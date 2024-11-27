@@ -40,13 +40,16 @@ double2 root1(u32 N, u32 k) {
   } else {
     assert(k <= N/8);
 
-#if 0
+    // Use long doubles for maximum accuracy
     long double angle = M_PIl * k / (N / 2);
-    return {cosl(angle), sinl(angle)};
-#else
-    double angle = M_PI * k / (N / 2);
-    return {cos(angle), sin(angle)};
-#endif
+    double sine, cosine;
+    cosine = double(cosl(angle)), sine = double(sinl(angle));
+    if (cosine*cosine+sine*sine == 1.0) return {cosine, sine};
+
+    // Try doubles instead of long doubles, the rounding might be subtly different
+    double angle2 = (double) angle;
+    cosine = cos(angle2), sine = sin(angle2);
+    return {cosine, sine};
   }
 }
 
