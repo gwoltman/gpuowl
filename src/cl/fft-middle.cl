@@ -233,7 +233,7 @@ void middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
 
 
 
-#define PERMUTE 1
+#define PERMUTE 0
 
 #define NUM_LANES 64
 // Get the T2 value from the specified lane
@@ -387,7 +387,7 @@ void middleMul2Out(T2 *u, u32 y, u32 x, double factor, Trig trig) {
       // Work on increasing u[i]
       if (midpt + processed < MIDDLE) {
         if (j < TRIGVALS_PER_Y) WADD(midpt + processed, cmul(base2, w));
-	else WADD(midpt + processed, base2 = cmul(base2, w));
+        else WADD(midpt + processed, base2 = cmul(base2, w));
       }
     }
   }
@@ -451,7 +451,7 @@ void middleMul2In(T2 *u, u32 y, u32 x, double factor, Trig trig) {
       // Work on increasing u[i]
       if (midpt + processed < MIDDLE) {
         if (j < TRIGVALS_PER_X) WADD(midpt + processed, cmul(base2, w));
-	else WADD(midpt + processed, base2 = cmul(base2, w));
+        else WADD(midpt + processed, base2 = cmul(base2, w));
       }
     }
   }
