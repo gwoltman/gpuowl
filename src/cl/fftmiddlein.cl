@@ -28,11 +28,11 @@ KERNEL(IN_WG) fftMiddleIn(P(T2) out, CP(T2) in, Trig trig) {
 
   readMiddleInLine(u, in, y, x);
 
-  middleMul2(u, x, y, 1, trig);
+  middleMul2In(u, y, x, 1, trig);
 
   fft_MIDDLE(u);
 
-  middleMul(u, y, trig);
+  middleMulIn(u, y, x, trig);
 
 #if MIDDLE_IN_LDS_TRANSPOSE
   // Transpose the x and y values

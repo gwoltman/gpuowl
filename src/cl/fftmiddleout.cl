@@ -32,7 +32,7 @@ KERNEL(OUT_WG) fftMiddleOut(P(T2) out, P(T2) in, Trig trig) {
 
   readMiddleOutLine(u, in, y, x);
 
-  middleMul(u, x, trig);
+  middleMulOut(u, y, x, trig);
 
   fft_MIDDLE(u);
 
@@ -42,7 +42,7 @@ KERNEL(OUT_WG) fftMiddleOut(P(T2) out, P(T2) in, Trig trig) {
   // number.  This may be due to roundoff errors introduced by applying inexact TWO_TO_N_8TH weights.
   double factor = 1.0 / (4 * 4 * NWORDS);
 
-  middleMul2(u, y, x, factor, trig);
+  middleMul2Out(u, y, x, factor, trig);
 
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values

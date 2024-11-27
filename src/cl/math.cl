@@ -28,6 +28,17 @@ T2 cfma(T2 a, T2 b, T2 c) {
 #endif
 }
 
+// Three step process to perform a * b and a * conj(b) using two fewer multiplies
+T2 cmulDual_setup(T2 a, T2 b) { return U2(a.x * b.x, a.y * b.x); }
+T2 cmulDual_plain(T2 a, T2 b, T2 setup) { return U2(fma(-a.y, b.y, setup.x), fma(a.x, b.y, setup.y)); }
+T2 cmulDual_conj(T2 a, T2 b, T2 setup) { return U2(fma(a.y, b.y, setup.x), fma(a.x, -b.y, setup.y)); }
+
+// Three step process to perform a * b and a * conj(b) using two fewer multiplies where b is in Fancy format (b.x needs a plus one)
+T2 cmulFancyDual_setup(T2 a, T2 b) { return U2(fma(a.x, b.x, a.x), fma(a.y, b.x, a.y)); }
+T2 cmulFancyDual_plain(T2 a, T2 b, T2 setup) { return U2(fma(-a.y, b.y, setup.x), fma(a.x, b.y, setup.y)); }
+T2 cmulFancyDual_conj(T2 a, T2 b, T2 setup) { return U2(fma(a.y, b.y, setup.x), fma(a.x, -b.y, setup.y)); }
+
+
 // Square any complex number
 T2 csq(T2 a) { return U2(fma(a.x, a.x, - a.y * a.y), 2 * a.x * a.y); }
 

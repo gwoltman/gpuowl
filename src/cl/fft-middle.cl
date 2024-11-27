@@ -91,7 +91,7 @@ void fft_MIDDLE(T2 *u) {
 
 void middleMul(T2 *u, u32 s, Trig trig) {
   assert(s < SMALL_HEIGHT);
-  if (MIDDLE == 1) { return; }
+  assert(MIDDLE > 1);
 
   T2 w = trig[s]; // s / BIG_HEIGHT
 
@@ -163,16 +163,12 @@ void middleMul(T2 *u, u32 s, Trig trig) {
 void middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
   assert(x < WIDTH);
   assert(y < SMALL_HEIGHT);
-
-  if (MIDDLE == 1) {
-    WADD(0, slowTrig_N(x * y, ND) * factor);
-    return;
-  }
+  assert(MIDDLE > 1);
 
   T2 w = trig[SMALL_HEIGHT + x]; // x / (MIDDLE * WIDTH)
 
   if (MIDDLE < SHARP_MIDDLE) {
-    T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, ND / MIDDLE * 2) * factor;
+    T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, (WIDTH-1) * (SMALL_HEIGHT-1) + (WIDTH-1) * SMALL_HEIGHT) * factor;
     for (u32 k = 0; k < MIDDLE; ++k) { WADD(k, base); }
     WSUB(0, w);
     if (MIDDLE > 2) { WADD(2, w); }
@@ -183,7 +179,7 @@ void middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
 
 #if MM2_CHAIN == 0
 
-    T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, ND / MIDDLE * 2) * factor;
+    T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, (WIDTH-1) * (SMALL_HEIGHT-1) + (WIDTH-1) * SMALL_HEIGHT) * factor;
     WADD(0, base);
     WADD(1, base);
 
@@ -200,7 +196,7 @@ void middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
       u32 n = (sz - 1) / 2;
       u32 mid = start + n;
 
-      T2 base1 = slowTrig_N(x * y + x * SMALL_HEIGHT * mid, ND / MIDDLE * (mid + 1)) * factor;
+      T2 base1 = slowTrig_N(x * y + x * SMALL_HEIGHT * mid, (WIDTH-1) * (SMALL_HEIGHT-1) + (WIDTH-1) * SMALL_HEIGHT * mid) * factor;
       WADD(mid, base1);
 
       T2 base2 = base1;
@@ -218,20 +214,246 @@ void middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
     }
 
 #elif MM2_CHAIN == 2
-    T2 base;
     for (u32 i = 1; i < MIDDLE; i += 3) {
-      base = slowTrig_N(x * y + x * SMALL_HEIGHT * i, ND / MIDDLE * (i + 1)) * factor;
-      WADD(i-1, base);
-      WADD(i,   base);
-      if (i + 1 < MIDDLE) { WADD(i+1, base); }
+      T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT * i, (WIDTH-1) * (SMALL_HEIGHT-1) + (WIDTH-1) * SMALL_HEIGHT * i) * factor;
+      T2 tmp = cmulFancyDual_setup(base, w);
+      WADD(i-1, cmulFancyDual_conj(base, w, tmp));
+      WADD(i, base);
+      if (i + 1 < MIDDLE) { WADD(i+1, cmulFancyDual_plain(base, w, tmp)); }
     }
-    if (MIDDLE % 3 == 1) { WADD(MIDDLE-1, base); }
-    for (u32 i = 0; i + 1 < MIDDLE; i += 3) { WSUBF(i, w); }
-    for (u32 i = 2; i < MIDDLE; i += 3) { WADDF(i, w); }
-    if (MIDDLE % 3 == 1) { WADDF(MIDDLE-1, w); WADDF(MIDDLE-1, w); }
+    if (MIDDLE % 3 == 1) {
+      WADD(MIDDLE-1, slowTrig_N(x * y + x * SMALL_HEIGHT * (MIDDLE-1), (WIDTH-1) * (SMALL_HEIGHT-1) + (WIDTH-1) * SMALL_HEIGHT * (MIDDLE-1)) * factor);
+    }
 #else
 #error MM2_CHAIN must be 0, 1 or 2.
 #endif
+  }
+}
+
+
+
+
+#define PERMUTE 1
+
+#define NUM_LANES 64
+// Get the T2 value from the specified lane
+T2 read_from_lane(T2 src, u32 lane) {
+  int4 s = as_int4(src);
+  int4 dest;
+  for (int i = 0; i < 4; ++i) { dest[i] = __builtin_amdgcn_ds_bpermute (lane * 4, s[i]); }
+  return as_double2(dest);
+}
+
+//******************************************************************************
+// Special versions of MiddleMul and MiddleMul2 for AMD GPUs
+// Should improve accuracy for modest speed cost over standard versions
+//******************************************************************************
+
+void middleMulOut(T2 *u, u32 y, u32 x, Trig trig) {
+  assert(y < WIDTH);
+  assert(x < SMALL_HEIGHT);
+  if (MIDDLE == 1) { return; }
+
+#if !PERMUTE
+  // Use old permute-less version
+  middleMul(u, x, trig);
+  return;
+#endif
+
+  // Compute all the trig values that will be needed by this 64-thread wavefront.
+  // A fftMiddleOut wavefront has OUT_SIZEX x values and 64/OUT_SIZEX y values.
+  // We need MIDDLE-1 trig values for each x value.
+  // If OUT_SIZEX * (MIDDLE-1) exceeds 64, there are somewhat slower methods
+  // available using fewer MIDDLE trig values.
+  u32 TRIGVALS_PER_X = NUM_LANES / OUT_SIZEX;
+  u32 lane = get_local_id(0) % NUM_LANES;
+  // Compute trig (x * j / BIGHEIGHT) for j = 1...TRIGVALS_PER_X
+  T2 trigvals = slowTrig_N(x * (lane / OUT_SIZEX + 1) * WIDTH, (SMALL_HEIGHT-1) * TRIGVALS_PER_X * WIDTH);
+
+  T2 w;
+  for (u32 j = 1; j < TRIGVALS_PER_X; ++j) {
+    // Get j-th trigval for x
+    w = read_from_lane(trigvals, x % OUT_SIZEX + (j-1) * OUT_SIZEX);
+    // Apply j-th trig value to as many u[i] as necessary
+    for (u32 i = j; i < MIDDLE; i += TRIGVALS_PER_X) { WADD(i, w); }
+  }
+  // Get last trigval for x
+  w = read_from_lane(trigvals, x % OUT_SIZEX + (TRIGVALS_PER_X-1) * OUT_SIZEX);
+  // Apply last trig value to as many u[i] as necessary
+  T2 base = w;
+  for (u32 k = TRIGVALS_PER_X; k < MIDDLE; k += TRIGVALS_PER_X) {
+    for (u32 i = 0; i < TRIGVALS_PER_X && k + i < MIDDLE; ++i) { WADD(k + i, base); }
+    if (k == TRIGVALS_PER_X) base = csq(w);
+    else base = cmul(base, w);
+  }
+}
+
+void middleMulIn(T2 *u, u32 y, u32 x, Trig trig) {
+  assert(y < SMALL_HEIGHT);
+  assert(x < WIDTH);
+  if (MIDDLE == 1) { return; }
+
+#if !PERMUTE
+  // Use old permute-less version
+  middleMul(u, y, trig);
+  return;
+#endif
+
+  // Compute all the trig values that will be needed by this 64-thread wavefront.
+  // A fftMiddleIn wavefront has IN_SIZEX x values and 64/IN_SIZEX y values.
+  // We need MIDDLE-1 trig values for each y value.
+  // If 64/IN_SIZEX * (MIDDLE-1) exceeds 64, there are slightly slower methods
+  // available using fewer MIDDLE trig values.
+  u32 TRIGVALS_PER_Y = IN_SIZEX;
+  u32 SIZEY = NUM_LANES / IN_SIZEX;
+  u32 lane = get_local_id(0) % NUM_LANES;
+  // Compute trig (y * j / BIGHEIGHT) for j = 1...TRIGVALS_PER_Y 
+  T2 trigvals = slowTrig_N(y * (lane % IN_SIZEX + 1) * WIDTH, (SMALL_HEIGHT-1) * TRIGVALS_PER_Y * WIDTH);
+
+  T2 w;
+  for (u32 j = 1; j < TRIGVALS_PER_Y; ++j) {
+    // Get j-th trigval for y
+    w = read_from_lane(trigvals, (y % SIZEY) * TRIGVALS_PER_Y + (j-1));
+    // Apply j-th trig value to as many u[i] as necessary
+    for (u32 i = j; i < MIDDLE; i += TRIGVALS_PER_Y) { WADD(i, w); }
+  }
+  // Get last trigval for y
+  w = read_from_lane(trigvals, (y % SIZEY) * TRIGVALS_PER_Y + (TRIGVALS_PER_Y-1));
+  // Apply last trig value to as many u[i] as necessary
+  T2 base = w;
+  for (u32 k = TRIGVALS_PER_Y; k < MIDDLE; k += TRIGVALS_PER_Y) {
+    for (u32 i = 0; i < TRIGVALS_PER_Y && k + i < MIDDLE; ++i) { WADD(k + i, base); }
+    if (k == TRIGVALS_PER_Y) base = csq(w);
+    else base = cmul(base, w);
+  }
+}
+
+
+void middleMul2Out(T2 *u, u32 y, u32 x, double factor, Trig trig) {
+  assert(y < WIDTH);
+  assert(x < SMALL_HEIGHT);
+  if (MIDDLE == 1) { WADD(0, slowTrig_N(x * y, ND) * factor); return; }
+
+#if !PERMUTE
+  // Use old permute-less version
+  middleMul2(u, y, x, factor, trig);
+  return;
+#endif
+
+  // Compute all the trig values that will be needed by this 64-thread wavefront.
+  // A fftMiddleOut wavefront has OUT_SIZEX x values and 64/OUT_SIZEX y values.
+  // We need (MIDDLE+1)/2 trig values for each y value.
+  // If OUT_SIZEX * (MIDDLE+1)/2 exceeds 64, there are somewhat less accurate
+  // methods available using fewer MIDDLE trig values.
+  u32 TRIGVALS_PER_Y = OUT_SIZEX;
+  u32 SIZEY = NUM_LANES / OUT_SIZEX;
+  u32 lane = get_local_id(0) % NUM_LANES;
+  // Compute trig (y * j / BIGWIDTH) for j = 1...TRIGVALS_PER_Y 
+  T2 trigvals = slowTrig_N(y * (lane % OUT_SIZEX + 1) * SMALL_HEIGHT, (WIDTH-1) * TRIGVALS_PER_Y * SMALL_HEIGHT);
+
+  u32 midpt = (MIDDLE + 1) / 2;
+  T2 basemid = slowTrig_N(y * x + midpt * y * SMALL_HEIGHT, (WIDTH-1) * (SMALL_HEIGHT-1) + midpt * (WIDTH-1) * SMALL_HEIGHT) * factor;
+  WADD(midpt, basemid);
+
+  T2 base1, base2;
+  for (u32 j = 1; j <= TRIGVALS_PER_Y && j <= midpt; ++j) {
+    // Get j-th trigval for y
+    T2 w = read_from_lane(trigvals, (y % SIZEY) * TRIGVALS_PER_Y + (j-1));
+    T2 tmp = cmulDual_setup(basemid, w);
+
+    // Work on midpt - j
+    base1 = cmulDual_conj(basemid, w, tmp);
+    WADD(midpt - j, base1);
+
+    // Work on midpt + j
+    if (midpt + j < MIDDLE) {
+      base2 = cmulDual_plain(basemid, w, tmp);
+      WADD(midpt + j, base2);
+    }
+  }
+
+  // If there weren't enough trig values, do some more processing
+  for (u32 processed = TRIGVALS_PER_Y; processed < midpt; ) {
+    for (u32 j = 1; j <= TRIGVALS_PER_Y && processed < midpt; ++j) {
+      // Get j-th trigval for y
+      T2 w = read_from_lane(trigvals, (y % SIZEY) * TRIGVALS_PER_Y + (j-1));
+
+      processed++;
+
+      // Work on decreasing u[i]
+      if (j < TRIGVALS_PER_Y) WADD(midpt - processed, cmul(base1, conjugate(w)));
+      else WADD(midpt - processed, base1 = cmul(base1, conjugate(w)));
+
+      // Work on increasing u[i]
+      if (midpt + processed < MIDDLE) {
+        if (j < TRIGVALS_PER_Y) WADD(midpt + processed, cmul(base2, w));
+	else WADD(midpt + processed, base2 = cmul(base2, w));
+      }
+    }
+  }
+}
+
+
+void middleMul2In(T2 *u, u32 y, u32 x, double factor, Trig trig) {
+  assert(y < SMALL_HEIGHT);
+  assert(x < WIDTH);
+  if (MIDDLE == 1) { WADD(0, slowTrig_N(x * y, ND) * factor); return; }
+
+#if !PERMUTE
+  // Use old permute-less version
+  middleMul2(u, x, y, factor, trig);
+  return;
+#endif
+
+  // Compute all the trig values that will be needed by this 64-thread wavefront.
+  // A fftMiddleIn wavefront has IN_SIZEX x values and 64/IN_SIZEX y values.
+  // We need (MIDDLE+1)/2 trig values for each x value.
+  // If IN_SIZEX * ((MIDDLE+1)/2) exceeds 64, there are somewhat less accurate
+  // methods available using fewer MIDDLE trig values.
+  u32 TRIGVALS_PER_X = NUM_LANES / IN_SIZEX;
+  u32 lane = get_local_id(0) % NUM_LANES;
+  // Compute trig (x * j / BIGWIDTH) for j = 1...TRIGVALS_PER_X
+  T2 trigvals = slowTrig_N(x * (lane / IN_SIZEX + 1) * SMALL_HEIGHT, (WIDTH-1) * TRIGVALS_PER_X * SMALL_HEIGHT);
+
+  u32 midpt = (MIDDLE + 1) / 2;
+  T2 basemid = slowTrig_N(x * y + midpt * x * SMALL_HEIGHT, (WIDTH-1) * (SMALL_HEIGHT-1) + midpt * (WIDTH-1) * SMALL_HEIGHT) * factor;
+  WADD(midpt, basemid);
+
+  T2 base1, base2;
+  for (u32 j = 1; j <= TRIGVALS_PER_X && j <= midpt; ++j) {
+    // Get j-th trigval for x
+    T2 w = read_from_lane(trigvals, x % IN_SIZEX + (j-1) * IN_SIZEX);
+    T2 tmp = cmulDual_setup(basemid, w);
+
+    // Work on midpt - j
+    base1 = cmulDual_conj(basemid, w, tmp);
+    WADD(midpt - j, base1);
+
+    // Work on midpt + j
+    if (midpt + j < MIDDLE) {
+      base2 = cmulDual_plain(basemid, w, tmp);
+      WADD(midpt + j, base2);
+    }
+  }
+
+  // If there weren't enough trig values, do some more processing
+  for (u32 processed = TRIGVALS_PER_X; processed < midpt; ) {
+    for (u32 j = 1; j <= TRIGVALS_PER_X && processed < midpt; ++j) {
+      // Get j-th trigval for x
+      T2 w = read_from_lane(trigvals, x % IN_SIZEX + (j-1) * IN_SIZEX);
+
+      processed++;
+
+      // Work on decreasing u[i]
+      if (j < TRIGVALS_PER_X) WADD(midpt - processed, cmul(base1, conjugate(w)));
+      else WADD(midpt - processed, base1 = cmul(base1, conjugate(w)));
+
+      // Work on increasing u[i]
+      if (midpt + processed < MIDDLE) {
+        if (j < TRIGVALS_PER_X) WADD(midpt + processed, cmul(base2, w));
+	else WADD(midpt + processed, base2 = cmul(base2, w));
+      }
+    }
   }
 }
 
@@ -275,12 +497,4 @@ void middleShuffle(local T *lds, T2 *u, u32 workgroupSize, u32 blockSize) {
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].w = p2[workgroupSize * i]; }
   }
-}
-
-
-// Do a partial transpose during fftMiddleIn/Out and write the results to global memory
-void middleShuffleWrite(global T2 *out, T2 *u, u32 workgroupSize, u32 blockSize) {
-  u32 me = get_local_id(0);
-  out += (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
-  for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
 }
