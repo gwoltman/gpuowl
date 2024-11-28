@@ -44,7 +44,10 @@ T2 csq(T2 a) { return U2(fma(a.x, a.x, - a.y * a.y), 2 * a.x * a.y); }
 
 // Square a (cos,sin) complex number
 T2 csqTrig(T2 a) { return U2(fma(-2 * a.y, a.y, 1), 2 * a.x * a.y); }
-// T2 csqTrig(T2 a) { return csq(a); }
+// Square a fancy (cos,sin) complex number
+T2 csqTrigFancy(T2 a) { return U2(fma(-2 * a.y, a.y, 1), 2 * fma(a.x, a.y, a.y)); }
+// Square a fancy (cos,sin) complex number, return a fancy number
+T2 csqTrigFancyFancy(T2 a) { return U2(-2 * a.y * a.y, 2 * fma(a.x, a.y, a.y)); }
 
 // a^2 + c
 T2 csqa(T2 a, T2 c) { return U2(fma(a.x, a.x, fma(a.y, -a.y, c.x)), fma(2 * a.x, a.y, c.y)); }
@@ -65,6 +68,11 @@ T2 csqFancyUpdate(T2 a) {
   return 2 * U2(fma(a.x, a.x, 2 * a.x), fma(a.x, a.y, a.y));
 #endif
 }
+
+// Cube a complex number w (cos,sin) given w^2 and w.  The squared input can be either fancy or not fancy.
+T2 ccubeTrig(T2 sq, T2 w) { T tmp = 2 * sq.y; return U2(fma(tmp, -w.y, w.x), fma(tmp, w.x, -w.y)); }
+T2 ccubeTrigFancy(T2 sq, T2 w) { T tmp = 2 * sq.y; T wx = w.x + 1; return U2(fma(tmp, -w.y, wx), fma(tmp, wx, -w.y)); }
+
 
 T2 mul_t4(T2 a)  { return U2(-a.y, a.x); } // i.e. a * i
 

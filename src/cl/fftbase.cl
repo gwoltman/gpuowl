@@ -119,38 +119,41 @@ void tabMul(u32 WG, Trig trig, T2 *u, u32 n, u32 f) {
     u[1] = cmul(u[1], w);
   }
 
-#if CLEAN == 1
-  T2 base = trig[WG + p];
+#if 0//CLEAN == 2                          // Titan V likes this case -- only one read.  But Z not helped much.  Needs more investigation.
 
-  if (n >= 8) {
-    for (u32 i = 2; i < n; ++i) {
-      u[i] = cmul(u[i], base);
-      base = cmulFancy(base, w);
-    }
-  } else {
-    for (u32 i = 2; i < n; ++i) {
-      u[i] = cmul(u[i], base);
-      base = cmul(base, w);
-    }
+  u32 midpt = (n + 1) / 2;
+  T2 base = trig[(midpt-1)*WG + p];
+  T2 tmp = cmulFancyDual_setup(base, w);
+  u[midpt] = cmul(u[midpt], base);
+  T2 base1 = cmulFancyDual_conj(base, w, tmp);
+  u[midpt - 1] = cmul(u[midpt - 1], base1);
+  T2 base2 = cmulFancyDual_plain(base, w, tmp);
+  u[midpt + 1] = cmul(u[midpt + 1], base2);
+  for (u32 i = 2; midpt + i < MIDDLE; ++i) {
+    if (midpt - i > 1) u[midpt - i] = cmul(u[midpt - i], base1 = cmulFancy(base1, conjugate(w)));
+    u[midpt + i] = cmul(u[midpt + i], base2 = cmulFancy(base2, w));
+  }
+
+#elif CLEAN == 1                        // Radeon VII loves this case
+
+  for (u32 i = 2; i < n; ++i) {
+    T2 base = trig[(i-1)*WG + p];
+    u[i] = cmul(u[i], base);
   }
 
 #elif CLEAN == 0
   if (n >= 8) {
-    T a = 2 * fma(w.x, w.y, w.y); // 2*sin*cos
-    u[2] = cmulFancy(u[2], U2(-2 * w.y * w.y, a));
-    a *= 2;
-    T2 base = U2(fma(a, -w.y, w.x + 1), fma(a, w.x, a - w.y));
+    T2 base = csqTrigFancyFancy(w);
+    u[2] = cmulFancy(u[2], base);
+    base = ccubeTrigFancy(base, w);
     for (u32 i = 3; i < n; ++i) {
       u[i] = cmul(u[i], base);
       base = cmulFancy(base, w);
     }
   } else {
-    T a = 2 * w.x * w.y;
-    // u[2] = fancyMulTrig(u[2], U2(-2 * w.y * w.y, a));
-    // u[2] = mul(u[2], U2(fma(w.x, w.x, -w.y * w.y), a));
-    u[2] = cmul(u[2], U2(fma(-2 * w.y, w.y, 1), a));
-    a *= 2;
-    T2 base = U2(fma(a, -w.y, w.x), fma(a, w.x, -w.y));
+    T2 base = csqTrig(w);
+    u[2] = cmul(u[2], base);
+    base = ccubeTrig(base, w);
     for (u32 i = 3; i < n; ++i) {
       u[i] = cmul(u[i], base);
       base = cmul(base, w);

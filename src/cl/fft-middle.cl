@@ -97,9 +97,14 @@ void middleMul(T2 *u, u32 s, Trig trig) {
 
   if (MIDDLE < SHARP_MIDDLE) {
     WADD(1, w);
+    if (MIDDLE == 2) return;
 #if MM_CHAIN == 0
     T2 base = csqTrig(w);
-    for (u32 k = 2; k < MIDDLE; ++k) {
+    WADD(2, base);
+    if (MIDDLE == 3) return;
+    base = ccubeTrig(base, w);
+    WADD(3, base);
+    for (u32 k = 4; k < MIDDLE; ++k) {
       WADD(k, base);
       base = cmul(base, w);
     }
@@ -113,19 +118,11 @@ void middleMul(T2 *u, u32 s, Trig trig) {
 
 #if MM_CHAIN == 0
     WADDF(1, w);
-    T2 base;
-    if (MIDDLE >= 10) {
-      base = csqFancyUpdate(w);
-      WADDF(2, base);
-      base.x += 1;
-    } else {
-      base = w;
-      base.x += 1;
-      base = cmulFancy(base, w);
-      WADD(2, base);
-    }
-
-    for (u32 k = 3; k < MIDDLE; ++k) {
+    T2 base = csqTrigFancyFancy(w);
+    WADDF(2, base);
+    base = ccubeTrigFancy(base, w);
+    WADD(3, base);
+    for (u32 k = 4; k < MIDDLE; ++k) {
       base = cmulFancy(base, w);
       WADD(k, base);
     }
@@ -133,6 +130,7 @@ void middleMul(T2 *u, u32 s, Trig trig) {
 #elif MM_CHAIN == 1
     for (u32 k = 3 + (MIDDLE - 2) % 3; k < MIDDLE; k += 3) {
       T2 base = slowTrig_N(WIDTH * k * s, WIDTH * SMALL_HEIGHT * k);
+      // OPT - should use cmulDual to save 2 multiplies    
       WADD(k-1, base);
       WADD(k,   base);
       WADD(k+1, base);
@@ -180,14 +178,24 @@ void middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
 #if MM2_CHAIN == 0
 
     T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, (WIDTH-1) * (SMALL_HEIGHT-1) + (WIDTH-1) * SMALL_HEIGHT) * factor;
+#ifdef SHOULD_BE_FASTER_BUT_MAY_USE_MORE_REGISTERS
+    T2 tmp = cmulFancyDual_setup(base, w);
+    WADD(0, cmulDual_conj(base, w, tmp));
+    WADD(1, base);
+    WADD(2, base = cmulDual_plain(base, w, tmp));
+    for (u32 k = 3; k < MIDDLE; ++k) {
+      base = cmulFancy(base, w);
+      WADD(k, base);
+    }
+#else
     WADD(0, base);
     WADD(1, base);
-
     for (u32 k = 2; k < MIDDLE; ++k) {
       base = cmulFancy(base, w);
       WADD(k, base);
     }
     WSUBF(0, w);
+#endif
 
 #elif MM2_CHAIN == 1
     u32 cnt = 1;
@@ -237,12 +245,14 @@ void middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
 
 #define NUM_LANES 64
 // Get the T2 value from the specified lane
+#if PERMUTE
 T2 read_from_lane(T2 src, u32 lane) {
   int4 s = as_int4(src);
   int4 dest;
   for (int i = 0; i < 4; ++i) { dest[i] = __builtin_amdgcn_ds_bpermute (lane * 4, s[i]); }
   return as_double2(dest);
 }
+#endif
 
 //******************************************************************************
 // Special versions of MiddleMul and MiddleMul2 for AMD GPUs
@@ -257,8 +267,7 @@ void middleMulOut(T2 *u, u32 y, u32 x, Trig trig) {
 #if !PERMUTE
   // Use old permute-less version
   middleMul(u, x, trig);
-  return;
-#endif
+#else
 
   // Compute all the trig values that will be needed by this 64-thread wavefront.
   // A fftMiddleOut wavefront has OUT_SIZEX x values and 64/OUT_SIZEX y values.
@@ -286,6 +295,7 @@ void middleMulOut(T2 *u, u32 y, u32 x, Trig trig) {
     if (k == TRIGVALS_PER_X) base = csq(w);
     else base = cmul(base, w);
   }
+#endif
 }
 
 void middleMulIn(T2 *u, u32 y, u32 x, Trig trig) {
@@ -296,8 +306,7 @@ void middleMulIn(T2 *u, u32 y, u32 x, Trig trig) {
 #if !PERMUTE
   // Use old permute-less version
   middleMul(u, y, trig);
-  return;
-#endif
+#else
 
   // Compute all the trig values that will be needed by this 64-thread wavefront.
   // A fftMiddleIn wavefront has IN_SIZEX x values and 64/IN_SIZEX y values.
@@ -326,6 +335,7 @@ void middleMulIn(T2 *u, u32 y, u32 x, Trig trig) {
     if (k == TRIGVALS_PER_Y) base = csq(w);
     else base = cmul(base, w);
   }
+#endif
 }
 
 
@@ -337,8 +347,7 @@ void middleMul2Out(T2 *u, u32 y, u32 x, double factor, Trig trig) {
 #if !PERMUTE
   // Use old permute-less version
   middleMul2(u, y, x, factor, trig);
-  return;
-#endif
+#else
 
   // Compute all the trig values that will be needed by this 64-thread wavefront.
   // A fftMiddleOut wavefront has OUT_SIZEX x values and 64/OUT_SIZEX y values.
@@ -391,6 +400,7 @@ void middleMul2Out(T2 *u, u32 y, u32 x, double factor, Trig trig) {
       }
     }
   }
+#endif
 }
 
 
@@ -402,8 +412,7 @@ void middleMul2In(T2 *u, u32 y, u32 x, double factor, Trig trig) {
 #if !PERMUTE
   // Use old permute-less version
   middleMul2(u, x, y, factor, trig);
-  return;
-#endif
+#else
 
   // Compute all the trig values that will be needed by this 64-thread wavefront.
   // A fftMiddleIn wavefront has IN_SIZEX x values and 64/IN_SIZEX y values.
@@ -455,6 +464,7 @@ void middleMul2In(T2 *u, u32 y, u32 x, double factor, Trig trig) {
       }
     }
   }
+#endif
 }
 
 #undef WADD
