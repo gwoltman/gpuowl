@@ -13,17 +13,19 @@
 //      X2(a, b);					2a^2 + 2(bt')^2, 4abt'
 //      b = mul(b, t);					                 4ab
 
+#define X2conja2b(a,b)  { T2 t = a; a.x = fma (2.0, b.x, a.x); a.y = fma(-2.0, b.y, -a.y); b.x = fma(-2.0, b.x, t.x); b.y = fma(-2.0, b.y, t.y); }
+
 void onePairSq(T2* pa, T2* pb, T2 conjugate_t_squared) {
   T2 a = *pa;
   T2 b = *pb;
 
   X2conjb(a, b);
-
   T2 tmp = a;
   a = csqa(a, cmul(csq(b), conjugate_t_squared));
-  b = 2 * cmul(tmp, b);
-
-  X2conja(a, b);
+//  b = 2 * cmul(tmp, b);
+//  X2conja(a, b);
+  b = cmul(tmp, b);
+  X2conja2b(a, b);
 
   *pa = a;
   *pb = b;
