@@ -19,7 +19,7 @@ void spin() {
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
-		       CP(u32) bits, ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
+                       CP(u32) bits, ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
 
 #if 0   // fft_WIDTH uses shufl_int instead of shufl
   local T2 lds[WIDTH / 4];
@@ -51,11 +51,6 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
 //  fft_WIDTH(lds + (get_group_id(0) / 131072), u, smallTrig + (get_group_id(0) / 131072));
-
-// A temporary hack until we figure out which combinations we want to finally offer:
-// UNROLL_W=0: old fft_WIDTH, no loop unrolling
-// UNROLL_W=1: old fft_WIDTH, loop unrolling
-// UNROLL_W=3: new fft_WIDTH if applicable.  Slightly better on Radeon VII -- more study needed as to why results weren't better.
 #if ZEROHACK_W
   new_fft_WIDTH1(lds + (get_group_id(0) / 131072), u, smallTrig + (get_group_id(0) / 131072));
 #else
@@ -105,10 +100,8 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
     // Generate big-word/little-word flags
 #if BIGLIT
-//    bool biglit0 = frac_bits + i * FRAC_BITS_BIGSTEP <= FRAC_BPW_HI;
-//    bool biglit1 = frac_bits + i * FRAC_BITS_BIGSTEP + FRAC_BPW_HI <= FRAC_BPW_HI;
     bool biglit0 = frac_bits + i * FRAC_BITS_BIGSTEP <= FRAC_BPW_HI;
-    bool biglit1 = frac_bits + i * FRAC_BITS_BIGSTEP >= -FRAC_BPW_HI;
+    bool biglit1 = frac_bits + i * FRAC_BITS_BIGSTEP >= -FRAC_BPW_HI;   // Same as frac_bits + i * FRAC_BITS_BIGSTEP + FRAC_BPW_HI <= FRAC_BPW_HI;
 #else
     bool biglit0 = test(b, 2 * i);
     bool biglit1 = test(b, 2 * i + 1);
