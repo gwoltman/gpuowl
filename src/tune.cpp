@@ -290,7 +290,7 @@ void Tune::ctune() {
   }
 
   for (FFTShape shape : shapes) {
-    FFTConfig fft{shape, 0, CARRY_32};
+    FFTConfig fft{shape, 101, CARRY_32};
     u32 exponent = primes.prevPrime(fft.maxExp());
     // log("tuning %10s with exponent %u\n", fft.shape.spec().c_str(), exponent);
 
