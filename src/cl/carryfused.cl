@@ -1668,10 +1668,10 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 31.
   const u32 m31_log2_root_two = (u32) (((1ULL << 30) / NWORDS) % 31);
   const u32 m31_bigword_weight_shift = (NWORDS - EXP % NWORDS) * m31_log2_root_two % 31;
-  const u32 m31_bigword_weight_shift_minus1 = (bigword_weight_shift + 30) % 31;
+  const u32 m31_bigword_weight_shift_minus1 = (m31_bigword_weight_shift + 30) % 31;
   const u32 m61_log2_root_two = (u32) (((1ULL << 60) / NWORDS) % 61);
   const u32 m61_bigword_weight_shift = (NWORDS - EXP % NWORDS) * m61_log2_root_two % 61;
-  const u32 m61_bigword_weight_shift_minus1 = (bigword_weight_shift + 60) % 61;
+  const u32 m61_bigword_weight_shift_minus1 = (m61_bigword_weight_shift + 60) % 61;
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
