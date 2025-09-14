@@ -58,7 +58,6 @@ void Queue::add(EventHolder&& e, TimeInfo* ti) {
 }
 
 void Queue::readSync(cl_mem buf, u32 size, void* out, TimeInfo* tInfo) {
-  queueMarkerEvent();
   add(read(get(), {}, true, buf, size, out, hasEvents), tInfo);
   events.synced();
 }

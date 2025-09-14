@@ -34,6 +34,8 @@
 #define MIDDLE_OUT_LDS_TRANSPOSE 1
 #endif
 
+#if FFT_FP64 || NTT_GF61
+
 //****************************************************************************************
 // Pair of routines to write data from carryFused and read data into fftMiddleIn
 //****************************************************************************************
@@ -50,7 +52,7 @@
 //      u[i]      i ranges 0...MIDDLE-1 (multiples of SMALL_HEIGHT)
 //      y         ranges 0...SMALL_HEIGHT-1 (multiples of one)
 
-void writeCarryFusedLine(T2 *u, P(T2) out, u32 line) {
+void OVERLOAD writeCarryFusedLine(T2 *u, P(T2) out, u32 line) {
 #if PAD_SIZE > 0
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
   out += line * WIDTH + line * PAD_SIZE + line / SMALL_HEIGHT * BIG_PAD_SIZE + (u32) get_local_id(0); // One pad every line + a big pad every SMALL_HEIGHT lines
@@ -61,7 +63,7 @@ void writeCarryFusedLine(T2 *u, P(T2) out, u32 line) {
 #endif
 }
 
-void readMiddleInLine(T2 *u, CP(T2) in, u32 y, u32 x) {
+void OVERLOAD readMiddleInLine(T2 *u, CP(T2) in, u32 y, u32 x) {
 #if PAD_SIZE > 0
   // Each work group reads successive y's which increments by one pad size.
   // Rather than having u[i] also increment by one, we choose a larger pad increment
@@ -86,7 +88,7 @@ void readMiddleInLine(T2 *u, CP(T2) in, u32 y, u32 x) {
 //      x         ranges 0...SMALL_HEIGHT-1 (multiples of one)          (also known as 0...G_H-1 and 0...NH-1)
 //      y         ranges 0...MIDDLE*WIDTH-1 (multiples of SMALL_HEIGHT)
 
-void writeMiddleInLine (P(T2) out, T2 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleInLine (P(T2) out, T2 *u, u32 chunk_y, u32 chunk_x)
 {
   //u32 SIZEY = IN_WG / IN_SIZEX;
   //u32 num_x_chunks = WIDTH / IN_SIZEX;                // Number of x chunks
@@ -121,7 +123,7 @@ void writeMiddleInLine (P(T2) out, T2 *u, u32 chunk_y, u32 chunk_x)
 
 // Read a line for tailFused or fftHin
 // This reads partially transposed data as written by fftMiddleIn
-void readTailFusedLine(CP(T2) in, T2 *u, u32 line, u32 me) {
+void OVERLOAD readTailFusedLine(CP(T2) in, T2 *u, u32 line, u32 me) {
   u32 SIZEY = IN_WG / IN_SIZEX;
 
 #if PAD_SIZE > 0
@@ -145,8 +147,8 @@ void readTailFusedLine(CP(T2) in, T2 *u, u32 line, u32 me) {
   u32 fftMiddleIn_y_incr = G_H;                                 // The increment to next fftMiddleIn y value
   u32 chunk_y_incr = fftMiddleIn_y_incr / SIZEY;                // The increment to next fftMiddleIn chunk_y value
   for (i32 i = 0; i < NH; ++i) {
-//    u32 fftMiddleIn_y = i * G_H + me;                           // The fftMiddleIn y value
-//    u32 chunk_y = fftMiddleIn_y / SIZEY;                        // The fftMiddleIn chunk_y value
+//    u32 fftMiddleIn_y = i * G_H + me;                         // The fftMiddleIn y value
+//    u32 chunk_y = fftMiddleIn_y / SIZEY;                      // The fftMiddleIn chunk_y value
     u[i] = NTLOAD(in[chunk_y * (MIDDLE * IN_WG + PAD_SIZE)]);   // Adjust in pointer the same way writeMiddleInLine did
     chunk_y += chunk_y_incr;
   }
@@ -196,7 +198,7 @@ void readTailFusedLine(CP(T2) in, T2 *u, u32 line, u32 me) {
 //      i in u[i] ranges 0...MIDDLE-1 (multiples of SMALL_HEIGHT)
 //      y         ranges 0...WIDTH-1 (multiples of BIG_HEIGHT)          (processed in batches of OUT_WG/OUT_SIZEX)
 
-void writeTailFusedLine(T2 *u, P(T2) out, u32 line, u32 me) {
+void OVERLOAD writeTailFusedLine(T2 *u, P(T2) out, u32 line, u32 me) {
 #if PAD_SIZE > 0
 #if MIDDLE == 4 || MIDDLE == 8 || MIDDLE == 16
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
@@ -211,7 +213,7 @@ void writeTailFusedLine(T2 *u, P(T2) out, u32 line, u32 me) {
 #endif
 }
 
-void readMiddleOutLine(T2 *u, CP(T2) in, u32 y, u32 x) {
+void OVERLOAD readMiddleOutLine(T2 *u, CP(T2) in, u32 y, u32 x) {
 #if PAD_SIZE > 0
 #if MIDDLE == 4 || MIDDLE == 8 || MIDDLE == 16
   // Each u[i] increments by one pad size.
@@ -274,7 +276,7 @@ void readMiddleOutLine(T2 *u, CP(T2) in, u32 y, u32 x) {
 // adjusted to effect a transpose.  Or caller must transpose the x and y values and send us an out pointer with thread_id added in.
 // In other words, caller is responsible for deciding the best way to transpose x and y values.
 
-void writeMiddleOutLine (P(T2) out, T2 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleOutLine (P(T2) out, T2 *u, u32 chunk_y, u32 chunk_x)
 {
   //u32 SIZEY = OUT_WG / OUT_SIZEX;
   //u32 num_x_chunks = SMALL_HEIGHT / OUT_SIZEX;  // Number of x chunks
@@ -307,7 +309,7 @@ void writeMiddleOutLine (P(T2) out, T2 *u, u32 chunk_y, u32 chunk_x)
 }
 
 // Read a line for carryFused or FFTW.  This line was written by writeMiddleOutLine above.
-void readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
+void OVERLOAD readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
   u32 me = get_local_id(0);
   u32 SIZEY = OUT_WG / OUT_SIZEX;
 
@@ -332,8 +334,8 @@ void readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
   u32 fftMiddleOut_y_incr = G_W;                                // The increment to next fftMiddleOut y value
   u32 chunk_y_incr = fftMiddleOut_y_incr / SIZEY;               // The increment to next fftMiddleOut chunk_y value
   for (i32 i = 0; i < NW; ++i) {
-//    u32 fftMiddleOut_y = i * G_W + me;                          // The fftMiddleOut y value
-//    u32 chunk_y = fftMiddleOut_y / SIZEY;                       // The fftMiddleOut chunk_y value
+//    u32 fftMiddleOut_y = i * G_W + me;                        // The fftMiddleOut y value
+//    u32 chunk_y = fftMiddleOut_y / SIZEY;                     // The fftMiddleOut chunk_y value
     u[i] = NTLOAD(in[chunk_y * (MIDDLE * OUT_WG + PAD_SIZE)]);  // Adjust in pointer the same way writeMiddleOutLine did
     chunk_y += chunk_y_incr;
   }
@@ -367,3 +369,303 @@ void readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
 #endif
 
 }
+
+#endif
+
+
+/**************************************************************************/
+/*            Similar to above, but for an FFT based on FP32              */
+/**************************************************************************/
+
+#if FFT_FP32 || NTT_GF31
+
+void OVERLOAD writeCarryFusedLine(F2 *u, P(F2) out, u32 line) {
+#if PAD_SIZE > 0
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+  out += line * WIDTH + line * PAD_SIZE + line / SMALL_HEIGHT * BIG_PAD_SIZE + (u32) get_local_id(0); // One pad every line + a big pad every SMALL_HEIGHT lines
+  for (u32 i = 0; i < NW; ++i) { NTSTORE(out[i * G_W], u[i]); }
+#else
+  out += line * WIDTH + (u32) get_local_id(0);
+  for (u32 i = 0; i < NW; ++i) { NTSTORE(out[i * G_W], u[i]); }
+#endif
+}
+
+void OVERLOAD readMiddleInLine(F2 *u, CP(F2) in, u32 y, u32 x) {
+#if PAD_SIZE > 0
+  // Each work group reads successive y's which increments by one pad size.
+  // Rather than having u[i] also increment by one, we choose a larger pad increment
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+  in += y * WIDTH + y * PAD_SIZE + (y / SMALL_HEIGHT) * BIG_PAD_SIZE + x;
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = NTLOAD(in[i * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
+#else
+  in += y * WIDTH + x;
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = NTLOAD(in[i * SMALL_HEIGHT * WIDTH]); }
+#endif
+}
+
+void OVERLOAD writeMiddleInLine (P(F2) out, F2 *u, u32 chunk_y, u32 chunk_x)
+{
+#if PAD_SIZE > 0
+  u32 SIZEY = IN_WG / IN_SIZEX;
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+
+  out += chunk_y * (MIDDLE * IN_WG + PAD_SIZE) +        // Write y chunks after middle chunks and a pad 
+         chunk_x * (SMALL_HEIGHT * MIDDLE * IN_SIZEX +  // num_y_chunks * (MIDDLE * IN_WG + PAD_SIZE)
+                    SMALL_HEIGHT / SIZEY * PAD_SIZE + BIG_PAD_SIZE);
+                                                        //              = SMALL_HEIGHT / SIZEY * (MIDDLE * IN_WG + PAD_SIZE)
+                                                        //              = SMALL_HEIGHT / (IN_WG / IN_SIZEX) * (MIDDLE * IN_WG + PAD_SIZE)
+                                                        //              = SMALL_HEIGHT * MIDDLE * IN_SIZEX + SMALL_HEIGHT / SIZEY * PAD_SIZE
+  // Write each u[i] sequentially
+  for (int i = 0; i < MIDDLE; ++i) { NTSTORE(out[i * IN_WG], u[i]); }
+#else
+  // Output data such that readCarryFused lines are packed tightly together.  No padding.
+  out += chunk_y * MIDDLE * IN_WG +                     // Write y chunks after middles
+         chunk_x * MIDDLE * SMALL_HEIGHT * IN_SIZEX;    // num_y_chunks * IN_WG = SMALL_HEIGHT / SIZEY * MIDDLE * IN_WG
+                                                        //                       = MIDDLE * SMALL_HEIGHT / (IN_WG / IN_SIZEX) * IN_WG
+                                                        //                       = MIDDLE * SMALL_HEIGHT * IN_SIZEX
+  // Write each u[i] sequentially
+  for (int i = 0; i < MIDDLE; ++i) { NTSTORE(out[i * IN_WG], u[i]); }
+#endif
+}
+
+// Read a line for tailFused or fftHin
+// This reads partially transposed data as written by fftMiddleIn
+void OVERLOAD readTailFusedLine(CP(F2) in, F2 *u, u32 line, u32 me) {
+  u32 SIZEY = IN_WG / IN_SIZEX;
+#if PAD_SIZE > 0
+  // Adjust in pointer based on the x value used in writeMiddleInLine
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+  u32 fftMiddleIn_x = line % WIDTH;                             // The fftMiddleIn x value
+  u32 chunk_x = fftMiddleIn_x / IN_SIZEX;                       // The fftMiddleIn chunk_x value
+  in += chunk_x * (SMALL_HEIGHT * MIDDLE * IN_SIZEX + SMALL_HEIGHT / SIZEY * PAD_SIZE + BIG_PAD_SIZE); // Adjust in pointer the same way writeMiddleInLine did
+  u32 x_within_in_wg = fftMiddleIn_x % IN_SIZEX;                // There were IN_SIZEX x values within IN_WG
+  in += x_within_in_wg * SIZEY;                                 // Adjust in pointer the same way writeMiddleInLine wrote x values within IN_WG
+
+  // Adjust in pointer based on the i value used in writeMiddleInLine
+  u32 fftMiddleIn_i = line / WIDTH;                             // The i in fftMiddleIn's u[i]
+  in += fftMiddleIn_i * IN_WG;                                  // Adjust in pointer the same way writeMiddleInLine did
+  // Adjust in pointer based on the y value used in writeMiddleInLine.  This code is a little obscure as rocm compiler has trouble optimizing commented out code.
+  in += me % SIZEY;                                             // Adjust in pointer to read SIZEY consecutive values
+  u32 fftMiddleIn_y = me;                                       // The i=0 fftMiddleIn y value
+  u32 chunk_y = fftMiddleIn_y / SIZEY;                          // The i=0 fftMiddleIn chunk_y value
+  u32 fftMiddleIn_y_incr = G_H;                                 // The increment to next fftMiddleIn y value
+  u32 chunk_y_incr = fftMiddleIn_y_incr / SIZEY;                // The increment to next fftMiddleIn chunk_y value
+  for (i32 i = 0; i < NH; ++i) {
+    u[i] = NTLOAD(in[chunk_y * (MIDDLE * IN_WG + PAD_SIZE)]);   // Adjust in pointer the same way writeMiddleInLine did
+    chunk_y += chunk_y_incr;
+  }
+#else                                                           // Read data that was not rotated or padded
+  // Adjust in pointer based on the x value used in writeMiddleInLine
+  u32 fftMiddleIn_x = line % WIDTH;                             // The fftMiddleIn x value
+  u32 chunk_x = fftMiddleIn_x / IN_SIZEX;                       // The fftMiddleIn chunk_x value
+  in += chunk_x * (SMALL_HEIGHT * MIDDLE * IN_SIZEX);           // Adjust in pointer the same way writeMiddleInLine did
+  u32 x_within_in_wg = fftMiddleIn_x % IN_SIZEX;                // There were IN_SIZEX x values within IN_WG
+  in += x_within_in_wg * SIZEY;                                 // Adjust in pointer the same way writeMiddleInLine wrote x values within IN_WG
+  // Adjust in pointer based on the i value used in writeMiddleInLine
+  u32 fftMiddleIn_i = line / WIDTH;                             // The i in fftMiddleIn's u[i]
+  in += fftMiddleIn_i * IN_WG;                                  // Adjust in pointer the same way writeMiddleInLine did
+  // Adjust in pointer based on the y value used in writeMiddleInLine.  This code is a little obscure as rocm compiler has trouble optimizing commented out code.
+  in += me % SIZEY;                                             // Adjust in pointer to read SIZEY consecutive values
+  u32 fftMiddleIn_y = me;                                       // The i=0 fftMiddleIn y value
+  u32 chunk_y = fftMiddleIn_y / SIZEY;                          // The i=0 fftMiddleIn chunk_y value
+  u32 fftMiddleIn_y_incr = G_H;                                 // The increment to next fftMiddleIn y value
+  u32 chunk_y_incr = fftMiddleIn_y_incr / SIZEY;                // The increment to next fftMiddleIn chunk_y value
+  for (i32 i = 0; i < NH; ++i) {
+    u32 fftMiddleIn_y = i * G_H + me;                           // The fftMiddleIn y value
+    u32 chunk_y = fftMiddleIn_y / SIZEY;                        // The fftMiddleIn chunk_y value
+    u[i] = NTLOAD(in[chunk_y * (MIDDLE * IN_WG)]);              // Adjust in pointer the same way writeMiddleInLine did
+    chunk_y += chunk_y_incr;
+  }
+#endif
+}
+
+void OVERLOAD writeTailFusedLine(F2 *u, P(F2) out, u32 line, u32 me) {
+#if PAD_SIZE > 0
+#if MIDDLE == 4 || MIDDLE == 8 || MIDDLE == 16
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+  out += line * (SMALL_HEIGHT + PAD_SIZE) + line / MIDDLE * BIG_PAD_SIZE + me; // Pad every output line plus every MIDDLE
+#else
+  out += line * (SMALL_HEIGHT + PAD_SIZE) + me;                         // Pad every output line
+#endif
+  for (u32 i = 0; i < NH; ++i) { NTSTORE(out[i * G_H], u[i]); }
+#else                                                                   // No padding
+  out += line * SMALL_HEIGHT + me;
+  for (u32 i = 0; i < NH; ++i) { NTSTORE(out[i * G_H], u[i]); }
+#endif
+}
+
+void OVERLOAD readMiddleOutLine(F2 *u, CP(F2) in, u32 y, u32 x) {
+#if PAD_SIZE > 0
+#if MIDDLE == 4 || MIDDLE == 8 || MIDDLE == 16
+  // Each u[i] increments by one pad size.
+  // Rather than each work group reading successive y's also increment by one, we choose a larger pad increment.
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+  in += y * MIDDLE * (SMALL_HEIGHT + PAD_SIZE) + y * BIG_PAD_SIZE + x;
+#else
+  in += y * MIDDLE * (SMALL_HEIGHT + PAD_SIZE) + x;
+#endif
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = NTLOAD(in[i * (SMALL_HEIGHT + PAD_SIZE)]); }
+#else                                                                   // No rotation, might be better on nVidia cards
+  in += y * MIDDLE * SMALL_HEIGHT + x;
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = NTLOAD(in[i * SMALL_HEIGHT]); }
+#endif
+}
+
+void OVERLOAD writeMiddleOutLine (P(F2) out, F2 *u, u32 chunk_y, u32 chunk_x)
+{
+#if PAD_SIZE > 0
+  u32 SIZEY = OUT_WG / OUT_SIZEX;
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+
+  out += chunk_y * (MIDDLE * OUT_WG + PAD_SIZE) +       // Write y chunks after middle chunks and a pad 
+         chunk_x * (WIDTH * MIDDLE * OUT_SIZEX +        // num_y_chunks * (MIDDLE * OUT_WG + PAD_SIZE)
+                    WIDTH / SIZEY * PAD_SIZE + BIG_PAD_SIZE);//         = WIDTH / SIZEY * (MIDDLE * OUT_WG + PAD_SIZE)
+                                                        //              = WIDTH / (OUT_WG / OUT_SIZEX) * (MIDDLE * OUT_WG + PAD_SIZE)
+                                                        //              = WIDTH * MIDDLE * OUT_SIZEX + WIDTH / SIZEY * PAD_SIZE
+  // Write each u[i] sequentially
+  for (int i = 0; i < MIDDLE; ++i) { NTSTORE(out[i * OUT_WG], u[i]); }
+#else
+  // Output data such that readCarryFused lines are packed tightly together.  No padding.
+  out += chunk_y * MIDDLE * OUT_WG +             // Write y chunks after middles
+         chunk_x * MIDDLE * WIDTH * OUT_SIZEX;   // num_y_chunks * OUT_WG = WIDTH / SIZEY * MIDDLE * OUT_WG
+                                        //                       = MIDDLE * WIDTH / (OUT_WG / OUT_SIZEX) * OUT_WG
+                                        //                       = MIDDLE * WIDTH * OUT_SIZEX
+  // Write each u[i] sequentially
+  for (int i = 0; i < MIDDLE; ++i) { NTSTORE(out[i * OUT_WG], u[i]); }
+#endif
+}
+
+void OVERLOAD readCarryFusedLine(CP(F2) in, F2 *u, u32 line) {
+  u32 me = get_local_id(0);
+  u32 SIZEY = OUT_WG / OUT_SIZEX;
+#if PAD_SIZE > 0
+  // Adjust in pointer based on the x value used in writeMiddleOutLine
+  u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
+  u32 fftMiddleOut_x = line % SMALL_HEIGHT;                     // The fftMiddleOut x value
+  u32 chunk_x = fftMiddleOut_x / OUT_SIZEX;                     // The fftMiddleOut chunk_x value
+  in += chunk_x * (WIDTH * MIDDLE * OUT_SIZEX + WIDTH / SIZEY * PAD_SIZE + BIG_PAD_SIZE); // Adjust in pointer the same way writeMiddleOutLine did
+  u32 x_within_out_wg = fftMiddleOut_x % OUT_SIZEX;             // There were OUT_SIZEX x values within OUT_WG
+  in += x_within_out_wg * SIZEY;                                // Adjust in pointer the same way writeMiddleOutLine wrote x values within OUT_WG
+  // Adjust in pointer based on the i value used in writeMiddleOutLine
+  u32 fftMiddleOut_i = line / SMALL_HEIGHT;                     // The i in fftMiddleOut's u[i]
+  in += fftMiddleOut_i * OUT_WG;                                // Adjust in pointer the same way writeMiddleOutLine did
+  // Adjust in pointer based on the y value used in writeMiddleOutLine.  This code is a little obscure as rocm compiler has trouble optimizing commented out code.
+  in += me % SIZEY;                                             // Adjust in pointer to read SIZEY consecutive values
+  u32 fftMiddleOut_y = me;                                      // The i=0 fftMiddleOut y value
+  u32 chunk_y = fftMiddleOut_y / SIZEY;                         // The i=0 fftMiddleOut chunk_y value
+  u32 fftMiddleOut_y_incr = G_W;                                // The increment to next fftMiddleOut y value
+  u32 chunk_y_incr = fftMiddleOut_y_incr / SIZEY;               // The increment to next fftMiddleOut chunk_y value
+  for (i32 i = 0; i < NW; ++i) {
+    u[i] = NTLOAD(in[chunk_y * (MIDDLE * OUT_WG + PAD_SIZE)]);  // Adjust in pointer the same way writeMiddleOutLine did
+    chunk_y += chunk_y_incr;
+  }
+#else                                                           // Read data that was not rotated or padded
+  // Adjust in pointer based on the x value used in writeMiddleOutLine
+  u32 fftMiddleOut_x = line % SMALL_HEIGHT;                     // The fftMiddleOut x value
+  u32 chunk_x = fftMiddleOut_x / OUT_SIZEX;                     // The fftMiddleOut chunk_x value
+  in += chunk_x * MIDDLE * WIDTH * OUT_SIZEX;                   // Adjust in pointer the same way writeMiddleOutLine did
+  u32 x_within_out_wg = fftMiddleOut_x % OUT_SIZEX;             // There were OUT_SIZEX x values within OUT_WG
+  in += x_within_out_wg * SIZEY;                                // Adjust in pointer the same way writeMiddleOutLine wrote x values with OUT_WG
+  // Adjust in pointer based on the i value used in writeMiddleOutLine
+  u32 fftMiddleOut_i = line / SMALL_HEIGHT;                     // The i in fftMiddleOut's u[i]
+  in += fftMiddleOut_i * OUT_WG;                                // Adjust in pointer the same way writeMiddleOutLine did
+  // Adjust in pointer based on the y value used in writeMiddleOutLine.  This code is a little obscure as rocm compiler has trouble optimizing commented out code.
+  in += me % SIZEY;                                             // Adjust in pointer to read SIZEY consecutive values
+  u32 fftMiddleOut_y = me;                                      // The i=0 fftMiddleOut y value
+  u32 chunk_y = fftMiddleOut_y / SIZEY;                         // The i=0 fftMiddleOut chunk_y value
+  u32 fftMiddleOut_y_incr = G_W;                                // The increment to next fftMiddleOut y value
+  u32 chunk_y_incr = fftMiddleOut_y_incr / SIZEY;               // The increment to next fftMiddleOut chunk_y value
+  for (i32 i = 0; i < NW; ++i) {
+    u[i] = NTLOAD(in[chunk_y * MIDDLE * OUT_WG]);               // Adjust in pointer the same way writeMiddleOutLine did
+    chunk_y += chunk_y_incr;
+  }
+#endif
+}
+
+#endif
+
+
+/**************************************************************************/
+/*          Similar to above, but for an NTT based on GF(M31^2)           */
+/**************************************************************************/
+
+#if NTT_GF31
+
+// Since F2 and GF31 are the same size we can simply call the floats based code
+
+void OVERLOAD writeCarryFusedLine(GF31 *u, P(GF31) out, u32 line) {
+  writeCarryFusedLine((F2 *) u, (P(F2)) out, line);
+}
+
+void OVERLOAD readMiddleInLine(GF31 *u, CP(GF31) in, u32 y, u32 x) {
+  readMiddleInLine((F2 *) u, (CP(F2)) in, y, x);
+}
+
+void OVERLOAD writeMiddleInLine (P(GF31) out, GF31 *u, u32 chunk_y, u32 chunk_x) {
+  writeMiddleInLine ((P(F2)) out, (F2 *) u, chunk_y, chunk_x);
+}
+
+void OVERLOAD readTailFusedLine(CP(GF31) in, GF31 *u, u32 line, u32 me) {
+  readTailFusedLine((CP(F2)) in, (F2 *) u, line, me);
+}
+
+void OVERLOAD writeTailFusedLine(GF31 *u, P(GF31) out, u32 line, u32 me) {
+  writeTailFusedLine((F2 *) u, (P(F2)) out, line, me);
+}
+
+void OVERLOAD readMiddleOutLine(GF31 *u, CP(GF31) in, u32 y, u32 x) {
+  readMiddleOutLine((F2 *) u, (CP(F2)) in, y, x);
+}
+
+void OVERLOAD writeMiddleOutLine (P(GF31) out, GF31 *u, u32 chunk_y, u32 chunk_x) {
+  writeMiddleOutLine ((P(F2)) out, (F2 *) u, chunk_y, chunk_x);
+}
+
+void OVERLOAD readCarryFusedLine(CP(GF31) in, GF31 *u, u32 line) {
+  readCarryFusedLine((CP(F2)) in, (F2 *) u, line);
+}
+
+#endif
+
+
+/**************************************************************************/
+/*          Similar to above, but for an NTT based on GF(M61^2)           */
+/**************************************************************************/
+
+#if NTT_GF61
+
+// Since T2 and GF61 are the same size we can simply call the doubles based code
+
+void OVERLOAD writeCarryFusedLine(GF61 *u, P(GF61) out, u32 line) {
+  writeCarryFusedLine((T2 *) u, (P(T2)) out, line);
+}
+
+void OVERLOAD readMiddleInLine(GF61 *u, CP(GF61) in, u32 y, u32 x) {
+  readMiddleInLine((T2 *) u, (CP(T2)) in, y, x);
+}
+
+void OVERLOAD writeMiddleInLine (P(GF61) out, GF61 *u, u32 chunk_y, u32 chunk_x) {
+  writeMiddleInLine ((P(T2)) out, (T2 *) u, chunk_y, chunk_x);
+}
+
+void OVERLOAD readTailFusedLine(CP(GF61) in, GF61 *u, u32 line, u32 me) {
+  readTailFusedLine((CP(T2)) in, (T2 *) u, line, me);
+}
+
+void OVERLOAD writeTailFusedLine(GF61 *u, P(GF61) out, u32 line, u32 me) {
+  writeTailFusedLine((T2 *) u, (P(T2)) out, line, me);
+}
+
+void OVERLOAD readMiddleOutLine(GF61 *u, CP(GF61) in, u32 y, u32 x) {
+  readMiddleOutLine((T2 *) u, (CP(T2)) in, y, x);
+}
+
+void OVERLOAD writeMiddleOutLine (P(GF61) out, GF61 *u, u32 chunk_y, u32 chunk_x) {
+  writeMiddleOutLine ((P(T2)) out, (T2 *) u, chunk_y, chunk_x);
+}
+
+void OVERLOAD readCarryFusedLine(CP(GF61) in, GF61 *u, u32 line) {
+  readCarryFusedLine((CP(T2)) in, (T2 *) u, line);
+}
+
+#endif

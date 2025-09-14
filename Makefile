@@ -19,8 +19,9 @@ else
 CXX = g++
 endif
 
-COMMON_FLAGS = -Wall -std=c++20
-# -static-libstdc++ -static-libgcc
+COMMON_FLAGS = -Wall -std=c++20 -static-libstdc++ -static-libgcc
+# For mingw-64 use this:
+#COMMON_FLAGS = -Wall -std=c++20 -static-libstdc++ -static-libgcc -static
 # -fext-numeric-literals
 
 ifeq ($(HOST_OS), Darwin)

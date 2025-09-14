@@ -11,6 +11,8 @@ using i32 = int32_t;
 using u32 = uint32_t;
 using i64 = int64_t;
 using u64 = uint64_t;
+using i128 = __int128;
+using u128 = unsigned __int128;
 using f128 = __float128;
 
 static_assert(sizeof(u8)  == 1, "size u8");
@@ -20,6 +22,30 @@ static_assert(sizeof(u64) == 8, "size u64");
 using namespace std;
 namespace std::filesystem{};
 namespace fs = std::filesystem;
+
+#define FFT_FP64 1
+#define FFT_FP32 0
+#define NTT_GF31 0
+#define NTT_GF61 0
+#define NTT_NCW 0
+
+// When using multiple primes in an NTT the size of an integer FFT "word" grows such that we need to support words larger than 32-bits
+#if (FFT_FP64 && NTT_GF31) | (FFT_FP32 && NTT_GF61) | (NTT_GF31 && NTT_GF61)
+typedef i64 Word;
+typedef u64 uWord;                      // Used by unbalance
+#else
+typedef i32 Word;
+typedef u32 uWord;                      // Used by unbalance
+#endif
+
+using double2 = pair<double, double>;
+using float2 = pair<float, float>;
+using int2 = pair<int, int>;
+using long2 = pair<long, long>;
+using uint = unsigned int;
+using uint2 = pair<unsigned int, unsigned int>;
+using ulong = unsigned long;
+using ulong2 = pair<unsigned long, unsigned long>;
 
 std::vector<std::string> split(const string& s, char delim);
 

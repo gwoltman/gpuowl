@@ -10,7 +10,9 @@
 
 u32 transPos(u32 k, u32 middle, u32 width) { return k / width + k % width * middle; }
 
-void fft_NH(T2 *u) {
+#if FFT_FP64
+
+void OVERLOAD fft_NH(T2 *u) {
 #if NH == 4
   fft4(u);
 #elif NH == 8
@@ -29,7 +31,7 @@ void fft_NH(T2 *u) {
 #error FFT_VARIANT_H == 0 only supported by AMD GPUs
 #endif
 
-void fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
+void OVERLOAD fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
   for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
     if (s > 1) { bar(); }
     fft_NH(u);
@@ -42,7 +44,7 @@ void fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
   fft_NH(u);
 }
 
-void fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
+void OVERLOAD fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
   u32 WG = SMALL_HEIGHT / NH;
   for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
     if (s > 1) { bar(WG); }
@@ -58,7 +60,7 @@ void fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
 
 #else
 
-void fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
+void OVERLOAD fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
   u32 me = get_local_id(0);
 
 #if !UNROLL_H
@@ -74,7 +76,7 @@ void fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
   fft_NH(u);
 }
 
-void fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
+void OVERLOAD fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
   u32 me = get_local_id(0);
   u32 WG = SMALL_HEIGHT / NH;
 
@@ -93,9 +95,7 @@ void fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
 
 #endif
 
-
-
-void new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, int callnum) {
+void OVERLOAD new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, int callnum) {
   u32 WG = SMALL_HEIGHT / NH;
   u32 me = get_local_id(0);
   // This line mimics shufl2 -- partition lds into halves
@@ -205,3 +205,169 @@ void new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, int callnum) {
 void new_fft_HEIGHT2_1(local T2 *lds, T2 *u, Trig trig, T2 w)  { new_fft_HEIGHT2(lds, u, trig, w, 1); }
 void new_fft_HEIGHT2_2(local T2 *lds, T2 *u, Trig trig, T2 w)  { new_fft_HEIGHT2(lds, u, trig, w, 2); }
 
+#endif
+
+
+/**************************************************************************/
+/*            Similar to above, but for an FFT based on FP32              */
+/**************************************************************************/
+
+#if FFT_FP32
+
+void OVERLOAD fft_NH(F2 *u) {
+#if NH == 4
+  fft4(u);
+#elif NH == 8
+  fft8(u);
+#else
+#error NH
+#endif
+}
+
+void OVERLOAD fft_HEIGHT(local F2 *lds, F2 *u, TrigFP32 trig) {
+  u32 me = get_local_id(0);
+
+#if !UNROLL_H
+  __attribute__((opencl_unroll_hint(1)))
+#endif
+
+  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
+    if (s > 1) { bar(); }
+    fft_NH(u);
+    tabMul(SMALL_HEIGHT / NH, trig, u, NH, s, me);
+    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
+  }
+  fft_NH(u);
+}
+
+void OVERLOAD fft_HEIGHT2(local F2 *lds, F2 *u, TrigFP32 trig) {
+  u32 me = get_local_id(0);
+  u32 WG = SMALL_HEIGHT / NH;
+
+#if !UNROLL_H
+  __attribute__((opencl_unroll_hint(1)))
+#endif
+
+  for (u32 s = 1; s < WG; s *= NH) {
+    if (s > 1) { bar(WG); }
+    fft_NH(u);
+    tabMul(WG, trig, u, NH, s, me % WG);
+    shufl2(WG, lds,  u, NH, s);
+  }
+  fft_NH(u);
+}
+
+void new_fft_HEIGHT2_1(local F2 *lds, F2 *u, TrigFP32 trig)  { fft_HEIGHT2(lds, u, trig); }
+void new_fft_HEIGHT2_2(local F2 *lds, F2 *u, TrigFP32 trig)  { fft_HEIGHT2(lds, u, trig); }
+
+#endif
+
+
+/**************************************************************************/
+/*          Similar to above, but for an NTT based on GF(M31^2)           */
+/**************************************************************************/
+
+#if NTT_GF31
+
+void OVERLOAD fft_NH(GF31 *u) {
+#if NH == 4
+  fft4(u);
+#elif NH == 8
+  fft8(u);
+#else
+#error NH
+#endif
+}
+
+void OVERLOAD fft_HEIGHT(local GF31 *lds, GF31 *u, TrigGF31 trig) {
+  u32 me = get_local_id(0);
+
+#if !UNROLL_H
+  __attribute__((opencl_unroll_hint(1)))
+#endif
+
+  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
+    if (s > 1) { bar(); }
+    fft_NH(u);
+    tabMul(SMALL_HEIGHT / NH, trig, u, NH, s, me);
+    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
+  }
+  fft_NH(u);
+}
+
+void OVERLOAD fft_HEIGHT2(local GF31 *lds, GF31 *u, TrigGF31 trig) {
+  u32 me = get_local_id(0);
+  u32 WG = SMALL_HEIGHT / NH;
+
+#if !UNROLL_H
+  __attribute__((opencl_unroll_hint(1)))
+#endif
+
+  for (u32 s = 1; s < WG; s *= NH) {
+    if (s > 1) { bar(WG); }
+    fft_NH(u);
+    tabMul(WG, trig, u, NH, s, me % WG);
+    shufl2(WG, lds,  u, NH, s);
+  }
+  fft_NH(u);
+}
+
+void OVERLOAD new_fft_HEIGHT2_1(local GF31 *lds, GF31 *u, TrigGF31 trig)  { fft_HEIGHT2(lds, u, trig); }
+void OVERLOAD new_fft_HEIGHT2_2(local GF31 *lds, GF31 *u, TrigGF31 trig)  { fft_HEIGHT2(lds, u, trig); }
+
+#endif
+
+
+/**************************************************************************/
+/*          Similar to above, but for an NTT based on GF(M61^2)           */
+/**************************************************************************/
+
+#if NTT_GF61
+
+void OVERLOAD fft_NH(GF61 *u) {
+#if NH == 4
+  fft4(u);
+#elif NH == 8
+  fft8(u);
+#else
+#error NH
+#endif
+}
+
+void OVERLOAD fft_HEIGHT(local GF61 *lds, GF61 *u, TrigGF61 trig) {
+  u32 me = get_local_id(0);
+
+#if !UNROLL_H
+  __attribute__((opencl_unroll_hint(1)))
+#endif
+
+  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
+    if (s > 1) { bar(); }
+    fft_NH(u);
+    tabMul(SMALL_HEIGHT / NH, trig, u, NH, s, me);
+    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
+  }
+  fft_NH(u);
+}
+
+void OVERLOAD fft_HEIGHT2(local GF61 *lds, GF61 *u, TrigGF61 trig) {
+  u32 me = get_local_id(0);
+  u32 WG = SMALL_HEIGHT / NH;
+
+#if !UNROLL_H
+  __attribute__((opencl_unroll_hint(1)))
+#endif
+
+  for (u32 s = 1; s < WG; s *= NH) {
+    if (s > 1) { bar(WG); }
+    fft_NH(u);
+    tabMul(WG, trig, u, NH, s, me % WG);
+    shufl2(WG, lds,  u, NH, s);
+  }
+  fft_NH(u);
+}
+
+void OVERLOAD new_fft_HEIGHT2_1(local GF61 *lds, GF61 *u, TrigGF61 trig)  { fft_HEIGHT2(lds, u, trig); }
+void OVERLOAD new_fft_HEIGHT2_2(local GF61 *lds, GF61 *u, TrigGF61 trig)  { fft_HEIGHT2(lds, u, trig); }
+
+#endif
