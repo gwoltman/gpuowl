@@ -142,8 +142,7 @@ void OVERLOAD fft4(F2 *u) { fft4by(u, 0, 1, 4); }
 
 void OVERLOAD fft4Core(GF31 *u) {
   X2(u[0], u[2]);
-  X2(u[1], u[3]); u[3] = mul_t4(u[3]);
-
+  X2_mul_t4(u[1], u[3]);
   X2(u[0], u[1]);
   X2(u[2], u[3]);
 }
@@ -153,7 +152,7 @@ void OVERLOAD fft4by(GF31 *u, u32 base, u32 step, u32 M) {
 
 #define A(k) u[(base + step * k) % M]
 
-  Z31 x0 = add(A(0).x, A(2).x);                                 //GWBUG:  Delay some of the mods (we have three spare bits)
+  Z31 x0 = add(A(0).x, A(2).x);                                 //GWBUG:  Delay some of the mods using 64 bit temps?
   Z31 x2 = sub(A(0).x, A(2).x);
   Z31 y0 = add(A(0).y, A(2).y);
   Z31 y2 = sub(A(0).y, A(2).y);

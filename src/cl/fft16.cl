@@ -177,9 +177,8 @@ void OVERLOAD fft16(F2 *u) {
   u[15] = cmul(u[15], U2(-C1, S1)); // 7t16
 
   u[10] = mul_t8(u[10]);
-  u[14] = mul_3t8(u[14]);
-
   u[12] = mul_t4(u[12]);
+  u[14] = mul_3t8(u[14]);
 
   fft8Core(u);
   fft8Core(u + 8);

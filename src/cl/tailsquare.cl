@@ -606,7 +606,7 @@ void OVERLOAD onePairSq(GF31* pa, GF31* pb, GF31 t_squared) {
   GF31 a = *pa, b = *pb;
 
   X2conjb(a, b);
-  GF31 c = sub(csq(a), cmul(csq(b), t_squared));
+  GF31 c = csq_sub(a, cmul(csq(b), t_squared));                 // a^2 - (b^2 * t_squared)
   GF31 d = mul2(cmul(a, b));
   X2_conjb(c, d);
   *pa = SWAP_XY(c), *pb = SWAP_XY(d);
