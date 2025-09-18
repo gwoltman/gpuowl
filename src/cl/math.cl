@@ -460,7 +460,7 @@ GF31 OVERLOAD csq_sub(GF31 a, GF31 c) {
 }
 
 // Complex mul
-#if 1						// One less negation, requires signed shifts.  Seems microscopically faster on TitanV.
+#if 1                                           // One less negation, requires signed shifts.  Seems microscopically faster on TitanV.
 GF31 OVERLOAD cmul(GF31 a, GF31 b) {
   u64 k1 = b.x * (u64) (a.x + a.y);             // 63-bit value, max = 7FFF FFFE 0000 0002
   u64 k2 = a.x * (u64) (b.y + neg(b.x));
@@ -700,7 +700,7 @@ GF61 OVERLOAD add(GF61 a, GF61 b) { return U2(add(a.x, b.x), add(a.y, b.y)); }
 Z61 OVERLOAD sub(Z61 a, Z61 b) { return modM61(a + neg(b, 2)); }
 GF61 OVERLOAD sub(GF61 a, GF61 b) { return U2(sub(a.x, b.x), sub(a.y, b.y)); }
 
- Z61 OVERLOAD neg(Z61 a) { return modM61(neg(a, 2)); }                // GWBUG: Examine all callers to see if neg call can be avoided
+Z61 OVERLOAD neg(Z61 a) { return modM61(neg(a, 2)); }                // GWBUG: Examine all callers to see if neg call can be avoided
 GF61 OVERLOAD neg(GF61 a) { return U2(neg(a.x), neg(a.y)); }
 
 // Assumes k reduced mod 61.
@@ -735,19 +735,34 @@ GF61 OVERLOAD mul2(GF61 a) { return U2(mul2(a.x), mul2(a.y)); }
 GF61 OVERLOAD conjugate(GF61 a) { return U2(a.x, neg(a.y)); }
 
 // Complex square. Uses (a + i*b)^2 == ((a+b)*(a-b) + i*2*a*b).
+#if 1
 GF61 OVERLOAD csq(GF61 a) { return U2(mul(a.x + a.y, modM61(a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }
+#else
+Z61 OVERLOAD modM61(u128 a) { return modM61(((u64) a & M61) + ((u64) (a >> 61) & M61) + (u64) (a >> 122)); }    // GWBUG - Have version without second modM61??? returns a 2*M61+epsilon.  
+GF61 OVERLOAD csq(GF61 a) { return U2(modM61((a.x + a.y) * (u128) (a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }
+#endif
 
 // a^2 + c
 GF61 OVERLOAD csqa(GF61 a, GF61 c) { return U2(modM61(weakMul(a.x + a.y, modM61(a.x + neg(a.y, 2))) + c.x), modM61(weakMul(a.x + a.x, a.y) + c.y)); }
 
 // Complex mul
 //GF61 OVERLOAD cmul(GF61 a, GF61 b) { return U2(sub(mul(a.x, b.x), mul(a.y, b.y)), add(mul(a.x, b.y), mul(a.y, b.x)));}
+#if 1
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {            // Use 2 extra bits in u64
   Z61 k1 = weakMul(b.x, a.x + a.y);             // 61+e * 62+e bits = 123+e mult = 62+e bit result
   Z61 k2 = weakMul(a.x, b.y + neg(b.x, 2));     // 61+e * 63+e bits = 63+e bit result
   Z61 k3 = weakMul(neg(a.y, 2), b.y + b.x);     // 62 * 62+e bits = 63+e bit result
   return U2(modM61(k1 + k3), modM61(k1 + k2));  // k1+k3 and k1+k2 are full 64-bit values
 }
+#else                                           // Slower on TitanV
+Z61 OVERLOAD modM61(u128 a) { return modM61(((u64) a & M61) + ((u64) (a >> 61) & M61) + (u64) (a >> 122)); }    // GWBUG - Have version without second modM61??? returns a 2*M61+epsilon.  
+GF61 OVERLOAD cmul(GF61 a, GF61 b) {              // Use 2 extra bits in u64 and u128
+  u128 k1 = b.x * (u128) (a.x + a.y);             // 61+e * 62+e bits = 123+e mult = 62+e bit result
+  u128 k2 = a.x * (u128) (b.y + neg(b.x, 2));     // 61+e * 63+e bits = 63+e bit result
+  u128 k3 = neg(a.y, 2) * (u128) (b.y + b.x);     // 62 * 62+e bits = 63+e bit result
+  return U2(modM61(k1 + k3), modM61(k1 + k2));    // k1+k3 and k1+k2 are full 64-bit values
+}
+#endif
 
 GF61 OVERLOAD cfma(GF61 a, GF61 b, GF61 c) { return add(cmul(a, b), c); }                               //GWBUG:  Can we do better?
 

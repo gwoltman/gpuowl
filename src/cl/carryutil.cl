@@ -50,25 +50,25 @@ void ROUNDOFF_CHECK(double x) {
 Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
 
-//GWBUG - is this ever faster?
+//GWBUG - is this ever faster?  Not on TitanV
 //i128 x128 = ((i128) (i64) i96_hi64(x) << 32) | i96_lo32(x);
 //i64 w = ((i64) x128 << (64 - nBits)) >> (64 - nBits);
-//x128 -= w;
-//*outCarry = x128 >> nBits;
+//*outCarry = (i64) (x128 >> nBits) + (w < 0);
 //return w;
 
 // This code is tricky because me must not shift i32 or u32 variables by 32.
 #if EXP / NWORDS >= 33                          //GWBUG Would the EXP / NWORDS == 32 code be just as fast?
   i64 xhi = i96_hi64(x);
   i64 w = lowBits(xhi, nBits - 32);
-  xhi -= w;
-  *outCarry = xhi >> (nBits - 32);
+//  xhi -= w;					//GWBUG - is (w < 0) version faster?
+//  *outCarry = xhi >> (nBits - 32);
+  *outCarry = (xhi >> (nBits - 32)) + (w < 0);
   return (w << 32) | i96_lo32(x);
 #elif EXP / NWORDS == 32
   i64 xhi = i96_hi64(x);
   i64 w = ((i64) i96_lo64(x) << (64 - nBits)) >> (64 - nBits);
 //  xhi -= w >> 32;
-//  *outCarry = xhi >> (nBits - 32);            //GWBUG -  Would adding (w < 0) be faster than subtracting w>>32 from xhi?
+//  *outCarry = xhi >> (nBits - 32);            //GWBUG -  Is this ever faster than adding (w < 0)???
   *outCarry = (xhi >> (nBits - 32)) + (w < 0);
   return w;
 #elif EXP / NWORDS == 31
@@ -142,7 +142,7 @@ Word OVERLOAD carryStep(i32 x, i32 *outCarry, bool isBigWord) {
 Word OVERLOAD carryStepSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
 
-// GWBUG  Is this faster (or same speed) ????  This code doesn't work on TitanV???
+// GWBUG  Is this faster (or same speed) ????  Does it work???
 //i128 x128 = ((i128) xhi << 32) | i96_lo32(x);
 //*outCarry = x128 >> nBits;
 //return ((u64) x128 << (64 - nBits)) >> (64 - nBits);
@@ -530,29 +530,22 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   u61 = add(u61, shl(u61, 31));                  // u61 + (u61 << 31)
   u64 n61 = get_Z61(u61);
 
-#if INT128_MATH
-i128 v = ((i128) n61 << 31) + n31 - n61;                                                        //GWBUG - is this better/as good as int96 code?
-//
-//  i96 value = make_i96(n61 >> 1, ((u32) n61 << 31) | n31);     // (n61<<31) + n31
-//  i96_sub(&value, n61);
+#if 1                                         //GWBUG - is this better/as good as int96 code? TitanV seems at least as good.
+  i128 v = ((i128) n61 << 31) + n31 - n61;       // n61 * M31 + n31
 
   // Convert to balanced representation by subtracting M61*M31
-if ((v >> 64) & 0xF8000000) v = v - (i128) M31 * (i128) M61;
-//  if (i96_hi32(value) & 0xF8000000) i96_sub(&value, make_i96(0x0FFFFFFF, 0xDFFFFFFF, 0x80000001));
+  if ((v >> 64) & 0xF8000000) v = v - (i128) M31 * (i128) M61;
 
   // Optionally calculate roundoff error as proximity to M61*M31/2.  27 bits of accuracy should be sufficient.
-//  u32 roundoff = (u32) abs((i32) i96_hi32(value));
-u32 roundoff = (u32) abs((i32)(v >> 64));
+  u32 roundoff = (u32) abs((i32)(v >> 64));
   *maxROE = max(*maxROE, roundoff);
 
   // Mul by 3 and add carry
 #if MUL3
-v = v * 3;
-//  i96_mul(&value, 3);
+  v = v * 3;
 #endif
-//  i96_add(&value, make_i96((u32)(inCarry >> 63), (u64) inCarry));
-v = v + inCarry;
-i96 value = make_i96((u64) (v >> 32), (u32) v);
+  v = v + inCarry;
+  i96 value = make_i96((u64) (v >> 32), (u32) v);
 
 #else
 
@@ -571,7 +564,6 @@ i96 value = make_i96((u64) (v >> 32), (u32) v);
   i96_mul(&value, 3);
 #endif
   i96_add(&value, make_i96((u32)(inCarry >> 63), (u64) inCarry));
-
 #endif
 
   return value;
