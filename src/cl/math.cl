@@ -25,6 +25,7 @@ u32 i96_hi32(i96 val) { return val.c.hi32; }
 u64 i96_lo64(i96 val) { return val.c.lo64; }
 u64 i96_hi64(i96 val) { return ((u64) val.a.hi32 << 32) + val.a.mid32; }
 u32 i96_lo32(i96 val) { return val.a.lo32; }
+u32 i96_mid32(i96 val) { return val.a.mid32; }
 
 // The X2 family of macros and SWAP are #defines because OpenCL does not allow pass by reference.
 // With NTT support added, we need to turn these macros into overloaded routines.

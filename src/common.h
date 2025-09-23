@@ -32,10 +32,8 @@ namespace fs = std::filesystem;
 // When using multiple primes in an NTT the size of an integer FFT "word" grows such that we need to support words larger than 32-bits
 #if (FFT_FP64 && NTT_GF31) | (FFT_FP32 && NTT_GF61) | (NTT_GF31 && NTT_GF61)
 typedef i64 Word;
-typedef u64 uWord;                      // Used by unbalance
 #else
 typedef i32 Word;
-typedef u32 uWord;                      // Used by unbalance
 #endif
 
 using double2 = pair<double, double>;
