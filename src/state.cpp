@@ -10,53 +10,44 @@
 
 static i64 lowBits(i64 u, int bits) { return (u << (64 - bits)) >> (64 - bits); }
 
-static uWord unbalance(Word w, int nBits, int *carry) {
-  assert(*carry == 0 || *carry == -1);
-  w += *carry;
-  *carry = 0;
-  if (w < 0) {
-    w += ((Word) 1 << nBits);
-    *carry = -1;
-  }
-  if (!(0 <= w && w < ((Word) 1 << nBits))) { log("w=%lX, nBits=%d\n", (long) w, nBits); }
-  assert(0 <= w && w < ((Word) 1 << nBits));
-  return w;
-}
-
 std::vector<u32> compactBits(const vector<Word> &dataVect, u32 E) {
   if (dataVect.empty()) { return {}; } // Indicating all zero
 
-  std::vector<u32> out;
-  out.reserve((E - 1) / 32 + 1);
-
   u32 N = dataVect.size();
   const Word *data = dataVect.data();
+
+  std::vector<u32> out;
+  out.reserve((E - 1) / 32 + 1);
 
   int carry = 0;
   u32 outWord = 0;
   int haveBits = 0;
 
+  // Convert to compact form
   for (u32 p = 0; p < N; ++p) {
     int nBits = bitlen(N, E, p);
-    uWord w = unbalance(data[p], nBits, &carry);
-
     assert(nBits > 0);
-    assert(w < ((uWord) 1 << nBits));
-    assert(haveBits < 32);
 
+    //   Be careful adding in the carry -- it could overflow a 32-bit word.  Convert value into desired unsigned range.
+    i64 tmp = (i64) data[p] + carry;
+    carry = (int) (tmp >> nBits);
+    u64 w = (u64) (tmp - ((i64) carry << nBits));
+    assert(w < ((uWord) 1 << nBits));
+
+    assert(haveBits < 32);
     while (nBits) {
-      int topBits = 32 - haveBits;
+      int needBits = 32 - haveBits;
       outWord |= w << haveBits;
-      if (nBits >= topBits) {
-        w >>= topBits;
-        nBits -= topBits;
+      if (nBits >= needBits) {
+        w >>= needBits;
+        nBits -= needBits;
         out.push_back(outWord);
         outWord = 0;
         haveBits = 0;
       } else {
         haveBits += nBits;
         w >>= nBits;
-	break;
+        break;
       }
     }
   }

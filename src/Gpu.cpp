@@ -1239,17 +1239,21 @@ u64 Gpu::bufResidue(Buffer<Word> &buf) {
   bufSmallOut.read(words, 64);
 
   int carry = 0;
-  for (int i = 0; i < 32; ++i) { carry = (words[i] + carry < 0) ? -1 : 0; }
+  for (int i = 0; i < 32; ++i) {
+    u32 len = bitlen(N, E, N - 32 + i);
+    i64 w = (i64) words[i] + carry;
+    carry = (int) (w >> len);
+  }
 
   u64 res = 0;
   int hasBits = 0;
   for (int k = 0; k < 32 && hasBits < 64; ++k) {
     u32 len = bitlen(N, E, k);
-    Word w = words[32 + k] + carry;
-    carry = (w < 0) ? -1 : 0;
-    if (w < 0) { w += (1LL << len); }
-    assert(w >= 0 && w < (1LL << len));
-    res |= u64(w) << hasBits;
+    i64 tmp = (i64) words[32 + k] + carry;
+    carry = (int) (tmp >> len);
+    u64 w = tmp - ((i64) carry << len);
+    assert(w < (1ULL << len));
+    res += w << hasBits;
     hasBits += len;
   }
   return res;
@@ -1758,13 +1762,11 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
     bool doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
     bool leadOut = (k % blockSize == 0) || k == persistK || k == kEnd || useLongCarry;
-//if (k%10==0) leadOut = true;		//GWBUG
 
     assert(!doStop || leadOut);
     if (doStop) { log("Stopping, please wait..\n"); }
 
     square(bufData, bufData, leadIn, leadOut, false);
-//if(leadOut)printf("k %d, Residue: %lX\n", k, bufResidue(bufData));		//GWBUG
     leadIn = leadOut;
 
     if (k == persistK) {
