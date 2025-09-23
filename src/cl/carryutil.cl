@@ -657,12 +657,14 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i64 *outCarry, bool isBigWord) {
 #if EXP > NWORDS / 10 * SLOPPY_MAXBPW
   return carryStep(x, outCarry, isBigWord);
 #else
-// GWBUG - not timed to see if it is faster
-  const u32 bigwordBits = EXP / NWORDS + 1;
-  u32 nBits = bitlen(isBigWord);
-  u32 w = lowBits(x, bigwordBits);
-  *outCarry = (((x << (32 - bigwordBits)) | ((u32) x >> bigwordBits)) + (w < 0)) << (bigwordBits - nBits);
-  return w;
+
+// GWBUG - not timed to see if it is faster.  Highly likely to be slower.
+//  const u32 bigwordBits = EXP / NWORDS + 1;
+//  u32 nBits = bitlen(isBigWord);
+//  u32 w = lowBits(x, bigwordBits);
+//  *outCarry = (((x << (32 - bigwordBits)) | ((u32) x >> bigwordBits)) + (w < 0)) << (bigwordBits - nBits);
+//  return w;
+  return carryStep(x, outCarry, isBigWord);
 #endif
 }
 
