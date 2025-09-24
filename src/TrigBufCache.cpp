@@ -570,7 +570,9 @@ vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width) {
     tab.resize(1);
   } else {
     GF31 root1hm = GF31::root_one(smallH * middle);
-    for (u32 k = 0; k < smallH; ++k) { tab.push_back(root1GF31(root1hm, k)); }
+    for (u32 m = 1; m < middle; ++m) {
+      for (u32 k = 0; k < smallH; ++k) { tab.push_back(root1GF31(root1hm, k * m)); }
+    }
     GF31 root1mw = GF31::root_one(middle * width);
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF31(root1mw, k)); }
     GF31 root1wmh = GF31::root_one(width * middle * smallH);
@@ -733,7 +735,9 @@ vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
     tab.resize(1);
   } else {
     GF61 root1hm = GF61::root_one(smallH * middle);
-    for (u32 k = 0; k < smallH; ++k) { tab.push_back(root1GF61(root1hm, k)); }
+    for (u32 m = 1; m < middle; ++m) {
+      for (u32 k = 0; k < smallH; ++k) { tab.push_back(root1GF61(root1hm, k * m)); }
+    }
     GF61 root1mw = GF61::root_one(middle * width);
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF61(root1mw, k)); }
     GF61 root1wmh = GF61::root_one(width * middle * smallH);

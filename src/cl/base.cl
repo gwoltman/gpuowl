@@ -107,6 +107,10 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define TABMUL_CHAIN 0
 #endif
 
+#if !defined(MIDDLE_CHAIN)
+#define MIDDLE_CHAIN 0
+#endif
+
 #if !defined(UNROLL_W)
 #if AMDGPU
 #define UNROLL_W 0
