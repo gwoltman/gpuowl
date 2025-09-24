@@ -97,7 +97,7 @@ void OVERLOAD fft_MIDDLE(T2 *u) {
 
 void OVERLOAD middleMul(T2 *u, u32 s, Trig trig) {
   assert(s < SMALL_HEIGHT);
-  if (MIDDLE == 1) { return; }
+  if (MIDDLE == 1) return;
 
   if (WIDTH == SMALL_HEIGHT) trig += SMALL_HEIGHT;     // In this case we can share the MiddleMul2 trig table.  Skip over the MiddleMul trig table.
   T2 w = trig[s];           // s / BIG_HEIGHT
@@ -377,7 +377,7 @@ void OVERLOAD fft_MIDDLE(F2 *u) {
 
 void OVERLOAD middleMul(F2 *u, u32 s, TrigFP32 trig) {
   assert(s < SMALL_HEIGHT);
-  if (MIDDLE == 1) { return; }
+  if (MIDDLE == 1) return;
 
   if (WIDTH == SMALL_HEIGHT) trig += SMALL_HEIGHT;     // In this case we can share the MiddleMul2 trig table.  Skip over the MiddleMul trig table.
   F2 w = trig[s];           // s / BIG_HEIGHT
@@ -633,14 +633,23 @@ void OVERLOAD fft_MIDDLE(GF31 *u) {
 
 void OVERLOAD middleMul(GF31 *u, u32 s, TrigGF31 trig) {
   assert(s < SMALL_HEIGHT);
-  if (MIDDLE == 1) { return; }
+  if (MIDDLE == 1) return;
 
   if (WIDTH == SMALL_HEIGHT) trig += SMALL_HEIGHT;     // In this case we can share the MiddleMul2 trig table.  Skip over the MiddleMul trig table.
   GF31 w = trig[s];         // s / BIG_HEIGHT
 
   WADD(1, w);
+  if (MIDDLE == 2) return;
+
+#if SHOULD_BE_FASTER
+  GF31 sq = csqTrig(w);
+  WADD(2, sq);
+  GF31 base = ccubeTrig(sq, w);                         // GWBUG: compute w^4 as csqTriq(sq), w^6 as ccubeTrig(w2, w4), and w^5 and w^7 as cmul_a_by_b_and_conjb
+  for (u32 k = 3; k < MIDDLE; ++k) {
+#else
   GF31 base = csq(w);
   for (u32 k = 2; k < MIDDLE; ++k) {
+#endif
     WADD(k, base);
     base = cmul(base, w);
   }
@@ -737,14 +746,23 @@ void OVERLOAD fft_MIDDLE(GF61 *u) {
 
 void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
   assert(s < SMALL_HEIGHT);
-  if (MIDDLE == 1) { return; }
+  if (MIDDLE == 1) return;
 
   if (WIDTH == SMALL_HEIGHT) trig += SMALL_HEIGHT;     // In this case we can share the MiddleMul2 trig table.  Skip over the MiddleMul trig table.
   GF61 w = trig[s];         // s / BIG_HEIGHT
 
   WADD(1, w);
+  if (MIDDLE == 2) return;
+
+#if SHOULD_BE_FASTER
+  GF61 sq = csqTrig(w);
+  WADD(2, sq);
+  GF61 base = ccubeTrig(sq, w);                         // GWBUG: compute w^4 as csqTriq(sq), w^6 as ccubeTrig(w2, w4), and w^5 and w^7 as cmul_a_by_b_and_conjb
+  for (u32 k = 3; k < MIDDLE; ++k) {
+#else
   GF61 base = csq(w);
   for (u32 k = 2; k < MIDDLE; ++k) {
+#endif
     WADD(k, base);
     base = cmul(base, w);
   }

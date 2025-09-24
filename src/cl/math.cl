@@ -493,6 +493,12 @@ void OVERLOAD cmul_a_by_b_and_conjb(GF31 *res1, GF31 *res2, GF31 a, GF31 b) {
   res2->x = fma(a.y,  b.y, axbx), res2->y = fma(a.x, neg(b.y), aybx);                           //GWBUG: Can we eliminate neg?  At least make it a tmp.
 }
 
+// Square a root of unity complex number
+GF31 OVERLOAD csqTrig(GF31 a) { Z31 two_ay = a.y + a.y; return U2(modM31(1 + two_ay * (u64) neg(a.y)), modM31(a.x * (u64) two_ay)); }
+
+// Cube w, a root of unity complex number, given w^2 and w
+GF31 OVERLOAD ccubeTrig(GF31 sq, GF31 w) { Z31 tmp = sq.y + sq.y; return U2(modM31(tmp * (u64) neg(w.y) + w.x), modM31(tmp * (u64) w.x + neg(w.y))); }
+
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF31 OVERLOAD mul_t4(GF31 a) { return U2(neg(a.y), a.x); }                                              // GWBUG:  Can caller use a version that does not negate real?
 
@@ -724,6 +730,17 @@ Z61 OVERLOAD weakMul(Z61 a, Z61 b) {                    // a*b must fit in 125 b
   return lo61 + hi61;
 }
 
+Z61 OVERLOAD weakMul128(Z61 a, Z61 b) {                    // Handles 64-bit inputs.  Result is 62+e bits.
+  ulong2 ab = wideMul(a, b);
+  u64 lo = ab.x, hi = ab.y;
+  return (lo & M61) + ((hi << 3) & M61) + ((u32)(lo >> 61) + (u32)(hi >> 58));
+//  u128 r = a * (u128) b;
+//  u32 rhi = r >> 122;
+//  u64 rmid = (r >> 61) & M61;
+//  u64 rlo = r & M61;
+//  return rhi + rmid + rlo;
+}
+
 Z61 OVERLOAD mul(Z61 a, Z61 b) { return modM61(weakMul(a, b)); }
 
 Z61 OVERLOAD fma(Z61 a, Z61 b, Z61 c) { return modM61(weakMul(a, b) + c); }             // GWBUG:  Can we do better?
@@ -738,6 +755,8 @@ GF61 OVERLOAD conjugate(GF61 a) { return U2(a.x, neg(a.y)); }
 // Complex square. Uses (a + i*b)^2 == ((a+b)*(a-b) + i*2*a*b).
 #if 1
 GF61 OVERLOAD csq(GF61 a) { return U2(mul(a.x + a.y, modM61(a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }
+#elif 1
+GF61 OVERLOAD csq(GF61 a) { return U2(modM61(weakMul128(a.x + a.y, a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }   //GWBUG - This version (without modM61s) could be used to produce 62+e bit results
 #else
 Z61 OVERLOAD modM61(u128 a) { return modM61(((u64) a & M61) + ((u64) (a >> 61) & M61) + (u64) (a >> 122)); }    // GWBUG - Have version without second modM61??? returns a 2*M61+epsilon.  
 GF61 OVERLOAD csq(GF61 a) { return U2(modM61((a.x + a.y) * (u128) (a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }
@@ -776,6 +795,13 @@ void OVERLOAD cmul_a_by_b_and_conjb(GF61 *res1, GF61 *res2, GF61 a, GF61 b) {
   res1->x = fma(a.y, neg(b.y), axbx), res1->y = fma(a.x,  b.y, aybx);                           //GWBUG: Can we eliminate neg?
   res2->x = fma(a.y,  b.y, axbx), res2->y = fma(a.x, neg(b.y), aybx);                           //GWBUG: Can we eliminate neg?  At least make it a tmp.
 }
+
+// Square a root of unity complex number (the second version may be faster if the compiler optimizes the u128 squaring).
+//GF61 OVERLOAD csqTrig(GF61 a) { Z61 two_ay = a.y + a.y; return U2(modM61(1 + weakMul(two_ay, neg(a.y, 2))), mul(a.x, two_ay)); }
+GF61 OVERLOAD csqTrig(GF61 a) { Z61 ay_sq = weakMul(a.y, a.y); return U2(modM61(1 + neg(ay_sq + ay_sq, 4)), mul2(weakMul(a.x, a.y))); }
+
+// Cube w, a root of unity complex number, given w^2 and w
+GF61 OVERLOAD ccubeTrig(GF61 sq, GF61 w) { Z61 tmp = sq.y + sq.y; return U2(modM61(weakMul(tmp, neg(w.y, 2)) + w.x), modM61(weakMul(tmp, w.x) + neg(w.y, 2))); }
 
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF61 OVERLOAD mul_t4(GF61 a) { return U2(neg(a.y), a.x); }                                      // GWBUG:  Can caller use a version that does not negate real?
