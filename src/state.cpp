@@ -32,7 +32,7 @@ std::vector<u32> compactBits(const vector<Word> &dataVect, u32 E) {
     i64 tmp = (i64) data[p] + carry;
     carry = (int) (tmp >> nBits);
     u64 w = (u64) (tmp - ((i64) carry << nBits));
-    assert(w < ((uWord) 1 << nBits));
+    assert(w < (1ULL << nBits));
 
     assert(haveBits < 32);
     while (nBits) {
