@@ -435,10 +435,10 @@ GF31 OVERLOAD csq(GF31 a) {
 }
 
 // a^2 + c
-GF31 OVERLOAD csqa(GF31 a, GF31 c) {
+GF31 OVERLOAD csq_add(GF31 a, GF31 c) {
   u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
   u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
-  return U2(modM31(r + c.x), modM31(i + c.y));
+  return U2(modM31(r + c.x), modM31(i + c.y));                          // GWBUG - hopefully the 64-bit adds are "free" via MAD instructions
 }
 
 // a^2 - c
@@ -446,6 +446,20 @@ GF31 OVERLOAD csq_sub(GF31 a, GF31 c) {
   u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
   u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
   return U2(modM31(r + neg(c.x)), modM31((i64) i - c.y));                 // GWBUG - check that the compiler generates MAD instructions
+}
+
+// a^2 + i*c
+GF31 OVERLOAD csq_addi(GF31 a, GF31 c) {
+  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
+  u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
+  return U2(modM31(r + neg(c.y)), modM31(i + c.x));                     // GWBUG - hopefully the 64-bit adds are "free" via MAD instructions
+}
+
+// a^2 - i*c
+GF31 OVERLOAD csq_subi(GF31 a, GF31 c) {
+  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
+  u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
+  return U2(modM31(r + c.y), modM31((i64) i - c.x));                    // GWBUG - check that the compiler generates MAD instructions
 }
 
 // Complex mul
@@ -743,6 +757,11 @@ GF61 OVERLOAD csqTrig(GF61 a) { Z61 ay_sq = weakMul(a.y, a.y, 2, 2); return U2(m
 // Cube w, a root of unity complex number, given w^2 and w
 GF61 OVERLOAD ccubeTrig(GF61 sq, GF61 w) { Z61 tmp = sq.y + sq.y; return U2(modM61(weakMul(tmp, neg(w.y, 2), 3, 3) + w.x), modM61(weakMul(tmp, w.x, 3, 2) + neg(w.y, 2))); }
 
+// a + i*b 
+GF61 OVERLOAD addi(GF61 a, GF61 b) { return U2(sub(a.x, b.y), add(a.y, b.x)); }
+// a - i*b 
+GF61 OVERLOAD subi(GF61 a, GF61 b) { return U2(add(a.x, b.y), sub(a.y, b.x)); }
+
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF61 OVERLOAD mul_t4(GF61 a) { return U2(neg(a.y), a.x); }                                      // GWBUG:  Can caller use a version that does not negate real?
 
@@ -789,6 +808,9 @@ GF61 OVERLOAD subq(GF61 a, GF61 b, const u32 m61_count) { return U2(subq(a.x, b.
 
 Z61 OVERLOAD subs(Z61 a, Z61 b, const u32 m61_count) { return modM61(a + neg(b, m61_count)); }
 GF61 OVERLOAD subs(GF61 a, GF61 b, const u32 m61_count) { return U2(subs(a.x, b.x, m61_count), subs(a.y, b.y, m61_count)); }
+
+GF61 OVERLOAD addiq(GF61 a, GF61 b, const u32 m61_count) { return U2(subq(a.x, b.y, m61_count), addq(a.y, b.x)); }
+GF61 OVERLOAD subiq(GF61 a, GF61 b, const u32 m61_count) { return U2(addq(a.x, b.y), subq(a.y, b.x, m61_count)); }
 
 void OVERLOAD X2q(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; *b = t + neg(*b, m61_count); }
 void OVERLOAD X2q_mul_t4(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t.x = t.x + neg(b->x, m61_count); b->x = b->y + neg(t.y, m61_count); b->y = t.x; }

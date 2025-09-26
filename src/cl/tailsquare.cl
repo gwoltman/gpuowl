@@ -583,12 +583,20 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if NTT_GF31
 
-void OVERLOAD onePairSq(GF31* pa, GF31* pb, GF31 t_squared) {
+void OVERLOAD onePairSq(GF31* pa, GF31* pb, GF31 t_squared, const u32 t_squared_type) {
   GF31 a = *pa, b = *pb;
+  GF31 c, d;
 
   X2conjb(a, b);
-  GF31 c = csq_sub(a, cmul(csq(b), t_squared));                 // a^2 - (b^2 * t_squared)
-  GF31 d = mul2(cmul(a, b));
+  if (t_squared_type == 0)                           // mul t_squared by 1
+    c = csq_sub(a, cmul(csq(b), t_squared));         // a^2 - (b^2 * t_squared)
+  if (t_squared_type == 1)                           // mul t_squared by i
+    c = csq_subi(a, cmul(csq(b), t_squared));        // a^2 - i*(b^2 * t_squared)
+  if (t_squared_type == 2)                           // mul t_squared by -1
+    c = csq_add(a, cmul(csq(b), t_squared));         // a^2 - -1*(b^2 * t_squared)
+  if (t_squared_type == 3)                           // mul t_squared by -i
+    c = csq_addi(a, cmul(csq(b), t_squared));        // a^2 - -i*(b^2 * t_squared)
+  d = mul2(cmul(a, b));
   X2_conjb(c, d);
   *pa = SWAP_XY(c), *pb = SWAP_XY(d);
 }
@@ -601,18 +609,17 @@ void OVERLOAD pairSq(u32 N, GF31 *u, GF31 *v, GF31 base_squared, bool special) {
       u[i] = SWAP_XY(mul2(foo(u[i])));
       v[i] = SWAP_XY(shl(csq(v[i]), 2));
     } else {
-      onePairSq(&u[i], &v[i], base_squared);
+      onePairSq(&u[i], &v[i], base_squared, 0);
     }
 
     if (N == NH) {
-      onePairSq(&u[i+NH/2], &v[i+NH/2], neg(base_squared));         //GWBUG -- can we write a special onepairsq that expects a base_squared that needs negation?
+      onePairSq(&u[i+NH/2], &v[i+NH/2], base_squared, 2);
     }
 
-    GF31 new_base_squared = mul_t4(base_squared);
-    onePairSq(&u[i+NH/4], &v[i+NH/4], new_base_squared);           //GWBUG -- or another special onePairSq that expects mul_t4'ed base_squared
+    onePairSq(&u[i+NH/4], &v[i+NH/4], base_squared, 1);
 
     if (N == NH) {
-      onePairSq(&u[i+3*NH/4], &v[i+3*NH/4], neg(new_base_squared));           //GWBUG -- or another special onePairSq that expects mul_t4'ed and negated base_squared
+      onePairSq(&u[i+3*NH/4], &v[i+3*NH/4], base_squared, 3);
     }
   }
 }
@@ -773,10 +780,9 @@ void OVERLOAD pairSq2_special(GF31 *u, GF31 base_squared) {
       u[0] = SWAP_XY(mul2(foo(u[0])));
       u[NH/2] = SWAP_XY(shl(csq(u[NH/2]), 2));
     } else {
-      onePairSq(&u[i], &u[NH/2+i], base_squared);   //GWBUG - why are we only using neg(base squareds)  onePairSq could easily compensate for this
+      onePairSq(&u[i], &u[NH/2+i], base_squared, 0);
     }
-    GF31 new_base_squared = mul_t4(base_squared);
-    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], new_base_squared);
+    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], base_squared, 1);
   }
 }
 
@@ -878,12 +884,20 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if NTT_GF61
 
-void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared) {
+void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_type) {
   GF61 a = *pa, b = *pb;
+  GF61 c, d;
 
   X2conjb(a, b);
-  GF61 c = subq(csq(a), cmul(csq(b), t_squared), 2);    // max c value is 3*M61+epsilon
-  GF61 d = 2 * cmul(a, b);                              // max d value is 2*M61+epsilon
+  if (t_squared_type == 0)                           // mul t_squared by 1
+    c = subq(csq(a), cmul(csq(b), t_squared), 2);    // max c value is 3*M61+epsilon
+  if (t_squared_type == 1)                           // mul t_squared by i
+    c = subiq(csq(a), cmul(csq(b), t_squared), 2);   // max c value is 3*M61+epsilon
+  if (t_squared_type == 2)                           // mul t_squared by -1
+    c = addq(csq(a), cmul(csq(b), t_squared));       // max c value is 3*M61+epsilon
+  if (t_squared_type == 3)                           // mul t_squared by -i
+    c = addiq(csq(a), cmul(csq(b), t_squared), 2);   // max c value is 3*M61+epsilon
+  d = 2 * cmul(a, b);                                // max d value is 2*M61+epsilon
   X2s_conjb(&c, &d, 4);
   *pa = SWAP_XY(c), *pb = SWAP_XY(d);
 }
@@ -896,18 +910,17 @@ void OVERLOAD pairSq(u32 N, GF61 *u, GF61 *v, GF61 base_squared, bool special) {
       u[i] = SWAP_XY(mul2(foo(u[i])));
       v[i] = SWAP_XY(shl(csq(v[i]), 2));
     } else {
-      onePairSq(&u[i], &v[i], base_squared);
+      onePairSq(&u[i], &v[i], base_squared, 0);
     }
 
     if (N == NH) {
-      onePairSq(&u[i+NH/2], &v[i+NH/2], neg(base_squared));         //GWBUG -- can we write a special onepairsq that expects a base_squared that needs negation?
+      onePairSq(&u[i+NH/2], &v[i+NH/2], base_squared, 2);
     }
 
-    GF61 new_base_squared = mul_t4(base_squared);
-    onePairSq(&u[i+NH/4], &v[i+NH/4], new_base_squared);           //GWBUG -- or another special onePairSq that expects mul_t4'ed base_squared
+    onePairSq(&u[i+NH/4], &v[i+NH/4], base_squared, 1);
 
     if (N == NH) {
-      onePairSq(&u[i+3*NH/4], &v[i+3*NH/4], neg(new_base_squared));           //GWBUG -- or another special onePairSq that expects mul_t4'ed and negated base_squared
+      onePairSq(&u[i+3*NH/4], &v[i+3*NH/4], base_squared, 3);
     }
   }
 }
@@ -1068,10 +1081,9 @@ void OVERLOAD pairSq2_special(GF61 *u, GF61 base_squared) {
       u[0] = SWAP_XY(mul2(foo(u[0])));
       u[NH/2] = SWAP_XY(shl(csq(u[NH/2]), 2));
     } else {
-      onePairSq(&u[i], &u[NH/2+i], base_squared);
+      onePairSq(&u[i], &u[NH/2+i], base_squared, 0);
     }
-    GF61 new_base_squared = mul_t4(base_squared);
-    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], new_base_squared);
+    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], base_squared, 1);
   }
 }
 
