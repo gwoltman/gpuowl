@@ -684,27 +684,6 @@ void OVERLOAD middleMul2(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
     base = cmul(base, w);
     WADD(k, base);
   }
-
-#if 0   // Might save a couple of muls with cmul_a_by_b_and_conjb if we can compute "desired_root = x * y + x * SMALL_HEIGHT" with a slightly expanded trig table
-  GF31 base = slowTrigGF31(x * y + x * SMALL_HEIGHT, ND / MIDDLE * 2);
-  WADD(1, base);
-
-  if (MIDDLE == 2) {
-    WADD(0, base);
-    WSUB(0, w);
-    return;
-  }
-
-  GF31 basehi, baselo;
-  cmul_a_by_b_and_conjb(&basehi, &baselo, base, w);
-  WADD(0, baselo);
-  WADD(2, basehi);
-
-  for (int i = 3; i < MIDDLE; ++i) {
-    basehi = cmul(basehi, w);
-    WADD(i, basehi);
-  }
-#endif
 }
 
 // Do a partial transpose during fftMiddleIn/Out
@@ -810,27 +789,6 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
     base = cmul(base, w);
     WADD(k, base);
   }
-
-#if 0   // Might save a couple of muls with cmul_a_by_b_and_conjb if we can compute "desired_root = x * y + x * SMALL_HEIGHT" with a slightly expanded trig table
-  GF61 base = slowTrigGF61(x * y + x * SMALL_HEIGHT, ND / MIDDLE * 2);
-  WADD(1, base);
-
-  if (MIDDLE == 2) {
-    WADD(0, base);
-    WSUB(0, w);
-    return;
-  }
-
-  GF61 basehi, baselo;
-  cmul_a_by_b_and_conjb(&basehi, &baselo, base, w);
-  WADD(0, baselo);
-  WADD(2, basehi);
-
-  for (int i = 3; i < MIDDLE; ++i) {
-    basehi = cmul(basehi, w);
-    WADD(i, basehi);
-  }
-#endif
 }
 
 // Do a partial transpose during fftMiddleIn/Out

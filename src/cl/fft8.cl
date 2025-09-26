@@ -119,7 +119,6 @@ void OVERLOAD fft8Core(GF61 *u) {
   fft4Core(u + 4);
 }
 
-// 4 MUL + 52 ADD
 void OVERLOAD fft8(GF61 *u) {
   fft8Core(u);
   // revbin [0, 4, 2, 6, 1, 5, 3, 7] undo
@@ -137,7 +136,7 @@ void OVERLOAD fft4CoreSpecial1(GF61 *u) {         // Starts with u[0,1,2,3] havi
   X2s(&u[2], &u[3], 5);                           // u[2,3] max value before reduction is 5,6*M61+epsilon
 }
 
-void OVERLOAD fft4CoreSpecial2(GF61 *u) {         // Like above, u[1].y needs negation.  Starts with u[0,1,2,3] having maximum values of (3,1,2,1)*M61+epsilon.
+void OVERLOAD fft4CoreSpecial2(GF61 *u) {         // Similar to above.  Starts with u[0,1,2,3] having maximum values of (3,1,2,1)*M61+epsilon.
   X2q(&u[0], &u[2], 3);                           // u[0,2] max value is 5,6*M61+epsilon.
   X2q_mul_t4(&u[1], &u[3], 2);                    // X2(u[1], u[3]); u[3] = mul_t4(u[3]);  u[1,3] max value is 3,2*M61+epsilon.
   u[0] = modM61(u[0]); u[2] = modM61(u[2]);       // Reduce the worst offenders  u[0,1,2,3] have maximum values of (1,3,1,2)*M61+epsilon.
@@ -154,7 +153,6 @@ void OVERLOAD fft8Core(GF61 *u) {                 // Starts with all u[i] having
   fft4CoreSpecial2(u + 4);
 }
 
-// 4 MUL + 52 ADD
 void OVERLOAD fft8(GF61 *u) {
   fft8Core(u);
   // revbin [0, 4, 2, 6, 1, 5, 3, 7] undo

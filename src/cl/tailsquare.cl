@@ -901,9 +901,9 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared) {
   GF61 a = *pa, b = *pb;
 
   X2conjb(a, b);
-  GF61 c = subq(csq(a), cmul(csq(b), t_squared), 2);
-  GF61 d = 2 * cmul(a, b);
-  X2s_conjb(&c, &d, 4);
+  GF61 c = subq(csq(a), cmul(csq(b), t_squared), 2);    // max c value is 3*M61+epsilon
+  GF61 d = 2 * cmul(a, b);                              // max d value is 2*M61+epsilon
+  X2s_conjb(&c, &d, 3);
   *pa = SWAP_XY(c), *pb = SWAP_XY(d);
 }
 
@@ -1087,7 +1087,7 @@ void OVERLOAD pairSq2_special(GF61 *u, GF61 base_squared) {
       u[0] = SWAP_XY(mul2(foo(u[0])));
       u[NH/2] = SWAP_XY(shl(csq(u[NH/2]), 2));
     } else {
-      onePairSq(&u[i], &u[NH/2+i], base_squared);   //GWBUG - why are we only using neg(base squareds)  onePairSq could easily compensate for this
+      onePairSq(&u[i], &u[NH/2+i], base_squared);
     }
     GF61 new_base_squared = mul_t4(base_squared);
     onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], new_base_squared);
