@@ -323,18 +323,6 @@ GF31 OVERLOAD cmul(GF31 a, GF31 b) {
   return U2(sub(k1, k3), add(k1, k2));
 }
 
-GF31 OVERLOAD cfma(GF31 a, GF31 b, GF31 c) { return add(cmul(a, b), c); }                               //GWBUG:  Can we do better?
-
-GF31 OVERLOAD cmul_by_conjugate(GF31 a, GF31 b) { return cmul(a, conjugate(b)); }                       //GWBUG: We can likely eliminate a negate
-
-// Multiply a by b and conjugate(b).  This saves 2 multiplies.
-void OVERLOAD cmul_a_by_b_and_conjb(GF31 *res1, GF31 *res2, GF31 a, GF31 b) {
-  Z31 axbx = mul(a.x, b.x);
-  Z31 aybx = mul(a.y, b.x);
-  res1->x = fma(a.y, neg(b.y), axbx), res1->y = fma(a.x,  b.y, aybx);                           //GWBUG: Can we eliminate neg?
-  res2->x = fma(a.y,  b.y, axbx), res2->y = fma(a.x, neg(b.y), aybx);                           //GWBUG: Can we eliminate neg?  At least make it a tmp.
-}
-
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF31 OVERLOAD mul_t4(GF31 a) { return U2(neg(a.y), a.x); }                                              // GWBUG:  Can caller use a version that does not negate real?
 
@@ -481,18 +469,6 @@ GF31 OVERLOAD cmul(GF31 a, GF31 b) {
 }
 #endif
 
-GF31 OVERLOAD cfma(GF31 a, GF31 b, GF31 c) { return add(cmul(a, b), c); }                               //GWBUG:  Can we do better?
-
-GF31 OVERLOAD cmul_by_conjugate(GF31 a, GF31 b) { return cmul(a, conjugate(b)); }                       //GWBUG: We can likely eliminate a negate
-
-// Multiply a by b and conjugate(b).  This saves 2 multiplies.
-void OVERLOAD cmul_a_by_b_and_conjb(GF31 *res1, GF31 *res2, GF31 a, GF31 b) {
-  Z31 axbx = mul(a.x, b.x);
-  Z31 aybx = mul(a.y, b.x);
-  res1->x = fma(a.y, neg(b.y), axbx), res1->y = fma(a.x,  b.y, aybx);                           //GWBUG: Can we eliminate neg?
-  res2->x = fma(a.y,  b.y, axbx), res2->y = fma(a.x, neg(b.y), aybx);                           //GWBUG: Can we eliminate neg?  At least make it a tmp.
-}
-
 // Square a root of unity complex number
 GF31 OVERLOAD csqTrig(GF31 a) { Z31 two_ay = a.y + a.y; return U2(modM31(1 + two_ay * (u64) neg(a.y)), modM31(a.x * (u64) two_ay)); }
 
@@ -612,18 +588,6 @@ GF61 OVERLOAD cmul(GF61 a, GF61 b) {
   return U2(sub(k1, k3), add(k1, k2));
 }
 
-GF61 OVERLOAD cfma(GF61 a, GF61 b, GF61 c) { return add(cmul(a, b), c); }                               //GWBUG:  Can we do better?
-
-GF61 OVERLOAD cmul_by_conjugate(GF61 a, GF61 b) { return cmul(a, conjugate(b)); }                       //GWBUG: We can likely eliminate a negate
-
-// Multiply a by b and conjugate(b).  This saves 2 multiplies.
-void OVERLOAD cmul_a_by_b_and_conjb(GF61 *res1, GF61 *res2, GF61 a, GF61 b) {
-  Z61 axbx = mul(a.x, b.x);
-  Z61 aybx = mul(a.y, b.x);
-  res1->x = fma(a.y, neg(b.y), axbx), res1->y = fma(a.x,  b.y, aybx);                           //GWBUG: Can we eliminate neg?
-  res2->x = fma(a.y,  b.y, axbx), res2->y = fma(a.x, neg(b.y), aybx);                           //GWBUG: Can we eliminate neg?  At least make it a tmp.
-}
-
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF61 OVERLOAD mul_t4(GF61 a) { return U2(neg(a.y), a.x); }                                              // GWBUG:  Can caller use a version that does not negate real?
 
@@ -698,8 +662,8 @@ i64 OVERLOAD get_balanced_Z61(Z61 a) { return (hi32(a) & 0xF0000000) ? (i64) a -
 Z61 OVERLOAD modM61(Z61 a) { return (a & M61) + (a >> 61); }
 GF61 OVERLOAD modM61(GF61 a) { return U2(modM61(a.x), modM61(a.y)); }
 // Internal routine to negate a value by adding the specified number of M61s -- no mod M61 reduction
-Z61 OVERLOAD neg(Z61 a, u32 m61_count) { return m61_count * M61 - a; }
-GF61 OVERLOAD neg(GF61 a, u32 m61_count) { return U2(neg(a.x, m61_count), neg(a.y, m61_count)); }
+Z61 OVERLOAD neg(Z61 a, const u32 m61_count) { return m61_count * M61 - a; }
+GF61 OVERLOAD neg(GF61 a, const u32 m61_count) { return U2(neg(a.x, m61_count), neg(a.y, m61_count)); }
 
 Z61 OVERLOAD add(Z61 a, Z61 b) { return modM61(a + b); }
 GF61 OVERLOAD add(GF61 a, GF61 b) { return U2(add(a.x, b.x), add(a.y, b.y)); }
@@ -723,27 +687,26 @@ ulong2 wideMul(u64 ab, u64 cd) {
   return U2((u64) r, (u64) (r >> 64));
 }
 
-Z61 OVERLOAD weakMul(Z61 a, Z61 b) {                    // a*b must fit in 125 bits, result will as large as a*b >> 61
+// Returns a * b not modded by M61.  Max value of result depends on the m61_counts of the inputs.
+// Let n = (a_m61_count - 1) * (b_m61_count - 1).  This is the maximum value in the highest 6 bits of a * b.
+// If n <= 4 result will be at most (n+1)*M61+epsilon.
+// If n > 4 result will be at most 2*M61+epsilon.
+Z61 OVERLOAD weakMul(Z61 a, Z61 b, const u32 a_m61_count, const u32 b_m61_count) {
   ulong2 ab = wideMul(a, b);
   u64 lo = ab.x, hi = ab.y;
-  u64 lo61 = lo & M61, hi61 = (hi << 3) + (lo >> 61);
-  return lo61 + hi61;
+  u64 lo61 = lo & M61;                                  // Max value is M61
+  if ((a_m61_count - 1) * (b_m61_count - 1) <= 4) {
+     hi = (hi << 3) + (lo >> 61);                       // Max value is (a_m61_count - 1) * (b_m61_count - 1) * M61 + epsilon
+     return lo61 + hi;                                  // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 1) * M61 + epsilon
+  } else {
+     u64 hi61 = ((hi << 3) + (lo >> 61)) & M61;         // Max value is M61
+     return lo61 + hi61 + (hi >> 58);                   // Max value is 2*M61 + epsilon
+  }
 }
 
-Z61 OVERLOAD weakMul128(Z61 a, Z61 b) {                    // Handles 64-bit inputs.  Result is 62+e bits.
-  ulong2 ab = wideMul(a, b);
-  u64 lo = ab.x, hi = ab.y;
-  return (lo & M61) + ((hi << 3) & M61) + ((u32)(lo >> 61) + (u32)(hi >> 58));
-//  u128 r = a * (u128) b;
-//  u32 rhi = r >> 122;
-//  u64 rmid = (r >> 61) & M61;
-//  u64 rlo = r & M61;
-//  return rhi + rmid + rlo;
-}
+Z61 OVERLOAD mul(Z61 a, Z61 b) { return modM61(weakMul(a, b, 2, 2)); }
 
-Z61 OVERLOAD mul(Z61 a, Z61 b) { return modM61(weakMul(a, b)); }
-
-Z61 OVERLOAD fma(Z61 a, Z61 b, Z61 c) { return modM61(weakMul(a, b) + c); }             // GWBUG:  Can we do better?
+Z61 OVERLOAD fma(Z61 a, Z61 b, Z61 c) { return modM61(weakMul(a, b, 2, 2) + c); }             // GWBUG:  Can we do better?
 
 // Multiply by 2
 Z61 OVERLOAD mul2(Z61 a) { return add(a, a); }
@@ -753,65 +716,42 @@ GF61 OVERLOAD mul2(GF61 a) { return U2(mul2(a.x), mul2(a.y)); }
 GF61 OVERLOAD conjugate(GF61 a) { return U2(a.x, neg(a.y)); }
 
 // Complex square. Uses (a + i*b)^2 == ((a+b)*(a-b) + i*2*a*b).
-#if 1
-GF61 OVERLOAD csq(GF61 a) { return U2(mul(a.x + a.y, modM61(a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }
-#elif 1
-GF61 OVERLOAD csq(GF61 a) { return U2(modM61(weakMul128(a.x + a.y, a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }   //GWBUG - This version (without modM61s) could be used to produce 62+e bit results
-#else
-Z61 OVERLOAD modM61(u128 a) { return modM61(((u64) a & M61) + ((u64) (a >> 61) & M61) + (u64) (a >> 122)); }    // GWBUG - Have version without second modM61??? returns a 2*M61+epsilon.  
-GF61 OVERLOAD csq(GF61 a) { return U2(modM61((a.x + a.y) * (u128) (a.x + neg(a.y, 2))), mul2(weakMul(a.x, a.y))); }
-#endif
+GF61 OVERLOAD csqq(GF61 a, const u32 m61_count) {
+  if (m61_count > 4) a = modM61(a);
+  Z61 re = weakMul(a.x + a.y, a.x + neg(a.y, m61_count), 2 * m61_count - 1, 2 * m61_count);
+  Z61 im = weakMul(a.x + a.x, a.y, 2 * m61_count - 1, m61_count);
+  return U2(re, im);
+}
+GF61 OVERLOAD csqs(GF61 a, const u32 m61_count) { return modM61(csqq(a, m61_count)); }
+GF61 OVERLOAD csq(GF61 a) { return csqs(a, 2); }
 
 // a^2 + c
-GF61 OVERLOAD csqa(GF61 a, GF61 c) { return U2(modM61(weakMul(a.x + a.y, modM61(a.x + neg(a.y, 2))) + c.x), modM61(weakMul(a.x + a.x, a.y) + c.y)); }
+GF61 OVERLOAD csqa(GF61 a, GF61 c) { return U2(modM61(weakMul(a.x + a.y, a.x + neg(a.y, 2), 3, 4) + c.x), modM61(weakMul(a.x + a.x, a.y, 3, 2) + c.y)); }
 
 // Complex mul
-//GF61 OVERLOAD cmul(GF61 a, GF61 b) { return U2(sub(mul(a.x, b.x), mul(a.y, b.y)), add(mul(a.x, b.y), mul(a.y, b.x)));}
-#if 1
-GF61 OVERLOAD cmul(GF61 a, GF61 b) {            // Use 2 extra bits in u64
-  Z61 k1 = weakMul(b.x, a.x + a.y);             // 61+e * 62+e bits = 123+e mult = 62+e bit result
-  Z61 k2 = weakMul(a.x, b.y + neg(b.x, 2));     // 61+e * 63+e bits = 63+e bit result
-  Z61 k3 = weakMul(neg(a.y, 2), b.y + b.x);     // 62 * 62+e bits = 63+e bit result
-  return U2(modM61(k1 + k3), modM61(k1 + k2));  // k1+k3 and k1+k2 are full 64-bit values
-}
-#else                                           // Slower on TitanV
-Z61 OVERLOAD modM61(u128 a) { return modM61(((u64) a & M61) + ((u64) (a >> 61) & M61) + (u64) (a >> 122)); }    // GWBUG - Have version without second modM61??? returns a 2*M61+epsilon.  
-GF61 OVERLOAD cmul(GF61 a, GF61 b) {              // Use 2 extra bits in u64 and u128
-  u128 k1 = b.x * (u128) (a.x + a.y);             // 61+e * 62+e bits = 123+e mult = 62+e bit result
-  u128 k2 = a.x * (u128) (b.y + neg(b.x, 2));     // 61+e * 63+e bits = 63+e bit result
-  u128 k3 = neg(a.y, 2) * (u128) (b.y + b.x);     // 62 * 62+e bits = 63+e bit result
-  return U2(modM61(k1 + k3), modM61(k1 + k2));    // k1+k3 and k1+k2 are full 64-bit values
-}
-#endif
-
-GF61 OVERLOAD cfma(GF61 a, GF61 b, GF61 c) { return add(cmul(a, b), c); }                               //GWBUG:  Can we do better?
-
-GF61 OVERLOAD cmul_by_conjugate(GF61 a, GF61 b) { return cmul(a, conjugate(b)); }                       //GWBUG: We can likely eliminate a negate
-
-// Multiply a by b and conjugate(b).  This saves 2 multiplies.
-void OVERLOAD cmul_a_by_b_and_conjb(GF61 *res1, GF61 *res2, GF61 a, GF61 b) {
-  Z61 axbx = mul(a.x, b.x);
-  Z61 aybx = mul(a.y, b.x);
-  res1->x = fma(a.y, neg(b.y), axbx), res1->y = fma(a.x,  b.y, aybx);                           //GWBUG: Can we eliminate neg?
-  res2->x = fma(a.y,  b.y, axbx), res2->y = fma(a.x, neg(b.y), aybx);                           //GWBUG: Can we eliminate neg?  At least make it a tmp.
+GF61 OVERLOAD cmul(GF61 a, GF61 b) {              // Use 3-epsilon extra bits in u64
+  Z61 k1 = weakMul(b.x, a.x + a.y, 2, 3);         // max value is 3*M61+epsilon
+  Z61 k2 = weakMul(a.x, b.y + neg(b.x, 2), 2, 3); // max value is 3*M61+epsilon
+  Z61 k3 = weakMul(a.y, b.y + b.x, 2, 3);         // max value is 3*M61+epsilon
+  return U2(modM61(k1 + neg(k3, 4)), modM61(k1 + k2));
 }
 
 // Square a root of unity complex number (the second version may be faster if the compiler optimizes the u128 squaring).
 //GF61 OVERLOAD csqTrig(GF61 a) { Z61 two_ay = a.y + a.y; return U2(modM61(1 + weakMul(two_ay, neg(a.y, 2))), mul(a.x, two_ay)); }
-GF61 OVERLOAD csqTrig(GF61 a) { Z61 ay_sq = weakMul(a.y, a.y); return U2(modM61(1 + neg(ay_sq + ay_sq, 4)), mul2(weakMul(a.x, a.y))); }
+GF61 OVERLOAD csqTrig(GF61 a) { Z61 ay_sq = weakMul(a.y, a.y, 2, 2); return U2(modM61(1 + neg(ay_sq + ay_sq, 4)), mul2(weakMul(a.x, a.y, 2, 2))); }
 
 // Cube w, a root of unity complex number, given w^2 and w
-GF61 OVERLOAD ccubeTrig(GF61 sq, GF61 w) { Z61 tmp = sq.y + sq.y; return U2(modM61(weakMul(tmp, neg(w.y, 2)) + w.x), modM61(weakMul(tmp, w.x) + neg(w.y, 2))); }
+GF61 OVERLOAD ccubeTrig(GF61 sq, GF61 w) { Z61 tmp = sq.y + sq.y; return U2(modM61(weakMul(tmp, neg(w.y, 2), 3, 3) + w.x), modM61(weakMul(tmp, w.x, 3, 2) + neg(w.y, 2))); }
 
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF61 OVERLOAD mul_t4(GF61 a) { return U2(neg(a.y), a.x); }                                      // GWBUG:  Can caller use a version that does not negate real?
 
 // mul with (-2^30, -2^30). (twiddle of tau/8 aka sqrt(i)). Note: 2 * (+/-2^30)^2 == 1 (mod M61).
-GF61 OVERLOAD mul_t8(GF61 a, u32 m61_count) { return shl(U2(a.y + neg(a.x, m61_count), neg(a.x + a.y, 2 * m61_count - 1)), 30); }
+GF61 OVERLOAD mul_t8(GF61 a, const u32 m61_count) { return shl(U2(a.y + neg(a.x, m61_count), neg(a.x + a.y, 2 * m61_count - 1)), 30); }
 GF61 OVERLOAD mul_t8(GF61 a) { return mul_t8(a, 2); }
 
 // mul with (2^30, -2^30). (twiddle of 3*tau/8).
-GF61 OVERLOAD mul_3t8(GF61 a, u32 m61_count) { return shl(U2(a.x + a.y, a.y + neg(a.x, m61_count)), 30); }
+GF61 OVERLOAD mul_3t8(GF61 a, const u32 m61_count) { return shl(U2(a.x + a.y, a.y + neg(a.x, m61_count)), 30); }
 GF61 OVERLOAD mul_3t8(GF61 a) { return mul_3t8(a, 2); }
 
 // Return a+b and a-b
@@ -844,19 +784,19 @@ GF61 OVERLOAD foo(GF61 a) { return foo2(a, a); }
 Z61 OVERLOAD addq(Z61 a, Z61 b) { return a + b; }
 GF61 OVERLOAD addq(GF61 a, GF61 b) { return U2(addq(a.x, b.x), addq(a.y, b.y)); }
 
-Z61 OVERLOAD subq(Z61 a, Z61 b, u32 m61_count) { return a + neg(b, m61_count); }
-GF61 OVERLOAD subq(GF61 a, GF61 b, u32 m61_count) { return U2(subq(a.x, b.x, m61_count), subq(a.y, b.y, m61_count)); }
+Z61 OVERLOAD subq(Z61 a, Z61 b, const u32 m61_count) { return a + neg(b, m61_count); }
+GF61 OVERLOAD subq(GF61 a, GF61 b, const u32 m61_count) { return U2(subq(a.x, b.x, m61_count), subq(a.y, b.y, m61_count)); }
 
-Z61 OVERLOAD subs(Z61 a, Z61 b, u32 m61_count) { return modM61(a + neg(b, m61_count)); }
-GF61 OVERLOAD subs(GF61 a, GF61 b, u32 m61_count) { return U2(subs(a.x, b.x, m61_count), subs(a.y, b.y, m61_count)); }
+Z61 OVERLOAD subs(Z61 a, Z61 b, const u32 m61_count) { return modM61(a + neg(b, m61_count)); }
+GF61 OVERLOAD subs(GF61 a, GF61 b, const u32 m61_count) { return U2(subs(a.x, b.x, m61_count), subs(a.y, b.y, m61_count)); }
 
-void OVERLOAD X2q(GF61 *a, GF61 *b, u32 m61_count) { GF61 t = *a; *a = t + *b; *b = t + neg(*b, m61_count); }
-void OVERLOAD X2q_mul_t4(GF61 *a, GF61 *b, u32 m61_count) { GF61 t = *a; *a = t + *b; t.x = t.x + neg(b->x, m61_count); b->x = b->y + neg(t.y, m61_count); b->y = t.x; }
-void OVERLOAD X2q_mul_t8(GF61 *a, GF61 *b, u32 m61_count) { GF61 t = *a; *a = t + *b; t = *b + neg(t, m61_count); *b = shl(U2(t.x + neg(t.y, m61_count * 2), t.x + t.y), 30); }
-void OVERLOAD X2q_mul_3t8(GF61 *a, GF61 *b, u32 m61_count) { GF61 t = *a; *a = t + *b; t = t + neg(*b, m61_count); *b = mul_3t8(t, m61_count * 2); }
+void OVERLOAD X2q(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; *b = t + neg(*b, m61_count); }
+void OVERLOAD X2q_mul_t4(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t.x = t.x + neg(b->x, m61_count); b->x = b->y + neg(t.y, m61_count); b->y = t.x; }
+void OVERLOAD X2q_mul_t8(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t = *b + neg(t, m61_count); *b = shl(U2(t.x + neg(t.y, m61_count * 2), t.x + t.y), 30); }
+void OVERLOAD X2q_mul_3t8(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t = t + neg(*b, m61_count); *b = mul_3t8(t, m61_count * 2); }
 
-void OVERLOAD X2s(GF61 *a, GF61 *b, u32 m61_count) { GF61 t = *a; *a = add(t, *b); *b = subs(t, *b, m61_count); }
-void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, u32 m61_count) { GF61 t = *a; *a = add(t, *b); b->x = subs(t.x, b->x, m61_count); b->y = subs(b->y, t.y, m61_count); }
+void OVERLOAD X2s(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = add(t, *b); *b = subs(t, *b, m61_count); }
+void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = add(t, *b); b->x = subs(t.x, b->x, m61_count); b->y = subs(b->y, t.y, m61_count); }
 
 #endif
 
