@@ -4,25 +4,6 @@
 #include "trig.cl"
 #include "fftheight.cl"
 
-// TAIL_TRIGS setting:
-//      2 = No memory accesses, trig values computed from scratch.  Good for excellent DP GPUs such as Titan V or Radeon VII Pro.
-//      1 = Limited memory accesses and some DP computation.  Tuned for Radeon VII a GPU with good DP performance.
-//      0 = No DP computation.  Trig vaules read from memory.  Good for GPUs with poor DP performance (a typical consumer grade GPU).
-#if !defined(TAIL_TRIGS)
-#define TAIL_TRIGS      2                         // Default is compute trig values from scratch
-#endif
-
-// TAIL_KERNELS setting:
-//      0 = single wide, single kernel
-//      1 = single wide, two kernels
-//      2 = double wide, single kernel
-//      3 = double wide, two kernels
-#if !defined(TAIL_KERNELS)
-#define TAIL_KERNELS    2                         // Default is double-wide tailSquare with two kernels
-#endif
-#define SINGLE_WIDE     TAIL_KERNELS < 2          // Old single-wide tailSquare vs. new double-wide tailSquare
-#define SINGLE_KERNEL   (TAIL_KERNELS & 1) == 0   // TailSquare uses a single kernel vs. two kernels
-
 #if FFT_FP64
 
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
@@ -903,7 +884,7 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared) {
   X2conjb(a, b);
   GF61 c = subq(csq(a), cmul(csq(b), t_squared), 2);    // max c value is 3*M61+epsilon
   GF61 d = 2 * cmul(a, b);                              // max d value is 2*M61+epsilon
-  X2s_conjb(&c, &d, 3);
+  X2s_conjb(&c, &d, 4);
   *pa = SWAP_XY(c), *pb = SWAP_XY(d);
 }
 

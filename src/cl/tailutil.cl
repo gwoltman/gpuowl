@@ -2,6 +2,25 @@
 
 #include "math.cl"
 
+// TAIL_TRIGS setting:
+//      2 = No memory accesses, trig values computed from scratch.  Good for excellent DP GPUs such as Titan V or Radeon VII Pro.
+//      1 = Limited memory accesses and some DP computation.  Tuned for Radeon VII a GPU with good DP performance.
+//      0 = No DP computation.  Trig vaules read from memory.  Good for GPUs with poor DP performance (a typical consumer grade GPU).
+#if !defined(TAIL_TRIGS)
+#define TAIL_TRIGS      2                         // Default is compute trig values from scratch
+#endif
+
+// TAIL_KERNELS setting:
+//      0 = single wide, single kernel
+//      1 = single wide, two kernels
+//      2 = double wide, single kernel
+//      3 = double wide, two kernels
+#if !defined(TAIL_KERNELS)
+#define TAIL_KERNELS    2                         // Default is double-wide tailSquare with two kernels
+#endif
+#define SINGLE_WIDE     TAIL_KERNELS < 2          // Old single-wide tailSquare vs. new double-wide tailSquare
+#define SINGLE_KERNEL   (TAIL_KERNELS & 1) == 0   // TailSquare uses a single kernel vs. two kernels
+
 #if FFT_FP64
 
 void OVERLOAD reverse(u32 WG, local T2 *lds, T2 *u, bool bump) {
