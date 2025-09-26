@@ -818,7 +818,7 @@ void OVERLOAD X2q_mul_t8(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *
 void OVERLOAD X2q_mul_3t8(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t = t + neg(*b, m61_count); *b = mul_3t8(t, m61_count * 2); }
 
 void OVERLOAD X2s(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = add(t, *b); *b = subs(t, *b, m61_count); }
-void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = add(t, *b); b->x = subs(t.x, b->x, m61_count); b->y = subs(b->y, t.y, m61_count); }
+void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, const u32 a_m61_count, const u32 b_m61_count) { GF61 t = *a; *a = add(t, *b); b->x = subs(t.x, b->x, b_m61_count); b->y = subs(b->y, t.y, a_m61_count); }
 
 #endif
 

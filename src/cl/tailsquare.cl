@@ -889,16 +889,16 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_
   GF61 c, d;
 
   X2conjb(a, b);
-  if (t_squared_type == 0)                           // mul t_squared by 1
-    c = subq(csq(a), cmul(csq(b), t_squared), 2);    // max c value is 3*M61+epsilon
-  if (t_squared_type == 1)                           // mul t_squared by i
-    c = subiq(csq(a), cmul(csq(b), t_squared), 2);   // max c value is 3*M61+epsilon
-  if (t_squared_type == 2)                           // mul t_squared by -1
-    c = addq(csq(a), cmul(csq(b), t_squared));       // max c value is 3*M61+epsilon
-  if (t_squared_type == 3)                           // mul t_squared by -i
-    c = addiq(csq(a), cmul(csq(b), t_squared), 2);   // max c value is 3*M61+epsilon
-  d = 2 * cmul(a, b);                                // max d value is 2*M61+epsilon
-  X2s_conjb(&c, &d, 4);
+  if (t_squared_type == 0)                             // mul t_squared by 1
+    c = subq(csqq(a, 2), cmul(csq(b), t_squared), 2);  // max c value is 4*M61+epsilon
+  if (t_squared_type == 1)                             // mul t_squared by i
+    c = subiq(csqq(a, 2), cmul(csq(b), t_squared), 2); // max c value is 4*M61+epsilon
+  if (t_squared_type == 2)                             // mul t_squared by -1
+    c = addq(csqq(a, 2), cmul(csq(b), t_squared));     // max c value is 3*M61+epsilon
+  if (t_squared_type == 3)                             // mul t_squared by -i
+    c = addiq(csqq(a, 2), cmul(csq(b), t_squared), 2); // max c value is 4*M61+epsilon
+  d = 2 * cmul(a, b);                                  // max d value is 2*M61+epsilon
+  X2s_conjb(&c, &d, 5, 3);
   *pa = SWAP_XY(c), *pb = SWAP_XY(d);
 }
 

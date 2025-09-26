@@ -376,9 +376,9 @@ void OVERLOAD onePairMul(GF61* pa, GF61* pb, GF61* pc, GF61* pd, GF61 t_squared)
 
   X2conjb(a, b);
   X2conjb(c, d);
-  GF61 e = subq(cmul(a, c), cmul(cmul(b, d), t_squared), 2);
-  GF61 f = addq(cmul(b, c), cmul(a, d));
-  X2s_conjb(&e, &f, 4);
+  GF61 e = subq(cmul(a, c), cmul(cmul(b, d), t_squared), 2);    // Max value is 3*M61+epsilon
+  GF61 f = addq(cmul(b, c), cmul(a, d));                        // Max value is 2*M61+epsilon
+  X2s_conjb(&e, &f, 4, 3);
   *pa = SWAP_XY(e), *pb = SWAP_XY(f);
 }
 
