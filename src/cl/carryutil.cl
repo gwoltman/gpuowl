@@ -682,7 +682,10 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i32 *outCarry, bool isBigWord) {
   i32 xhi = (i32)(x >> 32) + (i32)(x_topbit >> 32);
   *outCarry = xhi >> (nBits - 32);
   return w;
-#elif EXP / NWORDS == 31 || SLOPPY_MAXBPW >= 320        // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance)
+// nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance).  For reasons I don't fully understand the sloppy
+// case fails if BPW is too low.  Probably something to do with a small BPW with sloppy 32-bit values would require CARRY_LONG to work properly.
+// Not a major concern as end users should avoid small BPW as there is probably a more efficient NTT that could be used.
+#elif EXP / NWORDS == 31 || (EXP / NWORDS >= 23 && SLOPPY_MAXBPW >= 320)        
   i32 w = x;                                            // lowBits(x, bigwordBits = 32);
   *outCarry = ((i32)(x >> 32) + (w < 0)) << (32 - nBits);
   return w;
