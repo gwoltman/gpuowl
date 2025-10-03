@@ -43,7 +43,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
-  TrigFP32 trigF2 = (TrigFP32) smallTrig;
+  TrigFP32 smallTrigF2 = (TrigFP32) smallTrig;
 
   F2 u[NH];
   u32 g = get_group_id(0);
