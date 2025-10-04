@@ -1037,7 +1037,7 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
     vector<Word> GPUdata;
     GPUdata.resize(words.size() / 2);
     for (u32 i = 0; i < words.size(); i += 2) {
-      GPUdata[i/2] = ((i64) words[i+1] << 32) | (i32) words[i];
+      GPUdata[i/2] = ((i64) words[i+1] << 32) | (u32) words[i];
     }
     buf.write(std::move(GPUdata));
   }
