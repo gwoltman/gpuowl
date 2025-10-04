@@ -573,14 +573,14 @@ void OVERLOAD tabMul(u32 WG, TrigFP32 trig, F2 *u, u32 n, u32 f, u32 me) {
 
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
-  if (TABMUL_CHAIN) {
+  if (TABMUL_CHAIN32) {
     chainMul (n, u, trig[p], 0);
     return;
   }
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-  if (!TABMUL_CHAIN) {
+  if (!TABMUL_CHAIN32) {
     if (n >= 8) {
       u[1] = cmulFancy(u[1], trig[p]);
     } else {
@@ -688,14 +688,14 @@ void OVERLOAD tabMul(u32 WG, TrigGF31 trig, GF31 *u, u32 n, u32 f, u32 me) {
 
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
-  if (TABMUL_CHAIN) {
+  if (TABMUL_CHAIN31) {
     chainMul (n, u, trig[p], 0);
     return;
   }
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-  if (!TABMUL_CHAIN) {
+  if (!TABMUL_CHAIN31) {
     for (u32 i = 1; i < n; ++i) {
       u[i] = cmul(u[i], trig[(i-1)*WG + p]);
     }
@@ -826,14 +826,14 @@ void OVERLOAD tabMul(u32 WG, TrigGF61 trig, GF61 *u, u32 n, u32 f, u32 me) {
 
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
-  if (TABMUL_CHAIN) {
+  if (TABMUL_CHAIN61) {
     chainMul (n, u, trig[p], 0);
     return;
   }
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-  if (!TABMUL_CHAIN) {
+  if (!TABMUL_CHAIN61) {
     for (u32 i = 1; i < n; ++i) {
       u[i] = cmul(u[i], trig[(i-1)*WG + p]);
     }

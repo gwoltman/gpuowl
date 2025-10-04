@@ -43,6 +43,7 @@ public:
   string uid;
   string verifyPath;
 
+  string tune;
   vector<string> ctune;
 
   bool doCtune{};
@@ -53,7 +54,7 @@ public:
 
   std::map<std::string, std::string> flags;
   std::map<std::string, vector<KeyVal>> perFftConfig;
-  
+
   int device = 0;
   
   bool safeMath = true;

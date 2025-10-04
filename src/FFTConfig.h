@@ -17,9 +17,11 @@
 class Args;
 
 // Format 'n' with a K or M suffix if multiple of 1024 or 1024*1024
-string numberK(u32 n);
+string numberK(u64 n);
 
 using KeyVal = std::pair<std::string, std::string>;
+
+enum FFT_TYPES {FFT64=0, FFT3161=1, FFT3261=2, FFT61=3, FFT3231=50, FFT6431=51, FFT31=52, FFT32=53};
 
 class FFTShape {
 public:
@@ -31,23 +33,25 @@ public:
 
   static vector<FFTShape> multiSpec(const string& spec);
 
+  enum FFT_TYPES fft_type;
   u32 width  = 0;
   u32 middle = 0;
   u32 height = 0;
-  array<double, NUM_BPW_ENTRIES> bpw;
+  array<float, NUM_BPW_ENTRIES> bpw;
 
   FFTShape(u32 w = 1, u32 m = 1, u32 h = 1);
-  FFTShape(const string& w, const string& m, const string& h);
+  FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h);
+  FFTShape(enum FFT_TYPES t, const string& w, const string& m, const string& h);
   explicit FFTShape(const string& spec);
 
   u32 size() const { return width * height * middle * 2; }
   u32 nW() const { return (width == 1024 || width == 256 /*|| width == 4096*/) ? 4 : 8; }
   u32 nH() const { return (height == 1024 || height == 256 /*|| height == 4096*/) ? 4 : 8; }
 
-  double maxBpw() const { return *max_element(bpw.begin(), bpw.end()); }
-  std::string spec() const { return numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
+  float maxBpw() const { return *max_element(bpw.begin(), bpw.end()); }
+  std::string spec() const { return (fft_type ? to_string(fft_type) + ':' : "") + numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
 
-  double carry32BPW() const;
+  float carry32BPW() const;
   bool needsLargeCarry(u32 E) const;
   bool isFavoredShape() const;
 };
@@ -66,11 +70,21 @@ inline u32 next_variant(u32 v) {
   new_v = (v / 100 + 1) * 100; return (new_v);
 }
 
-enum CARRY_KIND { CARRY_32=0, CARRY_64=1, CARRY_AUTO=2};
+enum CARRY_KIND {CARRY_32=0, CARRY_64=1, CARRY_AUTO=2};
 
 struct FFTConfig {
 public:
   static FFTConfig bestFit(const Args& args, u32 E, const std::string& spec);
+
+  // Which FP and NTT primes are involved in the FFT
+  bool FFT_FP64;
+  bool FFT_FP32;
+  bool NTT_GF31;
+  bool NTT_GF61;
+  // bool NTT_NCW;	// Nick Craig-Wood prime not supported (yet?)
+
+  // Size (in bytes) of integer data passed to FFTs/NTTs on the GPU
+  u32 WordSize;
 
   FFTShape shape{};
   u32 variant;
@@ -80,8 +94,8 @@ public:
   FFTConfig(FFTShape shape, u32 variant, u32 carry);
 
   std::string spec() const;
-  u32 size() const { return shape.size(); }
-  u32 maxExp()  const { return maxBpw() * shape.size(); }
+  u64 size() const { return shape.size(); }
+  u64 maxExp()  const { return maxBpw() * shape.size(); }
 
-  double maxBpw() const;
+  float maxBpw() const;
 };

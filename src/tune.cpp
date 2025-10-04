@@ -103,26 +103,26 @@ string formatConfigResults(const vector<Entry>& results) {
 
 } // namespace
 
-double Tune::maxBpw(FFTConfig fft) {
+float Tune::maxBpw(FFTConfig fft) {
 
-//  double bpw = oldBpw;
+//  float bpw = oldBpw;
 
-  const double TARGET = 28;
+  const float TARGET = 28;
   const u32 sample_size = 5;
 
   // Estimate how much bpw needs to change to increase/decrease Z by 1.
   // This doesn't need to be a very accurate estimate.
   // This estimate comes from analyzing a 4M FFT and a 7.5M FFT.
   // The 4M FFT needed a .015 step, the 7.5M FFT needed a .012 step.
-  double bpw_step = .015 + (log2(fft.size()) - log2(4.0*1024*1024)) / (log2(7.5*1024*1024) - log2(4.0*1024*1024)) * (.012 - .015);
+  float bpw_step = .015 + (log2(fft.size()) - log2(4.0*1024*1024)) / (log2(7.5*1024*1024) - log2(4.0*1024*1024)) * (.012 - .015);
 
   // Pick a bpw that might be close to Z=34, it is best to err on the high side of Z=34
-  double bpw1 = fft.maxBpw() - 9 * bpw_step;                                      // Old bpw gave Z=28, we want Z=34 (or more)
+  float bpw1 = fft.maxBpw() - 9 * bpw_step;                                      // Old bpw gave Z=28, we want Z=34 (or more)
 
 // The code below was used when building the maxBpw table from scratch
 //  u32   non_best_width = N_VARIANT_W - 1 - variant_W(fft.variant);              // Number of notches below best-Z width variant
 //  u32   non_best_middle = N_VARIANT_M - 1 - variant_M(fft.variant);             // Number of notches below best-Z middle variant
-//  double bpw1 = 18.3 - 0.275 * (log2(fft.size()) - log2(256 * 13 * 1024 * 2)) - // Default max bpw from an old gpuowl version
+//  float bpw1 = 18.3 - 0.275 * (log2(fft.size()) - log2(256 * 13 * 1024 * 2)) - // Default max bpw from an old gpuowl version
 //              9 * bpw_step -                                                    // Default above should give Z=28, we want Z=34 (or more)
 //                (.08/.012 * bpw_step) * non_best_width -                        // 7.5M FFT has ~.08 bpw difference for each width variant below best variant
 //                (.06 + .04 * (fft.shape.middle - 4) / 11) * non_best_middle;    // Assume .1 bpw difference MIDDLE=15 and .06 for MIDDLE=4
@@ -130,11 +130,11 @@ double Tune::maxBpw(FFTConfig fft) {
 //if (fft.size() < 512000) bpw1 = 19, bpw_step = .02;
 
   // Fine tune our estimate for Z=34
-  double z1 = zForBpw(bpw1, fft, 1);
+  float z1 = zForBpw(bpw1, fft, 1);
 printf ("Guess bpw for %s is %.2f first Z34 is %.2f\n", fft.spec().c_str(), bpw1, z1);
   while (z1 < 31.0 || z1 > 37.0) {
-    double prev_bpw1 = bpw1;
-    double prev_z1 = z1;
+    float prev_bpw1 = bpw1;
+    float prev_z1 = z1;
     bpw1 = bpw1 + (z1 - 34) * bpw_step;
     z1 = zForBpw(bpw1, fft, 1);
 printf ("Reguess bpw for %s is %.2f first Z34 is %.2f\n", fft.spec().c_str(), bpw1, z1);
@@ -147,12 +147,12 @@ printf ("Reguess bpw for %s is %.2f first Z34 is %.2f\n", fft.spec().c_str(), bp
   z1 = (z1 + (sample_size - 1) * zForBpw(bpw1, fft, sample_size - 1)) / sample_size;
 
   // Pick a bpw somewhere near Z=22 then fine tune the guess
-  double bpw2 = bpw1 + (z1 - 22) * bpw_step;
-  double z2 = zForBpw(bpw2, fft, 1);
+  float bpw2 = bpw1 + (z1 - 22) * bpw_step;
+  float z2 = zForBpw(bpw2, fft, 1);
 printf ("Guess bpw for %s is %.2f first Z22 is %.2f\n", fft.spec().c_str(), bpw2, z2);
   while (z2 < 20.0 || z2 > 25.0) {
-    double prev_bpw2 = bpw2;
-    double prev_z2 = z2;
+    float prev_bpw2 = bpw2;
+    float prev_z2 = z2;
 //    bool error_recovery = (z2 <= 0.0);
 //    if (error_recovery) bpw2 -= bpw_step; else
     bpw2 = bpw2 + (z2 - 21) * bpw_step;
@@ -171,12 +171,12 @@ printf ("Reguess bpw for %s is %.2f first Z22 is %.2f\n", fft.spec().c_str(), bp
   return bpw2 + (bpw1 - bpw2) * (TARGET - z2) / (z1 - z2);
 }
 
-double Tune::zForBpw(double bpw, FFTConfig fft, u32 count) {
+float Tune::zForBpw(float bpw, FFTConfig fft, u32 count) {
   u32 exponent = (count == 1) ? primes.prevPrime(fft.size() * bpw) : primes.nextPrime(fft.size() * bpw);
-  double total_z = 0.0;
+  float total_z = 0.0;
   for (u32 i = 0; i < count; i++, exponent = primes.nextPrime (exponent + 1)) {
     auto [ok, res, roeSq, roeMul] = Gpu::make(q, exponent, shared, fft, {}, false)->measureROE(true);
-    double z = roeSq.z();
+    float z = roeSq.z();
     total_z += z;
 log("Zforbpw %.2f (z %.2f) : %s\n", bpw, z, fft.spec().c_str());
     if (!ok) { log("Error at bpw %.2f (z %.2f) : %s\n", bpw, z, fft.spec().c_str()); continue; }
@@ -195,8 +195,8 @@ void Tune::ztune() {
     u32 variant = 202;
     u32 sample_size = 5;
     FFTConfig fft{shape, variant, CARRY_AUTO};
-    for (double bpw = 18.18; bpw < 18.305; bpw += 0.02) {
-      double z = zForBpw(bpw, fft, sample_size);
+    for (float bpw = 18.18; bpw < 18.305; bpw += 0.02) {
+      float z = zForBpw(bpw, fft, sample_size);
       log ("Avg zForBpw %s %.2f %.2f\n", fft.spec().c_str(), bpw, z);
     }
   }
@@ -213,7 +213,7 @@ void Tune::ztune() {
     if (shape.width > 1024) bpw_variants[0] = 100, bpw_variants[3] = 110;
 
     // Copy the existing bpw array (in case we're replacing only some of the entries)
-    array<double, NUM_BPW_ENTRIES> bpw;
+    array<float, NUM_BPW_ENTRIES> bpw;
     bpw = shape.bpw;
 
     // Not all shapes have their maximum bpw per-computed.  But one can work on a non-favored shape by specifying it on the command line.
@@ -244,10 +244,10 @@ void Tune::carryTune() {
     if (prevSize == fft.size()) { continue; }
     prevSize = fft.size();
 
-    vector<double> zv;
+    vector<float> zv;
     double m = 0;
-    const double mid = fft.shape.carry32BPW();
-    for (double bpw : {mid - 0.05, mid + 0.05}) {
+    const float mid = fft.shape.carry32BPW();
+    for (float bpw : {mid - 0.05, mid + 0.05}) {
       u32 exponent = primes.nearestPrime(fft.size() * bpw);
       auto [ok, carry] = Gpu::make(q, exponent, shared, fft, {}, false)->measureCarry();
       m = carry.max;
@@ -255,7 +255,7 @@ void Tune::carryTune() {
       zv.push_back(carry.z());
     }
 
-    double avg = (zv[0] + zv[1]) / 2;
+    float avg = (zv[0] + zv[1]) / 2;
     u32 exponent = fft.shape.carry32BPW() * fft.size();
     double pErr100 = -expm1(-exp(-avg) * exponent * 100);
     log("%14s %.3f : %.3f (%.3f %.3f) %f %.0f%%\n", fft.spec().c_str(), mid, avg, zv[0], zv[1], m, pErr100 * 100);
@@ -325,288 +325,574 @@ void Tune::ctune() {
   log("\nBest configs (lines can be copied to config.txt):\n%s", formatConfigResults(results).c_str());
 }
 
+// Add better -use settings to list of changes to be made to config.txt
+void configsUpdate(double current_cost, double best_cost, double threshold, const char *key, u32 value, vector<pair<string,int>> &newConfigKeyVals, vector<pair<string,int>> &suggestedConfigKeyVals) {
+  if (best_cost == current_cost) return;
+  // If best cost is better than current cost by a substantial margin (the threshold) then add the key value pair to suggestedConfigKeyVals
+  if (best_cost < (1.0 - threshold) * current_cost)
+    newConfigKeyVals.push_back({key, value});
+  // Otherwise, add the key value pair to newConfigKeyVals
+  else
+    suggestedConfigKeyVals.push_back({key, value});
+}
+
 void Tune::tune() {
   Args *args = shared.args;
   vector<FFTShape> shapes = FFTShape::multiSpec(args->fftSpec);
-
+  
   // There are some options and variants that are different based on GPU manufacturer
   bool AMDGPU = isAmdGpu(q->context->deviceId());
 
-  // Look for best settings of various options
+  bool tune_config = 1;
+  bool time_FFTs = 0;
+  bool time_NTTs = 0;
+  u64 min_exponent = 75000000;
+  u64 max_exponent = 350000000;
+  if (!args->fftSpec.empty()) { min_exponent = 0; max_exponent = 1000000000000ull; }
 
-  if (1) {
-    u32 variant = 101;
+  // Parse input args
+  for (const string& s : split(args->tune, ',')) {
+    if (s.empty()) continue;
+    if (s == "noconfig") tune_config = 0;
+    if (s == "fp64") time_FFTs = 1;
+    if (s == "ntt") time_NTTs = 1;
+    auto keyVal = split(s, '=');
+    if (keyVal.size() == 2) {
+      if (keyVal.front() == "minexp") min_exponent = stoull(keyVal.back());
+      if (keyVal.front() == "maxexp") max_exponent = stoull(keyVal.back());
+    }
+  }
+
+  // Look for best settings of various options.  Append best settings to config.txt.
+  if (tune_config) {
+    vector<pair<string,int>> newConfigKeyVals;
+    vector<pair<string,int>> suggestedConfigKeyVals;
+
+    // Select/init the default FFTshape(s) and FFTConfig(s) for optimal -use options testing
+    FFTShape defaultFFTShape, defaultNTTShape, *defaultShape;
+
+    // If user gave us an fft-spec, use that to time options
+    if (!args->fftSpec.empty()) {
+      defaultShape = &shapes[0];
+      if (shapes[0].fft_type == FFT64) {
+        defaultFFTShape = shapes[0];
+        time_FFTs = 1;
+      } else {
+        defaultNTTShape = shapes[0];
+        time_NTTs = 1;
+      }
+    }
+    // If user specified FP64-timings, time a wavefront exponent using an 7.5M FFT
+    // If user specified NTT-timings, time a wavefront exponent using an 4M M31+M61 NTT
+    else if (time_FFTs || time_NTTs) {
+      if (time_FFTs) {
+        defaultFFTShape = FFTShape(FFT64, 512, 15, 512);
+        defaultShape = &defaultFFTShape;
+      }
+      if (time_NTTs) {
+        defaultNTTShape = FFTShape(FFT3161, 512, 8, 512);
+	defaultShape = &defaultNTTShape;
+      }
+    }
+    // No user specifications.  Time an FP64 FFT and a GF31*GF61 NTT to see if the GPU is more suited for FP64 work or NTT work.
+    else {
+      log("Checking whether this GPU is better suited for double-precision FFTs or integer NTTs.\n");
+      defaultFFTShape = FFTShape(FFT64, 512, 16, 512);
+      FFTConfig fft{defaultFFTShape, 101, CARRY_32};
+      double fp64_time = Gpu::make(q, 141000001, shared, fft, {}, false)->timePRP();
+      log("Time for FP64 FFT %12s is %6.1f\n", fft.spec().c_str(), fp64_time);
+      defaultNTTShape = FFTShape(FFT3161, 512, 8, 512);
+      FFTConfig ntt{defaultNTTShape, 202, CARRY_AUTO};
+      double ntt_time = Gpu::make(q, 141000001, shared, ntt, {}, false)->timePRP();
+      log("Time for M31*M61 NTT %12s is %6.1f\n", ntt.spec().c_str(), ntt_time);
+      if (fp64_time < ntt_time) {
+        defaultShape = &defaultFFTShape;
+        time_FFTs = 1;
+        if (fp64_time < 0.80 * ntt_time) {
+          log("FP64 FFTs are significantly faster than NTTs.  No NTT tuning will be performed.\n");
+        } else {
+          log("FP64 FFTs are not significantly faster than NTTs.  NTT tuning will be performed.\n");
+          time_NTTs = 1;
+        }
+      } else {
+        defaultShape = &defaultNTTShape;
+        time_NTTs = 1;
+        if (fp64_time > 1.20 * ntt_time) {
+          log("FP64 FFTs are significantly slower than NTTs.  No FP64 tuning will be performed.\n");
+        } else {
+          log("FP64 FFTs are not significantly slower than NTTs.  FP64 tuning will be performed.\n");
+          time_FFTs = 1;
+        }
+      }
+    }
+
+    log("\n");
+    log("Beginning timing of various options.  These settings will be appended to config.txt.  Please read config.txt after -tune completes.\n");
+    log("\n");
+
+    u32 variant = (defaultShape == &defaultFFTShape) ? 101 : 202;
 //GW: if fft spec on the command line specifies a variant then we should use that variant (I get some interesting results with 000 vs 101 vs 201 vs 202 likely due to rocm optimizer)
 
-    // Find best IN_WG,IN_SIZEX setting
-    if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+    // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings
+    if (1/*option to time IN/OUT settings*/) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_in_wg = 0;
       u32 best_in_sizex = 0;
+      u32 current_in_wg = args->value("IN_WG", 128);
+      u32 current_in_sizex = args->value("IN_SIZEX", 16);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 in_wg : {64, 128, 256}) {
         for (u32 in_sizex : {8, 16, 32}) {
-          shared.args->flags["IN_WG"] = to_string(in_wg);
-          shared.args->flags["IN_SIZEX"] = to_string(in_sizex);
+          args->flags["IN_WG"] = to_string(in_wg);
+          args->flags["IN_SIZEX"] = to_string(in_sizex);
           double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
           log("Time for %12s using IN_WG=%u, IN_SIZEX=%u is %6.1f\n", fft.spec().c_str(), in_wg, in_sizex, cost);
-	  if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_in_wg = in_wg; best_in_sizex = in_sizex; }
-	}
+          if (in_wg == current_in_wg && in_sizex == current_in_sizex) current_cost = cost;
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_in_wg = in_wg; best_in_sizex = in_sizex; }
+        }
       }
       log("Best IN_WG, IN_SIZEX is %u, %u.  Default is 128, 16.\n", best_in_wg, best_in_sizex);
-      shared.args->flags["IN_WG"] = to_string(best_in_wg);
-      shared.args->flags["IN_SIZEX"] = to_string(best_in_sizex);
-    }
+      configsUpdate(current_cost, best_cost, 0.003, "IN_WG", best_in_wg, newConfigKeyVals, suggestedConfigKeyVals);
+      configsUpdate(current_cost, best_cost, 0.003, "IN_SIZEX", best_in_sizex, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["IN_WG"] = to_string(best_in_wg);
+      args->flags["IN_SIZEX"] = to_string(best_in_sizex);
 
-    // Find best OUT_WG,OUT_SIZEX setting
-    if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
-      u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_out_wg = 0;
       u32 best_out_sizex = 0;
-      double best_cost = -1.0;
+      u32 current_out_wg = args->value("OUT_WG", 128);
+      u32 current_out_sizex = args->value("OUT_SIZEX", 16);
+      best_cost = -1.0;
+      current_cost = -1.0;
       for (u32 out_wg : {64, 128, 256}) {
         for (u32 out_sizex : {8, 16, 32}) {
-          shared.args->flags["OUT_WG"] = to_string(out_wg);
-          shared.args->flags["OUT_SIZEX"] = to_string(out_sizex);
+          args->flags["OUT_WG"] = to_string(out_wg);
+          args->flags["OUT_SIZEX"] = to_string(out_sizex);
           double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
           log("Time for %12s using OUT_WG=%u, OUT_SIZEX=%u is %6.1f\n", fft.spec().c_str(), out_wg, out_sizex, cost);
-	  if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_out_wg = out_wg; best_out_sizex = out_sizex; }
-	}
+          if (out_wg == current_out_wg && out_sizex == current_out_sizex) current_cost = cost;
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_out_wg = out_wg; best_out_sizex = out_sizex; }
+        }
       }
       log("Best OUT_WG, OUT_SIZEX is %u, %u.  Default is 128, 16.\n", best_out_wg, best_out_sizex);
-      shared.args->flags["OUT_WG"] = to_string(best_out_wg);
-      shared.args->flags["OUT_SIZEX"] = to_string(best_out_sizex);
+      configsUpdate(current_cost, best_cost, 0.003, "OUT_WG", best_out_wg, newConfigKeyVals, suggestedConfigKeyVals);
+      configsUpdate(current_cost, best_cost, 0.003, "OUT_SIZEX", best_out_sizex, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["OUT_WG"] = to_string(best_out_wg);
+      args->flags["OUT_SIZEX"] = to_string(best_out_sizex);
+    }
+
+    // Find best PAD setting.  Default is 256 bytes for AMD, 0 for all others.
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_pad = 0;
+      u32 current_pad = args->value("PAD", AMDGPU ? 256 : 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 pad : {0, 64, 128, 256, 512}) {
+        args->flags["PAD"] = to_string(pad);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        log("Time for %12s using PAD=%u is %6.1f\n", fft.spec().c_str(), pad, cost);
+        if (pad == current_pad) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_pad = pad; }
+      }
+      log("Best PAD is %u bytes.  Default PAD is %u bytes.\n", best_pad, AMDGPU ? 256 : 0);
+      configsUpdate(current_cost, best_cost, 0.000, "PAD", best_pad, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["PAD"] = to_string(best_pad);
+    }
+
+    // Find best NONTEMPORAL setting
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_nontemporal = 0;
+      u32 current_nontemporal = args->value("NONTEMPORAL", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 nontemporal : {0, 1}) {
+        args->flags["NONTEMPORAL"] = to_string(nontemporal);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        log("Time for %12s using NONTEMPORAL=%u is %6.1f\n", fft.spec().c_str(), nontemporal, cost);
+        if (nontemporal == current_nontemporal) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_nontemporal = nontemporal; }
+      }
+      log("Best NONTEMPORAL is %u.  Default NONTEMPORAL is 0.\n", best_nontemporal);
+      configsUpdate(current_cost, best_cost, 0.000, "NONTEMPORAL", best_nontemporal, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["NONTEMPORAL"] = to_string(best_nontemporal);
     }
 
     // Find best FAST_BARRIER setting
-    if (1 && AMDGPU) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+    if (AMDGPU) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_fast_barrier = 0;
+      u32 current_fast_barrier = args->value("FAST_BARRIER", 0);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 fast_barrier : {0, 1}) {
-        shared.args->flags["FAST_BARRIER"] = to_string(fast_barrier);
+        args->flags["FAST_BARRIER"] = to_string(fast_barrier);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using FAST_BARRIER=%u is %6.1f\n", fft.spec().c_str(), fast_barrier, cost);
+        if (fast_barrier == current_fast_barrier) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_fast_barrier = fast_barrier; }
       }
       log("Best FAST_BARRIER is %u.  Default FAST_BARRIER is 0.\n", best_fast_barrier);
-      shared.args->flags["FAST_BARRIER"] = to_string(best_fast_barrier);
-    }
-
-    // Find best TAIL_TRIGS setting
-    if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
-      u32 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_tail_trigs = 0;
-      double best_cost = -1.0;
-      for (u32 tail_trigs : {0, 1, 2}) {
-        shared.args->flags["TAIL_TRIGS"] = to_string(tail_trigs);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
-        log("Time for %12s using TAIL_TRIGS=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
-      }
-      log("Best TAIL_TRIGS is %u.  Default TAIL_TRIGS is 2.\n", best_tail_trigs);
-      shared.args->flags["TAIL_TRIGS"] = to_string(best_tail_trigs);
+      configsUpdate(current_cost, best_cost, 0.000, "FAST_BARRIER", best_fast_barrier, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["FAST_BARRIER"] = to_string(best_fast_barrier);
     }
 
     // Find best TAIL_KERNELS setting
     if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_kernels = 0;
+      u32 current_tail_kernels = args->value("TAIL_KERNELS", 2);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 tail_kernels : {0, 1, 2, 3}) {
-        shared.args->flags["TAIL_KERNELS"] = to_string(tail_kernels);
+        args->flags["TAIL_KERNELS"] = to_string(tail_kernels);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using TAIL_KERNELS=%u is %6.1f\n", fft.spec().c_str(), tail_kernels, cost);
+        if (tail_kernels == current_tail_kernels) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_kernels = tail_kernels; }
       }
       if (best_tail_kernels & 1)
         log("Best TAIL_KERNELS is %u.  Default TAIL_KERNELS is 2.\n", best_tail_kernels);
       else
         log("Best TAIL_KERNELS is %u (but best may be %u when running two workers on one GPU).  Default TAIL_KERNELS is 2.\n", best_tail_kernels, best_tail_kernels | 1);
-      shared.args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
+      configsUpdate(current_cost, best_cost, 0.000, "TAIL_KERNELS", best_tail_kernels, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
+    }
+
+    // Find best TAIL_TRIGS setting
+    if (time_FFTs) {
+      FFTConfig fft{defaultFFTShape, 101, CARRY_AUTO};
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_tail_trigs = 0;
+      u32 current_tail_trigs = args->value("TAIL_TRIGS", 2);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 tail_trigs : {0, 1, 2}) {
+        args->flags["TAIL_TRIGS"] = to_string(tail_trigs);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        log("Time for %12s using TAIL_TRIGS=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
+        if (tail_trigs == current_tail_trigs) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
+      }
+      log("Best TAIL_TRIGS is %u.  Default TAIL_TRIGS is 2.\n", best_tail_trigs);
+      configsUpdate(current_cost, best_cost, 0.003, "TAIL_TRIGS", best_tail_trigs, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TAIL_TRIGS"] = to_string(best_tail_trigs);
+    }
+
+    // Find best TAIL_TRIGS31 setting
+    if (time_NTTs) {
+      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
+      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_tail_trigs = 0;
+      u32 current_tail_trigs = args->value("TAIL_TRIGS31", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 tail_trigs : {0, 1}) {
+        args->flags["TAIL_TRIGS31"] = to_string(tail_trigs);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        log("Time for %12s using TAIL_TRIGS31=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
+        if (tail_trigs == current_tail_trigs) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
+      }
+      log("Best TAIL_TRIGS31 is %u.  Default TAIL_TRIGS31 is 0.\n", best_tail_trigs);
+      configsUpdate(current_cost, best_cost, 0.003, "TAIL_TRIGS31", best_tail_trigs, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TAIL_TRIGS31"] = to_string(best_tail_trigs);
+    }
+
+    // Find best TAIL_TRIGS32 setting
+    if (time_NTTs) {
+      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
+      if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_tail_trigs = 0;
+      u32 current_tail_trigs = args->value("TAIL_TRIGS32", 2);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 tail_trigs : {0, 1, 2}) {
+        args->flags["TAIL_TRIGS32"] = to_string(tail_trigs);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        log("Time for %12s using TAIL_TRIGS32=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
+        if (tail_trigs == current_tail_trigs) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
+      }
+      log("Best TAIL_TRIGS32 is %u.  Default TAIL_TRIGS32 is 2.\n", best_tail_trigs);
+      configsUpdate(current_cost, best_cost, 0.003, "TAIL_TRIGS32", best_tail_trigs, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TAIL_TRIGS32"] = to_string(best_tail_trigs);
+    }
+
+    // Find best TAIL_TRIGS61 setting
+    if (time_NTTs) {
+      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
+      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_tail_trigs = 0;
+      u32 current_tail_trigs = args->value("TAIL_TRIGS61", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 tail_trigs : {0, 1}) {
+        args->flags["TAIL_TRIGS61"] = to_string(tail_trigs);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        log("Time for %12s using TAIL_TRIGS61=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
+        if (tail_trigs == current_tail_trigs) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
+      }
+      log("Best TAIL_TRIGS61 is %u.  Default TAIL_TRIGS61 is 0.\n", best_tail_trigs);
+      configsUpdate(current_cost, best_cost, 0.003, "TAIL_TRIGS61", best_tail_trigs, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TAIL_TRIGS61"] = to_string(best_tail_trigs);
     }
 
     // Find best TABMUL_CHAIN setting
-    if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, 101, CARRY_32};
+    if (time_FFTs) {
+      FFTConfig fft{defaultFFTShape, 101, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
+      u32 current_tabmul_chain = args->value("TABMUL_CHAIN", 0);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 tabmul_chain : {0, 1}) {
-        shared.args->flags["TABMUL_CHAIN"] = to_string(tabmul_chain);
+        args->flags["TABMUL_CHAIN"] = to_string(tabmul_chain);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using TABMUL_CHAIN=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
+        if (tabmul_chain == current_tabmul_chain) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
       }
       log("Best TABMUL_CHAIN is %u.  Default TABMUL_CHAIN is 0.\n", best_tabmul_chain);
-      shared.args->flags["TABMUL_CHAIN"] = to_string(best_tabmul_chain);
+      configsUpdate(current_cost, best_cost, 0.003, "TABMUL_CHAIN", best_tabmul_chain, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TABMUL_CHAIN"] = to_string(best_tabmul_chain);
     }
 
-    // Find best PAD setting.  Default is 256 bytes for AMD, 0 for all others.
-    if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+    // Find best TABMUL_CHAIN31 setting
+    if (time_NTTs) {
+      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
+      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
       u32 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_pad = 0;
+      u32 best_tabmul_chain = 0;
+      u32 current_tabmul_chain = args->value("TABMUL_CHAIN31", 0);
       double best_cost = -1.0;
-      for (u32 pad : {0, 64, 128, 256, 512}) {
-        shared.args->flags["PAD"] = to_string(pad);
+      double current_cost = -1.0;
+      for (u32 tabmul_chain : {0, 1}) {
+        args->flags["TABMUL_CHAIN31"] = to_string(tabmul_chain);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
-        log("Time for %12s using PAD=%u is %6.1f\n", fft.spec().c_str(), pad, cost);
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_pad = pad; }
+        log("Time for %12s using TABMUL_CHAIN31=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
+        if (tabmul_chain == current_tabmul_chain) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
       }
-      log("Best PAD is %u bytes.  Default PAD is %u bytes.\n", best_pad, AMDGPU ? 256 : 0);
-      shared.args->flags["PAD"] = to_string(best_pad);
+      log("Best TABMUL_CHAIN31 is %u.  Default TABMUL_CHAIN31 is 0.\n", best_tabmul_chain);
+      configsUpdate(current_cost, best_cost, 0.003, "TABMUL_CHAIN31", best_tabmul_chain, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TABMUL_CHAIN31"] = to_string(best_tabmul_chain);
     }
 
-    // Find best NONTEMPORAL setting
-    if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+    // Find best TABMUL_CHAIN61 setting
+    if (time_NTTs) {
+      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
+      if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
       u32 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_nontemporal = 0;
+      u32 best_tabmul_chain = 0;
+      u32 current_tabmul_chain = args->value("TABMUL_CHAIN32", 0);
       double best_cost = -1.0;
-      for (u32 nontemporal : {0, 1}) {
-        shared.args->flags["NONTEMPORAL"] = to_string(nontemporal);
+      double current_cost = -1.0;
+      for (u32 tabmul_chain : {0, 1}) {
+        args->flags["TABMUL_CHAIN32"] = to_string(tabmul_chain);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
-        log("Time for %12s using NONTEMPORAL=%u is %6.1f\n", fft.spec().c_str(), nontemporal, cost);
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_nontemporal = nontemporal; }
+        log("Time for %12s using TABMUL_CHAIN32=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
+        if (tabmul_chain == current_tabmul_chain) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
       }
-      log("Best NONTEMPORAL is %u.  Default NONTEMPORAL is 0.\n", best_nontemporal);
-      shared.args->flags["NONTEMPORAL"] = to_string(best_nontemporal);
+      log("Best TABMUL_CHAIN32 is %u.  Default TABMUL_CHAIN32 is 0.\n", best_tabmul_chain);
+      configsUpdate(current_cost, best_cost, 0.003, "TABMUL_CHAIN32", best_tabmul_chain, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TABMUL_CHAIN32"] = to_string(best_tabmul_chain);
+    }
+
+    // Find best TABMUL_CHAIN61 setting
+    if (time_NTTs) {
+      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
+      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_tabmul_chain = 0;
+      u32 current_tabmul_chain = args->value("TABMUL_CHAIN61", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 tabmul_chain : {0, 1}) {
+        args->flags["TABMUL_CHAIN61"] = to_string(tabmul_chain);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        log("Time for %12s using TABMUL_CHAIN61=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
+        if (tabmul_chain == current_tabmul_chain) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
+      }
+      log("Best TABMUL_CHAIN61 is %u.  Default TABMUL_CHAIN61 is 0.\n", best_tabmul_chain);
+      configsUpdate(current_cost, best_cost, 0.003, "TABMUL_CHAIN61", best_tabmul_chain, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TABMUL_CHAIN61"] = to_string(best_tabmul_chain);
     }
 
     // Find best UNROLL_W setting
     if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_w = 0;
+      u32 current_unroll_w = args->value("UNROLL_W", AMDGPU ? 0 : 1);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 unroll_w : {0, 1}) {
-        shared.args->flags["UNROLL_W"] = to_string(unroll_w);
+        args->flags["UNROLL_W"] = to_string(unroll_w);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using UNROLL_W=%u is %6.1f\n", fft.spec().c_str(), unroll_w, cost);
+        if (unroll_w == current_unroll_w) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_unroll_w = unroll_w; }
       }
       log("Best UNROLL_W is %u.  Default UNROLL_W is %u.\n", best_unroll_w, AMDGPU ? 0 : 1);
-      shared.args->flags["UNROLL_W"] = to_string(best_unroll_w);
+      configsUpdate(current_cost, best_cost, 0.003, "UNROLL_W", best_unroll_w, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["UNROLL_W"] = to_string(best_unroll_w);
     }
 
     // Find best UNROLL_H setting
     if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_h = 0;
+      u32 current_unroll_h = args->value("UNROLL_H", AMDGPU && defaultShape->height >= 1024 ? 0 : 1);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 unroll_h : {0, 1}) {
-        shared.args->flags["UNROLL_H"] = to_string(unroll_h);
+        args->flags["UNROLL_H"] = to_string(unroll_h);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using UNROLL_H=%u is %6.1f\n", fft.spec().c_str(), unroll_h, cost);
+        if (unroll_h == current_unroll_h) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_unroll_h = unroll_h; }
       }
-      log("Best UNROLL_H is %u.  Default UNROLL_H is %u.\n", best_unroll_h, AMDGPU && shape.height >= 1024 ? 0 : 1);
-      shared.args->flags["UNROLL_H"] = to_string(best_unroll_h);
+      log("Best UNROLL_H is %u.  Default UNROLL_H is %u.\n", best_unroll_h, AMDGPU && defaultShape->height >= 1024 ? 0 : 1);
+      configsUpdate(current_cost, best_cost, 0.003, "UNROLL_H", best_unroll_h, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["UNROLL_H"] = to_string(best_unroll_h);
     }
 
     // Find best ZEROHACK_W setting
     if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_zerohack_w = 0;
+      u32 current_zerohack_w = args->value("ZEROHACK_W", 1);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 zerohack_w : {0, 1}) {
-        shared.args->flags["ZEROHACK_W"] = to_string(zerohack_w);
+        args->flags["ZEROHACK_W"] = to_string(zerohack_w);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using ZEROHACK_W=%u is %6.1f\n", fft.spec().c_str(), zerohack_w, cost);
+        if (zerohack_w == current_zerohack_w) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_zerohack_w = zerohack_w; }
       }
       log("Best ZEROHACK_W is %u.  Default ZEROHACK_W is 1.\n", best_zerohack_w);
-      shared.args->flags["ZEROHACK_W"] = to_string(best_zerohack_w);
+      configsUpdate(current_cost, best_cost, 0.003, "ZEROHACK_W", best_zerohack_w, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["ZEROHACK_W"] = to_string(best_zerohack_w);
     }
 
     // Find best ZEROHACK_H setting
     if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_zerohack_h = 0;
+      u32 current_zerohack_h = args->value("ZEROHACK_H", 1);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 zerohack_h : {0, 1}) {
-        shared.args->flags["ZEROHACK_H"] = to_string(zerohack_h);
+        args->flags["ZEROHACK_H"] = to_string(zerohack_h);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using ZEROHACK_H=%u is %6.1f\n", fft.spec().c_str(), zerohack_h, cost);
+        if (zerohack_h == current_zerohack_h) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_zerohack_h = zerohack_h; }
       }
       log("Best ZEROHACK_H is %u.  Default ZEROHACK_H is 1.\n", best_zerohack_h);
-      shared.args->flags["ZEROHACK_H"] = to_string(best_zerohack_h);
+      configsUpdate(current_cost, best_cost, 0.003, "ZEROHACK_H", best_zerohack_h, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["ZEROHACK_H"] = to_string(best_zerohack_h);
     }
 
     // Find best MIDDLE_IN_LDS_TRANSPOSE setting
     if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_in_lds_transpose = 0;
+      u32 current_middle_in_lds_transpose = args->value("MIDDLE_IN_LDS_TRANSPOSE", 1);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 middle_in_lds_transpose : {0, 1}) {
-        shared.args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(middle_in_lds_transpose);
+        args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(middle_in_lds_transpose);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using MIDDLE_IN_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_in_lds_transpose, cost);
+        if (middle_in_lds_transpose == current_middle_in_lds_transpose) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_in_lds_transpose = middle_in_lds_transpose; }
       }
       log("Best MIDDLE_IN_LDS_TRANSPOSE is %u.  Default MIDDLE_IN_LDS_TRANSPOSE is 1.\n", best_middle_in_lds_transpose);
-      shared.args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(best_middle_in_lds_transpose);
+      configsUpdate(current_cost, best_cost, 0.000, "MIDDLE_IN_LDS_TRANSPOSE", best_middle_in_lds_transpose, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(best_middle_in_lds_transpose);
     }
 
     // Find best MIDDLE_OUT_LDS_TRANSPOSE setting
     if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_out_lds_transpose = 0;
+      u32 current_middle_out_lds_transpose = args->value("MIDDLE_OUT_LDS_TRANSPOSE", 1);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 middle_out_lds_transpose : {0, 1}) {
-        shared.args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(middle_out_lds_transpose);
+        args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(middle_out_lds_transpose);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using MIDDLE_OUT_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_out_lds_transpose, cost);
+        if (middle_out_lds_transpose == current_middle_out_lds_transpose) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_out_lds_transpose = middle_out_lds_transpose; }
       }
       log("Best MIDDLE_OUT_LDS_TRANSPOSE is %u.  Default MIDDLE_OUT_LDS_TRANSPOSE is 1.\n", best_middle_out_lds_transpose);
-      shared.args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(best_middle_out_lds_transpose);
+      configsUpdate(current_cost, best_cost, 0.000, "MIDDLE_OUT_LDS_TRANSPOSE", best_middle_out_lds_transpose, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(best_middle_out_lds_transpose);
     }
 
     // Find best BIGLIT setting
-    if (1) {
-      const FFTShape& shape = shapes[0];
-      FFTConfig fft{shape, variant, CARRY_32};
+    if (time_FFTs) {
+      FFTConfig fft{*defaultShape, 101, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_biglit = 0;
+      u32 current_biglit = args->value("BIGLIT", 1);
       double best_cost = -1.0;
+      double current_cost = -1.0;
       for (u32 biglit : {0, 1}) {
-        shared.args->flags["BIGLIT"] = to_string(biglit);
+        args->flags["BIGLIT"] = to_string(biglit);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         log("Time for %12s using BIGLIT=%u is %6.1f\n", fft.spec().c_str(), biglit, cost);
+        if (biglit == current_biglit) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_biglit = biglit; }
       }
       log("Best BIGLIT is %u.  Default BIGLIT is 1.  The BIGLIT=0 option will probably be deprecated.\n", best_biglit);
-      shared.args->flags["BIGLIT"] = to_string(best_biglit);
+      configsUpdate(current_cost, best_cost, 0.003, "BIGLIT", best_biglit, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["BIGLIT"] = to_string(best_biglit);
     }
 
-    //GW:  Time some IN/OUT_WG/SIZEX combos?
+    // Output new settings to config.txt
+    File config = File::openAppend("config.txt");
+    if (newConfigKeyVals.size()) {
+      config.write("\n# New settings based on a -tune run.\n");
+      for (u32 i = 0; i < newConfigKeyVals.size(); ++i) {
+        config.write(i == 0 ? "   -use " : ",");
+        config.printf("%s=%u", newConfigKeyVals[i].first.c_str(), newConfigKeyVals[i].second);
+      }
+      config.write("\n");
+    }
+    if (suggestedConfigKeyVals.size()) {
+      config.write("\n# These settings were slightly faster in a -tune run.\n");
+      config.write("\n# It is suggested that each setting be timed over a longer duration to see if the setting really is faster.\n");
+      for (u32 i = 0; i < suggestedConfigKeyVals.size(); ++i) {
+        config.write(i == 0 ? "#  -use " : ",");
+        config.printf("%s=%u", suggestedConfigKeyVals[i].first.c_str(), suggestedConfigKeyVals[i].second);
+      }
+      config.write("\n");
+    }
+    config.write("\n# Running two workers often gives better throughput.");
+    config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers will often be better.\n");
+    config.write("#  -workers 2 -use TAIL_KERNEL=3\n");
   }
 
   // Flags that prune the amount of shapes and variants to time.
@@ -623,13 +909,11 @@ void Tune::tune() {
 skip_some_WH_variants = 2;   // should default be 1??
 skip_1K_256 = 0;
 
-//GW:  Suggest tuning with TAIL_KERNELS=2 even if production runs use TAIL_KERNELS=3
-
-  // For each width, time the 001, 101, and 201 variants to find the fastest width variant.
+  // For each width, time the 001, 101, and 201 FP64 variants to find the fastest width variant.
   // In an ideal world we'd use the -time feature and look at the kCarryFused timing.  Then we'd save this info in config.txt or tune.txt.
   map<int, u32> fastest_width_variants;
 
-  // For each height, time the 100, 101, and 102 variants to find the fastest height variant.
+  // For each height, time the 100, 101, and 102 FP64 variants to find the fastest height variant.
   // In an ideal world we'd use the -time feature and look at the tailSquare timing.  Then we'd save this info in config.txt or tune.txt.
   map<int, u32> fastest_height_variants;
 
@@ -638,11 +922,18 @@ skip_1K_256 = 0;
   // Loop through all possible FFT shapes
   for (const FFTShape& shape : shapes) {
 
+    // Skip some FFTs and NTTs
+    if (shape.fft_type == FFT64 && !time_FFTs) continue;
+    if (shape.fft_type != FFT64 && !time_NTTs) continue;
+
     // Time an exponent that's good for all variants and carry-config.
     u32 exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
 
   // Loop through all possible variants
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
+
+      // Only FP64 code supports variants
+      if (variant != LAST_VARIANT && !FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) continue;
 
       // Only AMD GPUs support variant zero (BCAST) and only if width <= 1024.
       if (variant_W(variant) == 0) {
@@ -656,6 +947,14 @@ skip_1K_256 = 0;
         if (shape.height > 1024) continue;
       }
 
+      // Reject shapes that won't be used to test exponents in the user's desired range
+      {
+        FFTConfig fft{shape, variant, CARRY_AUTO};
+        if (fft.maxExp() < min_exponent) continue;
+        if (fft.maxExp() > 2*max_exponent) continue;
+        if (shape.fft_type == FFT64 && fft.maxExp() > 1.2*max_exponent) continue;
+      }
+
       // If only one shape was specified on the command line, time it.  This lets the user time any shape, including non-favored ones.
       if (shapes.size() > 1) {
 
@@ -667,7 +966,7 @@ skip_1K_256 = 0;
 
         // Skip variants where width or height are not using the fastest variant.
         // NOTE: We ought to offer a tune=option where we also test more accurate variants to extend the FFT's max exponent.
-        if (skip_some_WH_variants) {
+        if (skip_some_WH_variants && FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) {
           u32 fastest_width = 1;
           if (auto it = fastest_width_variants.find(shape.width); it != fastest_width_variants.end()) {
             fastest_width = it->second;
@@ -689,7 +988,7 @@ skip_1K_256 = 0;
               FFTConfig{shape, variant, CARRY_32}.maxBpw() <
                   FFTConfig{shape, variant_WMH (fastest_width, variant_M(variant), variant_H(variant)), CARRY_32}.maxBpw()) continue;
         }
-        if (skip_some_WH_variants) {
+        if (skip_some_WH_variants && FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) {
           u32 fastest_height = 1;
           if (auto it = fastest_height_variants.find(shape.height); it != fastest_height_variants.end()) {
             fastest_height = it->second;
@@ -715,10 +1014,13 @@ skip_1K_256 = 0;
 
 //GW: If variant is specified on command line, time it (and only it)??  Or an option to only time one variant number??
 
-      vector carryToTest{CARRY_32};
-      // We need to test both carry-32 and carry-64 only when the carry transition is within the BPW range.
-      if (FFTConfig{shape, variant, CARRY_64}.maxBpw() > FFTConfig{shape, variant, CARRY_32}.maxBpw()) {
-        carryToTest.push_back(CARRY_64);
+      vector carryToTest{CARRY_AUTO};
+      if (shape.fft_type == FFT64) {
+        carryToTest[0] = CARRY_32;
+        // We need to test both carry-32 and carry-64 only when the carry transition is within the BPW range.
+        if (FFTConfig{shape, variant, CARRY_64}.maxBpw() > FFTConfig{shape, variant, CARRY_32}.maxBpw()) {
+          carryToTest.push_back(CARRY_64);
+        }
       }
 
       for (auto carry : carryToTest) {
@@ -729,10 +1031,11 @@ skip_1K_256 = 0;
 
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
         bool isUseful = TuneEntry{cost, fft}.update(results);
-        log("%c %6.1f %12s %9u\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
+        log("%c %6.1f %12s %9lu\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
       }
     }
   }
+//GW: write results more often (in case -tune run is aborted)?
 
   TuneEntry::writeTuneFile(results);
 }

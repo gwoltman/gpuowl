@@ -23,6 +23,7 @@
 #include <iomanip>
 #include <array>
 #include <cinttypes>
+#include <cstring>
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -38,8 +39,6 @@
 #define CARRY_LEN 8
 
 namespace {
-
-#if FFT_FP64
 
 u32 kAt(u32 H, u32 line, u32 col) { return (line + col * H) * 2; }
 
@@ -61,127 +60,105 @@ double invWeightM1(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
 
 double boundUnderOne(double x) { return std::min(x, nexttoward(1, 0)); }
 
-Weights genWeights(u32 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
-  u32 N = 2u * W * H;
-  
-  u32 groupWidth = W / nW;
-
-  // Inverse + Forward
-  vector<double> weightsConstIF;
-  vector<double> weightsIF;
-  for (u32 thread = 0; thread < groupWidth; ++thread) {
-    auto iw = invWeight(N, E, H, 0, thread, 0);
-    auto w = weight(N, E, H, 0, thread, 0);
-    // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
-    // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
-    // buffer, so there is an unfortunate duplication of these weights.
-    if (!AmdGpu) {
-      weightsConstIF.push_back(2 * boundUnderOne(iw));
-      weightsConstIF.push_back(2 * w);
-    }
-    weightsIF.push_back(2 * boundUnderOne(iw));
-    weightsIF.push_back(2 * w);
-  }
-
-  // the group order matches CarryA/M (not fftP/CarryFused).
-  for (u32 gy = 0; gy < H; ++gy) {
-    weightsIF.push_back(invWeightM1(N, E, H, gy, 0, 0));
-    weightsIF.push_back(weightM1(N, E, H, gy, 0, 0));
-  }
-  
-  vector<u32> bits;
-  
-  for (u32 line = 0; line < H; ++line) {
-    for (u32 thread = 0; thread < groupWidth; ) {
-      std::bitset<32> b;
-      for (u32 bitoffset = 0; bitoffset < 32; bitoffset += nW*2, ++thread) {
-        for (u32 block = 0; block < nW; ++block) {
-          for (u32 rep = 0; rep < 2; ++rep) {
-            if (isBigWord(N, E, kAt(H, line, block * groupWidth + thread) + rep)) { b.set(bitoffset + block * 2 + rep); }
-          }        
-        }
-      }
-      bits.push_back(b.to_ulong());
-    }
-  }
-  assert(bits.size() == N / 32);
-
-  return Weights{weightsConstIF, weightsIF, bits};
-}
-
-#endif
-
-#if FFT_FP32
-
-u32 kAt(u32 H, u32 line, u32 col) { return (line + col * H) * 2; }
-
-float weight(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float weight32(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2((double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
-float invWeight(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float invWeight32(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2(-(double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
-float weightM1(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float weightM132(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2((double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
 }
 
-float invWeightM1(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float invWeightM132(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2(- (double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
 }
 
 float boundUnderOne(float x) { return std::min(x, nexttowardf(1, 0)); }
 
-Weights genWeights(u32 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
+Weights genWeights(FFTConfig fft, u32 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
   u32 N = 2u * W * H;
-  
   u32 groupWidth = W / nW;
 
-  // Inverse + Forward
-  vector<float> weightsConstIF;
-  vector<float> weightsIF;
-  for (u32 thread = 0; thread < groupWidth; ++thread) {
-    auto iw = invWeight(N, E, H, 0, thread, 0);
-    auto w = weight(N, E, H, 0, thread, 0);
-    // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
-    // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
-    // buffer, so there is an unfortunate duplication of these weights.
-    if (!AmdGpu) {
-      weightsConstIF.push_back(2 * boundUnderOne(iw));
-      weightsConstIF.push_back(2 * w);
-    }
-    weightsIF.push_back(2 * boundUnderOne(iw));
-    weightsIF.push_back(2 * w);
-  }
-
-  // the group order matches CarryA/M (not fftP/CarryFused).
-  for (u32 gy = 0; gy < H; ++gy) {
-    weightsIF.push_back(invWeightM1(N, E, H, gy, 0, 0));
-    weightsIF.push_back(weightM1(N, E, H, gy, 0, 0));
-  }
-  
+  vector<double> weightsConstIF;
+  vector<double> weightsIF;
   vector<u32> bits;
 
-  for (u32 line = 0; line < H; ++line) {
-    for (u32 thread = 0; thread < groupWidth; ) {
-      std::bitset<32> b;
-      for (u32 bitoffset = 0; bitoffset < 32; bitoffset += nW*2, ++thread) {
-        for (u32 block = 0; block < nW; ++block) {
-          for (u32 rep = 0; rep < 2; ++rep) {
-            if (isBigWord(N, E, kAt(H, line, block * groupWidth + thread) + rep)) { b.set(bitoffset + block * 2 + rep); }
-          }        
-        }
+  if (fft.FFT_FP64) {
+    // Inverse + Forward
+    for (u32 thread = 0; thread < groupWidth; ++thread) {
+      auto iw = invWeight(N, E, H, 0, thread, 0);
+      auto w = weight(N, E, H, 0, thread, 0);
+      // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
+      // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
+      // buffer, so there is an unfortunate duplication of these weights.
+      if (!AmdGpu) {
+        weightsConstIF.push_back(2 * boundUnderOne(iw));
+        weightsConstIF.push_back(2 * w);
       }
-      bits.push_back(b.to_ulong());
+      weightsIF.push_back(2 * boundUnderOne(iw));
+      weightsIF.push_back(2 * w);
+    }
+
+    // the group order matches CarryA/M (not fftP/CarryFused).
+    for (u32 gy = 0; gy < H; ++gy) {
+      weightsIF.push_back(invWeightM1(N, E, H, gy, 0, 0));
+      weightsIF.push_back(weightM1(N, E, H, gy, 0, 0));
     }
   }
-  assert(bits.size() == N / 32);
+
+  else if (fft.FFT_FP32) {
+    vector<float> weightsConstIF32;
+    vector<float> weightsIF32;
+    // Inverse + Forward
+    for (u32 thread = 0; thread < groupWidth; ++thread) {
+      auto iw = invWeight32(N, E, H, 0, thread, 0);
+      auto w = weight32(N, E, H, 0, thread, 0);
+      // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
+      // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
+      // buffer, so there is an unfortunate duplication of these weights.
+      if (!AmdGpu) {
+        weightsConstIF32.push_back(2 * boundUnderOne(iw));
+        weightsConstIF32.push_back(2 * w);
+      }
+      weightsIF32.push_back(2 * boundUnderOne(iw));
+      weightsIF32.push_back(2 * w);
+    }
+
+    // the group order matches CarryA/M (not fftP/CarryFused).
+    for (u32 gy = 0; gy < H; ++gy) {
+      weightsIF32.push_back(invWeightM132(N, E, H, gy, 0, 0));
+      weightsIF32.push_back(weightM132(N, E, H, gy, 0, 0));
+    }
+
+    // Copy the float vectors to the double vectors
+    weightsConstIF.resize(weightsConstIF32.size() / 2);
+    memcpy((double *) weightsConstIF.data(), weightsConstIF32.data(), weightsConstIF32.size() * sizeof(float));
+    weightsIF.resize(weightsIF32.size() / 2);
+    memcpy((double *) weightsIF.data(), weightsIF32.data(), weightsIF32.size() * sizeof(float));
+  }
+
+  if (fft.FFT_FP64 || fft.FFT_FP64) {
+    for (u32 line = 0; line < H; ++line) {
+      for (u32 thread = 0; thread < groupWidth; ) {
+        std::bitset<32> b;
+        for (u32 bitoffset = 0; bitoffset < 32; bitoffset += nW*2, ++thread) {
+          for (u32 block = 0; block < nW; ++block) {
+            for (u32 rep = 0; rep < 2; ++rep) {
+              if (isBigWord(N, E, kAt(H, line, block * groupWidth + thread) + rep)) { b.set(bitoffset + block * 2 + rep); }
+	    }        
+	  }
+	}
+	bits.push_back(b.to_ulong());
+      }
+    }
+    assert(bits.size() == N / 32);
+  }
 
   return Weights{weightsConstIF, weightsIF, bits};
 }
-
-#endif
 
 string toLiteral(i32 value) { return to_string(value); }
 string toLiteral(u32 value) { return to_string(value) + 'u'; }
@@ -249,7 +226,7 @@ constexpr bool isInList(const string& s, initializer_list<string> list) {
 }
 
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u32 E, bool doLog,
-                 bool &tail_single_wide, bool &tail_single_kernel, u32 &tail_trigs, u32 &pad_size) {
+                 bool &tail_single_wide, bool &tail_single_kernel, u32 &pad_size) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -266,7 +243,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = 0, tail_single_kernel = 1;         // Default tailSquare is double-wide in one kernel
-  tail_trigs = 2;                                       // Default is calculating from scratch, no memory accesses
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
   // Validate -use options
@@ -292,7 +268,13 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "MIDDLE_OUT_LDS_TRANSPOSE",
                               "TAIL_KERNELS",
                               "TAIL_TRIGS",
-                              "TABMUL_CHAIN"
+                              "TAIL_TRIGS31",
+                              "TAIL_TRIGS32",
+                              "TAIL_TRIGS61",
+                              "TABMUL_CHAIN",
+                              "TABMUL_CHAIN31",
+                              "TABMUL_CHAIN32",
+                              "TABMUL_CHAIN61"
                             });
     if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
@@ -305,7 +287,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
       if (atoi(v.c_str()) == 2) tail_single_wide = 0, tail_single_kernel = 1;
       if (atoi(v.c_str()) == 3) tail_single_wide = 0, tail_single_kernel = 0;
     }
-    if (k == "TAIL_TRIGS") tail_trigs = atoi(v.c_str());
     if (k == "PAD") pad_size = atoi(v.c_str());
   }
 
@@ -332,64 +313,77 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   u32 N = fft.shape.size();
   defines += toDefine("FFT_VARIANT", fft.variant);
 
-#if FFT_FP64 | FFT_FP32
-  defines += toDefine("WEIGHT_STEP", weightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
-  defines += toDefine("IWEIGHT_STEP", invWeightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
-  defines += toDefine("TAILT", root1Fancy(fft.shape.height * 2, 1));
+  if (fft.FFT_FP64 | fft.FFT_FP32) {
+    defines += toDefine("WEIGHT_STEP", weightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
+    defines += toDefine("IWEIGHT_STEP", invWeightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
+    if (fft.FFT_FP64) defines += toDefine("TAILT", root1Fancy(fft.shape.height * 2, 1));
+    else defines += toDefine("TAILT", root1FancyFP32(fft.shape.height * 2, 1));
 
-  TrigCoefs coefs = trigCoefs(fft.shape.size() / 4);
-  defines += toDefine("TRIG_SCALE", int(coefs.scale));
-  defines += toDefine("TRIG_SIN",  coefs.sinCoefs);
-  defines += toDefine("TRIG_COS",  coefs.cosCoefs);
-#endif
-#if NTT_GF31
-  defines += toDefine("TAILTGF31", root1GF31(fft.shape.height * 2, 1));
-#endif
-#if NTT_GF61
-  defines += toDefine("TAILTGF61", root1GF61(fft.shape.height * 2, 1));
-#endif
+    TrigCoefs coefs = trigCoefs(fft.shape.size() / 4);
+    defines += toDefine("TRIG_SCALE", int(coefs.scale));
+    defines += toDefine("TRIG_SIN",  coefs.sinCoefs);
+    defines += toDefine("TRIG_COS",  coefs.cosCoefs);
+  }
+  if (fft.NTT_GF31) {
+    defines += toDefine("TAILTGF31", root1GF31(fft.shape.height * 2, 1));
+  }
+  if (fft.NTT_GF61) {
+    defines += toDefine("TAILTGF61", root1GF61(fft.shape.height * 2, 1));
+  }
 
-// When using multiple NTT primes or hybrid FFT/NTT, each FFT/NTT prime's data buffer and trig values are combined into one buffer.
-// The openCL code needs to know the offset to the data and trig values.  Distances are in "number of double2 values".
-#if FFT_FP64 & NTT_GF31
-  // GF31 data is located after the FP64 data.  Compute size of the FP64 data and trigs.
-  defines += toDefine("DISTGF31", FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
-  defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-  defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-  defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-#elif FFT_FP32 & NTT_GF31
-  // GF31 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-  defines += toDefine("DISTGF31", FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
-  defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-  defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-  defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-#elif FFT_FP32 & NTT_GF61
-  // GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-  defines += toDefine("DISTGF61", FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
-  defines += toDefine("DISTWTRIGGF61", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-  defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-  defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-#elif NTT_GF31 & NTT_GF61
-  defines += toDefine("DISTGF31", 0);
-  defines += toDefine("DISTWTRIGGF31", 0);
-  defines += toDefine("DISTMTRIGGF31", 0);
-  defines += toDefine("DISTHTRIGGF31", 0);
-  // GF61 data is located after the GF31 data.  Compute size of the GF31 data and trigs.
-  defines += toDefine("DISTGF61", GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
-  defines += toDefine("DISTWTRIGGF61", SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-  defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-  defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-#elif NTT_GF31
-  defines += toDefine("DISTGF31", 0);
-  defines += toDefine("DISTWTRIGGF31", 0);
-  defines += toDefine("DISTMTRIGGF31", 0);
-  defines += toDefine("DISTHTRIGGF31", 0);
-#elif NTT_GF61
-  defines += toDefine("DISTGF61", 0);
-  defines += toDefine("DISTWTRIGGF61", 0);
-  defines += toDefine("DISTMTRIGGF61", 0);
-  defines += toDefine("DISTHTRIGGF61", 0);
-#endif
+  // Enable/disable code for each possible FP and NTT
+  defines += toDefine("FFT_FP64", (int) fft.FFT_FP64);
+  defines += toDefine("FFT_FP32", (int) fft.FFT_FP32);
+  defines += toDefine("NTT_GF31", (int) fft.NTT_GF31);
+  defines += toDefine("NTT_GF61", (int) fft.NTT_GF61);
+  defines += toDefine("WordSize", fft.WordSize);
+
+  // When using multiple NTT primes or hybrid FFT/NTT, each FFT/NTT prime's data buffer and trig values are combined into one buffer.
+  // The openCL code needs to know the offset to the data and trig values.  Distances are in "number of double2 values".
+  if (fft.FFT_FP64 && fft.NTT_GF31) {
+    // GF31 data is located after the FP64 data.  Compute size of the FP64 data and trigs.
+    defines += toDefine("DISTGF31", FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
+    defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+  }
+  else if (fft.FFT_FP32 && fft.NTT_GF31) {
+    // GF31 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
+    defines += toDefine("DISTGF31", FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
+    defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+  }
+  else if (fft.FFT_FP32 && fft.NTT_GF61) {
+    // GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
+    defines += toDefine("DISTGF61", FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTWTRIGGF61", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
+    defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+  }
+  else if (fft.NTT_GF31 && fft.NTT_GF61) {
+    defines += toDefine("DISTGF31", 0);
+    defines += toDefine("DISTWTRIGGF31", 0);
+    defines += toDefine("DISTMTRIGGF31", 0);
+    defines += toDefine("DISTHTRIGGF31", 0);
+    // GF61 data is located after the GF31 data.  Compute size of the GF31 data and trigs.
+    defines += toDefine("DISTGF61", GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTWTRIGGF61", SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
+    defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+  }
+  else if (fft.NTT_GF31) {
+    defines += toDefine("DISTGF31", 0);
+    defines += toDefine("DISTWTRIGGF31", 0);
+    defines += toDefine("DISTMTRIGGF31", 0);
+    defines += toDefine("DISTHTRIGGF31", 0);
+  }
+  else if (fft.NTT_GF61) {
+    defines += toDefine("DISTGF61", 0);
+    defines += toDefine("DISTWTRIGGF61", 0);
+    defines += toDefine("DISTMTRIGGF61", 0);
+    defines += toDefine("DISTHTRIGGF61", 0);
+  }
 
   // Calculate fractional bits-per-word = (E % N) / N * 2^64
   u32 bpw_hi = (u64(E % N) << 32) / N;
@@ -511,6 +505,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   args{*shared.args},
   E(E),
   N(fft.shape.size()),
+  fft(fft),  
   WIDTH(fft.shape.width),
   SMALL_H(fft.shape.height),
   BIG_H(SMALL_H * fft.shape.middle),
@@ -518,12 +513,10 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   nW(fft.shape.nW()),
   nH(fft.shape.nH()),
   useLongCarry{args.carry == Args::CARRY_LONG},
-  compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize,
-                                           tail_single_wide, tail_single_kernel, tail_trigs, pad_size)},
+  compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, pad_size)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), queue, __VA_ARGS__)
 
-#if FFT_FP64 | FFT_FP32
   K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H)),
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH),
   K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2),
@@ -536,9 +529,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   K(ktailMulLow,           "tailmul.cl", "tailMul", hN / nH / 2, "-DMUL_LOW=1"),
   K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW),
-#endif
 
-#if NTT_GF31
   K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H)),
   K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH),
   K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2),
@@ -551,9 +542,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31", hN / nH / 2, "-DMUL_LOW=1"),
   K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW),
-#endif
 
-#if NTT_GF61
   K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H)),
   K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH),
   K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2),
@@ -566,7 +555,6 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61", hN / nH / 2, "-DMUL_LOW=1"),
   K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H)),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW),
-#endif
 
   K(kfftP,                 "fftp.cl", "fftP", hN / nW),
   K(kCarryA,               "carry.cl", "carry", hN / CARRY_LEN),
@@ -592,33 +580,30 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   K(kernIsEqual, "etc.cl", "isEqual", 256 * 256, "-DISEQUAL=1"),
   K(sum64,       "etc.cl", "sum64",   256 * 256, "-DSUM64=1"),
 
-#if FFT_FP64
   K(testTrig,    "selftest.cl", "testTrig", 256 * 256),
   K(testFFT4, "selftest.cl", "testFFT4", 256),
   K(testFFT14, "selftest.cl", "testFFT14", 256),
   K(testFFT15, "selftest.cl", "testFFT15", 256),
   K(testFFT, "selftest.cl", "testFFT", 256),
-#endif
   K(testTime, "selftest.cl", "testTime", 4096 * 64),
 
 #undef K
 
-  bufTrigH{shared.bufCache->smallTrigCombo(WIDTH, fft.shape.middle, SMALL_H, nH, fft.variant, tail_single_wide, tail_trigs)},
-  bufTrigM{shared.bufCache->middleTrig(SMALL_H, BIG_H / SMALL_H, WIDTH)},
-  bufTrigW{shared.bufCache->smallTrig(WIDTH, nW, fft.shape.middle, SMALL_H, nH, fft.variant, tail_single_wide, tail_trigs)},
+  bufTrigH{shared.bufCache->smallTrigCombo(shared.args, fft, WIDTH, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
+  bufTrigM{shared.bufCache->middleTrig(shared.args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
+  bufTrigW{shared.bufCache->smallTrig(shared.args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
 
-#if FFT_FP64 | FFT_FP32
-  weights{genWeights(E, WIDTH, BIG_H, nW, isAmdGpu(q->context->deviceId()))},
+  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isAmdGpu(q->context->deviceId()))},
   bufConstWeights{q->context, std::move(weights.weightsConstIF)},
   bufWeights{q->context,      std::move(weights.weightsIF)},
   bufBits{q->context,         std::move(weights.bitsCF)},
-#endif
 
 #define BUF(name, ...) name{profile.make(#name), queue, __VA_ARGS__}
 
-  BUF(bufData, N),
-  BUF(bufAux, N),
-  BUF(bufCheck, N),
+  // GPU Buffers containing integer data.  Since this buffer is type i64, if fft.WordSize < 8 then we need less memory allocated.
+  BUF(bufData, N * fft.WordSize / sizeof(Word)),
+  BUF(bufAux, N * fft.WordSize / sizeof(Word)),
+  BUF(bufCheck, N * fft.WordSize / sizeof(Word)),
   // Every double-word (i.e. N/2) produces one carry. In addition we may have one extra group thus WIDTH more carries.
   BUF(bufCarry, N / 2 + WIDTH),
   BUF(bufReady, (N / 2 + WIDTH) / 32), // Every wavefront (32 or 64 lanes) needs to signal "carry is ready"
@@ -629,9 +614,9 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   BUF(bufROE, ROE_SIZE),
   BUF(bufStatsCarry, CARRY_SIZE),
 
-  BUF(buf1, TOTAL_DATA_SIZE(WIDTH, fft.shape.middle, SMALL_H, pad_size)),
-  BUF(buf2, TOTAL_DATA_SIZE(WIDTH, fft.shape.middle, SMALL_H, pad_size)),
-  BUF(buf3, TOTAL_DATA_SIZE(WIDTH, fft.shape.middle, SMALL_H, pad_size)),
+  BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, pad_size)),
+  BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, pad_size)),
+  BUF(buf3, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, pad_size)),
 #undef BUF
 
   statsBits{u32(args.value("STATS", 0))},
@@ -645,7 +630,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
     // Sometimes we do want to run a FFT beyond a reasonable BPW (e.g. during -ztune), and these situations
     // coincide with logFftSize == false
     if (fft.maxExp() < E) {
-      log("Warning: %s (max %u) may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
+      log("Warning: %s (max %lu) may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
     }
   }
 
@@ -656,64 +641,64 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   }
 #endif
 
-  useLongCarry = useLongCarry || (bitsPerWord < 12.0);
+  useLongCarry = useLongCarry || (bitsPerWord < 10.0);
 
   if (useLongCarry) { log("Using long carry!\n"); }
 
-#if FFT_FP64 | FFT_FP32
-  kfftMidIn.setFixedArgs(2, bufTrigM);
-  kfftHin.setFixedArgs(2, bufTrigH);
-  ktailSquareZero.setFixedArgs(2, bufTrigH);
-  ktailSquare.setFixedArgs(2, bufTrigH);
-  ktailMulLow.setFixedArgs(3, bufTrigH);
-  ktailMul.setFixedArgs(3, bufTrigH);
-  kfftMidOut.setFixedArgs(2, bufTrigM);
-  kfftW.setFixedArgs(2, bufTrigW);
-#endif
-
-#if NTT_GF31
-  kfftMidInGF31.setFixedArgs(2, bufTrigM);
-  kfftHinGF31.setFixedArgs(2, bufTrigH);
-  ktailSquareZeroGF31.setFixedArgs(2, bufTrigH);
-  ktailSquareGF31.setFixedArgs(2, bufTrigH);
-  ktailMulLowGF31.setFixedArgs(3, bufTrigH);
-  ktailMulGF31.setFixedArgs(3, bufTrigH);
-  kfftMidOutGF31.setFixedArgs(2, bufTrigM);
-  kfftWGF31.setFixedArgs(2, bufTrigW);
-#endif
-
-#if NTT_GF61
-  kfftMidInGF61.setFixedArgs(2, bufTrigM);
-  kfftHinGF61.setFixedArgs(2, bufTrigH);
-  ktailSquareZeroGF61.setFixedArgs(2, bufTrigH);
-  ktailSquareGF61.setFixedArgs(2, bufTrigH);
-  ktailMulLowGF61.setFixedArgs(3, bufTrigH);
-  ktailMulGF61.setFixedArgs(3, bufTrigH);
-  kfftMidOutGF61.setFixedArgs(2, bufTrigM);
-  kfftWGF61.setFixedArgs(2, bufTrigW);
-#endif
-
-#if FFT_FP64 | FFT_FP32                         // The FP versions take bufWeight arguments  (and bufBits which may be deleted)
-  kfftP.setFixedArgs(2, bufTrigW, bufWeights);
-  for (Kernel* k : {&kCarryA, &kCarryAROE, &kCarryM, &kCarryMROE, &kCarryLL}) { k->setFixedArgs(3, bufCarry, bufWeights); }
-  for (Kernel* k : {&kCarryA, &kCarryM, &kCarryLL}) { k->setFixedArgs(5, bufStatsCarry); }
-  for (Kernel* k : {&kCarryAROE, &kCarryMROE})      { k->setFixedArgs(5, bufROE); }
-  for (Kernel* k : {&kCarryFused, &kCarryFusedROE, &kCarryFusedMul, &kCarryFusedMulROE, &kCarryFusedLL}) {
-    k->setFixedArgs(3, bufCarry, bufReady, bufTrigW, bufBits, bufConstWeights, bufWeights);
+  if (fft.FFT_FP64 || fft.FFT_FP32) {
+    kfftMidIn.setFixedArgs(2, bufTrigM);
+    kfftHin.setFixedArgs(2, bufTrigH);
+    ktailSquareZero.setFixedArgs(2, bufTrigH);
+    ktailSquare.setFixedArgs(2, bufTrigH);
+    ktailMulLow.setFixedArgs(3, bufTrigH);
+    ktailMul.setFixedArgs(3, bufTrigH);
+    kfftMidOut.setFixedArgs(2, bufTrigM);
+    kfftW.setFixedArgs(2, bufTrigW);
   }
-  for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE})           { k->setFixedArgs(9, bufROE); }
-  for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(9, bufStatsCarry); }
-#else
-  kfftP.setFixedArgs(2, bufTrigW);
-  for (Kernel* k : {&kCarryA, &kCarryAROE, &kCarryM, &kCarryMROE, &kCarryLL}) { k->setFixedArgs(3, bufCarry); }
-  for (Kernel* k : {&kCarryA, &kCarryM, &kCarryLL}) { k->setFixedArgs(4, bufStatsCarry); }
-  for (Kernel* k : {&kCarryAROE, &kCarryMROE})      { k->setFixedArgs(4, bufROE); }
-  for (Kernel* k : {&kCarryFused, &kCarryFusedROE, &kCarryFusedMul, &kCarryFusedMulROE, &kCarryFusedLL}) {
-    k->setFixedArgs(3, bufCarry, bufReady, bufTrigW);
+
+  if (fft.NTT_GF31) {
+    kfftMidInGF31.setFixedArgs(2, bufTrigM);
+    kfftHinGF31.setFixedArgs(2, bufTrigH);
+    ktailSquareZeroGF31.setFixedArgs(2, bufTrigH);
+    ktailSquareGF31.setFixedArgs(2, bufTrigH);
+    ktailMulLowGF31.setFixedArgs(3, bufTrigH);
+    ktailMulGF31.setFixedArgs(3, bufTrigH);
+    kfftMidOutGF31.setFixedArgs(2, bufTrigM);
+    kfftWGF31.setFixedArgs(2, bufTrigW);
   }
-  for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE}) { k->setFixedArgs(6, bufROE); }
-  for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(6, bufStatsCarry); }
-#endif
+
+  if (fft.NTT_GF61) {
+    kfftMidInGF61.setFixedArgs(2, bufTrigM);
+    kfftHinGF61.setFixedArgs(2, bufTrigH);
+    ktailSquareZeroGF61.setFixedArgs(2, bufTrigH);
+    ktailSquareGF61.setFixedArgs(2, bufTrigH);
+    ktailMulLowGF61.setFixedArgs(3, bufTrigH);
+    ktailMulGF61.setFixedArgs(3, bufTrigH);
+    kfftMidOutGF61.setFixedArgs(2, bufTrigM);
+    kfftWGF61.setFixedArgs(2, bufTrigW);
+  }
+
+  if (fft.FFT_FP64 || fft.FFT_FP32) {                         // The FP versions take bufWeight arguments  (and bufBits which may be deleted)
+    kfftP.setFixedArgs(2, bufTrigW, bufWeights);
+    for (Kernel* k : {&kCarryA, &kCarryAROE, &kCarryM, &kCarryMROE, &kCarryLL}) { k->setFixedArgs(3, bufCarry, bufWeights); }
+    for (Kernel* k : {&kCarryA, &kCarryM, &kCarryLL}) { k->setFixedArgs(5, bufStatsCarry); }
+    for (Kernel* k : {&kCarryAROE, &kCarryMROE})      { k->setFixedArgs(5, bufROE); }
+    for (Kernel* k : {&kCarryFused, &kCarryFusedROE, &kCarryFusedMul, &kCarryFusedMulROE, &kCarryFusedLL}) {
+      k->setFixedArgs(3, bufCarry, bufReady, bufTrigW, bufBits, bufConstWeights, bufWeights);
+    }
+    for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE})           { k->setFixedArgs(9, bufROE); }
+    for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(9, bufStatsCarry); }
+  } else {
+    kfftP.setFixedArgs(2, bufTrigW);
+    for (Kernel* k : {&kCarryA, &kCarryAROE, &kCarryM, &kCarryMROE, &kCarryLL}) { k->setFixedArgs(3, bufCarry); }
+    for (Kernel* k : {&kCarryA, &kCarryM, &kCarryLL}) { k->setFixedArgs(4, bufStatsCarry); }
+    for (Kernel* k : {&kCarryAROE, &kCarryMROE})      { k->setFixedArgs(4, bufROE); }
+    for (Kernel* k : {&kCarryFused, &kCarryFusedROE, &kCarryFusedMul, &kCarryFusedMulROE, &kCarryFusedLL}) {
+      k->setFixedArgs(3, bufCarry, bufReady, bufTrigW);
+    }
+    for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE}) { k->setFixedArgs(6, bufROE); }
+    for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(6, bufStatsCarry); }
+  }
 
   carryB.setFixedArgs(1, bufCarry);
 
@@ -739,99 +724,51 @@ void Gpu::fftP(Buffer<double>& out, Buffer<Word>& in) {
 }
 
 void Gpu::fftW(Buffer<double>& out, Buffer<double>& in) {
-#if FFT_FP64 | FFT_FP32
-  kfftW(out, in);
-#endif
-#if NTT_GF31
-  kfftWGF31(out, in);
-#endif
-#if NTT_GF61
-  kfftWGF61(out, in);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) kfftW(out, in);
+  if (fft.NTT_GF31) kfftWGF31(out, in);
+  if (fft.NTT_GF61) kfftWGF61(out, in);
 }
 
 void Gpu::fftMidIn(Buffer<double>& out, Buffer<double>& in) {
-#if FFT_FP64 | FFT_FP32
-  kfftMidIn(out, in);
-#endif
-#if NTT_GF31
-  kfftMidInGF31(out, in);
-#endif
-#if NTT_GF61
-  kfftMidInGF61(out, in);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) kfftMidIn(out, in);
+  if (fft.NTT_GF31) kfftMidInGF31(out, in);
+  if (fft.NTT_GF61) kfftMidInGF61(out, in);
 }
 
 void Gpu::fftMidOut(Buffer<double>& out, Buffer<double>& in) {
-#if FFT_FP64 | FFT_FP32
-  kfftMidOut(out, in);
-#endif
-#if NTT_GF31
-  kfftMidOutGF31(out, in);
-#endif
-#if NTT_GF61
-  kfftMidOutGF61(out, in);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) kfftMidOut(out, in);
+  if (fft.NTT_GF31) kfftMidOutGF31(out, in);
+  if (fft.NTT_GF61) kfftMidOutGF61(out, in);
 }
 
 void Gpu::fftHin(Buffer<double>& out, Buffer<double>& in) {
-#if FFT_FP64 | FFT_FP32
-  kfftHin(out, in);
-#endif
-#if NTT_GF31
-  kfftHinGF31(out, in);
-#endif
-#if NTT_GF61
-  kfftHinGF61(out, in);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) kfftHin(out, in);
+  if (fft.NTT_GF31) kfftHinGF31(out, in);
+  if (fft.NTT_GF61) kfftHinGF61(out, in);
 }
 
 void Gpu::tailSquareZero(Buffer<double>& out, Buffer<double>& in) {
-#if FFT_FP64 | FFT_FP32
-  ktailSquareZero(out, in);
-#endif
-#if NTT_GF31
-  ktailSquareZeroGF31(out, in);
-#endif
-#if NTT_GF61
-  ktailSquareZeroGF61(out, in);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) ktailSquareZero(out, in);
+  if (fft.NTT_GF31) ktailSquareZeroGF31(out, in);
+  if (fft.NTT_GF61) ktailSquareZeroGF61(out, in);
 }
 
 void Gpu::tailSquare(Buffer<double>& out, Buffer<double>& in) {
-#if FFT_FP64 | FFT_FP32
-  ktailSquare(out, in);
-#endif
-#if NTT_GF31
-  ktailSquareGF31(out, in);
-#endif
-#if NTT_GF61
-  ktailSquareGF61(out, in);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) ktailSquare(out, in);
+  if (fft.NTT_GF31) ktailSquareGF31(out, in);
+  if (fft.NTT_GF61) ktailSquareGF61(out, in);
 }
 
 void Gpu::tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2) {
-#if FFT_FP64 | FFT_FP32
-  ktailMul(out, in1, in2);
-#endif
-#if NTT_GF31
-  ktailMulGF31(out, in1, in2);
-#endif
-#if NTT_GF61
-  ktailMulGF61(out, in1, in2);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) ktailMul(out, in1, in2);
+  if (fft.NTT_GF31) ktailMulGF31(out, in1, in2);
+  if (fft.NTT_GF61) ktailMulGF61(out, in1, in2);
 }
 
 void Gpu::tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2) {
-#if FFT_FP64 | FFT_FP32
-  ktailMulLow(out, in1, in2);
-#endif
-#if NTT_GF31
-  ktailMulLowGF31(out, in1, in2);
-#endif
-#if NTT_GF61
-  ktailMulLowGF61(out, in1, in2);
-#endif
+  if (fft.FFT_FP64 || fft.FFT_FP32) ktailMulLow(out, in1, in2);
+  if (fft.NTT_GF31) ktailMulLowGF31(out, in1, in2);
+  if (fft.NTT_GF61) ktailMulLowGF61(out, in1, in2);
 }
 
 void Gpu::carryA(Buffer<Word>& out, Buffer<double>& in) {
@@ -962,13 +899,12 @@ vector<Word> Gpu::readChecked(Buffer<Word>& buf) {
     vector<Word> data = readOut(buf);
 
     u64 gpuSum = expectedVect[0];
-
     u64 hostSum = 0;
+
     int even = 1;
     for (auto it = data.begin(), end = data.end(); it < end; ++it, even = !even) {
-      if (sizeof(Word) == 4) hostSum += even ? u64(u32(*it)) : (u64(*it) << 32);
-      if (sizeof(Word) == 8) hostSum += u64(*it);
-      if (sizeof(Word) == 16) hostSum += u64(*it) + u64((__int128) *it >> 64);
+      if (fft.WordSize == 4) hostSum += even ? u64(u32(*it)) : (u64(*it) << 32);
+      if (fft.WordSize == 8) hostSum += u64(*it);
     }
 
     if (hostSum == gpuSum) {
@@ -1079,15 +1015,43 @@ void Gpu::logTimeKernels() {
   profile.reset();
 }
 
+vector<Word> Gpu::readWords(Buffer<Word> &buf) {
+  // GPU is returning either 4-byte or 8-byte integers.  C++ code is expecting 8-byte integers.  Handle the "no conversion" case.
+  if (fft.WordSize == 8) return buf.read();
+  // Convert 32-bit GPU Words into 64-bit C++ Words
+  vector<Word> GPUdata = buf.read();
+  vector<Word> CPUdata;
+  CPUdata.resize(GPUdata.size() * 2);
+  for (u32 i = 0; i < GPUdata.size(); ++i) {
+    CPUdata[2*i] = (i32) GPUdata[i];
+    CPUdata[2*i+1] = (GPUdata[i] >> 32);
+  }
+  return CPUdata;
+}
+
+void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
+  // GPU is expecting either 4-byte or 8-byte integers.  C++ code is using 8-byte integers.  Handle the "no conversion" case.
+  if (fft.WordSize == 8) buf.write(std::move(words));
+  // Convert 64-bit C++ Words into 32-bit GPU Words
+  else {
+    vector<Word> GPUdata;
+    GPUdata.resize(words.size() / 2);
+    for (u32 i = 0; i < words.size(); i += 2) {
+      GPUdata[i/2] = ((i64) words[i+1] << 32) | (i32) words[i];
+    }
+    buf.write(std::move(GPUdata));
+  }
+}
+
 vector<Word> Gpu::readOut(Buffer<Word> &buf) {
   transpOut(bufAux, buf);
-  return bufAux.read();
+  return readWords(bufAux);
 }
 
 void Gpu::writeIn(Buffer<Word>& buf, const vector<u32>& words) { writeIn(buf, expandBits(words, N, E)); }
 
 void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
-  bufAux.write(std::move(words));
+  writeWords(bufAux, words);
   transpIn(buf, bufAux);
 }
 
@@ -1235,8 +1199,7 @@ bool Gpu::isEqual(Buffer<Word>& in1, Buffer<Word>& in2) {
 
 u64 Gpu::bufResidue(Buffer<Word> &buf) {
   readResidue(bufSmallOut, buf);
-  Word words[64];
-  bufSmallOut.read(words, 64);
+  vector<Word> words = readWords(bufSmallOut);
 
   int carry = 0;
   for (int i = 0; i < 32; ++i) {

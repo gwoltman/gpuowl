@@ -7,7 +7,16 @@
 //      1 = Limited memory accesses and some DP computation.  Tuned for Radeon VII a GPU with good DP performance.
 //      0 = No DP computation.  Trig vaules read from memory.  Good for GPUs with poor DP performance (a typical consumer grade GPU).
 #if !defined(TAIL_TRIGS)
-#define TAIL_TRIGS      2                         // Default is compute trig values from scratch
+#define TAIL_TRIGS      2                         // Default is compute trig values from scratch for FP64
+#endif
+#if !defined(TAIL_TRIGS31)
+#define TAIL_TRIGS31    0                         // Default is read all trig values from memory for GF31
+#endif
+#if !defined(TAIL_TRIGS32)
+#define TAIL_TRIGS32    2                         // Default is compute trig values from scratch for FP32
+#endif
+#if !defined(TAIL_TRIGS61)
+#define TAIL_TRIGS61    0                         // Default is read all trig values from memory for GF61
 #endif
 
 // TAIL_KERNELS setting:

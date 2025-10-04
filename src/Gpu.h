@@ -77,20 +77,11 @@ public:
   double gumbelMiu{}, gumbelBeta{};
 };
 
-#if FFT_FP64
 struct Weights {
   vector<double> weightsConstIF;
   vector<double> weightsIF;
   vector<u32> bitsCF;
 };
-#endif
-#if FFT_FP32
-struct Weights {
-  vector<float> weightsConstIF;
-  vector<float> weightsIF;
-  vector<u32> bitsCF;
-};
-#endif
 
 class Gpu {
   Queue* queue;
@@ -105,6 +96,7 @@ private:
   u32 E;
   u32 N;
 
+  FFTConfig fft;
   u32 WIDTH;
   u32 SMALL_H;
   u32 BIG_H;
@@ -117,7 +109,7 @@ private:
 
   KernelCompiler compiler;
 
-#if FFT_FP64 | FFT_FP32
+  /* Kernels for FFT_FP64 or FFT_FP32 */
   Kernel kfftMidIn;
   Kernel kfftHin;
   Kernel ktailSquareZero;
@@ -126,9 +118,8 @@ private:
   Kernel ktailMulLow;
   Kernel kfftMidOut;
   Kernel kfftW;
-#endif
 
-#if NTT_GF31
+  /* Kernels for NTT_GF31 */
   Kernel kfftMidInGF31;
   Kernel kfftHinGF31;
   Kernel ktailSquareZeroGF31;
@@ -137,9 +128,8 @@ private:
   Kernel ktailMulLowGF31;
   Kernel kfftMidOutGF31;
   Kernel kfftWGF31;
-#endif
 
-#if NTT_GF61
+  /* Kernels for NTT_GF61 */
   Kernel kfftMidInGF61;
   Kernel kfftHinGF61;
   Kernel ktailSquareZeroGF61;
@@ -148,8 +138,8 @@ private:
   Kernel ktailMulLowGF61;
   Kernel kfftMidOutGF61;
   Kernel kfftWGF61;
-#endif
 
+  /* Kernels dealing with the FP data and product of NTT primes */
   Kernel kfftP;
   Kernel kCarryA;
   Kernel kCarryAROE;
@@ -167,13 +157,13 @@ private:
   Kernel readResidue;
   Kernel kernIsEqual;
   Kernel sum64;
-#if FFT_FP64
+
+  /* Weird test kernels */
   Kernel testTrig;
   Kernel testFFT4;
   Kernel testFFT14;
   Kernel testFFT15;
   Kernel testFFT;
-#endif
   Kernel testTime;
 
   // Kernel testKernel;
@@ -181,7 +171,6 @@ private:
   // Copy of some -use options needed for Kernel, Trig, and Weights initialization
   bool tail_single_wide;                // TailSquare processes one line at a time
   bool tail_single_kernel;              // TailSquare does not use a separate kernel for line zero
-  u32 tail_trigs;                       // 0,1,2.  Increasing values use more DP and less memory accesses
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
 
   // Twiddles: trigonometry constant buffers, used in FFTs.
@@ -191,19 +180,11 @@ private:
   TrigPtr bufTrigM;
   TrigPtr bufTrigW;
 
-  // The weights and the "bigWord bits" depend on the exponent.
-#if FFT_FP64
+  // Weights and the "bigWord bits" are only needed for FP64 and FP32 FFTs
   Weights weights;
   Buffer<double> bufConstWeights;
   Buffer<double> bufWeights;
   Buffer<u32> bufBits;  // bigWord bits aligned for CarryFused/fftP
-#endif
-#if FFT_FP32
-  Weights weights;
-  Buffer<float> bufConstWeights;
-  Buffer<float> bufWeights;
-  Buffer<u32> bufBits;  // bigWord bits aligned for CarryFused/fftP
-#endif
 
   // "integer word" buffers. These are "small buffers": N x int.
   Buffer<Word> bufData;   // Main int buffer with the words.
@@ -253,6 +234,9 @@ private:
   void carryFused(Buffer<double>& out, Buffer<double>& in);
   void carryFusedMul(Buffer<double>& out, Buffer<double>& in);
   void carryFusedLL(Buffer<double>& out, Buffer<double>& in);
+
+  vector<Word> readWords(Buffer<Word> &buf);
+  void writeWords(Buffer<Word>& buf, vector<Word> &words);
 
   vector<Word> readOut(Buffer<Word> &buf);
   void writeIn(Buffer<Word>& buf, vector<Word>&& words);
@@ -323,7 +307,7 @@ public:
   
   u64 dataResidue()  { return bufResidue(bufData); }
   u64 checkResidue() { return bufResidue(bufCheck); }
-    
+
   bool doCheck(u32 blockSize);
 
   void logTimeKernels();
@@ -343,7 +327,7 @@ public:
 
   // A:= A^h * B
   void expMul(Buffer<Word>& A, u64 h, Buffer<Word>& B);
-  
+
   // return A^(2^n)
   Words expExp2(const Words& A, u32 n);
   vector<Buffer<Word>> makeBufVector(u32 size);
@@ -365,4 +349,5 @@ private:
 #define FP32_DATA_SIZE(W,M,H,pad)       PAD_ADJUST(W*M*H*2, M, pad) * sizeof(float) / sizeof(double)
 #define GF31_DATA_SIZE(W,M,H,pad)       PAD_ADJUST(W*M*H*2, M, pad) * sizeof(uint) / sizeof(double)
 #define GF61_DATA_SIZE(W,M,H,pad)       PAD_ADJUST(W*M*H*2, M, pad) * sizeof(ulong) / sizeof(double)
-#define TOTAL_DATA_SIZE(W,M,H,pad)      FFT_FP64 * FP64_DATA_SIZE(W,M,H,pad) + FFT_FP32 * FP32_DATA_SIZE(W,M,H,pad) + NTT_GF31 * GF31_DATA_SIZE(W,M,H,pad) + NTT_GF61 * GF61_DATA_SIZE(W,M,H,pad)
+#define TOTAL_DATA_SIZE(fft,W,M,H,pad)  fft.FFT_FP64 * FP64_DATA_SIZE(W,M,H,pad) + fft.FFT_FP32 * FP32_DATA_SIZE(W,M,H,pad) + \
+                                        fft.NTT_GF31 * GF31_DATA_SIZE(W,M,H,pad) + fft.NTT_GF61 * GF61_DATA_SIZE(W,M,H,pad)

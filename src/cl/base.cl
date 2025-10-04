@@ -103,8 +103,21 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #error FFT_VARIANT_H must be between 0 and 2
 #endif
 
+#if !defined(BIGLIT)
+#define BIGLIT 1
+#endif
+
 #if !defined(TABMUL_CHAIN)
 #define TABMUL_CHAIN 0
+#endif
+#if !defined(TABMUL_CHAIN31)
+#define TABMUL_CHAIN31 0
+#endif
+#if !defined(TABMUL_CHAIN32)
+#define TABMUL_CHAIN32 0
+#endif
+#if !defined(TABMUL_CHAIN61)
+#define TABMUL_CHAIN61 0
 #endif
 
 #if !defined(MIDDLE_CHAIN)
@@ -156,26 +169,6 @@ typedef ulong u64;
 typedef __int128 i128;
 typedef unsigned __int128 u128;
 
-// Typedefs and defines for supporting hybrid FFTs
-#if !defined(FFT_FP64)
-#define FFT_FP64 1
-#endif
-#if !defined(FFT_FP32)
-#define FFT_FP32 0
-#endif
-#if !defined(NTT_GF31)
-#define NTT_GF31 0
-#endif
-#if !defined(NTT_GF61)
-#define NTT_GF61 0
-#endif
-#if !defined(NTT_NCW)
-#define NTT_NCW 0
-#endif
-#if NTT_NCW
-#error  Nick Craig-Woods NTT prime is not supported now
-#endif
-
 // Data types for data stored in FFTs and NTTs during the transform
 typedef double T;           // For historical reasons, classic FFTs using doubles call their data T and T2.
 typedef double2 T2;         // A complex value using doubles in a classic FFT.
@@ -189,18 +182,22 @@ typedef ulong2 GF61;        // A complex value using two Z61s.  For a GF(M61^2) 
 //typedef ulong2 NCW2;        // A complex value using NCWs.  For a Nick Craig-Wood's insipred NTT using prime 2^64 - 2^32 + 1.
 
 // Typedefs for "combo" FFT/NTTs (multiple NTT primes or hybrid FFT/NTT).
+#define COMBO_FFT (FFT_FP64 + FFT_FP32 + NTT_GF31 + NTT_GF61 > 1)
+// Sanity check for supported FFT/NTT
+#if (FFT_FP64 & NTT_GF31 & !FFT_FP32 & !NTT_GF61) | (NTT_GF31 & NTT_GF61 & !FFT_FP64 & !FFT_FP32) | (FFT_FP32 & NTT_GF61 & !FFT_FP64 & !NTT_GF31)
+#elif !COMBO_FFT | (FFT_FP32 & NTT_GF31 & !FFT_FP64 & !NTT_GF61)
+#else
+error - unsupported FFT/NTT combination
+#endif
 // Word and Word2 define the data type for FFT integers passed between the CPU and GPU.
-#define COMBO_FFT (FFT_FP64 + FFT_FP32 + NTT_GF31 + NTT_GF61 + NTT_NCW > 1)
-#if (FFT_FP64 & NTT_GF31 & !FFT_FP32 & !NTT_GF61 & !NTT_NCW) | (NTT_GF31 & NTT_GF61 & !FFT_FP64 & !FFT_FP32 & !NTT_NCW) | (FFT_FP32 & NTT_GF61 & !FFT_FP64 & !NTT_GF31 & !NTT_NCW)
-#define WordSize        8
+#if WordSize == 8
 typedef i64 Word;
 typedef long2 Word2;
-#elif !COMBO_FFT | (FFT_FP32 & NTT_GF31 & !FFT_FP64 & !NTT_GF61 & !NTT_NCW)
-#define WordSize        4
+#elif WordSize == 4
 typedef i32 Word;
 typedef int2 Word2;
 #else
-error - unsupported FFT/NTT combination
+error - unsupported integer WordSize
 #endif
 
 // Routine to create a pair

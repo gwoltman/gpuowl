@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "FFTConfig.h"
 
 #include <mutex>
 
@@ -26,8 +27,8 @@ class TrigBufCache {
   const Context* context;
   std::mutex mut;
 
-  std::map<tuple<u32, u32, u32, u32, bool, u32>, TrigPtr::weak_type> small;
-  std::map<tuple<u32, u32, u32>, TrigPtr::weak_type> middle;
+  std::map<tuple<u32, u32, u32, u32, u32>, TrigPtr::weak_type> small;
+  std::map<tuple<u32, u32, u32, u32>, TrigPtr::weak_type> middle;
 
   // The shared-pointers below keep the most recent set of buffers alive even without any Gpu instance
   // referencing them. This allows a single worker to delete & re-create the Gpu instance and still reuse the buffers.
@@ -41,29 +42,20 @@ public:
 
   ~TrigBufCache();
 
-  TrigPtr smallTrigCombo(u32 width, u32 middle, u32 height, u32 nH, u32 variant, bool tail_single_wide, u32 tail_trigs);
-  TrigPtr middleTrig(u32 SMALL_H, u32 MIDDLE, u32 W);
-  TrigPtr smallTrig(u32 width, u32 nW, u32 middle, u32 height, u32 nH, u32 variant, bool tail_single_wide, u32 tail_trigs);
+  TrigPtr smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 middle, u32 height, u32 nH, bool tail_single_wide);
+  TrigPtr middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 W);
+  TrigPtr smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u32 middle, u32 height, u32 nH, bool tail_single_wide);
 };
 
 
-#if FFT_FP64
 double2 root1Fancy(u32 N, u32 k);               // For small angles, return "fancy" cos - 1 for increased precision
 double2 root1(u32 N, u32 k);
-#endif
 
-#if FFT_FP32
-float2 root1Fancy(u32 N, u32 k);               // For small angles, return "fancy" cos - 1 for increased precision
-float2 root1(u32 N, u32 k);
-#endif
+float2 root1FancyFP32(u32 N, u32 k);            // For small angles, return "fancy" cos - 1 for increased precision
+float2 root1FP32(u32 N, u32 k);
 
-#if NTT_GF31
 uint2 root1GF31(u32 N, u32 k);
-#endif
-
-#if NTT_GF61
 ulong2 root1GF61(u32 N, u32 k);
-#endif
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of float2 values)
 #define SMALLTRIG_FP64_SIZE(W,M,H,nH)           (W != H || H == 0 ? W * 5 : SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)) // See genSmallTrigFP64

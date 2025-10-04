@@ -409,11 +409,11 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
-#if TAIL_TRIGS == 2
+#if TAIL_TRIGS32 == 2
   F2 trig = slowTrig_N(line1 + me * H, ND / NH);
 
   // Do a little bit of memory access and a little bit of DP math.  Good on a Radeon VII.
-#elif TAIL_TRIGS == 1
+#elif TAIL_TRIGS32 == 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
@@ -454,9 +454,9 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   }
 
   bar();
-  fft_HEIGHT(lds, v, smallTrigF2, w);
+  fft_HEIGHT(lds, v, smallTrigF2);
   bar();
-  fft_HEIGHT(lds, u, smallTrigF2, w);
+  fft_HEIGHT(lds, u, smallTrigF2);
 
   writeTailFusedLine(v, outF2, memline2, me);
   writeTailFusedLine(u, outF2, memline1, me);
@@ -523,11 +523,11 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
-#if TAIL_TRIGS == 2
+#if TAIL_TRIGS32 == 2
   F2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
 
   // Do a little bit of memory access and a little bit of DP math.  Good on a Radeon VII.
-#elif TAIL_TRIGS == 1
+#elif TAIL_TRIGS32 == 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
@@ -647,7 +647,7 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
-#if TAIL_TRIGS >= 1
+#if TAIL_TRIGS31 >= 1
   GF31 trig = smallTrig31[height_trigs + me];
 #if SINGLE_WIDE
   GF31 mult = smallTrig31[height_trigs + G_H + line];
@@ -710,12 +710,8 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   fft_HEIGHT(lds, v, smallTrig31);
 #endif
 
-  // Compute trig values from scratch.  Good on GPUs with relatively slow memory.
-#if 0 && TAIL_TRIGS == 2
-  GF31 trig = slowTrigGF31(line1 + me * H, ND / NH);
-
   // Do a little bit of memory access and a little bit of math.
-#elif TAIL_TRIGS >= 1
+#if TAIL_TRIGS31 >= 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
@@ -823,12 +819,8 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   new_fft_HEIGHT2_1(lds, u, smallTrig31);
 #endif
 
-  // Compute trig values from scratch.  Good on GPUs with high MUL throughput??
-#if 0 && TAIL_TRIGS == 2
-  GF31 trig = slowTrigGF31(line + H * lowMe, ND / NH * 2);
-
   // Do a little bit of memory access and a little bit of math.  Good on a Radeon VII.
-#elif TAIL_TRIGS >= 1
+#if TAIL_TRIGS31 >= 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
@@ -948,7 +940,7 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
-#if TAIL_TRIGS >= 1
+#if TAIL_TRIGS61 >= 1
   GF61 trig = smallTrig61[height_trigs + me];
 #if SINGLE_WIDE
   GF61 mult = smallTrig61[height_trigs + G_H + line];
@@ -1011,12 +1003,8 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   fft_HEIGHT(lds, v, smallTrig61);
 #endif
 
-  // Compute trig values from scratch.  Good on GPUs with relatively slow memory??
-#if 0 && TAIL_TRIGS == 2
-  GF61 trig = slowTrigGF61(line1 + me * H, ND / NH);
-
   // Do a little bit of memory access and a little bit of math.
-#elif TAIL_TRIGS >= 1
+#if TAIL_TRIGS61 >= 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
@@ -1124,12 +1112,8 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   new_fft_HEIGHT2_1(lds, u, smallTrig61);
 #endif
 
-  // Compute trig values from scratch.  Good on GPUs with high MUL throughput??
-#if 0 && TAIL_TRIGS == 2
-  GF61 trig = slowTrigGF61(line + H * lowMe, ND / NH * 2);
-
   // Do a little bit of memory access and a little bit of math.  Good on a Radeon VII.
-#elif TAIL_TRIGS >= 1
+#if TAIL_TRIGS61 >= 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;

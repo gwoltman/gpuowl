@@ -23,18 +23,9 @@ using namespace std;
 namespace std::filesystem{};
 namespace fs = std::filesystem;
 
-#define FFT_FP64 1
-#define FFT_FP32 0
-#define NTT_GF31 0
-#define NTT_GF61 0
-#define NTT_NCW 0
-
-// When using multiple primes in an NTT the size of an integer FFT "word" grows such that we need to support words larger than 32-bits
-#if (FFT_FP64 && NTT_GF31) | (FFT_FP32 && NTT_GF61) | (NTT_GF31 && NTT_GF61)
+// When using multiple primes in an NTT the size of an integer FFT "word" can be 64 bits.  Original FP64 FFT needs only 32 bits.
+// C code will use i64 integer data.  The code that reads and writes GPU buffers will downsize the integers to 32 bits when required.
 typedef i64 Word;
-#else
-typedef i32 Word;
-#endif
 
 using double2 = pair<double, double>;
 using float2 = pair<float, float>;

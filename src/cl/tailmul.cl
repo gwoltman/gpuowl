@@ -320,7 +320,7 @@ KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
-#if TAIL_TRIGS >= 1
+#if TAIL_TRIGS31 >= 1
   GF31 trig = smallTrig31[height_trigs + me];                    // Trig values for line zero, should be cached
 #if SINGLE_WIDE
   GF31 mult = smallTrig31[height_trigs + G_H + line1];
@@ -449,7 +449,7 @@ KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
-#if TAIL_TRIGS >= 1
+#if TAIL_TRIGS61 >= 1
   GF61 trig = smallTrig61[height_trigs + me];                    // Trig values for line zero, should be cached
 #if SINGLE_WIDE
   GF61 mult = smallTrig61[height_trigs + G_H + line1];
