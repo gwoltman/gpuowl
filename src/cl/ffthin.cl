@@ -57,7 +57,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
   F2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
 #endif
 
-  fft_HEIGHT(lds, u, smallTrigF2, w);
+  fft_HEIGHT(lds, u, smallTrigF2);
 
   write(G_H, NH, u, outF2, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }
