@@ -874,25 +874,27 @@ void Tune::tune() {
     // Output new settings to config.txt
     File config = File::openAppend("config.txt");
     if (newConfigKeyVals.size()) {
-      config.write("\n# New settings based on a -tune run.\n");
+      config.write("\n# New settings based on a -tune run.");
       for (u32 i = 0; i < newConfigKeyVals.size(); ++i) {
-        config.write(i == 0 ? "   -use " : ",");
+        config.write(i == 0 ? "\n   -use " : ",");
         config.printf("%s=%u", newConfigKeyVals[i].first.c_str(), newConfigKeyVals[i].second);
       }
       config.write("\n");
     }
     if (suggestedConfigKeyVals.size()) {
-      config.write("\n# These settings were slightly faster in a -tune run.\n");
-      config.write("\n# It is suggested that each setting be timed over a longer duration to see if the setting really is faster.\n");
+      config.write("\n# These settings were slightly faster in a -tune run.");
+      config.write("\n# It is suggested that each setting be timed over a longer duration to see if the setting really is faster.");
       for (u32 i = 0; i < suggestedConfigKeyVals.size(); ++i) {
-        config.write(i == 0 ? "#  -use " : ",");
+        config.write(i == 0 ? "\n#  -use " : ",");
         config.printf("%s=%u", suggestedConfigKeyVals[i].first.c_str(), suggestedConfigKeyVals[i].second);
       }
       config.write("\n");
     }
+    config.write("\n# Less frequent save file creation improves throughput.");
+    config.write("\n  -log 1000000\n");
     config.write("\n# Running two workers often gives better throughput.");
-    config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers will often be better.\n");
-    config.write("#  -workers 2 -use TAIL_KERNEL=3\n");
+    config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers will often be better.");
+    config.write("\n#  -workers 2 -use TAIL_KERNEL=3\n");
   }
 
   // Flags that prune the amount of shapes and variants to time.
