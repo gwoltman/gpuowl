@@ -1875,7 +1875,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
       log("Stopping, please wait..\n");
     }
 
-    bool doLog = (k % 10'000 == 0) || doStop;
+    bool doLog = (k % args.logStep == 0) || doStop;
     bool leadOut = doLog || useLongCarry;
 
     squareLL(bufData, leadIn, leadOut);
