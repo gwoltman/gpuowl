@@ -933,7 +933,7 @@ skip_1K_256 = 0;
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
 
       // Only FP64 code supports variants
-      if (variant != LAST_VARIANT && !FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) continue;
+      if (variant != 202 && !FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) continue;
 
       // Only AMD GPUs support variant zero (BCAST) and only if width <= 1024.
       if (variant_W(variant) == 0) {
