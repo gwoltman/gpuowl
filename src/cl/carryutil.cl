@@ -412,7 +412,7 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   i128 v = (((i128) n61 << 31) | n31) - n61;     // n61 * M31 + n31
 
   // Convert to balanced representation by subtracting M61*M31
-  if ((v >> 64) & 0xF8000000) v = v - (i128) M31 * (i128) M61;
+  if (((u32)(v >> 64)) & 0xF8000000) v = v - (i128) M31 * (i128) M61;
 
   // Optionally calculate roundoff error as proximity to M61*M31/2.  27 bits of accuracy should be sufficient.
   u32 roundoff = (u32) abs((i32)(v >> 64));
