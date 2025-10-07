@@ -731,7 +731,7 @@ GF61 OVERLOAD conjugate(GF61 a) { return U2(a.x, neg(a.y)); }
 
 // Complex square. Uses (a + i*b)^2 == ((a+b)*(a-b) + i*2*a*b).
 GF61 OVERLOAD csqq(GF61 a, const u32 m61_count) {
-  if (m61_count > 4) a = modM61(a);
+  if (m61_count > 4) return csqq(modM61(a), 2);
   Z61 re = weakMul(a.x + a.y, a.x + neg(a.y, m61_count), 2 * m61_count - 1, 2 * m61_count);
   Z61 im = weakMul(a.x + a.x, a.y, 2 * m61_count - 1, m61_count);
   return U2(re, im);
