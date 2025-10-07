@@ -165,7 +165,7 @@ i64 weightAndCarryOne(T u, T invWeight, i64 inCarry, float* maxROE, int sloppy_r
   double d = fma(u, invWeight, RNDVALCarry);
 
   // Optionally calculate roundoff error
-  float roundoff = fabs((float) fma(u, -invWeight, d - RNDVALCarry));
+  float roundoff = fabs((float) fma(u, invWeight, RNDVALCarry - d));
   *maxROE = max(*maxROE, roundoff);
 
   // Convert to long (for CARRY32 case we don't need to strip off the RNDVAL bits)
@@ -207,7 +207,7 @@ i32 weightAndCarryOne(F u, F invWeight, i32 inCarry, float* maxROE, int sloppy_r
   float d = fma(u, invWeight, RNDVALCarry);
 
   // Optionally calculate roundoff error
-  float roundoff = fabs(fma(u, -invWeight, d - RNDVALCarry));
+  float roundoff = fabs(fma(u, invWeight, RNDVALCarry - d));
   *maxROE = max(*maxROE, roundoff);
 
   // Convert to int
@@ -300,16 +300,14 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
   u32 n31 = get_Z31(u31);
 
   // The final result must be n31 mod M31.  Use FP64 data to calculate this value.
-  u = u * invWeight - (double) n31;                    // This should be close to a multiple of M31
-  u *= 4.656612875245796924105750827168e-10;            // Divide by M31.  Could divide by 2^31 (0.0000000004656612873077392578125) be accurate enough?  //GWBUG - check the generated code!  Use 1/M31???
+  u = fma(u, invWeight, - (double) n31);                               // This should be close to a multiple of M31
+  double uInt = fma(u, 4.656612875245796924105750827168e-10, RNDVAL);  // Divide by M31 and round to int
+  i64 n64 = RNDVALdoubleToLong(uInt);
 
-  i64 n64 = RNDVALdoubleToLong(u + RNDVAL);
-
-  i128 v = ((i128) n64 << 31) - n64;                      // n64 * M31
-  v += n31;
+  i128 v = (((i128) n64 << 31) | n31) - n64;         // n64 * M31 + n31
 
   // Optionally calculate roundoff error
-  float roundoff = (float) fabs(u - (double) n64);
+  float roundoff = (float) fabs(fma(u, 4.656612875245796924105750827168e-10, RNDVAL - uInt));
   *maxROE = max(*maxROE, roundoff);
 
   // Mul by 3 and add carry
@@ -337,16 +335,14 @@ i64 weightAndCarryOne(float uF2, Z31 u31, float F2_invWeight, u32 m31_invWeight,
   u32 n31 = get_Z31(u31);
 
   // The final result must be n31 mod M31.  Use FP32 data to calculate this value.
-  uF2 = uF2 * F2_invWeight - (float) n31;                    // This should be close to a multiple of M31
-  uF2 *= 0.0000000004656612873077392578125f;            // Divide by 2^31               //GWBUG - check the generated code!
+  uF2 = fma(uF2, F2_invWeight, - (float) n31);                           // This should be close to a multiple of M31
+  float uF2int = fma(uF2, 0.0000000004656612873077392578125f, RNDVAL);   // Divide by 2^31
+  i32 nF2 = RNDVALfloatToInt(uF2int);
 
-  i32 nF2 = lowBits(as_int(uF2 + RNDVAL), 22);
-
-  i64 v = ((i64) nF2 << 31) - nF2;                      // nF2 * M31
-  v += n31;
+  i64 v = (((i64) nF2 << 31) | n31) - nF2;         // nF2 * M31 + n31
 
   // Optionally calculate roundoff error
-  float roundoff = fabs(uF2 - nF2);
+  float roundoff = fabs(fma(uF2, 0.0000000004656612873077392578125f, RNDVAL - uF2int));
   *maxROE = max(*maxROE, roundoff);
 
   // Mul by 3 and add carry
@@ -371,39 +367,16 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
   u61 = shr(u61, m61_invWeight);
   u64 n61 = get_Z61(u61);
 
-#if 0
-BUG - need more than 64 bit integers
-
   // The final result must be n61 mod M61.  Use FP32 data to calculate this value.
-  uF2 = uF2 * F2_invWeight - (float) n61;                    // This should be close to a multiple of M61
-  uF2 *= 4.3368086899420177360298112034798e-19f;             // Divide by 2^61               //GWBUG - check the generated code!
+  uF2 = fma(uF2, F2_invWeight, - (float) n61);                                // This should be close to a multiple of M61
+  float uF2int = fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL);    // Divide by 2^61 and round to int
+  i32 nF2 = RNDVALfloatToInt(uF2int);
 
-  i32 nF2 = lowBits(as_int(uF2 + RNDVAL), 22);
-
-  i64 v = ((i64) nF2 << 61) - nF2;                              // nF2 * M61
-  v += n61;
+  i128 v = (((i128) nF2 << 61) | n61) - nF2;    // nF2 * M61 + n61
 
   // Optionally calculate roundoff error
-  float roundoff = fabs(uF2 - (float) nF2);
+  float roundoff = fabs(fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL - uF2int));
   *maxROE = max(*maxROE, roundoff);
-#else
-
-  // The final result must be n61 mod M61.  Use FP32 data to calculate this value.
-#undef RNDVAL                                                           //GWBUG - why are we using doubles?
-#define RNDVAL (3.0 * (1l << 51))
- double uuF2 = (double) uF2 * (double) F2_invWeight - (double) n61;                    // This should be close to a multiple of M61
- uuF2 = uuF2 * 4.3368086899420177360298112034798e-19;             // Divide by 2^61               //GWBUG - check the generated code!
-volatile double xxF2 = uuF2 + RNDVAL;             // Divide by 2^61               //GWBUG - check the generated code!
-  xxF2 -= RNDVAL;
-  i32 nF2 = (int) xxF2;
-
-  i128 v = ((i128) nF2 << 61) - nF2;                              // nF2 * M61
-  v += n61;
-
-  // Optionally calculate roundoff error
-  float roundoff = (float) fabs(uuF2 - (double) nF2);
-  *maxROE = max(*maxROE, roundoff);
-#endif
 
   // Mul by 3 and add carry
 #if MUL3
