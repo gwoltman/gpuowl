@@ -1263,8 +1263,12 @@ void Gpu::doBigLog(u32 k, u64 res, bool checkOK, float secsPerIt, u32 nIters, u3
   auto [roeSq, roeMul] = readROE();
   double z = roeSq.z();
   zAvg.update(z, roeSq.N);
-  log("%sZ=%.0f (avg %.1f), ROEmax=%.3f, ROEavg=%.3f, %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
-      z, zAvg.avg(), roeSq.max, roeSq.mean, (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
+  if (roeSq.max > 0.005)
+    log("%sZ=%.0f (avg %.1f), ROEmax=%.3f, ROEavg=%.3f. %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
+	z, zAvg.avg(), roeSq.max, roeSq.mean, (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
+  else
+    log("%sZ=%.0f (avg %.1f) %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
+        z, zAvg.avg(), (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
 
   if (roeSq.N > 2 && z < 20) {
     log("Danger ROE! Z=%.1f is too small, increase precision or FFT size!\n", z);
