@@ -890,11 +890,15 @@ void Tune::tune() {
       }
       config.write("\n");
     }
-    config.write("\n# Less frequent save file creation improves throughput.");
-    config.write("\n  -log 1000000\n");
-    config.write("\n# Running two workers often gives better throughput.");
-    config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers will often be better.");
-    config.write("\n#  -workers 2 -use TAIL_KERNELS=3\n");
+    if (args->logStep < 100000) {
+      config.write("\n# Less frequent save file creation improves throughput.");
+      config.write("\n  -log 1000000\n");
+    }
+    if (args->workers < 2) {
+      config.write("\n# Running two workers often gives better throughput.");
+      config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers will often be better.");
+      config.write("\n#  -workers 2 -use TAIL_KERNELS=3\n");
+    }
   }
 
   // Flags that prune the amount of shapes and variants to time.
