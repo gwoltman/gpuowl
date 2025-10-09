@@ -184,7 +184,7 @@ typedef ulong2 GF61;        // A complex value using two Z61s.  For a GF(M61^2) 
 // Typedefs for "combo" FFT/NTTs (multiple NTT primes or hybrid FFT/NTT).
 #define COMBO_FFT (FFT_FP64 + FFT_FP32 + NTT_GF31 + NTT_GF61 > 1)
 // Sanity check for supported FFT/NTT
-#if (FFT_FP64 & NTT_GF31 & !FFT_FP32 & !NTT_GF61) | (NTT_GF31 & NTT_GF61 & !FFT_FP64 & !FFT_FP32) | (FFT_FP32 & NTT_GF61 & !FFT_FP64 & !NTT_GF31)
+#if (FFT_FP64 & NTT_GF31 & !FFT_FP32 & !NTT_GF61) | (NTT_GF31 & NTT_GF61 & !FFT_FP64 & !FFT_FP32) | (FFT_FP32 & NTT_GF61 & !FFT_FP64 & !NTT_GF31) | (FFT_FP32 & NTT_GF31 & NTT_GF61 & !FFT_FP64)
 #elif !COMBO_FFT | (FFT_FP32 & NTT_GF31 & !FFT_FP64 & !NTT_GF61)
 #else
 error - unsupported FFT/NTT combination

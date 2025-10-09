@@ -323,7 +323,7 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31
+#elif FFT_FP32 & NTT_GF31 & !NTT_GF61
 
 #define SLOPPY_MAXBPW 154       // Based on 138M expo in 8M FFT = 16.45 BPW
 
@@ -336,13 +336,13 @@ i64 weightAndCarryOne(float uF2, Z31 u31, float F2_invWeight, u32 m31_invWeight,
 
   // The final result must be n31 mod M31.  Use FP32 data to calculate this value.
   uF2 = fma(uF2, F2_invWeight, - (float) n31);                           // This should be close to a multiple of M31
-  float uF2int = fma(uF2, 0.0000000004656612873077392578125f, RNDVAL);   // Divide by 2^31
+  float uF2int = fma(uF2, 4.656612875245796924105750827168e-10f, RNDVAL);   // Divide by M31 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
   i64 v = (((i64) nF2 << 31) | n31) - nF2;         // nF2 * M31 + n31
 
   // Optionally calculate roundoff error
-  float roundoff = fabs(fma(uF2, 0.0000000004656612873077392578125f, RNDVAL - uF2int));
+  float roundoff = fabs(fma(uF2, 4.656612875245796924105750827168e-10f, RNDVAL - uF2int));
   *maxROE = max(*maxROE, roundoff);
 
   // Mul by 3 and add carry
@@ -356,7 +356,7 @@ i64 weightAndCarryOne(float uF2, Z31 u31, float F2_invWeight, u32 m31_invWeight,
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M61^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF61
+#elif FFT_FP32 & !NTT_GF31 & NTT_GF61
 
 #define SLOPPY_MAXBPW 309       // Based on 134M expo in 4M FFT = 31.95 BPW
 
@@ -391,7 +391,7 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
 /*    Similar to above, but for an NTT based on GF(M31^2)*GF(M61^2)       */
 /**************************************************************************/
 
-#elif NTT_GF31 & NTT_GF61
+#elif !FFT_FP32 & NTT_GF31 & NTT_GF61
 
 #define SLOPPY_MAXBPW 383       // Based on 165M expo in 4M FFT = 39.34 BPW
 
@@ -423,7 +423,7 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   v = v * 3;
 #endif
   v = v + inCarry;
-  i96 value = make_i96((u64) (v >> 32), (u32) v);
+  i96 value = make_i96(v);
 
 #else
 
@@ -447,6 +447,50 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   return value;
 }
 
+/******************************************************************************/
+/*  Similar to above, but for a hybrid FFT based on FP32*GF(M31^2)*GF(M61^2)  */
+/******************************************************************************/
+
+#elif FFT_FP32 & NTT_GF31 & NTT_GF61
+
+#define SLOPPY_MAXBPW 461       // Based on 198M expo in 4M FFT = 47.20 BPW
+
+// Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
+i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_invWeight, u32 m61_invWeight, i64 inCarry, float* maxROE) {
+
+  // Apply inverse weights
+  u31 = shr(u31, m31_invWeight);
+  u61 = shr(u61, m61_invWeight);
+
+  // Use chinese remainder theorem to create a 92-bit result.  Loosely copied from Yves Gallot's mersenne2 program.
+  u32 n31 = get_Z31(u31);
+  u61 = subq(u61, make_Z61(n31), 2);                 // u61 - u31
+  u61 = add(u61, shl(u61, 31));                      // u61 + (u61 << 31)
+  u64 n61 = get_Z61(u61);
+  i128 n3161 = (((i128) n61 << 31) | n31) - n61;     // n61 * M31 + n31
+
+//GW - computing (float)n3161 may be complicated and we don't need all that precision. .  Would forming a smaller value (like just n61) to float be faster with the *M31 taken into account with the constant?
+
+  // The final result must be n3161 mod M31*M61.  Use FP32 data to calculate this value.
+  uF2 = fma(uF2, F2_invWeight, - (float) n3161);                             // This should be close to a multiple of M31*M61
+  float uF2int = fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL);   // Divide by M31*M61 and round to int
+  i32 nF2 = RNDVALfloatToInt(uF2int);
+
+  i64 nF2m31 = ((i64) nF2 << 31) - nF2;                  // nF2 * M31
+  i128 v = ((i128) nF2m31 << 61) - nF2m31 + n3161;       // nF2m31 * M61 + n3161
+
+  // Optionally calculate roundoff error
+  float roundoff = fabs(fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL - uF2int));
+  *maxROE = max(*maxROE, roundoff);
+
+  // Mul by 3 and add carry
+#if MUL3
+  v = v * 3;
+#endif
+  v = v + inCarry;
+  return v;
+}
+
 #else
 error - missing weightAndCarryOne implementation
 #endif
@@ -456,8 +500,14 @@ error - missing weightAndCarryOne implementation
 /*   Split a value + carryIn into a big-or-little word and a carryOut   */
 /************************************************************************/
 
+Word OVERLOAD carryStep(i128 x, i64 *outCarry, bool isBigWord) {
+  u32 nBits = bitlen(isBigWord);
+  i64 w = lowBits((i64)x, nBits);
+  *outCarry = (u64)(x >> nBits) + (w < 0);
+  return w;
+}
+
 Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
-  const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
 
 //GWBUG - is this ever faster?  Not on TitanV
@@ -552,6 +602,19 @@ Word OVERLOAD carryStep(i32 x, i32 *outCarry, bool isBigWord) {
 /* CarryFinal will later turn this into a balanced signed value. */
 /*****************************************************************/
 
+Word OVERLOAD carryStepUnsignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
+  const u32 bigwordBits = EXP / NWORDS + 1;
+  u32 nBits = bitlen(isBigWord);
+
+// Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
+  u64 w = ulowFixedBits((u64)x, bigwordBits);
+  const i128 topbitmask = ~((i128)1 << (bigwordBits - 1));
+//GW Can we use unsigned shift (knowing the sign won't be lost due to truncating the result) -- this is really a 64-bit extract (or two 32-bit extrats) -- use elsewhere?)
+  *outCarry = (x & topbitmask) >> nBits;
+//GW use this style else where, check for more fixed low bits
+  return w;
+}
+
 Word OVERLOAD carryStepUnsignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
@@ -560,12 +623,12 @@ Word OVERLOAD carryStepUnsignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
   i64 xhi = i96_hi64(x) & ~((1ULL << (bigwordBits - 32)) - 1);
   *outCarry = xhi >> (nBits - 32);
-  return ulowBits(i96_lo64(x), bigwordBits);
+  return ulowFixedBits(i96_lo64(x), bigwordBits);
 #elif EXP / NWORDS == 31                                // nBits = 31 or 32
   *outCarry = i96_hi64(x) << (32 - nBits);
   return i96_lo32(x);                                   // ulowBits(x, bigwordBits = 32);
 #else                                                   // nBits less than 32
-  u32 w = ulowBits(i96_lo32(x), bigwordBits);
+  u32 w = ulowFixedBits(i96_lo32(x), bigwordBits);
   *outCarry = (i96_hi64(x) << (32 - nBits)) | ((i96_lo32(x) - w) >> nBits);
   return w;
 #endif
@@ -595,6 +658,23 @@ Word OVERLOAD carryStepUnsignedSloppy(i32 x, i32 *outCarry, bool isBigWord) {
 /*  Also used on first word in carryFinal when not near max BPW.      */
 /**********************************************************************/
 
+Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
+#if EXP > NWORDS / 10 * SLOPPY_MAXBPW
+  return carryStep(x, outCarry, isBigWord);
+#else
+
+// Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
+  const u32 bigwordBits = EXP / NWORDS + 1;
+  u32 nBits = bitlen(isBigWord);
+  u64 xlo = (u64)x;
+  u64 xlo_topbit = xlo & (1ULL << (bigwordBits - 1));
+  i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
+  *outCarry = (x + xlo_topbit) >> nBits;
+  return w;
+#endif
+}
+
+
 Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
 #if EXP > NWORDS / 10 * SLOPPY_MAXBPW
   return carryStep(x, outCarry, isBigWord);
@@ -619,7 +699,7 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   *outCarry = (i96_hi64(x) + (w < 0)) << (32 - nBits);
   return w;
 #else                                                   // nBits less than 32       //GWBUG - is there a faster version?  Is this faster than plain old carryStep?
-  i32 w = lowBits(i96_lo32(x), bigwordBits);
+  i32 w = lowFixedBits(i96_lo32(x), bigwordBits);
   *outCarry = (((i96_hi64(x) << (32 - bigwordBits)) | (i96_lo32(x) >> bigwordBits)) + (w < 0)) << (bigwordBits - nBits);
   return w;
 #endif

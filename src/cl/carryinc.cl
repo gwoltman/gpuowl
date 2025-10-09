@@ -165,7 +165,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(T2 u, GF31 u31, T invWeight1, T invWeigh
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31
+#elif FFT_FP32 & NTT_GF31 & !NTT_GF61
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -197,7 +197,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(F2 uF2, GF31 u31, F invWeight1, F invWei
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M61^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF61
+#elif FFT_FP32 & !NTT_GF31 & NTT_GF61
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -229,7 +229,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(F2 uF2, GF61 u61, F invWeight1, F invWei
 /*    Similar to above, but for an NTT based on GF(M31^2)*GF(M61^2)       */
 /**************************************************************************/
 
-#elif NTT_GF31 & NTT_GF61
+#elif !FFT_FP32 & NTT_GF31 & NTT_GF61
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -251,6 +251,37 @@ Word2 OVERLOAD weightAndCarryPairSloppy(GF31 u31, GF61 u61, u32 m31_invWeight1, 
   i96 tmp1 = weightAndCarryOne(u31.x, u61.x, m31_invWeight1, m61_invWeight1, inCarry, maxROE);
   Word a = carryStepUnsignedSloppy(tmp1, &midCarry, b1);
   i96 tmp2 = weightAndCarryOne(u31.y, u61.y, m31_invWeight2, m61_invWeight2, midCarry, maxROE);
+  Word b = carryStepSignedSloppy(tmp2, outCarry, b2);
+  *carryMax = max(*carryMax, max(boundCarry(midCarry), boundCarry(*outCarry)));
+  return (Word2) (a, b);
+}
+
+/******************************************************************************/
+/*  Similar to above, but for a hybrid FFT based on FP32*GF(M31^2)*GF(M61^2)  */
+/******************************************************************************/
+
+#elif FFT_FP32 & NTT_GF31 & NTT_GF61
+
+// Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
+// Then propagate carries through two words.  Generate the output carry.
+Word2 OVERLOAD weightAndCarryPair(F2 uF2, GF31 u31, GF61 u61, F invWeight1, F invWeight2, u32 m31_invWeight1, u32 m31_invWeight2,
+                                  u32 m61_invWeight1, u32 m61_invWeight2, i64 inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax) {
+  iCARRY midCarry;
+  i128 tmp1 = weightAndCarryOne(uF2.x, u31.x, u61.x, invWeight1, m31_invWeight1, m61_invWeight1, inCarry, maxROE);
+  Word a = carryStep(tmp1, &midCarry, b1);
+  i128 tmp2 = weightAndCarryOne(uF2.y, u31.y, u61.y, invWeight2, m31_invWeight2, m61_invWeight2, midCarry, maxROE);
+  Word b = carryStep(tmp2, outCarry, b2);
+  *carryMax = max(*carryMax, max(boundCarry(midCarry), boundCarry(*outCarry)));
+  return (Word2) (a, b);
+}
+
+// Like weightAndCarryPair except that a strictly accurate calculation of the first Word and carry is not required.  Second word may also be sloppy.
+Word2 OVERLOAD weightAndCarryPairSloppy(F2 uF2, GF31 u31, GF61 u61, F invWeight1, F invWeight2, u32 m31_invWeight1, u32 m31_invWeight2,
+                                        u32 m61_invWeight1, u32 m61_invWeight2, i64 inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax) {
+  iCARRY midCarry;
+  i128 tmp1 = weightAndCarryOne(uF2.x, u31.x, u61.x, invWeight1, m31_invWeight1, m61_invWeight1, inCarry, maxROE);
+  Word a = carryStepUnsignedSloppy(tmp1, &midCarry, b1);
+  i128 tmp2 = weightAndCarryOne(uF2.y, u31.y, u61.y, invWeight2, m31_invWeight2, m61_invWeight2, midCarry, maxROE);
   Word b = carryStepSignedSloppy(tmp2, outCarry, b2);
   *carryMax = max(*carryMax, max(boundCarry(midCarry), boundCarry(*outCarry)));
   return (Word2) (a, b);

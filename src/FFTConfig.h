@@ -21,7 +21,7 @@ string numberK(u64 n);
 
 using KeyVal = std::pair<std::string, std::string>;
 
-enum FFT_TYPES {FFT64=0, FFT3161=1, FFT3261=2, FFT61=3, FFT3231=50, FFT6431=51, FFT31=52, FFT32=53};
+enum FFT_TYPES {FFT64=0, FFT3161=1, FFT3261=2, FFT61=3, FFT323161=4, FFT3231=50, FFT6431=51, FFT31=52, FFT32=53};
 
 class FFTShape {
 public:
