@@ -9,72 +9,56 @@
 u32 lo32(u64 x) { return (u32) x; }
 u32 hi32(u64 x) { return (u32) (x >> 32); }
 
-// A primitive partial implementation of an i96/u96 integer type
-// It seems that the clang PTX compiler struggles with switching between u32s and u64s
-#if 0			// This was the first cut.  Unions are messy as they may require recombining registers too frequently.
-typedef union {
-  struct { u32 lo32; u32 mid32; u32 hi32; } a;
-  struct { u64 lo64; u32 hi32; } c;
-} i96;
-i96 OVERLOAD make_i96(u128 v) { i96 val; val.c.hi32 = v >> 64, val.c.lo64 = v; return val; }
-i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.a.hi32 = h, val.a.mid32 = m, val.a.lo32 = l; return val; }
-i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.a.hi32 = hi32(h), val.a.mid32 = lo32(h), val.a.lo32 = l; return val; }
-i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.c.hi32 = h, val.c.lo64 = l; return val; }
-void i96_add(i96 *val, i96 x) { u64 lo64 = val->c.lo64 + x.c.lo64; val->c.hi32 += x.c.hi32 + (lo64 < val->c.lo64); val->c.lo64 = lo64; }
-void OVERLOAD i96_sub(i96 *val, i96 x) { u64 lo64 = val->c.lo64 - x.c.lo64; val->c.hi32 -= x.c.hi32 + (lo64 > val->c.lo64); val->c.lo64 = lo64; }
-void OVERLOAD i96_sub(i96 *val, u64 x) { i96_sub(val, make_i96(0, x)); }
-void i96_mul(i96 *val, u32 x) { u64 t = (u64)val->a.lo32 * x; val->a.lo32 = (u32)t; t = (u64)val->a.mid32 * x + (t >> 32); val->a.mid32 = (u32)t; val->a.hi32 = val->a.hi32 * x + (u32)(t >> 32); }
-u32 i96_hi32(i96 val) { return val.c.hi32; }
-u64 i96_lo64(i96 val) { return val.c.lo64; }
-u64 i96_hi64(i96 val) { return ((u64) val.a.hi32 << 32) + val.a.mid32; }
-u32 i96_lo32(i96 val) { return val.a.lo32; }
-u32 i96_mid32(i96 val) { return val.a.mid32; }
-#elif 0
-// An all u32 implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions
+// A primitive partial implementation of an i96 integer type
+#if 0
+// An all u32 implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions.
+// This version might be best on AMD and Intel if we can generate add-with-carry instructions.
 typedef struct { u32 lo32; u32 mid32; u32 hi32; } i96;
-i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.hi32 = h, val.mid32 = m, val.lo32 = l; return val; }
-i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.hi32 = hi32(h), val.mid32 = lo32(h), val.lo32 = l; return val; }
-i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.hi32 = h, val.mid32 = hi32(l); val.lo32 = lo32(l); return val; }
-void i96_add(i96 *val, i96 x) { val->lo32 += x.lo32; val->mid32 += x.mid32; val->hi32 += x.hi32 + (val->mid32 < x.mid32); u32 carry = (val->lo32 < x.lo32); val->mid32 += carry; val->hi32 += (val->mid32 < carry); }
-void OVERLOAD i96_sub(i96 *val, i96 x) { i96 tmp = *val; val->lo32 -= x.lo32; val->mid32 -= x.mid32; val->hi32 -= x.hi32 + (val->mid32 > tmp.mid32); u32 carry = (val->lo32 > tmp.lo32); tmp = *val; val->mid32 -= carry; val->hi32 -= (val->mid32 > tmp.mid32); }
-void OVERLOAD i96_sub(i96 *val, u64 x) { i96_sub(val, make_i96(0, x)); }
-void i96_mul(i96 *val, u32 x) { u64 t = (u64)val->lo32 * x; val->lo32 = (u32)t; t = (u64)val->mid32 * x + (t >> 32); val->mid32 = (u32)t; val->hi32 = val->hi32 * x + (u32)(t >> 32); }
+i96 OVERLOAD make_i96(i128 v) { i96 val; val.hi32 = (u128)v >> 64, val.mid32 = (u64)v >> 32, val.lo32 = v; return val; }
+i96 OVERLOAD make_i96(i64 v) { i96 val; val.hi32 = v >> 63, val.mid32 = v >> 32, val.lo32 = v; return val; }
+i96 OVERLOAD make_i96(i32 v) { i96 val; val.hi32 = v >> 31, val.mid32 = v >> 31, val.lo32 = v; return val; }
+i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
+i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
 u32 i96_hi32(i96 val) { return val.hi32; }
 u32 i96_mid32(i96 val) { return val.mid32; }
 u32 i96_lo32(i96 val) { return val.lo32; }
 u64 i96_lo64(i96 val) { return ((u64) val.mid32 << 32) | val.lo32; }
 u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | val.mid32; }
-#elif 1
-// A u64 lo32, u32 hi32 implementation.  This too would benefit from add.cc ASM instructions.
+void i96_add(i96 *val, i96 x) { val->lo32 += x.lo32; val->mid32 += x.mid32; val->hi32 += x.hi32 + (val->mid32 < x.mid32); u32 carry = (val->lo32 < x.lo32); val->mid32 += carry; val->hi32 += (val->mid32 < carry); }
+void i96_sub(i96 *val, i96 x) { i96 tmp = *val; val->lo32 -= x.lo32; val->mid32 -= x.mid32; val->hi32 -= x.hi32 + (val->mid32 > tmp.mid32); u32 carry = (val->lo32 > tmp.lo32); tmp = *val; val->mid32 -= carry; val->hi32 -= (val->mid32 > tmp.mid32); }
+void i96_mul(i96 *val, u32 x) { u64 t = (u64)val->lo32 * x; val->lo32 = (u32)t; t = (u64)val->mid32 * x + (t >> 32); val->mid32 = (u32)t; val->hi32 = val->hi32 * x + (u32)(t >> 32); }
+#elif 0
+// A u64 lo32, u32 hi32 implementation.  This too would benefit from add with carry instructions.
+// On nVidia, the clang optimizer kept the hi32 value as 64-bits!
 typedef struct { u64 lo64; u32 hi32; } i96;
-i96 OVERLOAD make_i96(u128 v) { i96 val; val.hi32 = v >> 64, val.lo64 = v; return val; }
-i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.hi32 = h, val.lo64 = ((u64) m << 32) | l; return val; }
-i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.hi32 = hi32(h), val.lo64 = ((u64) lo32(h) << 32) | l; return val; }
-i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.hi32 = h, val.lo64 = l; return val; }
+i96 OVERLOAD make_i96(i128 v) { i96 val; val.hi32 = (u128)v >> 64, val.lo64 = v; return val; }
+i96 OVERLOAD make_i96(i64 v) { i96 val; val.hi32 = v >> 63, val.lo64 = v; return val; }
+i96 OVERLOAD make_i96(i32 v) { return make_i96((i64)v); }
+i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi, val.lo64 = lo; return val; }
+i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi, val.lo64 = lo; return val; }
 u32 i96_hi32(i96 val) { return val.hi32; }
 u32 i96_mid32(i96 val) { return hi32(val.lo64); }
 u32 i96_lo32(i96 val) { return val.lo64; }
 u64 i96_lo64(i96 val) { return val.lo64; }
 u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | i96_mid32(val); }
 void i96_add(i96 *val, i96 x) { val->lo64 += x.lo64; val->hi32 += x.hi32 + (val->lo64 < x.lo64); }
-void OVERLOAD i96_sub(i96 *val, i96 x) { u64 tmp = val->lo64; val->lo64 -= x.lo64; val->hi32 -= x.hi32 + (val->lo64 > tmp); }
-void OVERLOAD i96_sub(i96 *val, u64 x) { i96_sub(val, make_i96(0, x)); }
+void i96_sub(i96 *val, i96 x) { u64 tmp = val->lo64; val->lo64 -= x.lo64; val->hi32 -= x.hi32 + (val->lo64 > tmp); }
 void i96_mul(i96 *val, u32 x) { u64 t = i96_lo32(*val) * (u64)x; u32 lo32 = t; t = i96_mid32(*val) * (u64)x + (t >> 32); u32 mid32 = t; u32 hi32 = val->hi32 * x + (t >> 32); *val = make_i96(hi32, mid32, lo32); }
 #elif 1
-// A u128 implementation.  This will use more registers.
-typedef struct { u128 x; } i96;
-i96 OVERLOAD make_i96(u128 v) { i96 val; val.x = v; return val; }
-i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.x = ((u128) h << 64) | ((u128) m << 32) | l; return val; }
-i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.x = ((u128) h << 32) | l; return val; }
-i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.x = ((u128) h << 64) | l; return val; }
-u32 i96_hi32(i96 val) { return val.x >> 64; }
-u32 i96_mid32(i96 val) { return val.x >> 32; }
+// An i128 implementation.  This might use more GPU registers.  nVidia likes this version.
+typedef struct { i128 x; } i96;
+i96 OVERLOAD make_i96(i128 v) { i96 val; val.x = v; return val; }
+i96 OVERLOAD make_i96(i64 v) { return make_i96((i128)v); }
+i96 OVERLOAD make_i96(i32 v) { return make_i96((i128)v); }
+i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.x = ((u128)hi << 64) + lo; return val; }
+i96 OVERLOAD make_i96(i32 hi, u64 lo) { return make_i96((i64)hi, lo); }
+u32 i96_hi32(i96 val) { return (u128)val.x >> 64; }
+u32 i96_mid32(i96 val) { return (u64)val.x >> 32; }
 u32 i96_lo32(i96 val) { return val.x; }
 u64 i96_lo64(i96 val) { return val.x; }
-u64 i96_hi64(i96 val) { return val.x >> 32; }
+u64 i96_hi64(i96 val) { return (u128)val.x >> 32; }
 void i96_add(i96 *val, i96 v) { val->x += v.x; }
-void OVERLOAD i96_sub(i96 *val, i96 v) { val->x -= v.x; }
-void OVERLOAD i96_sub(i96 *val, u64 x) { i96_sub(val, make_i96(0, x)); }
+void i96_sub(i96 *val, i96 v) { val->x -= v.x; }
 void i96_mul(i96 *val, u32 x) { val->x *= x; }
 #endif
 

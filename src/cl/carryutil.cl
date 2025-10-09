@@ -304,18 +304,21 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
   double uInt = fma(u, 4.656612875245796924105750827168e-10, RNDVAL);  // Divide by M31 and round to int
   i64 n64 = RNDVALdoubleToLong(uInt);
 
-  i128 v = (((i128) n64 << 31) | n31) - n64;         // n64 * M31 + n31
-
   // Optionally calculate roundoff error
   float roundoff = (float) fabs(fma(u, 4.656612875245796924105750827168e-10, RNDVAL - uInt));
   *maxROE = max(*maxROE, roundoff);
 
+  // Compute the value using i96 math
+  i64 vhi = n64 >> 33;
+  u64 vlo = ((u64)n64 << 31) | n31;
+  i96 value = make_i96(vhi, vlo);                   // (n64 << 31) + n31
+  i96_sub(&value, make_i96(n64));                   // n64 * M31 + n31
+
   // Mul by 3 and add carry
 #if MUL3
-  v = v * 3;
+  i96_mul(&value, 3);
 #endif
-  v += inCarry;
-  i96 value = make_i96((u64) (v >> 32), (u32) v);
+  i96_add(&value, make_i96(inCarry));
   return value;
 }
 
@@ -372,18 +375,21 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
   float uF2int = fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL);    // Divide by 2^61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
-  i128 v = (((i128) nF2 << 61) | n61) - nF2;    // nF2 * M61 + n61
-
   // Optionally calculate roundoff error
   float roundoff = fabs(fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL - uF2int));
   *maxROE = max(*maxROE, roundoff);
 
+  // Compute the value using i96 math
+  i32 vhi = nF2 >> 3;
+  u64 vlo = ((u64)nF2 << 61) | n61;
+  i96 value = make_i96(vhi, vlo);                // (nF2 << 61) + n61
+  i96_sub(&value, make_i96(nF2));                // nF2 * M61 + n61
+
   // Mul by 3 and add carry
 #if MUL3
-  v = v * 3;
+  i96_mul(&value, 3);
 #endif
-  v += inCarry;
-  i96 value = make_i96((u64) (v >> 32), (u32) v);
+  i96_add(&value, make_i96(inCarry));
   return value;
 }
 
@@ -415,30 +421,18 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   // Optionally calculate roundoff error as proximity to M61/2.  28 bits of accuracy should be sufficient.
   u32 roundoff = (u32) abs((i32)(n61 >> 32));
   *maxROE = max(*maxROE, roundoff);
-  
-#if 1                                         //GWBUG - is this better/as good as int96 code? TitanV seems at least as good.
+
+  // Compute the value using i96 math
   i64 vhi = n61 >> 33;
-  u64 vlo = (n61 << 31) | n31;
-  i128 v = (((i128)vhi << 64) | (i128)vlo) - n61;      // n61 * M31 + n31
-
-  // Mul by 3 and add carry
-#if MUL3
-  v = v * 3;
-#endif
-  v = v + inCarry;
-  i96 value = make_i96(v);
-
-#else
-  i96 value = make_i96(n61 >> 1, ((u32) n61 << 31) | n31);     // (n61<<31) + n31
-  i96_sub(&value, n61);
+  u64 vlo = ((u64)n61 << 31) | n31;
+  i96 value = make_i96(vhi, vlo);                // (n61 << 31) + n31
+  i96_sub(&value, make_i96(n61));                // n61 * M31 + n31
 
   // Mul by 3 and add carry
 #if MUL3
   i96_mul(&value, 3);
 #endif
-  i96_add(&value, make_i96((u32)(inCarry >> 63), (u64) inCarry));
-#endif
-
+  i96_add(&value, make_i96(inCarry));
   return value;
 }
 
