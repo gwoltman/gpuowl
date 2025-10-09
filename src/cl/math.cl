@@ -10,10 +10,13 @@ u32 lo32(u64 x) { return (u32) x; }
 u32 hi32(u64 x) { return (u32) (x >> 32); }
 
 // A primitive partial implementation of an i96/u96 integer type
+// It seems that the clang PTX compiler struggles with switching between u32s and u64s
+#if 0			// This was the first cut.  Unions are messy as they may require recombining registers too frequently.
 typedef union {
   struct { u32 lo32; u32 mid32; u32 hi32; } a;
   struct { u64 lo64; u32 hi32; } c;
 } i96;
+i96 OVERLOAD make_i96(u128 v) { i96 val; val.c.hi32 = v >> 64, val.c.lo64 = v; return val; }
 i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.a.hi32 = h, val.a.mid32 = m, val.a.lo32 = l; return val; }
 i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.a.hi32 = hi32(h), val.a.mid32 = lo32(h), val.a.lo32 = l; return val; }
 i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.c.hi32 = h, val.c.lo64 = l; return val; }
@@ -26,6 +29,55 @@ u64 i96_lo64(i96 val) { return val.c.lo64; }
 u64 i96_hi64(i96 val) { return ((u64) val.a.hi32 << 32) + val.a.mid32; }
 u32 i96_lo32(i96 val) { return val.a.lo32; }
 u32 i96_mid32(i96 val) { return val.a.mid32; }
+#elif 0
+// An all u32 implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions
+typedef struct { u32 lo32; u32 mid32; u32 hi32; } i96;
+i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.hi32 = h, val.mid32 = m, val.lo32 = l; return val; }
+i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.hi32 = hi32(h), val.mid32 = lo32(h), val.lo32 = l; return val; }
+i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.hi32 = h, val.mid32 = hi32(l); val.lo32 = lo32(l); return val; }
+void i96_add(i96 *val, i96 x) { val->lo32 += x.lo32; val->mid32 += x.mid32; val->hi32 += x.hi32 + (val->mid32 < x.mid32); u32 carry = (val->lo32 < x.lo32); val->mid32 += carry; val->hi32 += (val->mid32 < carry); }
+void OVERLOAD i96_sub(i96 *val, i96 x) { i96 tmp = *val; val->lo32 -= x.lo32; val->mid32 -= x.mid32; val->hi32 -= x.hi32 + (val->mid32 > tmp.mid32); u32 carry = (val->lo32 > tmp.lo32); tmp = *val; val->mid32 -= carry; val->hi32 -= (val->mid32 > tmp.mid32); }
+void OVERLOAD i96_sub(i96 *val, u64 x) { i96_sub(val, make_i96(0, x)); }
+void i96_mul(i96 *val, u32 x) { u64 t = (u64)val->lo32 * x; val->lo32 = (u32)t; t = (u64)val->mid32 * x + (t >> 32); val->mid32 = (u32)t; val->hi32 = val->hi32 * x + (u32)(t >> 32); }
+u32 i96_hi32(i96 val) { return val.hi32; }
+u32 i96_mid32(i96 val) { return val.mid32; }
+u32 i96_lo32(i96 val) { return val.lo32; }
+u64 i96_lo64(i96 val) { return ((u64) val.mid32 << 32) | val.lo32; }
+u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | val.mid32; }
+#elif 1
+// A u64 lo32, u32 hi32 implementation.  This too would benefit from add.cc ASM instructions.
+typedef struct { u64 lo64; u32 hi32; } i96;
+i96 OVERLOAD make_i96(u128 v) { i96 val; val.hi32 = v >> 64, val.lo64 = v; return val; }
+i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.hi32 = h, val.lo64 = ((u64) m << 32) | l; return val; }
+i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.hi32 = hi32(h), val.lo64 = ((u64) lo32(h) << 32) | l; return val; }
+i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.hi32 = h, val.lo64 = l; return val; }
+u32 i96_hi32(i96 val) { return val.hi32; }
+u32 i96_mid32(i96 val) { return hi32(val.lo64); }
+u32 i96_lo32(i96 val) { return val.lo64; }
+u64 i96_lo64(i96 val) { return val.lo64; }
+u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | i96_mid32(val); }
+void i96_add(i96 *val, i96 x) { val->lo64 += x.lo64; val->hi32 += x.hi32 + (val->lo64 < x.lo64); }
+void OVERLOAD i96_sub(i96 *val, i96 x) { u64 tmp = val->lo64; val->lo64 -= x.lo64; val->hi32 -= x.hi32 + (val->lo64 > tmp); }
+void OVERLOAD i96_sub(i96 *val, u64 x) { i96_sub(val, make_i96(0, x)); }
+void i96_mul(i96 *val, u32 x) { u64 t = i96_lo32(*val) * (u64)x; u32 lo32 = t; t = i96_mid32(*val) * (u64)x + (t >> 32); u32 mid32 = t; u32 hi32 = val->hi32 * x + (t >> 32); *val = make_i96(hi32, mid32, lo32); }
+#elif 1
+// A u128 implementation.  This will use more registers.
+typedef struct { u128 x; } i96;
+i96 OVERLOAD make_i96(u128 v) { i96 val; val.x = v; return val; }
+i96 OVERLOAD make_i96(u32 h, u32 m, u32 l) { i96 val; val.x = ((u128) h << 64) | ((u128) m << 32) | l; return val; }
+i96 OVERLOAD make_i96(u64 h, u32 l) { i96 val; val.x = ((u128) h << 32) | l; return val; }
+i96 OVERLOAD make_i96(u32 h, u64 l) { i96 val; val.x = ((u128) h << 64) | l; return val; }
+u32 i96_hi32(i96 val) { return val.x >> 64; }
+u32 i96_mid32(i96 val) { return val.x >> 32; }
+u32 i96_lo32(i96 val) { return val.x; }
+u64 i96_lo64(i96 val) { return val.x; }
+u64 i96_hi64(i96 val) { return val.x >> 32; }
+void i96_add(i96 *val, i96 v) { val->x += v.x; }
+void OVERLOAD i96_sub(i96 *val, i96 v) { val->x -= v.x; }
+void OVERLOAD i96_sub(i96 *val, u64 x) { i96_sub(val, make_i96(0, x)); }
+void i96_mul(i96 *val, u32 x) { val->x *= x; }
+#endif
+
 
 // The X2 family of macros and SWAP are #defines because OpenCL does not allow pass by reference.
 // With NTT support added, we need to turn these macros into overloaded routines.
@@ -670,7 +722,7 @@ void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, u32 m61_count) { X2_conjb_internal(a, 
 #elif 1   // Faster version that keeps results in the range 0 .. M61+epsilon
 
 u64 OVERLOAD get_Z61(Z61 a) { Z61 m = a - M61; return (m & 0x8000000000000000ULL) ? a : m; }  // Get value in range 0 to M61-1
-i64 OVERLOAD get_balanced_Z61(Z61 a) { return (hi32(a) & 0xF0000000) ? (i64) a - (i64) M61 : (i64) a; }  // Get balanced value in range -M61/2 to M61/2
+i64 OVERLOAD get_balanced_Z61(Z61 a) { return (a >= 0x1000000000000000ULL) ? (i64) a - (i64) M61 : (i64) a; }  // Get balanced value in range -M61/2 to M61/2
 
 // Internal routine to bring Z61 value into the range 0..M61+epsilon
 Z61 OVERLOAD modM61(Z61 a) { return (a & M61) + (a >> 61); }

@@ -1737,7 +1737,7 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   m61_combo_counter = m61_starting_combo_counter;
 
 #if ROE
-  float fltRoundMax = (float) roundMax / (float) 0x0FFFFFFF;      // For speed, roundoff was computed as 32-bit integer.  Convert to float - divide by M61*M31.
+  float fltRoundMax = (float) roundMax / (float) 0x1FFFFFFF;      // For speed, roundoff was computed as 32-bit integer.  Convert to float - divide by M61.
   updateStats(bufROE, posROE, fltRoundMax);
 #elif STATS & (1 << MUL3)
   updateStats(bufROE, posROE, carryMax);

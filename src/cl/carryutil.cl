@@ -406,17 +406,18 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   u32 n31 = get_Z31(u31);
   u61 = subq(u61, make_Z61(n31), 2);             // u61 - u31
   u61 = add(u61, shl(u61, 31));                  // u61 + (u61 << 31)
-  u64 n61 = get_Z61(u61);
 
+  // The resulting value will be get_Z61(u61) * M31 + n31 and if larger than ~M31*M61/2 return a negative value by subtracting M31 * M61.
+  // We can save a little work by determining if the result will be large using just u61 and returning (get_Z61(u61) - M61) * M31 + n31.
+  // This simplifies to get_balanced_Z61(u61) * M31 + n31.
+  i64 n61 = get_balanced_Z61(u61);
+
+  // Optionally calculate roundoff error as proximity to M61/2.  28 bits of accuracy should be sufficient.
+  u32 roundoff = (u32) abs((i32)(n61 >> 32));
+  *maxROE = max(*maxROE, roundoff);
+  
 #if 1                                         //GWBUG - is this better/as good as int96 code? TitanV seems at least as good.
   i128 v = (((i128) n61 << 31) | n31) - n61;     // n61 * M31 + n31
-
-  // Convert to balanced representation by subtracting M61*M31
-  if (((u32)(v >> 64)) & 0xF8000000) v = v - (i128) M31 * (i128) M61;
-
-  // Optionally calculate roundoff error as proximity to M61*M31/2.  27 bits of accuracy should be sufficient.
-  u32 roundoff = (u32) abs((i32)(v >> 64));
-  *maxROE = max(*maxROE, roundoff);
 
   // Mul by 3 and add carry
 #if MUL3
@@ -426,16 +427,8 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   i96 value = make_i96(v);
 
 #else
-
   i96 value = make_i96(n61 >> 1, ((u32) n61 << 31) | n31);     // (n61<<31) + n31
   i96_sub(&value, n61);
-
-  // Convert to balanced representation by subtracting M61*M31
-  if (i96_hi32(value) & 0xF8000000) i96_sub(&value, make_i96(0x0FFFFFFF, 0xDFFFFFFF, 0x80000001));
-
-  // Optionally calculate roundoff error as proximity to M61*M31/2.  27 bits of accuracy should be sufficient.
-  u32 roundoff = (u32) abs((i32) i96_hi32(value));
-  *maxROE = max(*maxROE, roundoff);
 
   // Mul by 3 and add carry
 #if MUL3
