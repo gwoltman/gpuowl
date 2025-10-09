@@ -417,7 +417,9 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   *maxROE = max(*maxROE, roundoff);
   
 #if 1                                         //GWBUG - is this better/as good as int96 code? TitanV seems at least as good.
-  i128 v = (((i128) n61 << 31) | n31) - n61;     // n61 * M31 + n31
+  i64 vhi = n61 >> 33;
+  u64 vlo = (n61 << 31) | n31;
+  i128 v = (((i128)vhi << 64) | (i128)vlo) - n61;      // n61 * M31 + n31
 
   // Mul by 3 and add carry
 #if MUL3
