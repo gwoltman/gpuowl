@@ -148,10 +148,10 @@ Weights genWeights(FFTConfig fft, u32 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
           for (u32 block = 0; block < nW; ++block) {
             for (u32 rep = 0; rep < 2; ++rep) {
               if (isBigWord(N, E, kAt(H, line, block * groupWidth + thread) + rep)) { b.set(bitoffset + block * 2 + rep); }
-	    }        
-	  }
-	}
-	bits.push_back(b.to_ulong());
+            }        
+          }
+        }
+        bits.push_back(b.to_ulong());
       }
     }
     assert(bits.size() == N / 32);
@@ -1277,7 +1277,7 @@ void Gpu::doBigLog(u32 k, u64 res, bool checkOK, float secsPerIt, u32 nIters, u3
   zAvg.update(z, roeSq.N);
   if (roeSq.max > 0.005)
     log("%sZ=%.0f (avg %.1f), ROEmax=%.3f, ROEavg=%.3f. %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
-	z, zAvg.avg(), roeSq.max, roeSq.mean, (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
+        z, zAvg.avg(), roeSq.max, roeSq.mean, (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
   else
     log("%sZ=%.0f (avg %.1f) %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
         z, zAvg.avg(), (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
@@ -1601,18 +1601,20 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
   return {ok, res, roes.first, roes.second};
 }
 
-double Gpu::timePRP() {
+double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest) to 10 (quickest, shortest)
   u32 blockSize{}, iters{}, warmup{};
 
-  if (true) {
-    blockSize = 200;
-    iters = 1000;
-    warmup = 30;
-  } else {
-    blockSize = 1000;
-    iters = 10'000;
-    warmup = 100;
-  }
+  if (quick == 10)     iters =   400, blockSize = 200;
+  else if (quick == 9) iters =   600, blockSize = 300;
+  else if (quick == 8) iters =   900, blockSize = 300;
+  else if (quick == 7) iters =  1200, blockSize = 400;
+  else if (quick == 6) iters =  1800, blockSize = 600;
+  else if (quick == 5) iters =  3000, blockSize = 1000;
+  else if (quick == 4) iters =  5000, blockSize = 1000;
+  else if (quick == 3) iters =  8000, blockSize = 1000;
+  else if (quick == 2) iters = 12000, blockSize = 1000;
+  else if (quick == 1) iters = 20000, blockSize = 1000;
+  warmup = 20;
 
   assert(iters % blockSize == 0);
 

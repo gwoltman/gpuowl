@@ -296,7 +296,7 @@ public:
   LLResult isPrimeLL(const Task& task);
   array<u64, 4> isCERT(const Task& task);
 
-  double timePRP();
+  double timePRP(int quick = 7);
 
   tuple<bool, u64, RoeInfo, RoeInfo> measureROE(bool quick);
   tuple<bool, RoeInfo> measureCarry();

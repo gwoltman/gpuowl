@@ -346,6 +346,7 @@ void Tune::tune() {
   bool tune_config = 1;
   bool time_FFTs = 0;
   bool time_NTTs = 0;
+  int quick = 7;                        // Run config from slowest (quick=1) to fastest (quick=10)
   u64 min_exponent = 75000000;
   u64 max_exponent = 350000000;
   if (!args->fftSpec.empty()) { min_exponent = 0; max_exponent = 1000000000000ull; }
@@ -358,10 +359,13 @@ void Tune::tune() {
     if (s == "ntt") time_NTTs = 1;
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
+      if (keyVal.front() == "quick") quick = stod(keyVal.back());
       if (keyVal.front() == "minexp") min_exponent = stoull(keyVal.back());
       if (keyVal.front() == "maxexp") max_exponent = stoull(keyVal.back());
     }
   }
+  if (quick < 1) quick = 1;
+  if (quick > 10) quick = 10;
 
   // Look for best settings of various options.  Append best settings to config.txt.
   if (tune_config) {
@@ -391,7 +395,7 @@ void Tune::tune() {
       }
       if (time_NTTs) {
         defaultNTTShape = FFTShape(FFT3161, 512, 8, 512);
-	defaultShape = &defaultNTTShape;
+        defaultShape = &defaultNTTShape;
       }
     }
     // No user specifications.  Time an FP64 FFT and a GF31*GF61 NTT to see if the GPU is more suited for FP64 work or NTT work.
@@ -399,11 +403,11 @@ void Tune::tune() {
       log("Checking whether this GPU is better suited for double-precision FFTs or integer NTTs.\n");
       defaultFFTShape = FFTShape(FFT64, 512, 16, 512);
       FFTConfig fft{defaultFFTShape, 101, CARRY_32};
-      double fp64_time = Gpu::make(q, 141000001, shared, fft, {}, false)->timePRP();
+      double fp64_time = Gpu::make(q, 141000001, shared, fft, {}, false)->timePRP(quick);
       log("Time for FP64 FFT %12s is %6.1f\n", fft.spec().c_str(), fp64_time);
       defaultNTTShape = FFTShape(FFT3161, 512, 8, 512);
       FFTConfig ntt{defaultNTTShape, 202, CARRY_AUTO};
-      double ntt_time = Gpu::make(q, 141000001, shared, ntt, {}, false)->timePRP();
+      double ntt_time = Gpu::make(q, 141000001, shared, ntt, {}, false)->timePRP(quick);
       log("Time for M31*M61 NTT %12s is %6.1f\n", ntt.spec().c_str(), ntt_time);
       if (fp64_time < ntt_time) {
         defaultShape = &defaultFFTShape;
@@ -447,7 +451,7 @@ void Tune::tune() {
         for (u32 in_sizex : {8, 16, 32}) {
           args->flags["IN_WG"] = to_string(in_wg);
           args->flags["IN_SIZEX"] = to_string(in_sizex);
-          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
           log("Time for %12s using IN_WG=%u, IN_SIZEX=%u is %6.1f\n", fft.spec().c_str(), in_wg, in_sizex, cost);
           if (in_wg == current_in_wg && in_sizex == current_in_sizex) current_cost = cost;
           if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_in_wg = in_wg; best_in_sizex = in_sizex; }
@@ -469,7 +473,7 @@ void Tune::tune() {
         for (u32 out_sizex : {8, 16, 32}) {
           args->flags["OUT_WG"] = to_string(out_wg);
           args->flags["OUT_SIZEX"] = to_string(out_sizex);
-          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
           log("Time for %12s using OUT_WG=%u, OUT_SIZEX=%u is %6.1f\n", fft.spec().c_str(), out_wg, out_sizex, cost);
           if (out_wg == current_out_wg && out_sizex == current_out_sizex) current_cost = cost;
           if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_out_wg = out_wg; best_out_sizex = out_sizex; }
@@ -492,7 +496,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 pad : {0, 64, 128, 256, 512}) {
         args->flags["PAD"] = to_string(pad);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using PAD=%u is %6.1f\n", fft.spec().c_str(), pad, cost);
         if (pad == current_pad) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_pad = pad; }
@@ -512,7 +516,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 nontemporal : {0, 1}) {
         args->flags["NONTEMPORAL"] = to_string(nontemporal);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using NONTEMPORAL=%u is %6.1f\n", fft.spec().c_str(), nontemporal, cost);
         if (nontemporal == current_nontemporal) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_nontemporal = nontemporal; }
@@ -532,7 +536,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 fast_barrier : {0, 1}) {
         args->flags["FAST_BARRIER"] = to_string(fast_barrier);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using FAST_BARRIER=%u is %6.1f\n", fft.spec().c_str(), fast_barrier, cost);
         if (fast_barrier == current_fast_barrier) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_fast_barrier = fast_barrier; }
@@ -552,7 +556,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tail_kernels : {0, 1, 2, 3}) {
         args->flags["TAIL_KERNELS"] = to_string(tail_kernels);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TAIL_KERNELS=%u is %6.1f\n", fft.spec().c_str(), tail_kernels, cost);
         if (tail_kernels == current_tail_kernels) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_kernels = tail_kernels; }
@@ -575,7 +579,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tail_trigs : {0, 1, 2}) {
         args->flags["TAIL_TRIGS"] = to_string(tail_trigs);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TAIL_TRIGS=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
         if (tail_trigs == current_tail_trigs) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
@@ -596,7 +600,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tail_trigs : {0, 1}) {
         args->flags["TAIL_TRIGS31"] = to_string(tail_trigs);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TAIL_TRIGS31=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
         if (tail_trigs == current_tail_trigs) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
@@ -617,7 +621,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tail_trigs : {0, 1, 2}) {
         args->flags["TAIL_TRIGS32"] = to_string(tail_trigs);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TAIL_TRIGS32=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
         if (tail_trigs == current_tail_trigs) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
@@ -638,7 +642,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tail_trigs : {0, 1}) {
         args->flags["TAIL_TRIGS61"] = to_string(tail_trigs);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TAIL_TRIGS61=%u is %6.1f\n", fft.spec().c_str(), tail_trigs, cost);
         if (tail_trigs == current_tail_trigs) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_trigs = tail_trigs; }
@@ -658,7 +662,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tabmul_chain : {0, 1}) {
         args->flags["TABMUL_CHAIN"] = to_string(tabmul_chain);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TABMUL_CHAIN=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
         if (tabmul_chain == current_tabmul_chain) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
@@ -679,7 +683,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tabmul_chain : {0, 1}) {
         args->flags["TABMUL_CHAIN31"] = to_string(tabmul_chain);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TABMUL_CHAIN31=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
         if (tabmul_chain == current_tabmul_chain) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
@@ -700,7 +704,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tabmul_chain : {0, 1}) {
         args->flags["TABMUL_CHAIN32"] = to_string(tabmul_chain);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TABMUL_CHAIN32=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
         if (tabmul_chain == current_tabmul_chain) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
@@ -721,7 +725,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 tabmul_chain : {0, 1}) {
         args->flags["TABMUL_CHAIN61"] = to_string(tabmul_chain);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using TABMUL_CHAIN61=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
         if (tabmul_chain == current_tabmul_chain) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
@@ -741,7 +745,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 unroll_w : {0, 1}) {
         args->flags["UNROLL_W"] = to_string(unroll_w);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using UNROLL_W=%u is %6.1f\n", fft.spec().c_str(), unroll_w, cost);
         if (unroll_w == current_unroll_w) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_unroll_w = unroll_w; }
@@ -761,7 +765,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 unroll_h : {0, 1}) {
         args->flags["UNROLL_H"] = to_string(unroll_h);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using UNROLL_H=%u is %6.1f\n", fft.spec().c_str(), unroll_h, cost);
         if (unroll_h == current_unroll_h) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_unroll_h = unroll_h; }
@@ -781,7 +785,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 zerohack_w : {0, 1}) {
         args->flags["ZEROHACK_W"] = to_string(zerohack_w);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using ZEROHACK_W=%u is %6.1f\n", fft.spec().c_str(), zerohack_w, cost);
         if (zerohack_w == current_zerohack_w) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_zerohack_w = zerohack_w; }
@@ -801,7 +805,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 zerohack_h : {0, 1}) {
         args->flags["ZEROHACK_H"] = to_string(zerohack_h);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using ZEROHACK_H=%u is %6.1f\n", fft.spec().c_str(), zerohack_h, cost);
         if (zerohack_h == current_zerohack_h) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_zerohack_h = zerohack_h; }
@@ -821,7 +825,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 middle_in_lds_transpose : {0, 1}) {
         args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(middle_in_lds_transpose);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using MIDDLE_IN_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_in_lds_transpose, cost);
         if (middle_in_lds_transpose == current_middle_in_lds_transpose) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_in_lds_transpose = middle_in_lds_transpose; }
@@ -841,7 +845,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 middle_out_lds_transpose : {0, 1}) {
         args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(middle_out_lds_transpose);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using MIDDLE_OUT_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_out_lds_transpose, cost);
         if (middle_out_lds_transpose == current_middle_out_lds_transpose) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_out_lds_transpose = middle_out_lds_transpose; }
@@ -861,7 +865,7 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 biglit : {0, 1}) {
         args->flags["BIGLIT"] = to_string(biglit);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using BIGLIT=%u is %6.1f\n", fft.spec().c_str(), biglit, cost);
         if (biglit == current_biglit) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_biglit = biglit; }
@@ -934,8 +938,10 @@ skip_1K_256 = 0;
 
     // Time an exponent that's good for all variants and carry-config.
     u32 exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
-
-  // Loop through all possible variants
+//GW: If user specified a quick != 7, adjust the formula below???
+    quick = (exponent < 50000000) ? 6 : (exponent < 150000000) ? 7 : (exponent < 350000000) ? 8 : 10;
+    
+    // Loop through all possible variants
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
 
       // Only FP64 code supports variants
@@ -983,7 +989,7 @@ skip_1K_256 = 0;
               if (w == 0 && !AMDGPU) continue;
               if (w == 0 && test.width > 1024) continue;
               FFTConfig fft{test, variant_WMH (w, 0, 1), CARRY_32};
-              cost = Gpu::make(q, primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP();
+              cost = Gpu::make(q, primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP(quick);
               log("Fast width search %6.1f %12s\n", cost, fft.spec().c_str());
               if (min_cost < 0.0 || cost < min_cost) { min_cost = cost; fastest_width = w; }
             }
@@ -1005,7 +1011,7 @@ skip_1K_256 = 0;
               if (h == 0 && !AMDGPU) continue;
               if (h == 0 && test.height > 1024) continue;
               FFTConfig fft{test, variant_WMH (1, 0, h), CARRY_32};
-              cost = Gpu::make(q, primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP();
+              cost = Gpu::make(q, primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP(quick);
               log("Fast height search %6.1f %12s\n", cost, fft.spec().c_str());
               if (min_cost < 0.0 || cost < min_cost) { min_cost = cost; fastest_height = h; }
             }
@@ -1035,7 +1041,7 @@ skip_1K_256 = 0;
         // Skip middle = 1, CARRY_32 if maximum exponent would be the same as middle = 0, CARRY_32
         if (variant_M(variant) > 0 && carry == CARRY_32 && fft.maxExp() <= FFTConfig{shape, variant - 10, CARRY_32}.maxExp()) continue;
 
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP();
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         bool isUseful = TuneEntry{cost, fft}.update(results);
         log("%c %6.1f %12s %9lu\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
       }
