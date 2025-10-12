@@ -24,11 +24,12 @@ Queue::Queue(const Context& context, bool profile) :
   markerEvent{},
   markerQueued(false),
   queueCount(0),
-  squareTime(50)
+  squareTime(50),
+  squareKernels(4)
 {
   // Formerly a constant (thus the CAPS).  nVidia is 3% CPU load at 400 or 500, and 35% load at 800 on my Linux machine.
   // AMD is just over 2% load at 1600 and 3200 on the same Linux machine.  Marginally better timings(?) at 3200.
-  MAX_QUEUE_COUNT = isAmdGpu(context.deviceId()) ? 3200 : 500;		// Queue size for 800 or 125 squarings
+  MAX_QUEUE_COUNT = isAmdGpu(context.deviceId()) ? 3200 : 500;		// Queue size for 800 or 125 squarings (if squareKernels = 4)
 }
 
 void Queue::writeTE(cl_mem buf, u64 size, const void* data, TimeInfo* tInfo) {
@@ -102,8 +103,8 @@ void Queue::waitForMarkerEvent() {
   // By default, nVidia finish causes a CPU busy wait.  Instead, sleep for a while.  Since we know how many items are enqueued after the marker we can make an
   // educated guess of how long to sleep to keep CPU overhead low.
   while (getEventInfo(markerEvent) != CL_COMPLETE) {
-    // There are 4 kernels per squaring.  Don't overestimate sleep time.  Divide by 10 instead of 4.
-    std::this_thread::sleep_for(std::chrono::microseconds(1 + queueCount * squareTime / 10));
+    // There are 4, 7, or 10 kernels per squaring.  Don't overestimate sleep time.  Divide by much more than the number of kernels.
+    std::this_thread::sleep_for(std::chrono::microseconds(1 + queueCount * squareTime / squareKernels / 2));
   }
   markerQueued = false;
 }

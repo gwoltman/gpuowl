@@ -51,6 +51,7 @@ public:
   void finish();
 
   void setSquareTime(int);          // Set the time to do one squaring (in microseconds)
+  void setSquareKernels(int n) { squareKernels = n; }
 
 private:                            // This replaces the "call queue->finish every 400 squarings" code in Gpu.cpp.  Solves the busy wait on nVidia GPUs.
   int MAX_QUEUE_COUNT;              // Queue size before a marker will be enqueued.  Typically, 100 to 1000 squarings.
@@ -58,6 +59,7 @@ private:                            // This replaces the "call queue->finish eve
   bool markerQueued;                // TRUE if a marker and event have been queued
   int queueCount;                   // Count of items added to the queue since last marker
   int squareTime;                   // Time to do one squaring (in microseconds)
+  int squareKernels;                // Number of kernels in one squaring
   void queueMarkerEvent();          // Queue the marker event
   void waitForMarkerEvent();        // Wait for marker event to complete
 };
