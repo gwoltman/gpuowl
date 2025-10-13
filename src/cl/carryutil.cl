@@ -501,19 +501,15 @@ Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
 
 // This code can be tricky because we must not shift i32 or u32 variables by 32.
-#if EXP / NWORDS >= 33                          //GWBUG Would the EXP / NWORDS == 32 code be just as fast?
+#if EXP / NWORDS >= 33
   i64 xhi = i96_hi64(x);
   i64 w = lowBits(xhi, nBits - 32);
-//  xhi -= w;                                   //GWBUG - is (w < 0) version faster?
-//  *outCarry = xhi >> (nBits - 32);
-  *outCarry = (xhi >> (nBits - 32)) + (w < 0);
+  *outCarry = (xhi - w) >> (nBits - 32);
   return (w << 32) | i96_lo32(x);
 #elif EXP / NWORDS == 32
   i64 xhi = i96_hi64(x);
   i64 w = lowBits(i96_lo64(x), nBits);
-//  xhi -= w >> 32;
-//  *outCarry = xhi >> (nBits - 32);            //GWBUG -  Is this ever faster than adding (w < 0)???
-  *outCarry = (xhi >> (nBits - 32)) + (w < 0);
+  *outCarry = (xhi - (w >> 32)) >> (nBits - 32);
   return w;
 #elif EXP / NWORDS == 31
   i64 w = lowBits(i96_lo64(x), nBits);
