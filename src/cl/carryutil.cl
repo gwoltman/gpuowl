@@ -60,10 +60,9 @@ i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; ret
 //i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; if (bits == 1) return -(u & 1); return ulowFixedBits(u, bits - 1) - (u & (1 << bits)); }
 i32 OVERLOAD lowFixedBits(u32 u, const u32 bits) { return lowFixedBits((i32) u, bits); }
 #endif
-// Return signed low bits where number of bits is known at compile time (number of bits can be 1 to 63)
-//i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return ((u << (64 - bits)) >> (64 - bits)); }
-//i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return ((u64) lowFixedBits((i32) ((u64) u >> 32), bits - 32) << 32) | (u32) u; }
-i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return (i64) ulowFixedBits(u, bits - 1) - (u & (1LL << (bits - 1))); }
+// Return signed low bits where number of bits is known at compile time (number of bits can be 1 to 63).  The two versions are the same speed on TitanV.
+i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return ((u << (64 - bits)) >> (64 - bits)); }
+//i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return (i64) ulowFixedBits(u, bits - 1) - (u & (1LL << (bits - 1))); }
 i64 OVERLOAD lowFixedBits(u64 u, const u32 bits) { return lowFixedBits((i64) u, bits); }
 
 // Extract 32 bits from a 64-bit value
@@ -371,7 +370,9 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
   u64 n61 = get_Z61(u61);
 
   // The final result must be n61 mod M61.  Use FP32 data to calculate this value.
-  uF2 = fma(uF2, F2_invWeight, - (float) n61);                                // This should be close to a multiple of M61
+//  float n61f = (float)n61;                                                    // Convert n61 to float
+  float n61f = (float)((u32)(n61 >> 32)) * 4294967296.0f;                     // Conversion from u64 to float might be slow, this might be faster
+  uF2 = fma(uF2, F2_invWeight, -n61f);                                        // This should be close to a multiple of M61
   float uF2int = fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL);    // Divide by 2^61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
@@ -458,10 +459,10 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
   u64 n61 = get_Z61(u61);
   i128 n3161 = (((i128) n61 << 31) | n31) - n61;     // n61 * M31 + n31
 
-//GW - computing (float)n3161 may be complicated and we don't need all that precision. .  Would forming a smaller value (like just n61) to float be faster with the *M31 taken into account with the constant?
-
   // The final result must be n3161 mod M31*M61.  Use FP32 data to calculate this value.
-  uF2 = fma(uF2, F2_invWeight, - (float) n3161);                             // This should be close to a multiple of M31*M61
+//  float n3161f = (float)n3161;                                               // Convert n3161 to float
+  float n3161f = (float)((u32)(n61 >> 32)) * 9223372036854775808.0f;         // Conversion from i128 to float might be slow, this might be faster
+  uF2 = fma(uF2, F2_invWeight, -n3161f);                                     // This should be close to a multiple of M31*M61
   float uF2int = fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL);   // Divide by M31*M61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
@@ -498,12 +499,6 @@ Word OVERLOAD carryStep(i128 x, i64 *outCarry, bool isBigWord) {
 
 Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
-
-//GWBUG - is this ever faster?  Not on TitanV
-//i128 x128 = ((i128) (i64) i96_hi64(x) << 32) | i96_lo32(x);
-//i64 w = ((i64) x128 << (64 - nBits)) >> (64 - nBits);
-//*outCarry = (i64) (x128 >> nBits) + (w < 0);
-//return w;
 
 // This code can be tricky because we must not shift i32 or u32 variables by 32.
 #if EXP / NWORDS >= 33                          //GWBUG Would the EXP / NWORDS == 32 code be just as fast?
@@ -673,10 +668,6 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
-//  i64 w = lowFixedBits(i96_lo64(x), bigwordBits);
-//  i64 xhi = ((i64) i96_hi64(x) >> (bigwordBits - 32)) + (w < 0);
-//  *outCarry = xhi << (bigwordBits - nBits);
-// or this:
   u64 xlo = i96_lo64(x);
   u64 xlo_topbit = xlo & (1ULL << (bigwordBits - 1));
   i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
