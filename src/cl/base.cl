@@ -19,7 +19,8 @@ CARRY_LEN
 NW
 NH
 AMDGPU  : if this is an AMD GPU
-HAS_ASM : set if we believe __asm() can be used
+HAS_ASM : set if we believe __asm() can be used for AMD GCN
+HAS_PTX : set if we believe __asm() can be used for nVidia PTX
 
 -- Derived from above:
 BIG_HEIGHT == SMALL_HEIGHT * MIDDLE
@@ -56,12 +57,16 @@ G_H        "group height" == SMALL_HEIGHT / NH
 //__builtin_assume(condition)
 #endif // DEBUG
 
-#if AMDGPU
-// On AMDGPU the default is HAS_ASM
-#if !NO_ASM
+#if NO_ASM
+#define HAS_ASM 0
+#define HAS_PTX 0
+#elif AMDGPU
 #define HAS_ASM 1
+#define HAS_PTX 0
+#else // Assume it is as nVidia GPU (can C code detect nVidia like it does for AMD?)
+#define HAS_ASM 0
+#define HAS_PTX 1
 #endif
-#endif // AMDGPU
 
 // Default is not adding -2 to results for LL
 #if !defined(LL)

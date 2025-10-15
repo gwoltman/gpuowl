@@ -9,6 +9,30 @@
 u32 lo32(u64 x) { return (u32) x; }
 u32 hi32(u64 x) { return (u32) (x >> 32); }
 
+// Multiply and add primitives
+
+u128 mad32(u32 a, u32 b, u64 c) {
+#if 0 && HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
+  u32 reslo, reshi;
+  __asm("mad.lo.cc.u32 %0, %1, %2, %3;" : "=r"(reslo) : "r"(a), "r"(b), "r"((u32) c));
+  __asm("madc.hi.u32   %0, %1, %2, %3;" : "=r"(reshi) : "r"(a), "r"(b), "r"((u32) (c >> 32)));
+  return ((u64)reshi << 32) | reslo;
+#else
+  return (u64) a * (u64) b + c;
+#endif
+}
+
+u128 mad64(u64 a, u64 b, u128 c) {
+#if 0 && HAS_PTX                                // Slower on TitanV, don't understand why
+  u64 reslo, reshi;
+  __asm("mad.lo.cc.u64 %0, %1, %2, %3;" : "=l"(reslo) : "l"(a), "l"(b), "l"((u64) c));
+  __asm("madc.hi.u64   %0, %1, %2, %3;" : "=l"(reshi) : "l"(a), "l"(b), "l"((u64) (c >> 64)));
+  return ((u128)reshi << 64) | reslo;
+#else
+  return (u128) a * (u128) b + c;
+#endif
+}
+
 // A primitive partial implementation of an i96 integer type
 #if 0
 // An all u32 implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions.
@@ -499,7 +523,7 @@ GF31 OVERLOAD csq_subi(GF31 a, GF31 c) {
 }
 
 // Complex mul
-#if 1                                           // One less negation, requires signed shifts.  Seems microscopically faster on TitanV.
+#if 0                                           // One less negation, requires signed shifts.  Seems microscopically faster on TitanV.
 GF31 OVERLOAD cmul(GF31 a, GF31 b) {
   u64 k1 = b.x * (u64) (a.x + a.y);             // 63-bit value, max = 7FFF FFFE 0000 0002
   u64 k2 = a.x * (u64) (b.y + neg(b.x));
@@ -511,10 +535,8 @@ GF31 OVERLOAD cmul(GF31 a, GF31 b) {
 #else
 GF31 OVERLOAD cmul(GF31 a, GF31 b) {
   u64 k1 = b.x * (u64) (a.x + a.y);             // 63-bit value, max = 7FFF FFFE 0000 0002
-  u64 k2 = a.x * (u64) (b.y + neg(b.x));
-  u64 k3 = neg(a.y) * (u64) (b.y + b.x);
-  u64 k1k3 = k1 + k3;                           // unsigned 64-bit value, max = FFFF FFFC 0000 0004
-  u64 k1k2 = k1 + k2;                           // unsigned 64-bit value, max = FFFF FFFC 0000 0004
+  u64 k1k2 = mad32(a.x, b.y + neg(b.x), k1);    // unsigned 64-bit value, max = FFFF FFFC 0000 0004
+  u64 k1k3 = mad32(neg(a.y), b.y + b.x, k1);    // unsigned 64-bit value, max = FFFF FFFC 0000 0004
   return U2(modM31(k1k3), modM31(k1k2));
 }
 #endif
@@ -779,12 +801,33 @@ GF61 OVERLOAD csq(GF61 a) { return csqs(a, 2); }
 GF61 OVERLOAD csqa(GF61 a, GF61 c) { return U2(modM61(weakMul(a.x + a.y, a.x + neg(a.y, 2), 3, 4) + c.x), modM61(weakMul(a.x + a.x, a.y, 3, 2) + c.y)); }
 
 // Complex mul
+#if 0
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {              // Use 3-epsilon extra bits in u64
   Z61 k1 = weakMul(b.x, a.x + a.y, 2, 3);         // max value is 3*M61+epsilon
   Z61 k2 = weakMul(a.x, b.y + neg(b.x, 2), 2, 3); // max value is 3*M61+epsilon
   Z61 k3 = weakMul(a.y, b.y + b.x, 2, 3);         // max value is 3*M61+epsilon
   return U2(modM61(k1 + neg(k3, 4)), modM61(k1 + k2));
 }
+#else
+Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b_m61_count) {
+  u128 ab = mad64(a, b, c);                             // Max c value assumed to be M61^2+epsilon
+  u64 lo = ab, hi = ab >> 64;
+  u64 lo61 = lo & M61;                                  // Max value is M61
+  if ((a_m61_count - 1) * (b_m61_count - 1) + 1 <= 6) {
+     hi = (hi << 3) + (lo >> 61);                       // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 1) * M61 + epsilon
+     return lo61 + hi;                                  // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 2) * M61 + epsilon
+  } else {
+     u64 hi61 = ((hi << 3) + (lo >> 61)) & M61;         // Max value is M61
+     return lo61 + hi61 + (hi >> 58);                   // Max value is 2*M61 + epsilon
+  }
+}
+GF61 OVERLOAD cmul(GF61 a, GF61 b) {
+  u128 k1 = (u128) b.x * (u128) (a.x + a.y);                  // max value is M61^2+epsilon
+  Z61 k1k2 = weakMulAdd(a.x, b.y + neg(b.x, 2), k1, 2, 3);    // max value is 4*M61+epsilon
+  Z61 k1k3 = weakMulAdd(a.y, neg(b.y + b.x, 3), k1, 2, 4);    // max value is 5*M61+epsilon
+  return U2(modM61(k1k3), modM61(k1k2));
+}
+#endif
 
 // Square a root of unity complex number (the second version may be faster if the compiler optimizes the u128 squaring).
 //GF61 OVERLOAD csqTrig(GF61 a) { Z61 two_ay = a.y + a.y; return U2(modM61(1 + weakMul(two_ay, neg(a.y, 2))), mul(a.x, two_ay)); }
