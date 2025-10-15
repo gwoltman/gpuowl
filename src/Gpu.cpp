@@ -646,12 +646,10 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
     }
   }
 
-#if !FFT_FP32
-  if (bitsPerWord < FFTShape::MIN_BPW) {
-    log("FFT size too large for exponent (%.2f bits/word < %.2f bits/word).\n", bitsPerWord, FFTShape::MIN_BPW);
+  if (bitsPerWord < fft.minBpw()) {
+    log("FFT size too large for exponent (%.2f bits/word < %.2f bits/word).\n", bitsPerWord, fft.minBpw());
     throw "FFT size too large";
   }
-#endif
 
   useLongCarry = useLongCarry || (bitsPerWord < 10.0);
 

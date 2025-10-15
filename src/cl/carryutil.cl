@@ -10,8 +10,12 @@ typedef i32 CFcarry;
 #endif
 
 // The carry for the non-fused CarryA, CarryB, CarryM kernels.
-// Simply use large carry always as the split kernels are slow anyway (and seldomly used normally).
+// Simply use largest possible carry always as the split kernels are slow anyway (and seldomly used normally).
+#if COMBO_FFT || !(FFT_FP32 || NTT_GF31)
 typedef i64 CarryABM;
+#else
+typedef i32 CarryABM;
+#endif
 
 /********************************/
 /*       Helper routines        */
@@ -753,7 +757,8 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 #undef iCARRY
 #endif
 
+#if COMBO_FFT || !(FFT_FP32 || NTT_GF31)
 #define iCARRY i64
 #include "carryinc.cl"
 #undef iCARRY
-
+#endif

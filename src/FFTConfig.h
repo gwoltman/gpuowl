@@ -25,8 +25,6 @@ enum FFT_TYPES {FFT64=0, FFT3161=1, FFT3261=2, FFT61=3, FFT323161=4, FFT3231=50,
 
 class FFTShape {
 public:
-  static constexpr const float MIN_BPW = 3;
-  
   static std::vector<FFTShape> allShapes(u32 from=0, u32 to = -1);
 
   static tuple<u32, u32, bool> getChainLengths(u32 fftSize, u32 exponent, u32 middle);
@@ -48,6 +46,7 @@ public:
   u32 nW() const { return (width == 1024 || width == 256 /*|| width == 4096*/) ? 4 : 8; }
   u32 nH() const { return (height == 1024 || height == 256 /*|| height == 4096*/) ? 4 : 8; }
 
+  float minBpw() const { return fft_type != FFT32 ? 3.0f : 1.0f; }
   float maxBpw() const { return *max_element(bpw.begin(), bpw.end()); }
   std::string spec() const { return (fft_type ? to_string(fft_type) + ':' : "") + numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
 
@@ -97,5 +96,6 @@ public:
   u64 size() const { return shape.size(); }
   u64 maxExp()  const { return maxBpw() * shape.size(); }
 
+  float minBpw() const { return shape.minBpw(); }
   float maxBpw() const;
 };
