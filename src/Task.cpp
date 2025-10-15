@@ -87,7 +87,7 @@ string ffttype(FFTConfig fft) {
   return fft.shape.fft_type == FFT64 ? "FP64" : fft.shape.fft_type == FFT3161 ? "M31+M61" :
          fft.shape.fft_type == FFT61 ? "M61"  : fft.shape.fft_type == FFT3261 ? "FP32+M61" :
          fft.shape.fft_type == FFT31 ? "M31"  : fft.shape.fft_type == FFT3231 ? "FP32+M31" :
-         fft.shape.fft_type == FFT32 ? "FP32" : fft.shape.fft_type == FFT6431 ? "FP64+M31" : fft.shape.fft_type == FFT323164 ? "FP32+M31+M61" : "unknown";
+         fft.shape.fft_type == FFT32 ? "FP32" : fft.shape.fft_type == FFT6431 ? "FP64+M31" : fft.shape.fft_type == FFT323161 ? "FP32+M31+M61" : "unknown";
 }
 
 string json(const vector<string>& v) {
