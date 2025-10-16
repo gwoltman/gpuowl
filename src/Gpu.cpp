@@ -962,32 +962,34 @@ void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3) {
   mul(ioA, buf1, buf2, buf3, mul3);
 };
 
-void Gpu::writeState(const vector<u32>& check, u32 blockSize) {
+void Gpu::writeState(u32 k, const vector<u32>& check, u32 blockSize) {
   assert(blockSize > 0);
   writeIn(bufCheck, check);
 
   bufData << bufCheck;
   bufAux  << bufCheck;
 
-  u32 n;
-  for (n = 1; blockSize % (2 * n) == 0; n *= 2) {
+  if (k) {  // Only verify bufData that was read in from a save file
+    u32 n;
+    for (n = 1; blockSize % (2 * n) == 0; n *= 2) {
+      squareLoop(bufData, 0, n);
+      modMul(bufData, bufAux);
+      bufAux << bufData;
+    }
+
+    assert((n & (n - 1)) == 0);
+    assert(blockSize % n == 0);
+
+    blockSize /= n;
+    assert(blockSize >= 2);
+
+    for (u32 i = 0; i < blockSize - 2; ++i) {
+      squareLoop(bufData, 0, n);
+      modMul(bufData, bufAux);
+    }
+
     squareLoop(bufData, 0, n);
-    modMul(bufData, bufAux);
-    bufAux << bufData;
   }
-
-  assert((n & (n - 1)) == 0);
-  assert(blockSize % n == 0);
-
-  blockSize /= n;
-  assert(blockSize >= 2);
-
-  for (u32 i = 0; i < blockSize - 2; ++i) {
-    squareLoop(bufData, 0, n);
-    modMul(bufData, bufAux);
-  }
-
-  squareLoop(bufData, 0, n);
   modMul(bufData, bufAux, true);
 }
   
@@ -1439,7 +1441,7 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
     }
 
     PRPState state = saver.load();
-    writeState(state.check, state.blockSize);
+    writeState(state.k, state.check, state.blockSize);
     u64 res = dataResidue();
 
     if (res == state.res64) {
@@ -1482,7 +1484,7 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
 
   u32 k = 0;
   PRPState state{E, 0, blockSize, 3, makeWords(E, 1), 0};
-  writeState(state.check, state.blockSize);
+  writeState(state.k, state.check, state.blockSize);
   {
     u64 res = dataResidue();
     if (res != state.res64) {
@@ -1550,7 +1552,7 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
 
   u32 k = 0;
   PRPState state{E, 0, blockSize, 3, makeWords(E, 1), 0};
-  writeState(state.check, state.blockSize);
+  writeState(state.k, state.check, state.blockSize);
   {
     u64 res = dataResidue();
     if (res != state.res64) {
@@ -1619,7 +1621,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
 
   u32 k = 0;
   PRPState state{E, 0, blockSize, 3, makeWords(E, 1), 0};
-  writeState(state.check, state.blockSize);
+  writeState(state.k, state.check, state.blockSize);
   assert(dataResidue() == state.res64);
 
   modMul(bufCheck, bufData);

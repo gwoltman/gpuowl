@@ -259,7 +259,7 @@ private:
 
   void bottomHalf(Buffer<double>& out, Buffer<double>& inTmp);
 
-  void writeState(const vector<u32>& check, u32 blockSize);
+  void writeState(u32 k, const vector<u32>& check, u32 blockSize);
 
   // does either carrryFused() or the expanded version depending on useLongCarry
   void doCarry(Buffer<double>& out, Buffer<double>& in);
