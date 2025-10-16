@@ -54,8 +54,7 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
     auto parts = split(spec, ':');
     if (parseInt(parts[0]) < 60) {      // Look for a prefix specifying the FFT type
       fft_type = (enum FFT_TYPES) parseInt(parts[0]);
-      for (u32 i = 1; i < parts.size(); ++i) parts[i-1] = parts[i];
-      parts.resize(parts.size() - 1);
+      parts = vector(next(parts.begin()), parts.end());
     }
     assert(parts.size() <= 3);
     if (parts.size() == 3) {
