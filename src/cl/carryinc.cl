@@ -13,7 +13,7 @@ Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
 /*  Original FP64 version to start the carry propagation process for a pair of FFT values  */
 /*******************************************************************************************/
 
-#if FFT_FP64 & !COMBO_FFT
+#if FFT_TYPE == FFT64
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -43,7 +43,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(T2 u, T2 invWeight, i64 inCarry, bool b1
 /*            Similar to above, but for an FFT based on FP32              */
 /**************************************************************************/
 
-#elif FFT_FP32 & !COMBO_FFT
+#elif FFT_TYPE == FFT32
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -73,7 +73,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(F2 u, F2 invWeight, iCARRY inCarry, bool
 /*          Similar to above, but for an NTT based on GF(M31^2)           */
 /**************************************************************************/
 
-#elif NTT_GF31 & !COMBO_FFT
+#elif FFT_TYPE == FFT31
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -103,7 +103,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(GF31 u, u32 invWeight1, u32 invWeight2, 
 /*          Similar to above, but for an NTT based on GF(M61^2)           */
 /**************************************************************************/
 
-#elif NTT_GF61 & !COMBO_FFT
+#elif FFT_TYPE == FFT61
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -133,7 +133,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(GF61 u, u32 invWeight1, u32 invWeight2, 
 /*    Similar to above, but for a hybrid FFT based on FP64 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP64 & NTT_GF31
+#elif FFT_TYPE == FFT6431
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -165,7 +165,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(T2 u, GF31 u31, T invWeight1, T invWeigh
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & !NTT_GF61
+#elif FFT_TYPE == FFT3231
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -197,7 +197,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(F2 uF2, GF31 u31, F invWeight1, F invWei
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M61^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & !NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3261
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -229,7 +229,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(F2 uF2, GF61 u61, F invWeight1, F invWei
 /*    Similar to above, but for an NTT based on GF(M31^2)*GF(M61^2)       */
 /**************************************************************************/
 
-#elif !FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3161
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
@@ -260,7 +260,7 @@ Word2 OVERLOAD weightAndCarryPairSloppy(GF31 u31, GF61 u61, u32 m31_invWeight1, 
 /*  Similar to above, but for a hybrid FFT based on FP32*GF(M31^2)*GF(M61^2)  */
 /******************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT323161
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.

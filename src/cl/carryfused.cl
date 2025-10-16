@@ -16,7 +16,7 @@ void spin() {
 #endif
 }
 
-#if FFT_FP64 & !COMBO_FFT
+#if FFT_TYPE == FFT64
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -231,7 +231,7 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 /*            Similar to above, but for an FFT based on FP32              */
 /**************************************************************************/
 
-#elif FFT_FP32 & !COMBO_FFT
+#elif FFT_TYPE == FFT32
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -421,7 +421,7 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
 /*          Similar to above, but for an NTT based on GF(M31^2)           */
 /**************************************************************************/
 
-#elif NTT_GF31 & !COMBO_FFT
+#elif FFT_TYPE == FFT31
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -642,7 +642,7 @@ KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle
 /*          Similar to above, but for an NTT based on GF(M61^2)           */
 /**************************************************************************/
 
-#elif NTT_GF61 & !COMBO_FFT
+#elif FFT_TYPE == FFT61
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -863,7 +863,7 @@ KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle
 /*    Similar to above, but for a hybrid FFT based on FP64 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP64 & NTT_GF31
+#elif FFT_TYPE == FFT6431
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -1106,7 +1106,7 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & !NTT_GF61
+#elif FFT_TYPE == FFT3231
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -1352,7 +1352,7 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M61^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & !NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3261
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -1598,7 +1598,7 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 /*    Similar to above, but for an NTT based on GF(M31^2)*GF(M61^2)       */
 /**************************************************************************/
 
-#elif !FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3161
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
@@ -1857,7 +1857,7 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 /*  Similar to above, but for a hybrid FFT based on FP32*GF(M31^2)*GF(M61^2)  */
 /******************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT323161
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)

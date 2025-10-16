@@ -11,7 +11,7 @@ typedef i32 CFcarry;
 
 // The carry for the non-fused CarryA, CarryB, CarryM kernels.
 // Simply use largest possible carry always as the split kernels are slow anyway (and seldomly used normally).
-#if COMBO_FFT || !(FFT_FP32 || NTT_GF31)
+#if FFT_TYPE != FFT32 && FFT_TYPE != FFT31
 typedef i64 CarryABM;
 #else
 typedef i32 CarryABM;
@@ -151,7 +151,7 @@ void ROUNDOFF_CHECK(double x) {
 /*  From the FFT data, construct a value to normalize and carry propagate  */
 /***************************************************************************/
 
-#if FFT_FP64 & !COMBO_FFT
+#if FFT_TYPE == FFT64
 
 #define SLOPPY_MAXBPW 173       // Based on 142.4M expo in 7.5M FFT = 18.36 BPW
 
@@ -194,7 +194,7 @@ i64 weightAndCarryOne(T u, T invWeight, i64 inCarry, float* maxROE, int sloppy_r
 /*            Similar to above, but for an FFT based on FP32              */
 /**************************************************************************/
 
-#elif FFT_FP32 & !COMBO_FFT
+#elif FFT_TYPE == FFT32
 
 #define SLOPPY_MAXBPW 0         // F32 FFTs are not practical
 
@@ -235,7 +235,7 @@ i32 weightAndCarryOne(F u, F invWeight, i32 inCarry, float* maxROE, int sloppy_r
 /*          Similar to above, but for an NTT based on GF(M31^2)           */
 /**************************************************************************/
 
-#elif NTT_GF31 & !COMBO_FFT
+#elif FFT_TYPE == FFT31
 
 #define SLOPPY_MAXBPW 73        // Based on 140M expo in 16M FFT = 8.34 BPW
 
@@ -263,7 +263,7 @@ i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 /*          Similar to above, but for an NTT based on GF(M61^2)           */
 /**************************************************************************/
 
-#elif NTT_GF61 & !COMBO_FFT
+#elif FFT_TYPE == FFT61
 
 #define SLOPPY_MAXBPW 225       // Based on 198M expo in 8M FFT = 23.6 BPW
 
@@ -291,7 +291,7 @@ i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 /*    Similar to above, but for a hybrid FFT based on FP64 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP64 & NTT_GF31
+#elif FFT_TYPE == FFT6431
 
 #define SLOPPY_MAXBPW 327       // Based on 142M expo in 4M FFT = 33.86 BPW
 
@@ -329,7 +329,7 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & !NTT_GF61
+#elif FFT_TYPE == FFT3231
 
 #define SLOPPY_MAXBPW 154       // Based on 138M expo in 8M FFT = 16.45 BPW
 
@@ -362,7 +362,7 @@ i64 weightAndCarryOne(float uF2, Z31 u31, float F2_invWeight, u32 m31_invWeight,
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M61^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & !NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3261
 
 #define SLOPPY_MAXBPW 309       // Based on 134M expo in 4M FFT = 31.95 BPW
 
@@ -402,7 +402,7 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
 /*    Similar to above, but for an NTT based on GF(M31^2)*GF(M61^2)       */
 /**************************************************************************/
 
-#elif !FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3161
 
 #define SLOPPY_MAXBPW 383       // Based on 165M expo in 4M FFT = 39.34 BPW
 
@@ -445,7 +445,7 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
 /*  Similar to above, but for a hybrid FFT based on FP32*GF(M31^2)*GF(M61^2)  */
 /******************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT323161
 
 #define SLOPPY_MAXBPW 461       // Based on 198M expo in 4M FFT = 47.20 BPW
 
@@ -749,7 +749,7 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 /*     Do this last, it depends on weightAndCarryOne defined above        */
 /**************************************************************************/
 
-/* Support both 32-bit and 64-bit carries */                    // GWBUG - not all NTTs need to support both carries
+/* Support both 32-bit and 64-bit carries */
 
 #if WordSize <= 4
 #define iCARRY i32
@@ -757,7 +757,7 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 #undef iCARRY
 #endif
 
-#if COMBO_FFT || !(FFT_FP32 || NTT_GF31)
+#if FFT_TYPE != FFT32 && FFT_TYPE != FFT31
 #define iCARRY i64
 #include "carryinc.cl"
 #undef iCARRY

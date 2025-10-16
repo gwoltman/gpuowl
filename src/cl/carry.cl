@@ -3,7 +3,7 @@
 #include "carryutil.cl"
 #include "weight.cl"
 
-#if FFT_FP64 & !COMBO_FFT
+#if FFT_TYPE == FFT64
 
 // Carry propagation with optional MUL-3, over CARRY_LEN words.
 // Input arrives with real and imaginary values swapped and weighted.
@@ -49,7 +49,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 /*            Similar to above, but for an FFT based on FP32              */
 /**************************************************************************/
 
-#elif FFT_FP32 & !COMBO_FFT
+#elif FFT_TYPE == FFT32
 
 // Carry propagation with optional MUL-3, over CARRY_LEN words.
 // Input arrives with real and imaginary values swapped and weighted.
@@ -94,7 +94,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(F2) in, u32 posROE, P(CarryABM) carryOut, Big
 /*          Similar to above, but for an NTT based on GF(M31^2)           */
 /**************************************************************************/
 
-#elif NTT_GF31 & !COMBO_FFT
+#elif FFT_TYPE == FFT31
 
 KERNEL(G_W) carry(P(Word2) out, CP(GF31) in, u32 posROE, P(CarryABM) carryOut, P(uint) bufROE) {
   u32 g  = get_group_id(0);
@@ -168,7 +168,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF31) in, u32 posROE, P(CarryABM) carryOut, P
 /*          Similar to above, but for an NTT based on GF(M61^2)           */
 /**************************************************************************/
 
-#elif NTT_GF61 & !COMBO_FFT
+#elif FFT_TYPE == FFT61
 
 KERNEL(G_W) carry(P(Word2) out, CP(GF61) in, u32 posROE, P(CarryABM) carryOut, P(uint) bufROE) {
   u32 g  = get_group_id(0);
@@ -242,7 +242,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF61) in, u32 posROE, P(CarryABM) carryOut, P
 /*    Similar to above, but for a hybrid FFT based on FP64 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP64 & NTT_GF31
+#elif FFT_TYPE == FFT6431
 
 KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
   u32 g  = get_group_id(0);
@@ -320,7 +320,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M31^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & !NTT_GF61
+#elif FFT_TYPE == FFT3231
 
 KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
   u32 g  = get_group_id(0);
@@ -399,7 +399,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 /*    Similar to above, but for a hybrid FFT based on FP32 & GF(M61^2)    */
 /**************************************************************************/
 
-#elif FFT_FP32 & !NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3261
 
 KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
   u32 g  = get_group_id(0);
@@ -478,7 +478,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 /*    Similar to above, but for an NTT based on GF(M31^2)*GF(M61^2)       */
 /**************************************************************************/
 
-#elif !FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT3161
 
 KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(uint) bufROE) {
   u32 g  = get_group_id(0);
@@ -570,7 +570,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
 /*  Similar to above, but for a hybrid FFT based on FP32*GF(M31^2)*GF(M61^2)  */
 /******************************************************************************/
 
-#elif FFT_FP32 & NTT_GF31 & NTT_GF61
+#elif FFT_TYPE == FFT323161
 
 KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
   u32 g  = get_group_id(0);

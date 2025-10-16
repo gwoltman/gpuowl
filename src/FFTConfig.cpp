@@ -235,15 +235,15 @@ FFTConfig::FFTConfig(FFTShape shape, u32 variant, u32 carry) :
   assert(variant_M(variant) < N_VARIANT_M);
   assert(variant_H(variant) < N_VARIANT_H);
 
-  if (shape.fft_type == FFT64) FFT_FP64 = 1, FFT_FP32 = 0, NTT_GF31 = 0, NTT_GF61 = 0, WordSize = 4;
-  else if (shape.fft_type == FFT3161) FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 1, WordSize = 8;
-  else if (shape.fft_type == FFT3261) FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 0, NTT_GF61 = 1, WordSize = 8;
-  else if (shape.fft_type == FFT61) FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 0, NTT_GF61 = 1, WordSize = 4;
+  if      (shape.fft_type == FFT64)     FFT_FP64 = 1, FFT_FP32 = 0, NTT_GF31 = 0, NTT_GF61 = 0, WordSize = 4;
+  else if (shape.fft_type == FFT3161)   FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 1, WordSize = 8;
+  else if (shape.fft_type == FFT3261)   FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 0, NTT_GF61 = 1, WordSize = 8;
+  else if (shape.fft_type == FFT61)     FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 0, NTT_GF61 = 1, WordSize = 4;
   else if (shape.fft_type == FFT323161) FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 1, NTT_GF61 = 1, WordSize = 8;
-  else if (shape.fft_type == FFT3231) FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 4;
-  else if (shape.fft_type == FFT6431) FFT_FP64 = 1, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 8;
-  else if (shape.fft_type == FFT31) FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 4;
-  else if (shape.fft_type == FFT32) FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 0, NTT_GF61 = 0, WordSize = 4;
+  else if (shape.fft_type == FFT3231)   FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 4;
+  else if (shape.fft_type == FFT6431)   FFT_FP64 = 1, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 8;
+  else if (shape.fft_type == FFT31)     FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 4;
+  else if (shape.fft_type == FFT32)     FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 0, NTT_GF61 = 0, WordSize = 4;
   else throw "FFT type";
 }
 

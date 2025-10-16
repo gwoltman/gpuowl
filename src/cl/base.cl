@@ -186,13 +186,18 @@ typedef ulong2 GF61;        // A complex value using two Z61s.  For a GF(M61^2) 
 //typedef ulong NCW;          // A value calculated mod 2^64 - 2^32 + 1.
 //typedef ulong2 NCW2;        // A complex value using NCWs.  For a Nick Craig-Wood's insipred NTT using prime 2^64 - 2^32 + 1.
 
-// Typedefs for "combo" FFT/NTTs (multiple NTT primes or hybrid FFT/NTT).
-#define COMBO_FFT (FFT_FP64 + FFT_FP32 + NTT_GF31 + NTT_GF61 > 1)
-// Sanity check for supported FFT/NTT
-#if (FFT_FP64 & NTT_GF31 & !FFT_FP32 & !NTT_GF61) | (NTT_GF31 & NTT_GF61 & !FFT_FP64 & !FFT_FP32) | (FFT_FP32 & NTT_GF61 & !FFT_FP64 & !NTT_GF31) | (FFT_FP32 & NTT_GF31 & NTT_GF61 & !FFT_FP64)
-#elif !COMBO_FFT | (FFT_FP32 & NTT_GF31 & !FFT_FP64 & !NTT_GF61)
-#else
-error - unsupported FFT/NTT combination
+// Defines for the various supported FFTs/NTTs.  These match the enumeration in FFTConfig.h.  Sanity check for supported FFT/NTT.
+#define FFT64           0
+#define FFT3161         1
+#define FFT3261         2
+#define FFT61           3
+#define FFT323161       4
+#define FFT3231         50
+#define FFT6431         51
+#define FFT31           52
+#define FFT32           53
+#if FFT_TYPE < 0 || (FFT_TYPE > 4 && FFT_TYPE < 50) || FFT_TYPE > 53
+#error - unsupported FFT/NTT
 #endif
 // Word and Word2 define the data type for FFT integers passed between the CPU and GPU.
 #if WordSize == 8

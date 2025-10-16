@@ -331,7 +331,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     defines += toDefine("TAILTGF61", root1GF61(fft.shape.height * 2, 1));
   }
 
-  // Enable/disable code for each possible FP and NTT
+  // Send the FFT/NTT type and booleans that enable/disable code for each possible FP and NTT
+  defines += toDefine("FFT_TYPE", (int) fft.shape.fft_type);
   defines += toDefine("FFT_FP64", (int) fft.FFT_FP64);
   defines += toDefine("FFT_FP32", (int) fft.FFT_FP32);
   defines += toDefine("NTT_GF31", (int) fft.NTT_GF31);
