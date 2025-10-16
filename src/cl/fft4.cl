@@ -206,7 +206,6 @@ void OVERLOAD fft4by(GF61 *u, u32 base, u32 step, u32 M) {
 
 #define A(k) u[(base + step * k) % M]
 
-#if !TEST_SHL
   Z61 x0 = addq(A(0).x, A(2).x);             // Max value is 2*M61+epsilon
   Z61 x2 = subq(A(0).x, A(2).x, 2);          // Max value is 3*M61+epsilon
   Z61 y0 = addq(A(0).y, A(2).y);
@@ -233,42 +232,6 @@ void OVERLOAD fft4by(GF61 *u, u32 base, u32 step, u32 M) {
   A(1) = U2(a2, b2);
   A(2) = U2(a1, b1);
   A(3) = U2(a3, b3);
-
-#else		// Test case to see if signed M61 mod would be faster  (if so, look into creating X2q options in math.cl's GF61 to support signed intermediates)
-
-  i64 x0 = A(0).x + A(2).x;
-  i64 x2 = A(0).x - A(2).x;
-  i64 y0 = A(0).y + A(2).y;
-  i64 y2 = A(0).y - A(2).y;
-
-  i64 x1 = A(1).x + A(3).x;
-  i64 y3 = A(1).x - A(3).x;
-  i64 y1 = A(1).y + A(3).y;
-  i64 x3 = A(3).y - A(1).y;
-
-  i64 a0 = x0 - x1;
-  i64 a1 = x0 - x1;
-
-  i64 b0 = y0 + y1;
-  i64 b1 = y0 - y1;
-
-  i64 a2 = x2 + x3;
-  i64 a3 = x2 - x3;
-
-  i64 b2 = y2 + y3;
-  i64 b3 = y2 - y3;
-
-#define cvt(a)   (Z61) ((a & M61) + (a >> MBITS))
-
-  A(0) = U2(cvt(a0), cvt(b0));
-  A(1) = U2(cvt(a2), cvt(b2));
-  A(2) = U2(cvt(a1), cvt(b1));
-  A(3) = U2(cvt(a3), cvt(b3));
-
-#undef cvt
-
-#endif
-
 
 #undef A
 
