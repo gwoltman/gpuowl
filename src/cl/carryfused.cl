@@ -91,20 +91,21 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
   u32 word_index = (me * H + line) * 2;
   u32 frac_bits = word_index * FRAC_BPW_HI + mad_hi (word_index, FRAC_BPW_LO, FRAC_BPW_HI);
+  const u32 frac_bits_bigstep = ((G_W * H * 2) * FRAC_BPW_HI + (u32)(((u64)(G_W * H * 2) * FRAC_BPW_LO) >> 32));
 #endif
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
   T invBase = optionalDouble(weights.x);
-  
+
   for (u32 i = 0; i < NW; ++i) {
     T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
     T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
 
     // Generate big-word/little-word flags
 #if BIGLIT
-    bool biglit0 = frac_bits + i * FRAC_BITS_BIGSTEP <= FRAC_BPW_HI;
-    bool biglit1 = frac_bits + i * FRAC_BITS_BIGSTEP >= -FRAC_BPW_HI;   // Same as frac_bits + i * FRAC_BITS_BIGSTEP + FRAC_BPW_HI <= FRAC_BPW_HI;
+    bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
+    bool biglit1 = frac_bits + i * frac_bits_bigstep >= -FRAC_BPW_HI;   // Same as frac_bits + i * frac_bits_bigstep + FRAC_BPW_HI <= FRAC_BPW_HI;
 #else
     bool biglit0 = test(b, 2 * i);
     bool biglit1 = test(b, 2 * i + 1);
@@ -210,7 +211,7 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   // Apply each 32 or 64 bit carry to the 2 words
   for (i32 i = 0; i < NW; ++i) {
 #if BIGLIT
-    bool biglit0 = frac_bits + i * FRAC_BITS_BIGSTEP <= FRAC_BPW_HI;
+    bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
 #else
     bool biglit0 = test(b, 2 * i);
 #endif
@@ -291,6 +292,7 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
   // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
   u32 word_index = (me * H + line) * 2;
   u32 frac_bits = word_index * FRAC_BPW_HI + mad_hi (word_index, FRAC_BPW_LO, FRAC_BPW_HI);
+  const u32 frac_bits_bigstep = ((G_W * H * 2) * FRAC_BPW_HI + (u32)(((u64)(G_W * H * 2) * FRAC_BPW_LO) >> 32));
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
@@ -301,8 +303,8 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
 
     // Generate big-word/little-word flags
-    bool biglit0 = frac_bits + i * FRAC_BITS_BIGSTEP <= FRAC_BPW_HI;
-    bool biglit1 = frac_bits + i * FRAC_BITS_BIGSTEP >= -FRAC_BPW_HI;   // Same as frac_bits + i * FRAC_BITS_BIGSTEP + FRAC_BPW_HI <= FRAC_BPW_HI;
+    bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
+    bool biglit1 = frac_bits + i * frac_bits_bigstep >= -FRAC_BPW_HI;   // Same as frac_bits + i * frac_bits_bigstep + FRAC_BPW_HI <= FRAC_BPW_HI;
 
     // Apply the inverse weights, optionally compute roundoff error, and convert to integer.  Also apply MUL3 here.
     // Then propagate carries through two words (the first carry does not have to be accurately calculated because it will
@@ -403,7 +405,7 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
 
   // Apply each 32 or 64 bit carry to the 2 words
   for (i32 i = 0; i < NW; ++i) {
-    bool biglit0 = frac_bits + i * FRAC_BITS_BIGSTEP <= FRAC_BPW_HI;
+    bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
     u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);
   }

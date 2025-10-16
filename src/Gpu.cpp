@@ -405,8 +405,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   bpw--; // bpw must not be an exact value -- it must be less than exact value to get last biglit value right
   defines += toDefine("FRAC_BPW_HI", (u32) (bpw >> 32));
   defines += toDefine("FRAC_BPW_LO", (u32) bpw);
-  u32 bigstep = (bpw * (N / fft.shape.nW())) >> 32;
-  defines += toDefine("FRAC_BITS_BIGSTEP", bigstep);
 
   return defines;
 }
