@@ -374,10 +374,9 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
   u64 n61 = get_Z61(u61);
 
   // The final result must be n61 mod M61.  Use FP32 data to calculate this value.
-//  float n61f = (float)n61;                                                    // Convert n61 to float
-  float n61f = (float)((u32)(n61 >> 32)) * 4294967296.0f;                     // Conversion from u64 to float might be slow, this might be faster
-  uF2 = fma(uF2, F2_invWeight, -n61f);                                        // This should be close to a multiple of M61
-  float uF2int = fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL);    // Divide by 2^61 and round to int
+  float n61f = (float)((u32)(n61 >> 32)) * -4294967296.0f;                    // Conversion from u64 to float might be slow, this might be faster
+  uF2 = fma(uF2, F2_invWeight, n61f);                                         // This should be close to a multiple of M61
+  float uF2int = fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL);    // Divide by M61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
   // Optionally calculate roundoff error
@@ -464,9 +463,8 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
   i128 n3161 = (((i128) n61 << 31) | n31) - n61;     // n61 * M31 + n31
 
   // The final result must be n3161 mod M31*M61.  Use FP32 data to calculate this value.
-//  float n3161f = (float)n3161;                                               // Convert n3161 to float
-  float n3161f = (float)((u32)(n61 >> 32)) * 9223372036854775808.0f;         // Conversion from i128 to float might be slow, this might be faster
-  uF2 = fma(uF2, F2_invWeight, -n3161f);                                     // This should be close to a multiple of M31*M61
+  float n3161f = (float)((u32)(n61 >> 32)) * -9223372036854775808.0f;        // Conversion from i128 to float might be slow, this might be faster
+  uF2 = fma(uF2, F2_invWeight, n3161f);                                      // This should be close to a multiple of M31*M61
   float uF2int = fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL);   // Divide by M31*M61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
