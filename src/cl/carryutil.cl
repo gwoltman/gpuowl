@@ -153,8 +153,6 @@ void ROUNDOFF_CHECK(double x) {
 
 #if FFT_TYPE == FFT64
 
-#define SLOPPY_MAXBPW 173       // Based on 142.4M expo in 7.5M FFT = 18.36 BPW
-
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i64 weightAndCarryOne(T u, T invWeight, i64 inCarry, float* maxROE, int sloppy_result_is_acceptable) {
 
@@ -196,8 +194,6 @@ i64 weightAndCarryOne(T u, T invWeight, i64 inCarry, float* maxROE, int sloppy_r
 
 #elif FFT_TYPE == FFT32
 
-#define SLOPPY_MAXBPW 0         // F32 FFTs are not practical
-
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer.  Handle MUL3.
 i32 weightAndCarryOne(F u, F invWeight, i32 inCarry, float* maxROE, int sloppy_result_is_acceptable) {
 
@@ -237,8 +233,6 @@ i32 weightAndCarryOne(F u, F invWeight, i32 inCarry, float* maxROE, int sloppy_r
 
 #elif FFT_TYPE == FFT31
 
-#define SLOPPY_MAXBPW 73        // Based on 140M expo in 16M FFT = 8.34 BPW
-
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 
@@ -265,8 +259,6 @@ i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 
 #elif FFT_TYPE == FFT61
 
-#define SLOPPY_MAXBPW 225       // Based on 198M expo in 8M FFT = 23.6 BPW
-
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 
@@ -292,8 +284,6 @@ i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 /**************************************************************************/
 
 #elif FFT_TYPE == FFT6431
-
-#define SLOPPY_MAXBPW 327       // Based on 142M expo in 4M FFT = 33.86 BPW
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry, float* maxROE) {
@@ -331,8 +321,6 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
 
 #elif FFT_TYPE == FFT3231
 
-#define SLOPPY_MAXBPW 154       // Based on 138M expo in 8M FFT = 16.45 BPW
-
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i64 weightAndCarryOne(float uF2, Z31 u31, float F2_invWeight, u32 m31_invWeight, i32 inCarry, float* maxROE) {
 
@@ -363,8 +351,6 @@ i64 weightAndCarryOne(float uF2, Z31 u31, float F2_invWeight, u32 m31_invWeight,
 /**************************************************************************/
 
 #elif FFT_TYPE == FFT3261
-
-#define SLOPPY_MAXBPW 309       // Based on 134M expo in 4M FFT = 31.95 BPW
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight, i64 inCarry, float* maxROE) {
@@ -402,8 +388,6 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
 /**************************************************************************/
 
 #elif FFT_TYPE == FFT3161
-
-#define SLOPPY_MAXBPW 383       // Based on 165M expo in 4M FFT = 39.34 BPW
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i64 inCarry, u32* maxROE) {
@@ -445,8 +429,6 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
 /******************************************************************************/
 
 #elif FFT_TYPE == FFT323161
-
-#define SLOPPY_MAXBPW 461       // Based on 198M expo in 4M FFT = 47.20 BPW
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_invWeight, u32 m61_invWeight, i64 inCarry, float* maxROE) {
@@ -640,8 +622,14 @@ Word OVERLOAD carryStepUnsignedSloppy(i32 x, i32 *outCarry, bool isBigWord) {
 /*  Also used on first word in carryFinal when not near max BPW.      */
 /**********************************************************************/
 
+// We only allow sloppy results when not near the maximum bits-per-word.  For now, this is defined as 1.1 bits below maxbpw.
+// No studies have been done on reducing this 1,1 value since this is a rather minor optimization.  Since the preprocessor can't
+// handle floats, the MAXBPW value passed in is 100 * maxbpw.
+#define SLOPPY_MAXBPW   (MAXBPW - 1100)
+#define ACTUAL_BPW      (EXP / (NWORDS / 100))
+
 Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
-#if EXP > NWORDS / 10 * SLOPPY_MAXBPW
+#if ACTUAL_BPW > SLOPPY_MAXBPW
   return carryStep(x, outCarry, isBigWord);
 #else
 
@@ -658,7 +646,7 @@ Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
 
 
 Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
-#if EXP > NWORDS / 10 * SLOPPY_MAXBPW
+#if ACTUAL_BPW > SLOPPY_MAXBPW
   return carryStep(x, outCarry, isBigWord);
 #else
 
@@ -672,7 +660,7 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   i64 xhi = i96_hi64(x) + (xlo_topbit >> 32);
   *outCarry = xhi >> (nBits - 32);
   return w;
-#elif EXP / NWORDS == 31 || SLOPPY_MAXBPW >= 320        // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance)
+#elif EXP / NWORDS == 31 || SLOPPY_MAXBPW >= 3200       // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance)
   i32 w = i96_lo32(x);                                  // lowBits(x, bigwordBits = 32);
   *outCarry = (i96_hi64(x) + (w < 0)) << (32 - nBits);
   return w;
@@ -685,7 +673,7 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
 }
 
 Word OVERLOAD carryStepSignedSloppy(i64 x, i64 *outCarry, bool isBigWord) {
-#if EXP > NWORDS / 10 * SLOPPY_MAXBPW
+#if ACTUAL_BPW > SLOPPY_MAXBPW
   return carryStep(x, outCarry, isBigWord);
 #else
 
@@ -700,7 +688,7 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i64 *outCarry, bool isBigWord) {
 }
 
 Word OVERLOAD carryStepSignedSloppy(i64 x, i32 *outCarry, bool isBigWord) {
-#if EXP > NWORDS / 10 * SLOPPY_MAXBPW
+#if ACTUAL_BPW > SLOPPY_MAXBPW
   return carryStep(x, outCarry, isBigWord);
 #else
 
@@ -716,7 +704,7 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i32 *outCarry, bool isBigWord) {
 // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance).  For reasons I don't fully understand the sloppy
 // case fails if BPW is too low.  Probably something to do with a small BPW with sloppy 32-bit values would require CARRY_LONG to work properly.
 // Not a major concern as end users should avoid small BPW as there is probably a more efficient NTT that could be used.
-#elif EXP / NWORDS == 31 || (EXP / NWORDS >= 23 && SLOPPY_MAXBPW >= 320)        
+#elif EXP / NWORDS == 31 || (EXP / NWORDS >= 23 && SLOPPY_MAXBPW >= 3200)        
   i32 w = x;                                            // lowBits(x, bigwordBits = 32);
   *outCarry = ((i32)(x >> 32) + (w < 0)) << (32 - nBits);
   return w;

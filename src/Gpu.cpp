@@ -312,6 +312,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 
   u32 N = fft.shape.size();
   defines += toDefine("FFT_VARIANT", fft.variant);
+  defines += toDefine("MAXBPW", (u32)(fft.maxBpw() * 100.0f));
 
   if (fft.FFT_FP64 | fft.FFT_FP32) {
     defines += toDefine("WEIGHT_STEP", weightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
