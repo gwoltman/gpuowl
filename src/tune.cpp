@@ -431,7 +431,8 @@ void Tune::tune() {
     }
 
     log("\n");
-    log("Beginning timing of various options.  These settings will be appended to config.txt.  Please read config.txt after -tune completes.\n");
+    log("Beginning timing of various options.  These settings will be appended to config.txt.\n");
+    log("Please read config.txt after -tune completes.\n");
     log("\n");
 
     u32 variant = (defaultShape == &defaultFFTShape) ? 101 : 202;
