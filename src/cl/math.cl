@@ -11,7 +11,7 @@ u32 hi32(u64 x) { return (u32) (x >> 32); }
 
 // Multiply and add primitives
 
-u128 mad32(u32 a, u32 b, u64 c) {
+u64 mad32(u32 a, u32 b, u64 c) {
 #if 0 && HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
   u32 reslo, reshi;
   __asm("mad.lo.cc.u32 %0, %1, %2, %3;" : "=r"(reslo) : "r"(a), "r"(b), "r"((u32) c));
