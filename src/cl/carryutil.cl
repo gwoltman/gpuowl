@@ -234,7 +234,7 @@ i32 weightAndCarryOne(F u, F invWeight, i32 inCarry, float* maxROE, int sloppy_r
 #elif FFT_TYPE == FFT31
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
-i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
+i64 weightAndCarryOne(Z61 u, u32 invWeight, i32 inCarry, u32* maxROE) {
 
   // Apply inverse weight
   u = shr(u, invWeight);
@@ -248,7 +248,7 @@ i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 
   // Mul by 3 and add carry
 #if MUL3
-  value *= 3;
+  return (i64)value * 3 + inCarry;
 #endif
   return value + inCarry;
 }

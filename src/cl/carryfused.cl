@@ -461,13 +461,8 @@ KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle
 
   Word2 wu[NW];
 
-#if MUL3
-  P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
-  i64 carry[NW+1];
-#else
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;
   CFcarry carry[NW+1];
-#endif
 
 #if AMDGPU
 #define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
