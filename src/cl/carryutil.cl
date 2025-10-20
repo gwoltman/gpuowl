@@ -305,14 +305,13 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
   i64 vhi = n64 >> 33;
   u64 vlo = ((u64)n64 << 31) | n31;
   i96 value = make_i96(vhi, vlo);                   // (n64 << 31) + n31
-  i96_sub(&value, make_i96(n64));                   // n64 * M31 + n31
+  value = sub(value, make_i96(n64));                // n64 * M31 + n31
 
   // Mul by 3 and add carry
 #if MUL3
-  i96_mul(&value, 3);
+  value = add(value, add(value, value));
 #endif
-  i96_add(&value, make_i96(inCarry));
-  return value;
+  return add(value, make_i96(inCarry));
 }
 
 /**************************************************************************/
@@ -373,14 +372,13 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
   i32 vhi = nF2 >> 3;
   u64 vlo = ((u64)nF2 << 61) | n61;
   i96 value = make_i96(vhi, vlo);                // (nF2 << 61) + n61
-  i96_sub(&value, make_i96(nF2));                // nF2 * M61 + n61
+  value = sub(value, make_i96(nF2));             // nF2 * M61 + n61
 
   // Mul by 3 and add carry
 #if MUL3
-  i96_mul(&value, 3);
+  value = add(value, add(value, value));
 #endif
-  i96_add(&value, make_i96(inCarry));
-  return value;
+  return add(value, make_i96(inCarry));
 }
 
 /**************************************************************************/
@@ -414,14 +412,13 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   i64 vhi = n61 >> 33;
   u64 vlo = ((u64)n61 << 31) | n31;
   i96 value = make_i96(vhi, vlo);                // (n61 << 31) + n31
-  i96_sub(&value, make_i96(n61));                // n61 * M31 + n31
+  value = sub(value, make_i96(n61));             // n61 * M31 + n31
 
   // Mul by 3 and add carry
 #if MUL3
-  i96_mul(&value, 3);
+  value = add(value, add(value, value));
 #endif
-  i96_add(&value, make_i96(inCarry));
-  return value;
+  return add(value, make_i96(inCarry));
 }
 
 /******************************************************************************/

@@ -48,9 +48,8 @@ u32 i96_mid32(i96 val) { return val.mid32; }
 u32 i96_lo32(i96 val) { return val.lo32; }
 u64 i96_lo64(i96 val) { return ((u64) val.mid32 << 32) | val.lo32; }
 u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | val.mid32; }
-void i96_add(i96 *val, i96 x) { val->lo32 += x.lo32; val->mid32 += x.mid32; val->hi32 += x.hi32 + (val->mid32 < x.mid32); u32 carry = (val->lo32 < x.lo32); val->mid32 += carry; val->hi32 += (val->mid32 < carry); }
-void i96_sub(i96 *val, i96 x) { i96 tmp = *val; val->lo32 -= x.lo32; val->mid32 -= x.mid32; val->hi32 -= x.hi32 + (val->mid32 > tmp.mid32); u32 carry = (val->lo32 > tmp.lo32); tmp = *val; val->mid32 -= carry; val->hi32 -= (val->mid32 > tmp.mid32); }
-void i96_mul(i96 *val, u32 x) { u64 t = (u64)val->lo32 * x; val->lo32 = (u32)t; t = (u64)val->mid32 * x + (t >> 32); val->mid32 = (u32)t; val->hi32 = val->hi32 * x + (u32)(t >> 32); }
+i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 + b.lo32; val.mid32 = a.mid32 + b.mid32; val.hi32 = a.hi32 + b.hi32 + (val.mid32 < a.mid32); u32 carry = (val.lo32 < a.lo32); u32 tmp = val.mid32; val.mid32 += carry; val.hi32 += (val.mid32 < tmp); return val; }
+i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 - b.lo32; val.mid32 = a.mid32 - b.mid32; val.hi32 = a.hi32 - b.hi32 - (val.mid32 > a.mid32); u32 carry = (val.lo32 > a.lo32); u32 tmp = val.mid32; val.mid32 -= carry; val.hi32 -= (val.mid32 > tmp); return val; }
 #elif 0
 // A u64 lo32, u32 hi32 implementation.  This too would benefit from add with carry instructions.
 // On nVidia, the clang optimizer kept the hi32 value as 64-bits!
@@ -65,9 +64,8 @@ u32 i96_mid32(i96 val) { return hi32(val.lo64); }
 u32 i96_lo32(i96 val) { return val.lo64; }
 u64 i96_lo64(i96 val) { return val.lo64; }
 u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | i96_mid32(val); }
-void i96_add(i96 *val, i96 x) { val->lo64 += x.lo64; val->hi32 += x.hi32 + (val->lo64 < x.lo64); }
-void i96_sub(i96 *val, i96 x) { u64 tmp = val->lo64; val->lo64 -= x.lo64; val->hi32 -= x.hi32 + (val->lo64 > tmp); }
-void i96_mul(i96 *val, u32 x) { u64 t = i96_lo32(*val) * (u64)x; u32 lo32 = t; t = i96_mid32(*val) * (u64)x + (t >> 32); u32 mid32 = t; u32 hi32 = val->hi32 * x + (t >> 32); *val = make_i96(hi32, mid32, lo32); }
+i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 + b.lo64; val.hi32 = a.hi32 + b.hi32 + (val.lo64 < a.lo64); return val; }
+i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 - b.lo64; val.hi32 = a.hi32 - b.hi32 - (val.lo64 > a.lo64); return val; }
 #elif 1
 // An i128 implementation.  This might use more GPU registers.  nVidia likes this version.
 typedef struct { i128 x; } i96;
@@ -81,9 +79,8 @@ u32 i96_mid32(i96 val) { return (u64)val.x >> 32; }
 u32 i96_lo32(i96 val) { return val.x; }
 u64 i96_lo64(i96 val) { return val.x; }
 u64 i96_hi64(i96 val) { return (u128)val.x >> 32; }
-void i96_add(i96 *val, i96 v) { val->x += v.x; }
-void i96_sub(i96 *val, i96 v) { val->x -= v.x; }
-void i96_mul(i96 *val, u32 x) { val->x *= x; }
+i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.x = a.x + b.x; return val; }
+i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.x = a.x - b.x; return val; }
 #endif
 
 
