@@ -62,6 +62,7 @@ float getGpuRamGB(cl_device_id id);
 u64 getFreeMem(cl_device_id id);
 bool hasFreeMemInfo(cl_device_id id);
 bool isAmdGpu(cl_device_id id);
+bool isNvidiaGpu(cl_device_id id);
 string getDriverVersion(cl_device_id id);
 string getDriverVersionByPos(int pos);
 

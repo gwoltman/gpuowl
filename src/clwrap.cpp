@@ -172,6 +172,12 @@ bool isAmdGpu(cl_device_id id) {
   return pcieId == 0x1002;
 }
 
+bool isNvidiaGpu(cl_device_id id) {
+  u32 pcieId = 0;
+  GET_INFO(id, CL_DEVICE_VENDOR_ID, pcieId);
+  return pcieId == 0x10DE;
+}
+
 /*
 static string getFreq(cl_device_id device) {
   unsigned computeUnits, frequency;

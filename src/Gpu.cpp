@@ -304,6 +304,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                   });
 
   if (isAmdGpu(id)) { defines += toDefine("AMDGPU", 1); }
+  if (isNvidiaGpu(id)) { defines += toDefine("NVIDIAGPU", 1); }
 
   if ((fft.carry == CARRY_AUTO && fft.shape.needsLargeCarry(E)) || (fft.carry == CARRY_64)) {
     if (doLog) { log("Using CARRY64\n"); }
