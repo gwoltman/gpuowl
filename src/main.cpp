@@ -41,12 +41,14 @@ void gpuWorker(GpuCommon shared, Queue *q, i32 instance) {
 
 
 #if defined(__MINGW32__) || defined(__MINGW64__) || defined(__MSYS__) // for Windows
-extern int putenv(const char *);
+extern int putenv(char *);
 #endif
 
 int main(int argc, char **argv) {
 
-#if defined(__MINGW32__) || defined(__MINGW64__) || defined(__MSYS__)
+#if defined(__MSYS__)
+  // I was unable to get putenv to link in MSYS2
+#elif defined(__MINGW32__) || defined(__MINGW64__)
   putenv("ROC_SIGNAL_POOL_SIZE=32");
 #else
   // Required to work around a ROCm bug when using multiple queues
