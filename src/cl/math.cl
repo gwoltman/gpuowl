@@ -9,6 +9,101 @@
 u32 lo32(u64 x) { return (u32) x; }
 u32 hi32(u64 x) { return (u32) (x >> 32); }
 
+// A primitive partial implementation of an i96 integer type
+#if 0
+// An all u32 implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions.
+// This version might be best on AMD and Intel if we can generate add-with-carry instructions.
+typedef struct { u32 lo32; u32 mid32; u32 hi32; } i96;
+i96 OVERLOAD make_i96(i64 v) { i96 val; val.hi32 = v >> 63, val.mid32 = v >> 32, val.lo32 = v; return val; }
+i96 OVERLOAD make_i96(i32 v) { i96 val; val.hi32 = v >> 31, val.mid32 = v >> 31, val.lo32 = v; return val; }
+i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
+i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
+u32 i96_hi32(i96 val) { return val.hi32; }
+u32 i96_mid32(i96 val) { return val.mid32; }
+u32 i96_lo32(i96 val) { return val.lo32; }
+u64 i96_lo64(i96 val) { return ((u64) val.mid32 << 32) | val.lo32; }
+u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | val.mid32; }
+i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 + b.lo32; val.mid32 = a.mid32 + b.mid32; val.hi32 = a.hi32 + b.hi32 + (val.mid32 < a.mid32); u32 carry = (val.lo32 < a.lo32); u32 tmp = val.mid32; val.mid32 += carry; val.hi32 += (val.mid32 < tmp); return val; }
+i96 OVERLOAD add(i96 a, i64 b) { return add(a, make_i96(b)); }
+i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 - b.lo32; val.mid32 = a.mid32 - b.mid32; val.hi32 = a.hi32 - b.hi32 - (val.mid32 > a.mid32); u32 carry = (val.lo32 > a.lo32); u32 tmp = val.mid32; val.mid32 -= carry; val.hi32 -= (val.mid32 > tmp); return val; }
+i96 OVERLOAD sub(i96 a, i64 b) { return sub(a, make_i96(b)); }
+i96 OVERLOAD sub(i96 a, i32 b) { return sub(a, make_i96(b)); }
+#elif defined(__SIZEOF_INT128__)
+// An i128 implementation.  This might use more GPU registers.  nVidia likes this version.
+typedef struct { __int128 x; } i96;
+i96 OVERLOAD make_i96(i64 v) { i96 val; val.x = v; return val; }
+i96 OVERLOAD make_i96(i32 v) { i96 val; val.x = v; return val; }
+i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.x = ((unsigned __int128)hi << 64) + lo; return val; }
+i96 OVERLOAD make_i96(i32 hi, u64 lo) { return make_i96((i64)hi, lo); }
+u32 i96_hi32(i96 val) { return (unsigned __int128)val.x >> 64; }
+u32 i96_mid32(i96 val) { return (u64)val.x >> 32; }
+u32 i96_lo32(i96 val) { return val.x; }
+u64 i96_lo64(i96 val) { return val.x; }
+u64 i96_hi64(i96 val) { return (unsigned __int128)val.x >> 32; }
+i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.x = a.x + b.x; return val; }
+i96 OVERLOAD add(i96 a, i64 b) { return add(a, make_i96(b)); }
+i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.x = a.x - b.x; return val; }
+i96 OVERLOAD sub(i96 a, i64 b) { return sub(a, make_i96(b)); }
+i96 OVERLOAD sub(i96 a, i32 b) { return sub(a, make_i96(b)); }
+#elif 1
+// A u64 lo32, u32 hi32 implementation.  This too would benefit from add with carry instructions.
+// On nVidia, the clang optimizer kept the hi32 value as 64-bits!
+typedef struct { u64 lo64; u32 hi32; } i96;
+i96 OVERLOAD make_i96(i64 v) { i96 val; val.hi32 = v >> 63, val.lo64 = v; return val; }
+i96 OVERLOAD make_i96(i32 v) { return make_i96((i64)v); }
+i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi, val.lo64 = lo; return val; }
+i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi, val.lo64 = lo; return val; }
+u32 i96_hi32(i96 val) { return val.hi32; }
+u32 i96_mid32(i96 val) { return hi32(val.lo64); }
+u32 i96_lo32(i96 val) { return val.lo64; }
+u64 i96_lo64(i96 val) { return val.lo64; }
+u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | i96_mid32(val); }
+i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 + b.lo64; val.hi32 = a.hi32 + b.hi32 + (val.lo64 < a.lo64); return val; }
+i96 OVERLOAD add(i96 a, i64 b) { return add(a, make_i96(b)); }
+i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 - b.lo64; val.hi32 = a.hi32 - b.hi32 - (val.lo64 > a.lo64); return val; }
+i96 OVERLOAD sub(i96 a, i64 b) { return sub(a, make_i96(b)); }
+i96 OVERLOAD sub(i96 a, i32 b) { return sub(a, make_i96(b)); }
+#endif
+
+// A primitive partial implementation of an i128 and u128 integer type
+#if defined(__SIZEOF_INT128__)
+typedef struct { __int128 x; } i128;
+typedef struct { unsigned __int128 x; } u128;
+i128 OVERLOAD make_i128(i64 hi, u64 lo) { i128 val; val.x = ((__int128)hi << 64) | lo; return val; }
+i128 OVERLOAD make_i128(u64 hi, u64 lo) { i128 val; val.x = ((__int128)hi << 64) | lo; return val; }
+u64 i128_lo64(i128 val) { return val.x; }
+u64 i128_shrlo64(i128 val, u32 bits) { return val.x >> bits; }
+i128 OVERLOAD i128_masklo64(i128 a, u64 m) { i128 val; val.x = a.x & (((__int128)0xFFFFFFFFFFFFFFFFULL << 64) | m); return val; }
+i128 OVERLOAD add(i128 a, i128 b) { i128 val; val.x = a.x + b.x; return val; }
+i128 OVERLOAD add(i128 a, u64 b) { i128 val; val.x = a.x + (__int128)b; return val; }
+i128 OVERLOAD add(i128 a, i64 b) { i128 val; val.x = a.x + (__int128)b; return val; }
+i128 OVERLOAD sub(i128 a, u64 b) { i128 val; val.x = a.x - (__int128)b; return val; }
+i128 OVERLOAD sub(i128 a, i64 b) { i128 val; val.x = a.x - (__int128)b; return val; }
+u128 OVERLOAD make_u128(u64 hi, u64 lo) { u128 val; val.x = ((unsigned __int128)hi << 64) + lo; return val; }
+u64 u128_lo64(u128 val) { return val.x; }
+u64 u128_hi64(u128 val) { return val.x >> 64; }
+u128 mul64(u64 a, u64 b) { u128 val; val.x = (unsigned __int128)a * (unsigned __int128)b; return val; }
+u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.x = a.x + b.x; return val; }
+#else		// UNTESTED!  The mul64 macro causes clang to hang!
+typedef struct { i64 hi64; u64 lo64; } i128;
+typedef struct { u64 hi64; u64 lo64; } u128;
+i128 OVERLOAD make_i128(i64 hi, u64 lo) { i128 val; val.hi64 = hi; val.lo64 = lo; return val; }
+i128 OVERLOAD make_i128(u64 hi, u64 lo) { i128 val; val.hi64 = hi; val.lo64 = lo; return val; }
+u64 i128_lo64(i128 val) { return val.lo64; }
+u64 i128_shrlo64(i128 val, u32 bits) { return (val.hi64 << (64 - bits)) | (val.lo64 >> bits); }
+i128 OVERLOAD i128_masklo64(i128 a, u64 m) { i128 val; val.lo64 = a.lo64 & m; val.hi64 = a.hi64; return val; }
+i128 OVERLOAD add(i128 a, i128 b) { i128 val; val.lo64 = a.lo64 + b.lo64; val.hi64 = a.hi64 + b.hi64 + (val.lo64 < a.lo64); return val; }
+i128 OVERLOAD add(i128 a, u64 b) { i128 val; val.lo64 = a.lo64 + b; val.hi64 = a.hi64 + (val.lo64 < a.lo64); return val; }
+i128 OVERLOAD add(i128 a, i64 b) { i128 val; val.lo64 = a.lo64 + b; val.hi64 = a.hi64 + (b >> 63) + (val.lo64 < a.lo64); return val; }
+i128 OVERLOAD sub(i128 a, u64 b) { i128 val; val.lo64 = a.lo64 - b; val.hi64 = a.hi64 - (val.lo64 > a.lo64); return val; }
+i128 OVERLOAD sub(i128 a, i64 b) { i128 val; val.lo64 = a.lo64 - (u64)b; val.hi64 = a.hi64 - (b >> 63) - (val.lo64 > a.lo64); return val; }
+u128 OVERLOAD make_u128(u64 hi, u64 lo) { u128 val; val.hi64 = hi; val.lo64 = lo; return val; }
+u64 u128_lo64(u128 val) { return val.lo64; }
+u64 u128_hi64(u128 val) { return val.hi64; }
+u128 mul64(u64 a, u64 b) { u128 val; val.lo64 = a * b; val.hi64 = mul_hi(a, b); return val; }
+u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.lo64 = a.lo64 + b.lo64; val.hi64 = a.hi64 + b.hi64 + (val.lo64 < a.lo64); return val; }
+#endif
+
 // Multiply and add primitives
 
 u64 mad32(u32 a, u32 b, u64 c) {
@@ -27,61 +122,11 @@ u128 mad64(u64 a, u64 b, u128 c) {
   u64 reslo, reshi;
   __asm("mad.lo.cc.u64 %0, %1, %2, %3;" : "=l"(reslo) : "l"(a), "l"(b), "l"((u64) c));
   __asm("madc.hi.u64   %0, %1, %2, %3;" : "=l"(reshi) : "l"(a), "l"(b), "l"((u64) (c >> 64)));
-  return ((u128)reshi << 64) | reslo;
+  return make_u128(reshi, reslo);
 #else
-  return (u128) a * (u128) b + c;
+  return add(mul64(a, b), c);
 #endif
 }
-
-// A primitive partial implementation of an i96 integer type
-#if 0
-// An all u32 implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions.
-// This version might be best on AMD and Intel if we can generate add-with-carry instructions.
-typedef struct { u32 lo32; u32 mid32; u32 hi32; } i96;
-i96 OVERLOAD make_i96(i128 v) { i96 val; val.hi32 = (u128)v >> 64, val.mid32 = (u64)v >> 32, val.lo32 = v; return val; }
-i96 OVERLOAD make_i96(i64 v) { i96 val; val.hi32 = v >> 63, val.mid32 = v >> 32, val.lo32 = v; return val; }
-i96 OVERLOAD make_i96(i32 v) { i96 val; val.hi32 = v >> 31, val.mid32 = v >> 31, val.lo32 = v; return val; }
-i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
-i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
-u32 i96_hi32(i96 val) { return val.hi32; }
-u32 i96_mid32(i96 val) { return val.mid32; }
-u32 i96_lo32(i96 val) { return val.lo32; }
-u64 i96_lo64(i96 val) { return ((u64) val.mid32 << 32) | val.lo32; }
-u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | val.mid32; }
-i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 + b.lo32; val.mid32 = a.mid32 + b.mid32; val.hi32 = a.hi32 + b.hi32 + (val.mid32 < a.mid32); u32 carry = (val.lo32 < a.lo32); u32 tmp = val.mid32; val.mid32 += carry; val.hi32 += (val.mid32 < tmp); return val; }
-i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 - b.lo32; val.mid32 = a.mid32 - b.mid32; val.hi32 = a.hi32 - b.hi32 - (val.mid32 > a.mid32); u32 carry = (val.lo32 > a.lo32); u32 tmp = val.mid32; val.mid32 -= carry; val.hi32 -= (val.mid32 > tmp); return val; }
-#elif 0
-// A u64 lo32, u32 hi32 implementation.  This too would benefit from add with carry instructions.
-// On nVidia, the clang optimizer kept the hi32 value as 64-bits!
-typedef struct { u64 lo64; u32 hi32; } i96;
-i96 OVERLOAD make_i96(i128 v) { i96 val; val.hi32 = (u128)v >> 64, val.lo64 = v; return val; }
-i96 OVERLOAD make_i96(i64 v) { i96 val; val.hi32 = v >> 63, val.lo64 = v; return val; }
-i96 OVERLOAD make_i96(i32 v) { return make_i96((i64)v); }
-i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi, val.lo64 = lo; return val; }
-i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi, val.lo64 = lo; return val; }
-u32 i96_hi32(i96 val) { return val.hi32; }
-u32 i96_mid32(i96 val) { return hi32(val.lo64); }
-u32 i96_lo32(i96 val) { return val.lo64; }
-u64 i96_lo64(i96 val) { return val.lo64; }
-u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | i96_mid32(val); }
-i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 + b.lo64; val.hi32 = a.hi32 + b.hi32 + (val.lo64 < a.lo64); return val; }
-i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 - b.lo64; val.hi32 = a.hi32 - b.hi32 - (val.lo64 > a.lo64); return val; }
-#elif 1
-// An i128 implementation.  This might use more GPU registers.  nVidia likes this version.
-typedef struct { i128 x; } i96;
-i96 OVERLOAD make_i96(i128 v) { i96 val; val.x = v; return val; }
-i96 OVERLOAD make_i96(i64 v) { return make_i96((i128)v); }
-i96 OVERLOAD make_i96(i32 v) { return make_i96((i128)v); }
-i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.x = ((u128)hi << 64) + lo; return val; }
-i96 OVERLOAD make_i96(i32 hi, u64 lo) { return make_i96((i64)hi, lo); }
-u32 i96_hi32(i96 val) { return (u128)val.x >> 64; }
-u32 i96_mid32(i96 val) { return (u64)val.x >> 32; }
-u32 i96_lo32(i96 val) { return val.x; }
-u64 i96_lo64(i96 val) { return val.x; }
-u64 i96_hi64(i96 val) { return (u128)val.x >> 32; }
-i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.x = a.x + b.x; return val; }
-i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.x = a.x - b.x; return val; }
-#endif
 
 
 // The X2 family of macros and SWAP are #defines because OpenCL does not allow pass by reference.
@@ -622,8 +667,8 @@ Z61 OVERLOAD shr(Z61 a, u32 k) { return ((a >> k) + (a << (61 - k))) & M61; }   
 GF61 OVERLOAD shr(GF61 a, u32 k) { return U2(shr(a.x, k), shr(a.y, k)); }
 
 ulong2 wideMul(u64 ab, u64 cd) {
-  u128 r = (u128) ab * (u128) cd;
-  return U2((u64) r, (u64) (r >> 64));
+  u128 r = mul64(ab, cd);
+  return U2(u128_lo64(r), u128_hi64(r));
 }
 
 Z61 OVERLOAD mul(Z61 a, Z61 b) {
@@ -752,8 +797,8 @@ Z61 OVERLOAD shl(Z61 a, u32 k) { return shr(a, 61 - k); }         // Return rang
 GF61 OVERLOAD shl(GF61 a, u32 k) { return U2(shl(a.x, k), shl(a.y, k)); }
 
 ulong2 wideMul(u64 ab, u64 cd) {
-  u128 r = (u128) ab * (u128) cd;
-  return U2((u64) r, (u64) (r >> 64));
+  u128 r = mul64(ab, cd);
+  return U2(u128_lo64(r), u128_hi64(r));
 }
 
 // Returns a * b not modded by M61.  Max value of result depends on the m61_counts of the inputs.
@@ -808,7 +853,7 @@ GF61 OVERLOAD cmul(GF61 a, GF61 b) {              // Use 3-epsilon extra bits in
 #else
 Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b_m61_count) {
   u128 ab = mad64(a, b, c);                             // Max c value assumed to be M61^2+epsilon
-  u64 lo = ab, hi = ab >> 64;
+  u64 lo = u128_lo64(ab), hi = u128_hi64(ab);
   u64 lo61 = lo & M61;                                  // Max value is M61
   if ((a_m61_count - 1) * (b_m61_count - 1) + 1 <= 6) {
      hi = (hi << 3) + (lo >> 61);                       // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 1) * M61 + epsilon
@@ -819,7 +864,7 @@ Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b
   }
 }
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {
-  u128 k1 = (u128) b.x * (u128) (a.x + a.y);                  // max value is M61^2+epsilon
+  u128 k1 = mul64(b.x, a.x + a.y);                            // max value is M61^2+epsilon
   Z61 k1k2 = weakMulAdd(a.x, b.y + neg(b.x, 2), k1, 2, 3);    // max value is 4*M61+epsilon
   Z61 k1k3 = weakMulAdd(a.y, neg(b.y + b.x, 3), k1, 2, 4);    // max value is 5*M61+epsilon
   return U2(modM61(k1k3), modM61(k1k2));

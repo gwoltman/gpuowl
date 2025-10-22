@@ -305,13 +305,13 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
   i64 vhi = n64 >> 33;
   u64 vlo = ((u64)n64 << 31) | n31;
   i96 value = make_i96(vhi, vlo);                   // (n64 << 31) + n31
-  value = sub(value, make_i96(n64));                // n64 * M31 + n31
+  value = sub(value, n64);                          // n64 * M31 + n31
 
   // Mul by 3 and add carry
 #if MUL3
   value = add(value, add(value, value));
 #endif
-  return add(value, make_i96(inCarry));
+  return add(value, inCarry);
 }
 
 /**************************************************************************/
@@ -372,13 +372,13 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
   i32 vhi = nF2 >> 3;
   u64 vlo = ((u64)nF2 << 61) | n61;
   i96 value = make_i96(vhi, vlo);                // (nF2 << 61) + n61
-  value = sub(value, make_i96(nF2));             // nF2 * M61 + n61
+  value = sub(value, nF2);                       // nF2 * M61 + n61
 
   // Mul by 3 and add carry
 #if MUL3
   value = add(value, add(value, value));
 #endif
-  return add(value, make_i96(inCarry));
+  return add(value, inCarry);
 }
 
 /**************************************************************************/
@@ -412,13 +412,13 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
   i64 vhi = n61 >> 33;
   u64 vlo = ((u64)n61 << 31) | n31;
   i96 value = make_i96(vhi, vlo);                // (n61 << 31) + n31
-  value = sub(value, make_i96(n61));             // n61 * M31 + n31
+  value = sub(value, n61);                       // n61 * M31 + n31
 
   // Mul by 3 and add carry
 #if MUL3
   value = add(value, add(value, value));
 #endif
-  return add(value, make_i96(inCarry));
+  return add(value, inCarry);
 }
 
 /******************************************************************************/
@@ -439,16 +439,20 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
   u61 = subq(u61, make_Z61(n31), 2);                 // u61 - u31
   u61 = add(u61, shl(u61, 31));                      // u61 + (u61 << 31)
   u64 n61 = get_Z61(u61);
-  i128 n3161 = (((i128) n61 << 31) | n31) - n61;     // n61 * M31 + n31
+
+  i128 n3161 = make_i128(n61 >> 33, (n61 << 31) | n31);  // n61 << 31 + n31
+  n3161 = sub(n3161, n61);                               // n61 * M31 + n31
 
   // The final result must be n3161 mod M31*M61.  Use FP32 data to calculate this value.
-  float n3161f = (float)((u32)(n61 >> 32)) * -9223372036854775808.0f;        // Conversion from i128 to float might be slow, this might be faster
+  float n3161f = (float)((u32)(n61 >> 32)) * -9223372036854775808.0f;        // Converting n3161 from i128 to float might be slow, this might be faster
   uF2 = fma(uF2, F2_invWeight, n3161f);                                      // This should be close to a multiple of M31*M61
   float uF2int = fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL);   // Divide by M31*M61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
-  i64 nF2m31 = ((i64) nF2 << 31) - nF2;                  // nF2 * M31
-  i128 v = ((i128) nF2m31 << 61) - nF2m31 + n3161;       // nF2m31 * M61 + n3161
+  i64 nF2m31 = ((i64)nF2 << 31) - nF2;                   // nF2 * M31
+  i128 v = make_i128(nF2m31 >> 3, (u64)nF2m31 << 61);    // nF2m31 << 61
+  v = sub(v, nF2m31);                                    // nF2m31 * M61
+  v = add(v, n3161);                                     // nF2m31 * M61 + n3161
 
   // Optionally calculate roundoff error
   float roundoff = fabs(fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL - uF2int));
@@ -456,9 +460,9 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
 
   // Mul by 3 and add carry
 #if MUL3
-  v = v * 3;
+  v = add(v, add(v, v));
 #endif
-  v = v + inCarry;
+  v = add(v, inCarry);
   return v;
 }
 
@@ -473,8 +477,8 @@ error - missing weightAndCarryOne implementation
 
 Word OVERLOAD carryStep(i128 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
-  i64 w = lowBits((i64)x, nBits);
-  *outCarry = (u64)(x >> nBits) + (w < 0);
+  i64 w = lowBits(i128_lo64(x), nBits);
+  *outCarry = i128_shrlo64(x, nBits) + (w < 0);
   return w;
 }
 
@@ -568,11 +572,9 @@ Word OVERLOAD carryStepUnsignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
 
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
-  u64 w = ulowFixedBits((u64)x, bigwordBits);
-  const i128 topbitmask = ~((i128)1 << (bigwordBits - 1));
-//GW Can we use unsigned shift (knowing the sign won't be lost due to truncating the result) -- this is really a 64-bit extract (or two 32-bit extrats) -- use elsewhere?)
-  *outCarry = (x & topbitmask) >> nBits;
-//GW use this style else where, check for more fixed low bits
+  u64 w = ulowFixedBits(i128_lo64(x), bigwordBits);
+  x = i128_masklo64(x, ~((u64)1 << (bigwordBits - 1)));
+  *outCarry = i128_shrlo64(x, nBits);
   return w;
 }
 
@@ -582,7 +584,7 @@ Word OVERLOAD carryStepUnsignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
 
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
-  i64 xhi = i96_hi64(x) & ~((1ULL << (bigwordBits - 32)) - 1);
+  i64 xhi = i96_hi64(x) & ~(((u64)1 << (bigwordBits - 32)) - 1);
   *outCarry = xhi >> (nBits - 32);
   return ulowFixedBits(i96_lo64(x), bigwordBits);
 #elif EXP / NWORDS == 31                                // nBits = 31 or 32
@@ -633,14 +635,13 @@ Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
-  u64 xlo = (u64)x;
-  u64 xlo_topbit = xlo & (1ULL << (bigwordBits - 1));
+  u64 xlo = i128_lo64(x);
+  u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
   i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
-  *outCarry = (x + xlo_topbit) >> nBits;
+  *outCarry = i128_shrlo64(add(x, xlo_topbit), nBits);
   return w;
 #endif
 }
-
 
 Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
 #if ACTUAL_BPW > SLOPPY_MAXBPW
@@ -652,7 +653,7 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
   u64 xlo = i96_lo64(x);
-  u64 xlo_topbit = xlo & (1ULL << (bigwordBits - 1));
+  u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
   i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
   i64 xhi = i96_hi64(x) + (xlo_topbit >> 32);
   *outCarry = xhi >> (nBits - 32);
@@ -693,7 +694,7 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i32 *outCarry, bool isBigWord) {
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
-  u64 x_topbit = x & (1ULL << (bigwordBits - 1));
+  u64 x_topbit = x & ((u64)1 << (bigwordBits - 1));
   i64 w = ulowFixedBits(x, bigwordBits - 1) - x_topbit;
   i32 xhi = (i32)(x >> 32) + (i32)(x_topbit >> 32);
   *outCarry = xhi >> (nBits - 32);

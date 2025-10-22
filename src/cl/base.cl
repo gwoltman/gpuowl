@@ -171,8 +171,6 @@ typedef int i32;
 typedef uint u32;
 typedef long i64;
 typedef ulong u64;
-typedef __int128 i128;
-typedef unsigned __int128 u128;
 
 // Data types for data stored in FFTs and NTTs during the transform
 typedef double T;           // For historical reasons, classic FFTs using doubles call their data T and T2.
