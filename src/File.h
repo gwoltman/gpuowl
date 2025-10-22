@@ -60,6 +60,10 @@ class File {
     _commit(fileno(f));
 #elif defined(__APPLE__)
     fcntl(fileno(f), F_FULLFSYNC, 0);
+#elif defined(__MSYS__)
+#define fileno(__F) ((__F)->_file)
+    fsync(fileno(f));
+#undef fileno
 #else
     fdatasync(fileno(f));
 #endif

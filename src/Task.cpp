@@ -40,7 +40,7 @@ constexpr int platform() {
 
   const constexpr bool IS_32BIT = (sizeof(void*) == 4);
 
-#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__) || defined(__MINGW32__) || defined(__MINGW64__)
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__) || defined(__MINGW32__) || defined(__MINGW64__) || defined(__MSYS__)
   return IS_32BIT ? WIN_32 : WIN_64;
 
 #elif __APPLE__
