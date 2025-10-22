@@ -79,12 +79,12 @@ i128 OVERLOAD add(i128 a, u64 b) { i128 val; val.x = a.x + (__int128)b; return v
 i128 OVERLOAD add(i128 a, i64 b) { i128 val; val.x = a.x + (__int128)b; return val; }
 i128 OVERLOAD sub(i128 a, u64 b) { i128 val; val.x = a.x - (__int128)b; return val; }
 i128 OVERLOAD sub(i128 a, i64 b) { i128 val; val.x = a.x - (__int128)b; return val; }
-u128 OVERLOAD make_u128(u64 hi, u64 lo) { u128 val; val.x = ((unsigned __int128)hi << 64) + lo; return val; }
+u128 OVERLOAD make_u128(u64 hi, u64 lo) { u128 val; val.x = ((unsigned __int128)hi << 64) | lo; return val; }
 u64 u128_lo64(u128 val) { return val.x; }
 u64 u128_hi64(u128 val) { return val.x >> 64; }
 u128 mul64(u64 a, u64 b) { u128 val; val.x = (unsigned __int128)a * (unsigned __int128)b; return val; }
 u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.x = a.x + b.x; return val; }
-#else		// UNTESTED!  The mul64 macro causes clang to hang!
+#else           // UNTESTED!  The mul64 macro causes clang to hang!
 typedef struct { i64 hi64; u64 lo64; } i128;
 typedef struct { u64 hi64; u64 lo64; } u128;
 i128 OVERLOAD make_i128(i64 hi, u64 lo) { i128 val; val.hi64 = hi; val.lo64 = lo; return val; }
@@ -107,22 +107,41 @@ u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.lo64 = a.lo64 + b.lo64; val.hi
 // Multiply and add primitives
 
 u64 mad32(u32 a, u32 b, u64 c) {
-#if 0 && HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
+#if HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
   u32 reslo, reshi;
-  __asm("mad.lo.cc.u32 %0, %1, %2, %3;" : "=r"(reslo) : "r"(a), "r"(b), "r"((u32) c));
-  __asm("madc.hi.u32   %0, %1, %2, %3;" : "=r"(reshi) : "r"(a), "r"(b), "r"((u32) (c >> 32)));
+  __asm("mad.lo.cc.u32 %0, %2, %3, %4;\n\t"
+        "madc.hi.u32   %1, %2, %3, %5;" : "=r"(reslo), "=r"(reshi) : "r"(a), "r"(b), "r"((u32)c), "r"((u32)(c >> 32)));
   return ((u64)reshi << 32) | reslo;
 #else
-  return (u64) a * (u64) b + c;
+  return (u64)a * (u64)b + c;
 #endif
 }
 
 u128 mad64(u64 a, u64 b, u128 c) {
-#if 0 && HAS_PTX                                // Slower on TitanV, don't understand why
+#if 0 && HAS_PTX                           // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
-  __asm("mad.lo.cc.u64 %0, %1, %2, %3;" : "=l"(reslo) : "l"(a), "l"(b), "l"((u64) c));
-  __asm("madc.hi.u64   %0, %1, %2, %3;" : "=l"(reshi) : "l"(a), "l"(b), "l"((u64) (c >> 64)));
+  __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
+        "madc.hi.u64   %1, %2, %3, %5;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(u128_lo64(c)), "l"(u128_hi64(c)));
   return make_u128(reshi, reslo);
+#elif HAS_PTX                              // Faster on TitanV.  No difference on mobile 4070.  Much cleaner PTX code generated.
+  uint2 a2 = as_uint2(a);
+  uint2 b2 = as_uint2(b);
+  uint2 clo2 = as_uint2(u128_lo64(c));
+  uint2 chi2 = as_uint2(u128_hi64(c));
+  uint2 rlo2, rhi2;
+  __asm("mad.lo.cc.u32  %0, %4, %6, %8;\n\t"
+        "madc.hi.cc.u32 %1, %4, %6, %9;\n\t"
+        "madc.lo.cc.u32 %2, %5, %7, %10;\n\t"
+        "madc.hi.u32    %3, %5, %7, %11;\n\t"
+        "mad.lo.cc.u32  %1, %5, %6, %1;\n\t"
+        "madc.hi.cc.u32 %2, %5, %6, %2;\n\t"
+        "addc.u32       %3, %3, 0;\n\t"
+        "mad.lo.cc.u32  %1, %4, %7, %1;\n\t"
+        "madc.hi.cc.u32 %2, %4, %7, %2;\n\t"
+        "addc.u32       %3, %3, 0;"
+        : "=r"(rlo2.x), "=r"(rlo2.y), "=r"(rhi2.x), "+r"(rhi2.y)
+        : "r"(a2.x), "r"(a2.y), "r"(b2.x), "r"(b2.y), "r"(clo2.x), "r"(clo2.y), "r"(chi2.x), "r"(chi2.y));
+  return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
 #else
   return add(mul64(a, b), c);
 #endif
