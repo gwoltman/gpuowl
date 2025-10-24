@@ -24,6 +24,8 @@ typedef i32 CarryABM;
 // Return unsigned low bits (number of bits must be between 1 and 31)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_ubfe)
 u32 OVERLOAD ulowBits(i32 u, u32 bits) { return __builtin_amdgcn_ubfe(u, 0, bits); }
+#elif HAS_PTX
+u32 OVERLOAD ulowBits(i32 u, u32 bits) { u32 res; __asm("szext.clamp.u32 %0, %1, %2;" : "=r"(res) : "r"(u), "r"(bits)); return res; }
 #else
 u32 OVERLOAD ulowBits(i32 u, u32 bits) { return (((u32) u << (32 - bits)) >> (32 - bits)); }
 #endif
@@ -33,11 +35,7 @@ u64 OVERLOAD ulowBits(i64 u, u32 bits) { return (((u64) u << (64 - bits)) >> (64
 u64 OVERLOAD ulowBits(u64 u, u32 bits) { return ulowBits((i64) u, bits); }
 
 // Return unsigned low bits where number of bits is known at compile time (number of bits can be 0 to 32)
-#if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_ubfe)
-u32 OVERLOAD ulowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; return __builtin_amdgcn_ubfe(u, 0, bits); }
-#else
 u32 OVERLOAD ulowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; return u & ((1 << bits) - 1); }
-#endif
 u32 OVERLOAD ulowFixedBits(u32 u, const u32 bits) { return ulowFixedBits((i32) u, bits); }
 // Return unsigned low bits where number of bits is known at compile time (number of bits can be 0 to 64)
 u64 OVERLOAD ulowFixedBits(i64 u, const u32 bits) { return u & ((1LL << bits) - 1); }
@@ -46,32 +44,45 @@ u64 OVERLOAD ulowFixedBits(u64 u, const u32 bits) { return ulowFixedBits((i64) u
 // Return signed low bits (number of bits must be between 1 and 31)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_sbfe)
 i32 OVERLOAD lowBits(i32 u, u32 bits) { return __builtin_amdgcn_sbfe(u, 0, bits); }
+#elif HAS_PTX
+i32 OVERLOAD lowBits(i32 u, u32 bits) { i32 res; __asm("szext.clamp.s32 %0, %1, %2;" : "=r"(res) : "r"(u), "r"(bits)); return res; }
 #else
 i32 OVERLOAD lowBits(i32 u, u32 bits) { return ((u << (32 - bits)) >> (32 - bits)); }
 #endif
-i32 OVERLOAD lowBits(u32 u, u32 bits) { return lowBits((i32) u, bits); }
+i32 OVERLOAD lowBits(u32 u, u32 bits) { return lowBits((i32)u, bits); }
 // Return signed low bits (number of bits must be between 1 and 63)
 i64 OVERLOAD lowBits(i64 u, u32 bits) { return ((u << (64 - bits)) >> (64 - bits)); }
-i64 OVERLOAD lowBits(u64 u, u32 bits) { return lowBits((i64) u, bits); }
+i64 OVERLOAD lowBits(u64 u, u32 bits) { return lowBits((i64)u, bits); }
+
+// Return signed low bits (number of bits must be between 1 and 32)
+#if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_sbfe)
+i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits(u, bits); }
+#elif HAS_PTX
+i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits(u, bits); }
+#else
+i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits((u64)u, bits); }
+#endif
+i32 OVERLOAD lowBitsSafe32(u32 u, u32 bits) { return lowBitsSafe32((i32)u, bits); }
 
 // Return signed low bits where number of bits is known at compile time (number of bits can be 0 to 32)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_sbfe)
 i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; return __builtin_amdgcn_sbfe(u, 0, bits); }
+#elif HAS_PTX
+i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; i32 res; __asm("szext.clamp.s32 %0, %1, %2;" : "=r"(res) : "r"(u), "r"(bits)); return res; }
 #else
-// This version should generate 2 shifts
 i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; return (u << (32 - bits)) >> (32 - bits); }
-// This version should generate 2 ANDs and one subtract
-//i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; if (bits == 1) return -(u & 1); return ulowFixedBits(u, bits - 1) - (u & (1 << bits)); }
-i32 OVERLOAD lowFixedBits(u32 u, const u32 bits) { return lowFixedBits((i32) u, bits); }
 #endif
+i32 OVERLOAD lowFixedBits(u32 u, const u32 bits) { return lowFixedBits((i32)u, bits); }
 // Return signed low bits where number of bits is known at compile time (number of bits can be 1 to 63).  The two versions are the same speed on TitanV.
 i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return ((u << (64 - bits)) >> (64 - bits)); }
 //i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return (i64) ulowFixedBits(u, bits - 1) - (u & (1LL << (bits - 1))); }
-i64 OVERLOAD lowFixedBits(u64 u, const u32 bits) { return lowFixedBits((i64) u, bits); }
+i64 OVERLOAD lowFixedBits(u64 u, const u32 bits) { return lowFixedBits((i64)u, bits); }
 
 // Extract 32 bits from a 64-bit value
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_alignbit)
 i32 xtract32(i64 x, u32 bits) { return __builtin_amdgcn_alignbit(as_int2(x).y, as_int2(x).x, bits); }
+#elif HAS_PTX
+i32 xtract32(i64 x, u32 bits) { i32 res; __asm("shf.r.clamp.b32 %0, %1, %2, %3;" : "=r"(res) : "r"(as_uint2(x).x), "r"(as_uint2(x).y), "r"(bits)); return res; }
 #else
 i32 xtract32(i64 x, u32 bits) { return x >> bits; }
 #endif
@@ -286,7 +297,7 @@ i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
 #elif FFT_TYPE == FFT6431
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
-i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry, float* maxROE) {
+i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, bool hasInCarry, i64 inCarry, float* maxROE) {
 
   // Apply inverse weight and get the Z31 data
   u31 = shr(u31, m31_invWeight);
@@ -311,7 +322,8 @@ i96 weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, i64 inCarry,
 #if MUL3
   value = add(value, add(value, value));
 #endif
-  return add(value, inCarry);
+  if (hasInCarry) value = add(value, inCarry);
+  return value;
 }
 
 /**************************************************************************/
@@ -352,7 +364,7 @@ i64 weightAndCarryOne(float uF2, Z31 u31, float F2_invWeight, u32 m31_invWeight,
 #elif FFT_TYPE == FFT3261
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
-i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight, i64 inCarry, float* maxROE) {
+i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight, bool hasInCarry, i64 inCarry, float* maxROE) {
 
   // Apply inverse weight and get the Z61 data
   u61 = shr(u61, m61_invWeight);
@@ -378,7 +390,8 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
 #if MUL3
   value = add(value, add(value, value));
 #endif
-  return add(value, inCarry);
+  if (hasInCarry) value = add(value, inCarry);
+  return value;
 }
 
 /**************************************************************************/
@@ -388,7 +401,7 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
 #elif FFT_TYPE == FFT3161
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
-i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i64 inCarry, u32* maxROE) {
+i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, bool hasInCarry, i64 inCarry, u32* maxROE) {
 
   // Apply inverse weights
   u31 = shr(u31, m31_invWeight);
@@ -418,7 +431,8 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
 #if MUL3
   value = add(value, add(value, value));
 #endif
-  return add(value, inCarry);
+  if (hasInCarry) value = add(value, inCarry);
+  return value;
 }
 
 /******************************************************************************/
@@ -428,7 +442,7 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, i6
 #elif FFT_TYPE == FFT323161
 
 // Apply inverse weight, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
-i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_invWeight, u32 m61_invWeight, i64 inCarry, float* maxROE) {
+i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_invWeight, u32 m61_invWeight, bool hasInCarry, i64 inCarry, float* maxROE) {
 
   // Apply inverse weights
   u31 = shr(u31, m31_invWeight);
@@ -462,7 +476,7 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
 #if MUL3
   v = add(v, add(v, v));
 #endif
-  v = add(v, inCarry);
+  if (hasInCarry) v = add(v, inCarry);
   return v;
 }
 
@@ -484,25 +498,27 @@ Word OVERLOAD carryStep(i128 x, i64 *outCarry, bool isBigWord) {
 
 Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
+  u32 nBitsLess32 = bitlen(isBigWord) - 32;
 
 // This code can be tricky because we must not shift i32 or u32 variables by 32.
 #if EXP / NWORDS >= 33
-  i64 xhi = i96_hi64(x);
-  i64 w = lowBits(xhi, nBits - 32);
-  *outCarry = (xhi - w) >> (nBits - 32);
-  return (w << 32) | i96_lo32(x);
+  i32 whi = lowBits(i96_mid32(x), nBitsLess32);
+  *outCarry = ((i64)i96_hi64(x) - (i64)whi) >> nBitsLess32;
+  return as_ulong((uint2)(i96_lo32(x), (u32)whi));
 #elif EXP / NWORDS == 32
-  i64 xhi = i96_hi64(x);
-  i64 w = lowBits(i96_lo64(x), nBits);
-  *outCarry = (xhi - (w >> 32)) >> (nBits - 32);
-  return w;
+  i32 whi = xtract32(i96_lo64(x), nBitsLess32) >> 31;
+  *outCarry = ((i64)i96_hi64(x) - (i64)whi) >> nBitsLess32;
+  return as_ulong((uint2)(i96_lo32(x), (u32)whi));
 #elif EXP / NWORDS == 31
-  i64 w = lowBits(i96_lo64(x), nBits);
-  *outCarry = ((i96_hi64(x) << (32 - nBits)) | ((i96_lo32(x) >> 16) >> (nBits - 16))) + (w < 0);
+  i32 w = lowBitsSafe32(i96_lo32(x), nBits);
+  *outCarry = as_long((int2)(xtract32(i96_lo64(x), nBits), xtract32(i96_hi64(x), nBits))) + (w < 0);
   return w;
+//  i64 w = lowBits(i96_lo64(x), nBits);
+//  *outCarry = ((i96_hi64(x) << (32 - nBits)) | ((i96_lo32(x) >> 16) >> (nBits - 16))) + (w < 0);
+//  return w;
 #else
   i32 w = lowBits(i96_lo32(x), nBits);
-  *outCarry = ((i96_hi64(x) << (32 - nBits)) | (i96_lo32(x) >> nBits)) + (w < 0);
+  *outCarry = as_long((int2)(xtract32(i96_lo64(x), nBits), xtract32(i96_hi64(x), nBits))) + (w < 0);
   return w;
 #endif
 }
@@ -510,22 +526,22 @@ Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
 Word OVERLOAD carryStep(i64 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
 #if EXP / NWORDS >= 33
-  i32 xhi = (x >> 32);
+  i32 xhi = hi32(x);
   i32 whi = lowBits(xhi, nBits - 32);
   *outCarry = (xhi - whi) >> (nBits - 32);
-  return (Word) (((u64) whi << 32) | (u32)(x));
+  return (Word) as_long((int2)(lo32(x), whi));
 #elif EXP / NWORDS == 32
-  i32 xhi = (x >> 32);
+  i32 xhi = hi32(x);
   i64 w = lowBits(x, nBits);
-  xhi -= w >> 32;
+  xhi -= (i32)(w >> 32);
   *outCarry = xhi >> (nBits - 32);
   return w;
 #elif EXP / NWORDS == 31
-  i64 w = lowBits(x, nBits);
+  i32 w = lowBitsSafe32(lo32(x), nBits);
   *outCarry = (x - w) >> nBits;
   return w;
 #else
-  Word w = lowBits((i32) x, nBits);
+  Word w = lowBits(lo32(x), nBits);
   *outCarry = (x - w) >> nBits;
   return w;
 #endif
@@ -534,21 +550,21 @@ Word OVERLOAD carryStep(i64 x, i64 *outCarry, bool isBigWord) {
 Word OVERLOAD carryStep(i64 x, i32 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
 #if EXP / NWORDS >= 33
-  i32 xhi = (x >> 32);
+  i32 xhi = hi32(x);
   i32 w = lowBits(xhi, nBits - 32);
   *outCarry = (xhi >> (nBits - 32)) + (w < 0);
-  return (Word) (((u64) w << 32) | (u32)(x));
+  return as_long((int2)(lo32(x), w));
 #elif EXP / NWORDS == 32
-  i32 xhi = (x >> 32);
+  i32 xhi = hi32(x);
   i64 w = lowBits(x, nBits);
-  *outCarry = (i32) (xhi >> (nBits - 32)) + (w < 0);
+  *outCarry = (xhi >> (nBits - 32)) + (w < 0);
   return w;
 #elif EXP / NWORDS == 31
-  i32 w = lowBits(x, nBits);
-  *outCarry = (i32) (x >> nBits) + (w < 0);
+  i32 w = lowBitsSafe32(lo32(x), nBits);
+  *outCarry = xtract32(x, nBits) + (w < 0);
   return w;
 #else
-  Word w = lowBits(x, nBits);
+  i32 w = lowBits(x, nBits);
   *outCarry = xtract32(x, nBits) + (w < 0);
   return w;
 #endif
@@ -584,15 +600,15 @@ Word OVERLOAD carryStepUnsignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
 
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
-  i64 xhi = i96_hi64(x) & ~(((u64)1 << (bigwordBits - 32)) - 1);
+  i64 xhi = as_ulong((uint2)(i96_mid32(x) & ~((1 << (bigwordBits - 32)) - 1), i96_hi32(x)));
   *outCarry = xhi >> (nBits - 32);
-  return ulowFixedBits(i96_lo64(x), bigwordBits);
-#elif EXP / NWORDS == 31                                // nBits = 31 or 32
+  return as_ulong((uint2)(i96_lo32(x), ulowFixedBits(i96_mid32(x), bigwordBits - 32)));
+#elif EXP / NWORDS == 31 || EXP / NWORDS >= 22          // nBits = 31 or 32, fastest version. Should also work on smaller nBits.
   *outCarry = i96_hi64(x) << (32 - nBits);
   return i96_lo32(x);                                   // ulowBits(x, bigwordBits = 32);
 #else                                                   // nBits less than 32
   u32 w = ulowFixedBits(i96_lo32(x), bigwordBits);
-  *outCarry = (i96_hi64(x) << (32 - nBits)) | ((i96_lo32(x) - w) >> nBits);
+  *outCarry = as_long((int2)(xtract32(as_long((int2)(i96_lo32(x) - w, i96_mid32(x))), nBits), xtract32(i96_hi64(x), nBits)));
   return w;
 #endif
 }
@@ -624,7 +640,7 @@ Word OVERLOAD carryStepUnsignedSloppy(i32 x, i32 *outCarry, bool isBigWord) {
 // We only allow sloppy results when not near the maximum bits-per-word.  For now, this is defined as 1.1 bits below maxbpw.
 // No studies have been done on reducing this 1,1 value since this is a rather minor optimization.  Since the preprocessor can't
 // handle floats, the MAXBPW value passed in is 100 * maxbpw.
-#define SLOPPY_MAXBPW   (MAXBPW - 1100)
+#define SLOPPY_MAXBPW   (MAXBPW - 110)
 #define ACTUAL_BPW      (EXP / (NWORDS / 100))
 
 Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
@@ -632,6 +648,8 @@ Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
   return carryStep(x, outCarry, isBigWord);
 #else
 
+//GW:  Need to compare to simple carryStep
+  
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
@@ -652,20 +670,21 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
-  u64 xlo = i96_lo64(x);
-  u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
-  i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
-  i64 xhi = i96_hi64(x) + (xlo_topbit >> 32);
-  *outCarry = xhi >> (nBits - 32);
-  return w;
+  return carryStep(x, outCarry, isBigWord);		// Should be just as fast as code below
+//  u32 xmid_topbit = i96_mid32(x) & (1 << (bigwordBits - 32 - 1));
+//  i32 whi = ulowFixedBits(i96_mid32(x), bigwordBits - 32 - 1) - xmid_topbit;
+//  i64 xhi = i96_hi64(x) + xmid_topbit;
+//  *outCarry = xhi >> (nBits - 32);
+//  return as_long((int2)(i96_lo32(x), whi));
 #elif EXP / NWORDS == 31 || SLOPPY_MAXBPW >= 3200       // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance)
   i32 w = i96_lo32(x);                                  // lowBits(x, bigwordBits = 32);
   *outCarry = (i96_hi64(x) + (w < 0)) << (32 - nBits);
   return w;
-#else                                                   // nBits less than 32       //GWBUG - is there a faster version?  Is this faster than plain old carryStep?
-  i32 w = lowFixedBits(i96_lo32(x), bigwordBits);
-  *outCarry = (((i96_hi64(x) << (32 - bigwordBits)) | (i96_lo32(x) >> bigwordBits)) + (w < 0)) << (bigwordBits - nBits);
-  return w;
+#else                                                   // nBits less than 32
+  return carryStep(x, outCarry, isBigWord);		// Should be faster than code below
+//  i32 w = lowFixedBits(i96_lo32(x), bigwordBits);
+//  *outCarry = (as_long((int2)(xtract32(i96_lo64(x), bigwordBits), xtract32(i96_hi64(x), bigwordBits))) + (w < 0)) << (bigwordBits - nBits);
+//  return w;
 #endif
 #endif
 }
@@ -675,12 +694,7 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i64 *outCarry, bool isBigWord) {
   return carryStep(x, outCarry, isBigWord);
 #else
 
-// GWBUG - not timed to see if it is faster.  Highly likely to be slower.
-//  const u32 bigwordBits = EXP / NWORDS + 1;
-//  u32 nBits = bitlen(isBigWord);
-//  u32 w = lowBits(x, bigwordBits);
-//  *outCarry = (((x << (32 - bigwordBits)) | ((u32) x >> bigwordBits)) + (w < 0)) << (bigwordBits - nBits);
-//  return w;
+  // We're unlikely to find code that is better than carryStep
   return carryStep(x, outCarry, isBigWord);
 #endif
 }
@@ -689,6 +703,8 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i32 *outCarry, bool isBigWord) {
 #if ACTUAL_BPW > SLOPPY_MAXBPW
   return carryStep(x, outCarry, isBigWord);
 #else
+
+//GW: I need to look at PTX code generated by the code below vs. carryStep
 
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
   const u32 bigwordBits = EXP / NWORDS + 1;

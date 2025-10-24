@@ -300,7 +300,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
     // Compute result
     out[p] = weightAndCarryPair(SWAP_XY(in[p]), SWAP_XY(in31[p]), w1, w2, weight_shift0, weight_shift1,
-                                carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
+                                LL != 0 || i != 0, carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
 
     // Generate weight shifts and frac_bits for next pair
     combo_counter += combo_step;
@@ -458,7 +458,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
     // Compute result
     out[p] = weightAndCarryPair(SWAP_XY(inF2[p]), SWAP_XY(in61[p]), w1, w2, weight_shift0, weight_shift1,
-                                carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
+                                LL != 0 || i != 0, carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
 
     // Generate weight shifts and frac_bits for next pair
     combo_counter += combo_step;
@@ -546,7 +546,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
 
     // Compute result
     out[p] = weightAndCarryPair(SWAP_XY(in31[p]), SWAP_XY(in61[p]), m31_weight_shift0, m31_weight_shift1, m61_weight_shift0, m61_weight_shift1,
-                                carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
+                                LL != 0 || i != 0, carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_step;
@@ -643,7 +643,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
     // Compute result
     out[p] = weightAndCarryPair(SWAP_XY(inF2[p]), SWAP_XY(in31[p]), SWAP_XY(in61[p]), w1, w2, m31_weight_shift0, m31_weight_shift1, m61_weight_shift0, m61_weight_shift1,
-                                carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
+                                LL != 0 || i != 0, carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_step;

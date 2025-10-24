@@ -6,26 +6,54 @@
 
 // Access parts of a 64-bit value
 
-u32 lo32(u64 x) { return (u32) x; }
-u32 hi32(u64 x) { return (u32) (x >> 32); }
+u32 OVERLOAD lo32(u64 x) { uint2 x2 = as_uint2(x); return (u32)x2.x; }
+u32 OVERLOAD hi32(u64 x) { uint2 x2 = as_uint2(x); return (u32)x2.y; }
+u32 OVERLOAD lo32(i64 x) { uint2 x2 = as_uint2(x); return (u32)x2.x; }
+i32 OVERLOAD hi32(i64 x) { uint2 x2 = as_uint2(x); return (i32)x2.y; }
 
 // A primitive partial implementation of an i96 integer type
-#if 0
-// An all u32 implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions.
+#if 1
+// An all 32-bit implementation.  The add and subtract routines desperately need to use ASM with add.cc and sub.cc PTX instructions.
 // This version might be best on AMD and Intel if we can generate add-with-carry instructions.
-typedef struct { u32 lo32; u32 mid32; u32 hi32; } i96;
-i96 OVERLOAD make_i96(i64 v) { i96 val; val.hi32 = v >> 63, val.mid32 = v >> 32, val.lo32 = v; return val; }
-i96 OVERLOAD make_i96(i32 v) { i96 val; val.hi32 = v >> 31, val.mid32 = v >> 31, val.lo32 = v; return val; }
-i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
-i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi, val.mid32 = lo >> 32, val.lo32 = lo; return val; }
+typedef struct { i32 hi32; u32 mid32; u32 lo32; } i96;
+i96 OVERLOAD make_i96(i64 v) { i96 val; val.lo32 = lo32(v); val.mid32 = hi32(v); val.hi32 = (i32)val.mid32 >> 31; return val; }
+i96 OVERLOAD make_i96(i32 v) { i96 val; val.lo32 = v; val.mid32 = val.hi32 = (i32)val.lo32 >> 31; return val; }
+i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi; val.mid32 = hi32(lo); val.lo32 = lo32(lo); return val; }
+i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi; val.mid32 = hi32(lo); val.lo32 = lo32(lo); return val; }
 u32 i96_hi32(i96 val) { return val.hi32; }
 u32 i96_mid32(i96 val) { return val.mid32; }
 u32 i96_lo32(i96 val) { return val.lo32; }
-u64 i96_lo64(i96 val) { return ((u64) val.mid32 << 32) | val.lo32; }
-u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | val.mid32; }
-i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 + b.lo32; val.mid32 = a.mid32 + b.mid32; val.hi32 = a.hi32 + b.hi32 + (val.mid32 < a.mid32); u32 carry = (val.lo32 < a.lo32); u32 tmp = val.mid32; val.mid32 += carry; val.hi32 += (val.mid32 < tmp); return val; }
+u64 i96_lo64(i96 val) { return as_ulong((uint2)(val.lo32, val.mid32)); }
+u64 i96_hi64(i96 val) { return as_ulong((uint2)(val.mid32, val.hi32)); }
+i96 OVERLOAD add(i96 a, i96 b) {
+  i96 val;
+#if HAS_PTX
+  __asm("add.cc.u32  %0, %3, %6;\n\t"
+        "addc.cc.u32 %1, %4, %7;\n\t"
+	"addc.u32    %2, %5, %8;"
+	: "=r"(val.lo32), "=r"(val.mid32), "=r"(val.hi32)
+	: "r"(a.lo32), "r"(a.mid32), "r"(a.hi32), "r"(b.lo32), "r"(b.mid32), "r"(b.hi32));
+#else
+  u64 alo64 = as_ulong((uint2)(a.lo32, a.mid32)); u64 blo64 = as_ulong((uint2)(b.lo32, b.mid32)); u64 lo64 = alo64 + blo64;
+  val.lo32 = lo32(lo64); val.mid32 = hi32(lo64); val.hi32 = a.hi32 + b.hi32 + (lo64 < alo64);
+#endif
+  return val;
+}
 i96 OVERLOAD add(i96 a, i64 b) { return add(a, make_i96(b)); }
-i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo32 = a.lo32 - b.lo32; val.mid32 = a.mid32 - b.mid32; val.hi32 = a.hi32 - b.hi32 - (val.mid32 > a.mid32); u32 carry = (val.lo32 > a.lo32); u32 tmp = val.mid32; val.mid32 -= carry; val.hi32 -= (val.mid32 > tmp); return val; }
+i96 OVERLOAD sub(i96 a, i96 b) {
+  i96 val;
+#if HAS_PTX
+  __asm("sub.cc.u32  %0, %3, %6;\n\t"
+        "subc.cc.u32 %1, %4, %7;\n\t"
+	"subc.u32    %2, %5, %8;"
+	: "=r"(val.lo32), "=r"(val.mid32), "=r"(val.hi32)
+	: "r"(a.lo32), "r"(a.mid32), "r"(a.hi32), "r"(b.lo32), "r"(b.mid32), "r"(b.hi32));
+#else
+  u64 alo64 = as_ulong((uint2)(a.lo32, a.mid32)); u64 blo64 = as_ulong((uint2)(b.lo32, b.mid32)); u64 lo64 = alo64 - blo64;
+  val.lo32 = lo32(lo64); val.mid32 = hi32(lo64); val.hi32 = a.hi32 - b.hi32 - (lo64 > alo64);
+#endif
+  return val;
+}
 i96 OVERLOAD sub(i96 a, i64 b) { return sub(a, make_i96(b)); }
 i96 OVERLOAD sub(i96 a, i32 b) { return sub(a, make_i96(b)); }
 #elif defined(__SIZEOF_INT128__)
