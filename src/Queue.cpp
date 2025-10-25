@@ -25,11 +25,12 @@ Queue::Queue(const Context& context, bool profile) :
   markerQueued(false),
   queueCount(0),
   squareTime(50),
-  squareKernels(4)
+  squareKernels(4),
+  firstSetTime(true)
 {
   // Formerly a constant (thus the CAPS).  nVidia is 3% CPU load at 400 or 500, and 35% load at 800 on my Linux machine.
   // AMD is just over 2% load at 1600 and 3200 on the same Linux machine.  Marginally better timings(?) at 3200.
-  MAX_QUEUE_COUNT = isAmdGpu(context.deviceId()) ? 3200 : 500;		// Queue size for 800 or 125 squarings (if squareKernels = 4)
+  MAX_QUEUE_COUNT = isAmdGpu(context.deviceId()) ? 3200 : 500;          // Queue size for 800 or 125 squarings (if squareKernels = 4)
 }
 
 void Queue::writeTE(cl_mem buf, u64 size, const void* data, TimeInfo* tInfo) {
@@ -110,6 +111,10 @@ void Queue::waitForMarkerEvent() {
 }
 
 void Queue::setSquareTime(int time) {
+  if (firstSetTime) {                 // Ignore first setSquareTime call.  First measured times are wrong because of startup costs
+    firstSetTime = false;
+    return;
+  }
   if (time < 30) time = 30;           // Assume a minimum square time of 30us
   if (time > 3000) time = 3000;       // Assume a maximum square time of 3000us
   squareTime = time;
