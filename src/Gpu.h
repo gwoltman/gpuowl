@@ -222,7 +222,6 @@ private:
   void fftMidIn(Buffer<double>& out, Buffer<double>& in);
   void fftMidOut(Buffer<double>& out, Buffer<double>& in);
   void fftHin(Buffer<double>& out, Buffer<double>& in);
-  void tailSquareZero(Buffer<double>& out, Buffer<double>& in);
   void tailSquare(Buffer<double>& out, Buffer<double>& in);
   void tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2);
   void tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2);
@@ -257,8 +256,6 @@ private:
   
   void exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Buffer<double>& buf2, Buffer<double>& buf3);
 
-  void bottomHalf(Buffer<double>& out, Buffer<double>& inTmp);
-
   void writeState(u32 k, const vector<u32>& check, u32 blockSize);
 
   // does either carrryFused() or the expanded version depending on useLongCarry
@@ -268,6 +265,7 @@ private:
   void mul(Buffer<Word>& io, Buffer<double>& inB);
 
   void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3 = false);
+  void modMul(Buffer<Word>& ioA, bool leadInB, Buffer<Word>& inB, bool mul3 = false);
 
   fs::path saveProof(const Args& args, const ProofSet& proofSet);
   std::pair<RoeInfo, RoeInfo> readROE();
