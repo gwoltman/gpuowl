@@ -898,20 +898,20 @@ GF61 OVERLOAD cmul(GF61 a, GF61 b) {              // Use 3-epsilon extra bits in
   return U2(modM61(k1 + neg(k3, 4)), modM61(k1 + k2));
 }
 #else
-Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b_m61_count) {
-  u128 ab = mad64(a, b, c);                             // Max c value assumed to be M61^2+epsilon
+Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b_m61_count) {  // Max c value assumed to be 2*M61^2+epsilon
+  u128 ab = mad64(a, b, c);                             // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 2) * M61^2 + epsilon
   u64 lo = u128_lo64(ab), hi = u128_hi64(ab);
   u64 lo61 = lo & M61;                                  // Max value is M61
-  if ((a_m61_count - 1) * (b_m61_count - 1) + 1 <= 6) {
-     hi = (hi << 3) + (lo >> 61);                       // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 1) * M61 + epsilon
-     return lo61 + hi;                                  // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 2) * M61 + epsilon
+  if ((a_m61_count - 1) * (b_m61_count - 1) + 2 <= 6) {
+     hi = (hi << 3) + (lo >> 61);                       // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 2) * M61 + epsilon
+     return lo61 + hi;                                  // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 3) * M61 + epsilon
   } else {
      u64 hi61 = ((hi << 3) + (lo >> 61)) & M61;         // Max value is M61
      return lo61 + hi61 + (hi >> 58);                   // Max value is 2*M61 + epsilon
   }
 }
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {
-  u128 k1 = mul64(b.x, a.x + a.y);                            // max value is M61^2+epsilon
+  u128 k1 = mul64(b.x, a.x + a.y);                            // max value is 2*M61^2+epsilon
   Z61 k1k2 = weakMulAdd(a.x, b.y + neg(b.x, 2), k1, 2, 3);    // max value is 4*M61+epsilon
   Z61 k1k3 = weakMulAdd(a.y, neg(b.y + b.x, 3), k1, 2, 4);    // max value is 5*M61+epsilon
   return U2(modM61(k1k3), modM61(k1k2));
