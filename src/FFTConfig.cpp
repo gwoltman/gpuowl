@@ -266,7 +266,8 @@ float FFTConfig::maxBpw() const {
     float b2 = shape.bpw[variant_M(variant) * 3 + variant_H(variant)];
     b = (b1 + b2) / 2.0;
   }
-  return carry == CARRY_32 ? std::min(shape.carry32BPW(), b) : b;
+  // Only some FFTs support both 32 and 64 bit carries.
+  return (carry == CARRY_32 && (shape.fft_type == FFT64 || shape.fft_type == FFT3231)) ? std::min(shape.carry32BPW(), b) : b;
 }
 
 FFTConfig FFTConfig::bestFit(const Args& args, u32 E, const string& spec) {
