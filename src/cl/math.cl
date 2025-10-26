@@ -30,9 +30,9 @@ i96 OVERLOAD add(i96 a, i96 b) {
 #if HAS_PTX
   __asm("add.cc.u32  %0, %3, %6;\n\t"
         "addc.cc.u32 %1, %4, %7;\n\t"
-	"addc.u32    %2, %5, %8;"
-	: "=r"(val.lo32), "=r"(val.mid32), "=r"(val.hi32)
-	: "r"(a.lo32), "r"(a.mid32), "r"(a.hi32), "r"(b.lo32), "r"(b.mid32), "r"(b.hi32));
+        "addc.u32    %2, %5, %8;"
+        : "=r"(val.lo32), "=r"(val.mid32), "=r"(val.hi32)
+        : "r"(a.lo32), "r"(a.mid32), "r"(a.hi32), "r"(b.lo32), "r"(b.mid32), "r"(b.hi32));
 #else
   u64 alo64 = as_ulong((uint2)(a.lo32, a.mid32)); u64 blo64 = as_ulong((uint2)(b.lo32, b.mid32)); u64 lo64 = alo64 + blo64;
   val.lo32 = lo32(lo64); val.mid32 = hi32(lo64); val.hi32 = a.hi32 + b.hi32 + (lo64 < alo64);
@@ -45,9 +45,9 @@ i96 OVERLOAD sub(i96 a, i96 b) {
 #if HAS_PTX
   __asm("sub.cc.u32  %0, %3, %6;\n\t"
         "subc.cc.u32 %1, %4, %7;\n\t"
-	"subc.u32    %2, %5, %8;"
-	: "=r"(val.lo32), "=r"(val.mid32), "=r"(val.hi32)
-	: "r"(a.lo32), "r"(a.mid32), "r"(a.hi32), "r"(b.lo32), "r"(b.mid32), "r"(b.hi32));
+        "subc.u32    %2, %5, %8;"
+        : "=r"(val.lo32), "=r"(val.mid32), "=r"(val.hi32)
+        : "r"(a.lo32), "r"(a.mid32), "r"(a.hi32), "r"(b.lo32), "r"(b.mid32), "r"(b.hi32));
 #else
   u64 alo64 = as_ulong((uint2)(a.lo32, a.mid32)); u64 blo64 = as_ulong((uint2)(b.lo32, b.mid32)); u64 lo64 = alo64 - blo64;
   val.lo32 = lo32(lo64); val.mid32 = hi32(lo64); val.hi32 = a.hi32 - b.hi32 - (lo64 > alo64);
@@ -912,8 +912,8 @@ Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b
 }
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {
   u128 k1 = mul64(b.x, a.x + a.y);                            // max value is 2*M61^2+epsilon
-  Z61 k1k2 = weakMulAdd(a.x, b.y + neg(b.x, 2), k1, 2, 3);    // max value is 4*M61+epsilon
-  Z61 k1k3 = weakMulAdd(a.y, neg(b.y + b.x, 3), k1, 2, 4);    // max value is 5*M61+epsilon
+  Z61 k1k2 = weakMulAdd(a.x, b.y + neg(b.x, 2), k1, 2, 4);    // max value is 6*M61+epsilon
+  Z61 k1k3 = weakMulAdd(a.y, neg(b.y + b.x, 3), k1, 2, 4);    // max value is 6*M61+epsilon
   return U2(modM61(k1k3), modM61(k1k2));
 }
 #endif
