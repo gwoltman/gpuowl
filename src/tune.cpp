@@ -939,9 +939,10 @@ skip_1K_256 = 0;
 
     // Time an exponent that's good for all variants and carry-config.
     u32 exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
-//GW: If user specified a quick != 7, adjust the formula below???
-    quick = (exponent < 50000000) ? 6 : (exponent < 150000000) ? 7 : (exponent < 350000000) ? 8 : 10;
-    
+    u32 adjusted_quick = (exponent < 50000000) ? quick - 1 : (exponent < 150000000) ? quick : (exponent < 350000000) ? quick + 1 : quick + 2;
+    if (adjusted_quick < 1) adjusted_quick = 1;
+    if (adjusted_quick > 10) adjusted_quick = 10;
+
     // Loop through all possible variants
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
 
@@ -990,7 +991,7 @@ skip_1K_256 = 0;
               if (w == 0 && !AMDGPU) continue;
               if (w == 0 && test.width > 1024) continue;
               FFTConfig fft{test, variant_WMH (w, 0, 1), CARRY_32};
-              cost = Gpu::make(q, primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP(quick);
+              cost = Gpu::make(q, primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP(adjusted_quick);
               log("Fast width search %6.1f %12s\n", cost, fft.spec().c_str());
               if (min_cost < 0.0 || cost < min_cost) { min_cost = cost; fastest_width = w; }
             }
