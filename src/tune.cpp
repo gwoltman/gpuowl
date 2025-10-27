@@ -939,7 +939,7 @@ skip_1K_256 = 0;
 
     // Time an exponent that's good for all variants and carry-config.
     u32 exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
-    u32 adjusted_quick = (exponent < 50000000) ? quick - 1 : (exponent < 150000000) ? quick : (exponent < 350000000) ? quick + 1 : quick + 2;
+    u32 adjusted_quick = (exponent < 50000000) ? quick - 1 : (exponent < 170000000) ? quick : (exponent < 350000000) ? quick + 1 : quick + 2;
     if (adjusted_quick < 1) adjusted_quick = 1;
     if (adjusted_quick > 10) adjusted_quick = 10;
 
