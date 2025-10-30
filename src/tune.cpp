@@ -413,18 +413,18 @@ void Tune::tune() {
         defaultShape = &defaultFFTShape;
         time_FFTs = 1;
         if (fp64_time < 0.80 * ntt_time) {
-          log("FP64 FFTs are significantly faster than NTTs.  No NTT tuning will be performed.\n");
+          log("FP64 FFTs are significantly faster than integer NTTs.  No NTT tuning will be performed.\n");
         } else {
-          log("FP64 FFTs are not significantly faster than NTTs.  NTT tuning will be performed.\n");
+          log("FP64 FFTs are not significantly faster than integer NTTs.  NTT tuning will be performed.\n");
           time_NTTs = 1;
         }
       } else {
         defaultShape = &defaultNTTShape;
         time_NTTs = 1;
         if (fp64_time > 1.20 * ntt_time) {
-          log("FP64 FFTs are significantly slower than NTTs.  No FP64 tuning will be performed.\n");
+          log("FP64 FFTs are significantly slower than integer NTTs.  No FP64 tuning will be performed.\n");
         } else {
-          log("FP64 FFTs are not significantly slower than NTTs.  FP64 tuning will be performed.\n");
+          log("FP64 FFTs are not significantly slower than integer NTTs.  FP64 tuning will be performed.\n");
           time_FFTs = 1;
         }
       }
@@ -900,8 +900,8 @@ void Tune::tune() {
       config.write("\n  -log 1000000\n");
     }
     if (args->workers < 2) {
-      config.write("\n# Running two workers often gives better throughput.");
-      config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers will often be better.");
+      config.write("\n# Running two workers sometimes gives better throughput.");
+      config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers may be better.");
       config.write("\n#  -workers 2 -use TAIL_KERNELS=3\n");
     }
   }
