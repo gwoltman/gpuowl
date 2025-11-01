@@ -615,7 +615,7 @@ void Tune::tune() {
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tail_trigs = 0;
       u32 current_tail_trigs = args->value("TAIL_TRIGS32", 2);
       double best_cost = -1.0;
@@ -694,11 +694,11 @@ void Tune::tune() {
       args->flags["TABMUL_CHAIN31"] = to_string(best_tabmul_chain);
     }
 
-    // Find best TABMUL_CHAIN61 setting
+    // Find best TABMUL_CHAIN32 setting
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tabmul_chain = 0;
       u32 current_tabmul_chain = args->value("TABMUL_CHAIN32", 0);
       double best_cost = -1.0;
