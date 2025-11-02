@@ -55,9 +55,7 @@ i64 OVERLOAD lowBits(i64 u, u32 bits) { return ((u << (64 - bits)) >> (64 - bits
 i64 OVERLOAD lowBits(u64 u, u32 bits) { return lowBits((i64)u, bits); }
 
 // Return signed low bits (number of bits must be between 1 and 32)
-#if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_sbfe)
-i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits(u, bits); }
-#elif HAS_PTX
+#if HAS_PTX
 i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits(u, bits); }
 #else
 i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits((u64)u, bits); }
@@ -78,13 +76,20 @@ i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFix
 //i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return (i64) ulowFixedBits(u, bits - 1) - (u & (1LL << (bits - 1))); }
 i64 OVERLOAD lowFixedBits(u64 u, const u32 bits) { return lowFixedBits((i64)u, bits); }
 
-// Extract 32 bits from a 64-bit value
+// Extract 32 bits from a 64-bit value (starting bit offset can be 0 to 31)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_alignbit)
 i32 xtract32(i64 x, u32 bits) { return __builtin_amdgcn_alignbit(as_int2(x).y, as_int2(x).x, bits); }
 #elif HAS_PTX
 i32 xtract32(i64 x, u32 bits) { i32 res; __asm("shf.r.clamp.b32 %0, %1, %2, %3;" : "=r"(res) : "r"(as_uint2(x).x), "r"(as_uint2(x).y), "r"(bits)); return res; }
 #else
 i32 xtract32(i64 x, u32 bits) { return x >> bits; }
+#endif
+
+// Extract 32 bits from a 64-bit value (starting bit offset can be 0 to 32)
+#if HAS_PTX
+i32 xtractSafe32(i64 x, u32 bits) { i32 res; __asm("shf.r.clamp.b32 %0, %1, %2, %3;" : "=r"(res) : "r"(as_uint2(x).x), "r"(as_uint2(x).y), "r"(bits)); return res; }
+#else
+i32 xtractSafe32(i64 x, u32 bits) { return x >> bits; }
 #endif
 
 u32 bitlen(bool b) { return EXP / NWORDS + b; }
@@ -511,7 +516,7 @@ Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
   return as_ulong((uint2)(i96_lo32(x), (u32)whi));
 #elif EXP / NWORDS == 31
   i32 w = lowBitsSafe32(i96_lo32(x), nBits);
-  *outCarry = as_long((int2)(xtract32(i96_lo64(x), nBits), xtract32(i96_hi64(x), nBits))) + (w < 0);
+  *outCarry = as_long((int2)(xtractSafe32(i96_lo64(x), nBits), xtractSafe32(i96_hi64(x), nBits))) + (w < 0);
   return w;
 //  i64 w = lowBits(i96_lo64(x), nBits);
 //  *outCarry = ((i96_hi64(x) << (32 - nBits)) | ((i96_lo32(x) >> 16) >> (nBits - 16))) + (w < 0);
@@ -561,7 +566,7 @@ Word OVERLOAD carryStep(i64 x, i32 *outCarry, bool isBigWord) {
   return w;
 #elif EXP / NWORDS == 31
   i32 w = lowBitsSafe32(lo32(x), nBits);
-  *outCarry = xtract32(x, nBits) + (w < 0);
+  *outCarry = xtractSafe32(x, nBits) + (w < 0);
   return w;
 #else
   i32 w = lowBits(x, nBits);
