@@ -156,6 +156,7 @@ named "config.txt" in the prpll run directory.
 -prp <exponent>    : run a single PRP test and exit, ignoring worktodo.txt
 -ll <exponent>     : run a single LL test and exit, ignoring worktodo.txt
 -verify <file>     : verify PRP-proof contained in <file>
+-smallest          : work on smallest exponent in worktodo.txt rather than the first exponent in worktodo.txt    
 -proof <power>     : generate proof of power <power> (default: optimal depending on exponent).
                      A lower power reduces disk space requirements but increases the verification cost.
                      A higher power increases disk usage a lot.
@@ -367,6 +368,7 @@ void Args::parse(const string& line) {
     else if (key == "-iters") { iters = stoi(s); assert(iters && (iters % 10000 == 0)); }
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
     else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
+    else if (key == "-smallest") { smallest = true; }
     else if (key == "-fft") { fftSpec = s; }
     else if (key == "-dump") { dump = s; }
     else if (key == "-user") { user = s; }

@@ -62,6 +62,7 @@ public:
   bool verbose = false;
   bool useCache = false;
   bool profile = false;
+  bool smallest = false;
 
   fs::path masterDir;
   fs::path proofResultDir = "proof";
