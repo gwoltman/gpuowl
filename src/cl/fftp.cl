@@ -442,11 +442,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
     // Convert and weight input
     u31[i] = U2(shl(make_Z31(in[p].x), m31_weight_shift0), shl(make_Z31(in[p].y), m31_weight_shift1));      // Form a GF31 from each pair of input words
@@ -454,9 +454,9 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
 
 // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_bigstep;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
   fft_WIDTH(lds31, u31, smallTrig31);
@@ -533,11 +533,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
     F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP));
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
     // Convert and weight input
     uF2[i] = U2(in[p].x * w1, in[p].y * w2);
@@ -546,9 +546,9 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
 // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_bigstep;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
   fft_WIDTH(ldsF2, uF2, smallTrigF2);

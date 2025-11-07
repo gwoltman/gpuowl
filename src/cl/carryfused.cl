@@ -1694,10 +1694,8 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   const u32 log2_NWORDS = (WIDTH == 256 ? 8 : WIDTH == 512 ? 9 : WIDTH == 1024 ? 10 : 12) +
                           (MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4) +
                           (SMALL_HEIGHT == 256 ? 8 : SMALL_HEIGHT == 512 ? 9 : SMALL_HEIGHT == 1024 ? 10 : 12) + 1;
-  m31_weight_shift = m31_weight_shift + log2_NWORDS + 1;
-  if (m31_weight_shift > 31) m31_weight_shift -= 31;
-  m61_weight_shift = m61_weight_shift + log2_NWORDS + 1;
-  if (m61_weight_shift > 61) m61_weight_shift -= 61;
+  m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift + log2_NWORDS + 1);
+  m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift + log2_NWORDS + 1);
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
@@ -1705,11 +1703,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
 
     // Generate big-word/little-word flags
@@ -1726,9 +1724,9 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_bigstep;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
   m31_combo_counter = m31_starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
   m61_combo_counter = m61_starting_combo_counter;
@@ -1819,11 +1817,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
@@ -1833,9 +1831,9 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_bigstep;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
   bar();
@@ -1969,10 +1967,8 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   const u32 log2_NWORDS = (WIDTH == 256 ? 8 : WIDTH == 512 ? 9 : WIDTH == 1024 ? 10 : 12) +
                           (MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4) +
                           (SMALL_HEIGHT == 256 ? 8 : SMALL_HEIGHT == 512 ? 9 : SMALL_HEIGHT == 1024 ? 10 : 12) + 1;
-  m31_weight_shift = m31_weight_shift + log2_NWORDS + 1;
-  if (m31_weight_shift > 31) m31_weight_shift -= 31;
-  m61_weight_shift = m61_weight_shift + log2_NWORDS + 1;
-  if (m61_weight_shift > 61) m61_weight_shift -= 61;
+  m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift + log2_NWORDS + 1);
+  m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift + log2_NWORDS + 1);
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
@@ -1983,11 +1979,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
 
     // Generate big-word/little-word flags
@@ -2004,9 +2000,9 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_bigstep;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
   m31_combo_counter = m31_starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
   m61_combo_counter = m61_starting_combo_counter;
@@ -2104,11 +2100,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
@@ -2119,9 +2115,9 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_bigstep;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
   bar();

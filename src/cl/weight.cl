@@ -133,3 +133,30 @@ F optionalHalve(F w) {    // return w >= 4 ? w / 2 : w;
 }
 
 #endif
+
+
+/**************************************************************************/
+/*            Helper routines for NTT weight calculations                 */
+/**************************************************************************/
+
+#if NTT_GF31
+
+// if (weight_shift > 31) weight_shift -= 31;
+// This version uses PTX instructions which may be faster on nVidia GPUs
+u32 adjust_m31_weight_shift (u32 weight_shift) {
+  return optional_mod(weight_shift, 31);
+}
+
+#endif
+
+
+#if NTT_GF61
+
+// if (weight_shift > 61) weight_shift -= 61;
+// This version uses PTX instructions which may be faster on nVidia GPUs
+u32 adjust_m61_weight_shift (u32 weight_shift) {
+  return optional_mod(weight_shift, 61);
+}
+
+#endif
+

@@ -533,11 +533,11 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
 
     // Generate big-word/little-word flags
@@ -550,10 +550,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
-// GWBUG - derive m61 weight shifts from m31 counter (or vice versa) sort of easily done from difference in the two weight shifts (no need to add frac_bits twice)
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
   carryOut[G_W * g + me] = carry;
 
@@ -630,11 +629,11 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP));
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     u32 m31_weight_shift1 = m31_weight_shift;
     u32 m61_weight_shift0 = m61_weight_shift;
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
     u32 m61_weight_shift1 = m61_weight_shift;
 
     // Generate big-word/little-word flags
@@ -647,10 +646,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_step;
-    if (m31_weight_shift > 31) m31_weight_shift -= 31;
+    m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_step;
-    if (m61_weight_shift > 61) m61_weight_shift -= 61;
-// GWBUG - derive m61 weight shifts from m31 counter (or vice versa) sort of easily done from difference in the two weight shifts (no need to add frac_bits twice)
+    m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
   carryOut[G_W * g + me] = carry;
 

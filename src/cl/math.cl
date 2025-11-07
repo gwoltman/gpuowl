@@ -132,6 +132,56 @@ u128 mul64(u64 a, u64 b) { u128 val; val.lo64 = a * b; val.hi64 = mul_hi(a, b); 
 u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.lo64 = a.lo64 + b.lo64; val.hi64 = a.hi64 + b.hi64 + (val.lo64 < a.lo64); return val; }
 #endif
 
+// Select based on sign of first argument.  This generates less PTX code, but is no faster on 5xxx GPUs
+i32 select32(i32 a, i32 b, i32 c) {
+#if HAS_PTX
+  i32 res;
+  __asm("slct.s32.s32 %0, %2, %3, %1;" : "=r"(res) : "r"(a), "r"(b), "r"(c));
+  return res;
+#else
+  return a >= 0 ? b : c;
+#endif
+}
+
+// Optionally add a value if first arg is negative.
+i32 optional_add(i32 a, const i32 b) {
+#if HAS_PTX
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
+	" @%%p add.s32 %0, %0, %1;}"      // if (a < 0) a = a + b
+	: "+r"(a) : "n"(b));
+#else
+  if (a < 0) a = a + b;
+#endif
+  return a;
+}
+
+// Optionally subtract a value if first arg is negative.
+i32 optional_sub(i32 a, const i32 b) {
+#if HAS_PTX
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
+	" @%%p sub.s32 %0, %0, %1;}"      // if (a < 0) a = a - b
+	: "+r"(a) : "n"(b));
+#else
+  if (a < 0) a = a - b;
+#endif
+  return a;
+}
+
+// Optionally subtract a value if first arg is greater than value.
+i32 optional_mod(i32 a, const i32 b) {
+#if 0 //HAS_PTX  // Not faster on 5xxx GPUs (not sure why)
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.ge.s32 %%p, %0, %1;\n\t"   // a > b
+	" @%%p sub.s32 %0, %0, %1;}"      // if (a > b) a = a - b
+	: "+r"(a) : "n"(b));
+#else
+  if (a >= b) a = a - b;
+#endif
+  return a;
+}
+
 // Multiply and add primitives
 
 u64 mad32(u32 a, u32 b, u64 c) {
@@ -509,12 +559,18 @@ GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
 
 
 
-#elif 1                 // This version is a little sloppy.  Returns values in 0..M31 range     //GWBUG (could this handle M31+1 too> neg() is hard. If so made_Z31(i64) is faster
+#elif 1                                                               // This version is a little sloppy.  Returns values in 0..M31 range.
 
 // Internal routines to return value in 0..M31 range
-Z31 OVERLOAD modM31(Z31 a) { return (a & M31) + (a >> 31); }          // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
-Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }          // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
-Z31 OVERLOAD modM31(u64 a) {                                          // a must be less than 0xFFFFFFFF00000000
+//Z31 OVERLOAD modM31(Z31 a) { return (a & M31) + (a >> 31); }                        // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+Z31 OVERLOAD modM31(Z31 a) { i32 alt = a + 0x80000001; return select32(a, a, alt); }  // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+//Z31 OVERLOAD modM31(Z31 a) { return optional_add(a, 0x80000001); }                  // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+
+//Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }                        // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
+Z31 OVERLOAD modM31(i32 a) { i32 alt = a - 0x80000001; return select32(a, a, alt); }  // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
+//Z31 OVERLOAD modM31(i32 a) { return optional_sub(a, 0x80000001); }                  // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
+
+Z31 OVERLOAD modM31(u64 a) {                                          // a must be less than  0xFFFFFFFF7FFFFFFF
   u32 alo = a & M31;
   u32 amid = (a >> 31) & M31;
   u32 ahi = a >> 62;
@@ -564,8 +620,7 @@ GF31 OVERLOAD shr(GF31 a, u32 k) { return U2(shr(a.x, k), shr(a.y, k)); }
 Z31 OVERLOAD shl(Z31 a, u32 k) { return shr(a, 31 - k); }
 GF31 OVERLOAD shl(GF31 a, u32 k) { return U2(shl(a.x, k), shl(a.y, k)); }
 
-//Z31 OVERLOAD mul(Z31 a, Z31 b) { u64 t = a * (u64) b; return add((Z31) (t & M31), (Z31) (t >> 31)); }         //GWBUG.  is M31 * M31 a problem????  I think so!  needs double mod
-Z31 OVERLOAD mul(Z31 a, Z31 b) { u64 t = a * (u64) b; return modM31(add((Z31) (t & M31), (Z31) (t >> 31))); }      //Fixes the M31 * M31 problem
+Z31 OVERLOAD mul(Z31 a, Z31 b) { u64 t = a * (u64) b; return modM31(add((Z31)(t & M31), (Z31)(t >> 31))); }
 
 Z31 OVERLOAD fma(Z31 a, Z31 b, Z31 c) { return add(mul(a, b), c); }             // GWBUG:  Can we do better?
 
