@@ -217,14 +217,16 @@ private:
   TimeInfo* timeBufVect;
   ZAvg zAvg;
 
+  int NUM_CACHE_GROUPS = 3;
+
   void fftP(Buffer<double>& out, Buffer<double>& in) { fftP(out, reinterpret_cast<Buffer<Word>&>(in)); }
   void fftP(Buffer<double>& out, Buffer<Word>& in);
-  void fftMidIn(Buffer<double>& out, Buffer<double>& in);
-  void fftMidOut(Buffer<double>& out, Buffer<double>& in);
+  void fftMidIn(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
+  void fftMidOut(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
   void fftHin(Buffer<double>& out, Buffer<double>& in);
-  void tailSquare(Buffer<double>& out, Buffer<double>& in);
-  void tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2);
-  void tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2);
+  void tailSquare(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
+  void tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group = 0);
+  void tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group = 0);
   void fftW(Buffer<double>& out, Buffer<double>& in);
   void carryA(Buffer<double>& out, Buffer<double>& in) { carryA(reinterpret_cast<Buffer<Word>&>(out), in); }
   void carryA(Buffer<Word>& out, Buffer<double>& in);
@@ -240,11 +242,12 @@ private:
   vector<Word> readOut(Buffer<Word> &buf);
   void writeIn(Buffer<Word>& buf, vector<Word>&& words);
 
-  void square(Buffer<Word>& out, Buffer<Word>& in, bool leadIn, bool leadOut, bool doMul3 = false, bool doLL = false);
-  void squareCERT(Buffer<Word>& io, bool leadIn, bool leadOut) { square(io, io, leadIn, leadOut, false, false); }
-  void squareLL(Buffer<Word>& io, bool leadIn, bool leadOut) { square(io, io, leadIn, leadOut, false, true); }
+  enum LEAD_TYPE {LEAD_NONE = 0, LEAD_WIDTH = 1, LEAD_MIDDLE = 2};
 
-  void square(Buffer<Word>& io);
+  void square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut, bool doMul3 = false, bool doLL = false);
+  void square(Buffer<Word>& io) { square(io, io, LEAD_NONE, LEAD_NONE, false, false); }
+  void squareCERT(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, false); }
+  void squareLL(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, true); }
 
   u32 squareLoop(Buffer<Word>& out, Buffer<Word>& in, u32 from, u32 to, bool doTailMul3);
   u32 squareLoop(Buffer<Word>& io, u32 from, u32 to) { return squareLoop(io, io, from, to, false); }
@@ -265,7 +268,7 @@ private:
   void mul(Buffer<Word>& io, Buffer<double>& inB);
 
   void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3 = false);
-  void modMul(Buffer<Word>& ioA, bool leadInB, Buffer<Word>& inB, bool mul3 = false);
+  void modMul(Buffer<Word>& ioA, enum LEAD_TYPE leadInB, Buffer<Word>& inB, bool mul3 = false);
 
   fs::path saveProof(const Args& args, const ProofSet& proofSet);
   std::pair<RoeInfo, RoeInfo> readROE();

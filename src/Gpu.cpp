@@ -741,16 +741,16 @@ void Gpu::fftW(Buffer<double>& out, Buffer<double>& in) {
   if (fft.NTT_GF61) kfftWGF61(out, in);
 }
 
-void Gpu::fftMidIn(Buffer<double>& out, Buffer<double>& in) {
-  if (fft.FFT_FP64 || fft.FFT_FP32) kfftMidIn(out, in);
-  if (fft.NTT_GF31) kfftMidInGF31(out, in);
-  if (fft.NTT_GF61) kfftMidInGF61(out, in);
+void Gpu::fftMidIn(Buffer<double>& out, Buffer<double>& in, int cache_group) {
+  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) kfftMidIn(out, in);
+  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) kfftMidInGF31(out, in);
+  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) kfftMidInGF61(out, in);
 }
 
-void Gpu::fftMidOut(Buffer<double>& out, Buffer<double>& in) {
-  if (fft.FFT_FP64 || fft.FFT_FP32) kfftMidOut(out, in);
-  if (fft.NTT_GF31) kfftMidOutGF31(out, in);
-  if (fft.NTT_GF61) kfftMidOutGF61(out, in);
+void Gpu::fftMidOut(Buffer<double>& out, Buffer<double>& in, int cache_group) {
+  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) kfftMidOut(out, in);
+  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) kfftMidOutGF31(out, in);
+  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) kfftMidOutGF61(out, in);
 }
 
 void Gpu::fftHin(Buffer<double>& out, Buffer<double>& in) {
@@ -759,27 +759,27 @@ void Gpu::fftHin(Buffer<double>& out, Buffer<double>& in) {
   if (fft.NTT_GF61) kfftHinGF61(out, in);
 }
 
-void Gpu::tailSquare(Buffer<double>& out, Buffer<double>& in) {
+void Gpu::tailSquare(Buffer<double>& out, Buffer<double>& in, int cache_group) {
   if (!tail_single_kernel) {
-    if (fft.FFT_FP64 || fft.FFT_FP32) ktailSquareZero(out, in);
-    if (fft.NTT_GF31) ktailSquareZeroGF31(out, in);
-    if (fft.NTT_GF61) ktailSquareZeroGF61(out, in);
+    if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailSquareZero(out, in);
+    if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailSquareZeroGF31(out, in);
+    if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailSquareZeroGF61(out, in);
   }
-  if (fft.FFT_FP64 || fft.FFT_FP32) ktailSquare(out, in);
-  if (fft.NTT_GF31) ktailSquareGF31(out, in);
-  if (fft.NTT_GF61) ktailSquareGF61(out, in);
+  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailSquare(out, in);
+  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailSquareGF31(out, in);
+  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailSquareGF61(out, in);
 }
 
-void Gpu::tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2) {
-  if (fft.FFT_FP64 || fft.FFT_FP32) ktailMul(out, in1, in2);
-  if (fft.NTT_GF31) ktailMulGF31(out, in1, in2);
-  if (fft.NTT_GF61) ktailMulGF61(out, in1, in2);
+void Gpu::tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group) {
+  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailMul(out, in1, in2);
+  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailMulGF31(out, in1, in2);
+  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailMulGF61(out, in1, in2);
 }
 
-void Gpu::tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2) {
-  if (fft.FFT_FP64 || fft.FFT_FP32) ktailMulLow(out, in1, in2);
-  if (fft.NTT_GF31) ktailMulLowGF31(out, in1, in2);
-  if (fft.NTT_GF61) ktailMulLowGF61(out, in1, in2);
+void Gpu::tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group) {
+  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailMulLow(out, in1, in2);
+  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailMulLowGF31(out, in1, in2);
+  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailMulLowGF61(out, in1, in2);
 }
 
 void Gpu::carryA(Buffer<Word>& out, Buffer<double>& in) {
@@ -939,13 +939,16 @@ vector<u32> Gpu::readData() { return readAndCompress(bufData); }
 // out := inA * inB; inB is preserved
 void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, Buffer<double>& tmp2, bool mul3) {
     fftP(tmp1, ioA);
-    fftMidIn(tmp2, tmp1);
-    tailMul(tmp1, inB, tmp2);
+
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      fftMidIn(tmp2, tmp1, cache_group);
+      tailMul(tmp1, inB, tmp2, cache_group);
+      fftMidOut(tmp2, tmp1, cache_group);
+    }
 
     // Register the current ROE pos as multiplication (vs. a squaring)
     if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos); }
 
-    fftMidOut(tmp2, tmp1);
     fftW(tmp1, tmp2);
     if (mul3) { carryM(ioA, tmp1); } else { carryA(ioA, tmp1); }
     carryB(ioA);
@@ -958,15 +961,13 @@ void Gpu::mul(Buffer<Word>& io, Buffer<double>& buf1) {
 
 // out := inA * inB;
 void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3) {
-  modMul(ioA, true, inB, mul3);
+  modMul(ioA, LEAD_NONE, inB, mul3);
 };
 
-// out := inA * inB; if leadInB set then inB (a.k.a. buf1) is preserved
-void Gpu::modMul(Buffer<Word>& ioA, bool leadInB, Buffer<Word>& inB, bool mul3) {
-  if (leadInB) {
-    fftP(buf2, inB);
-    fftMidIn(buf1, buf2);
-  }
+// out := inA * inB; inB will end up in buf1 in the LEAD_MIDDLE state
+void Gpu::modMul(Buffer<Word>& ioA, enum LEAD_TYPE leadInB, Buffer<Word>& inB, bool mul3) {
+  if (leadInB == LEAD_NONE) fftP(buf2, inB);
+  if (leadInB != LEAD_MIDDLE) fftMidIn(buf1, buf2);
   mul(ioA, buf1, buf2, buf3, mul3);
 };
 
@@ -1127,15 +1128,19 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
     while (!testBit(exp, p)) { --p; }
 
     for (--p; ; --p) {
-      fftMidIn(buf2, buf3);
-      tailSquare(buf3, buf2);
-      fftMidOut(buf2, buf3);
+      for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+        fftMidIn(buf2, buf3);
+        tailSquare(buf3, buf2);
+        fftMidOut(buf2, buf3);
+      }
 
       if (testBit(exp, p)) {
         doCarry(buf3, buf2);
-        fftMidIn(buf2, buf3);
-        tailMulLow(buf3, buf2, buf1);
-        fftMidOut(buf2, buf3);
+        for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+          fftMidIn(buf2, buf3, cache_group);
+          tailMulLow(buf3, buf2, buf1, cache_group);
+	  fftMidOut(buf2, buf3, cache_group);
+	}
       }
 
       if (!p) { break; }
@@ -1161,19 +1166,22 @@ void Gpu::doCarry(Buffer<double>& out, Buffer<double>& in) {
   }
 }
 
-void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, bool leadIn, bool leadOut, bool doMul3, bool doLL) {
+void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut, bool doMul3, bool doLL) {
+  // leadOut = LEAD_MIDDLE is not supported (slower than LEAD_WIDTH)
+  assert(leadOut != LEAD_MIDDLE);
   // LL does not do Mul3
   assert(!(doMul3 && doLL));
 
-  if (leadIn) {
-    fftP(buf2, in);
-    fftMidIn(buf1, buf2);
-  }
+  if (leadIn == LEAD_NONE) fftP(buf2, in);
 
-  tailSquare(buf2, buf1);
-  fftMidOut(buf1, buf2);
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf2, cache_group);
+      tailSquare(buf2, buf1, cache_group);
+      fftMidOut(buf1, buf2, cache_group);
+    }
 
-  if (leadOut) {
+  // If leadOut is not allowed then we cannot use the faster carryFused kernel
+  if (leadOut == LEAD_NONE) {
     fftW(buf2, buf1);
     if (!doLL && !doMul3) {
       carryA(out, buf2);
@@ -1183,27 +1191,25 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, bool leadIn, bool leadOut,
       carryM(out, buf2);
     }
     carryB(out);
-  } else {
+  }
+
+  // Use CarryFused
+  else {
     assert(!useLongCarry);
     assert(!doMul3);
-
     if (doLL) {
       carryFusedLL(buf2, buf1);
     } else {
       carryFused(buf2, buf1);
     }
-    // Unused: carryFusedMul(buf2, buf1);
-    fftMidIn(buf1, buf2);
   }
 }
 
-void Gpu::square(Buffer<Word>& io) { square(io, io, true, true, false, false); }
-
 u32 Gpu::squareLoop(Buffer<Word>& out, Buffer<Word>& in, u32 from, u32 to, bool doTailMul3) {
   assert(from < to);
-  bool leadIn = true;
+  enum LEAD_TYPE leadIn = LEAD_NONE;
   for (u32 k = from; k < to; ++k) {
-    bool leadOut = useLongCarry || (k == to - 1);
+    enum LEAD_TYPE leadOut = useLongCarry || (k == to - 1) ? LEAD_NONE : LEAD_WIDTH;
     square(out, (k==from) ? in : out, leadIn, leadOut, doTailMul3 && (k == to - 1));
     leadIn = leadOut;
   }
@@ -1501,12 +1507,17 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
     assert(res == state.res64);
   }
 
-  modMul(bufCheck, bufData);
-  square(bufData, bufData, true, useLongCarry);
+  enum LEAD_TYPE leadIn = LEAD_NONE;
+  modMul(bufCheck, leadIn, bufData);
+  leadIn = LEAD_MIDDLE;
+
+  enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+  square(bufData, bufData, leadIn, leadOut);
+  leadIn = leadOut;
   ++k;
 
   while (k < warmup) {
-    square(bufData, bufData, useLongCarry, useLongCarry);
+    square(bufData, bufData, leadIn, leadOut);
     ++k;
   }
 
@@ -1514,20 +1525,20 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
 
   if (Signal::stopRequested()) { throw "stop requested"; }
 
-  bool leadIn = useLongCarry;
   while (true) {
     while (k % blockSize < blockSize-1) {
-      square(bufData, bufData, leadIn, useLongCarry);
+      square(bufData, bufData, leadIn, leadOut);
+      leadIn = leadOut;
       ++k;
-      leadIn = useLongCarry;
     }
-    square(bufData, bufData, useLongCarry, true);
-    leadIn = true;
+    square(bufData, bufData, leadIn, LEAD_NONE);
+    leadIn = LEAD_NONE;
     ++k;
 
     if (k >= iters) { break; }
 
-    modMul(bufCheck, bufData);
+    modMul(bufCheck, leadIn, bufData);
+    leadIn = LEAD_MIDDLE;
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
 
@@ -1569,12 +1580,18 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
     assert(res == state.res64);
   }
 
-  modMul(bufCheck, bufData);
-  square(bufData, bufData, true, useLongCarry);
+  enum LEAD_TYPE leadIn = LEAD_NONE;
+  modMul(bufCheck, leadIn, bufData);
+  leadIn = LEAD_MIDDLE;
+
+  enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+  square(bufData, bufData, leadIn, leadOut);
+  leadIn = leadOut;
   ++k;
 
   while (k < warmup) {
-    square(bufData, bufData, useLongCarry, useLongCarry);
+    square(bufData, bufData, leadIn, leadOut);
+    leadIn = leadOut;
     ++k;
   }
 
@@ -1582,20 +1599,20 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
 
   if (Signal::stopRequested()) { throw "stop requested"; }
 
-  bool leadIn = useLongCarry;
   while (true) {
     while (k % blockSize < blockSize-1) {
-      square(bufData, bufData, leadIn, useLongCarry);
+      square(bufData, bufData, leadIn, leadOut);
+      leadIn = leadOut;
       ++k;
-      leadIn = useLongCarry;
     }
-    square(bufData, bufData, useLongCarry, true);
-    leadIn = true;
+    square(bufData, bufData, leadIn, LEAD_NONE);
+    leadIn = LEAD_NONE;
     ++k;
 
     if (k >= iters) { break; }
 
-    modMul(bufCheck, bufData);
+    modMul(bufCheck, leadIn, bufData);
+    leadIn = LEAD_MIDDLE;
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
 
@@ -1632,12 +1649,18 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   writeState(state.k, state.check, state.blockSize);
   assert(dataResidue() == state.res64);
 
-  modMul(bufCheck, bufData);
-  square(bufData, bufData, true, useLongCarry);
+  enum LEAD_TYPE leadIn = LEAD_NONE;
+  modMul(bufCheck, leadIn, bufData);
+  leadIn = LEAD_MIDDLE;
+
+  enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+  square(bufData, bufData, leadIn, leadOut);
+  leadIn = leadOut;
   ++k;
 
   while (k < warmup) {
-    square(bufData, bufData, useLongCarry, useLongCarry);
+    square(bufData, bufData, leadIn, leadOut);
+    leadIn = leadOut;
     ++k;
   }
   queue->finish();
@@ -1645,20 +1668,20 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
 
   Timer t;
   queue->setSquareTime(0);     // Busy wait on nVidia to get the most accurate timings while tuning
-  bool leadIn = useLongCarry;
   while (true) {
     while (k % blockSize < blockSize-1) {
-      square(bufData, bufData, leadIn, useLongCarry);
+      square(bufData, bufData, leadIn, leadOut);
+      leadIn = leadOut;
       ++k;
-      leadIn = useLongCarry;
     }
-    square(bufData, bufData, useLongCarry, true);
-    leadIn = true;
+    square(bufData, bufData, leadIn, LEAD_NONE);
+    leadIn = LEAD_NONE;
     ++k;
 
     if (k >= iters) { break; }
 
-    modMul(bufCheck, bufData);
+    modMul(bufCheck, leadIn, bufData);
+    leadIn = LEAD_MIDDLE;
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
   queue->finish();
@@ -1726,7 +1749,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
   bool skipNextCheckUpdate = false;
 
   u32 persistK = proofSet.next(k);
-  bool leadIn = true;
+  enum LEAD_TYPE leadIn = LEAD_NONE;
 
   assert(k % blockSize == 0);
   assert(checkStep % blockSize == 0);
@@ -1745,6 +1768,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
       skipNextCheckUpdate = false;
     } else if (k % blockSize == 0) {
       modMul(bufCheck, leadIn, bufData);
+      leadIn = LEAD_MIDDLE;
     }
 
     ++k; // !! early inc
@@ -1752,7 +1776,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
     bool doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
     bool doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k - startK == 2 * blockSize);
     bool doLog = k % logStep == 0;
-    bool leadOut = doCheck || doLog || k == persistK || k == kEnd || useLongCarry;
+    enum LEAD_TYPE leadOut = doCheck || doLog || k == persistK || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     if (doStop) { log("Stopping, please wait..\n"); }
 
@@ -1886,7 +1910,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
 
   u32 k = startK;
   u32 kEnd = E - 2;
-  bool leadIn = true;
+  enum LEAD_TYPE leadIn = LEAD_NONE;
 
   while (true) {
     ++k;
@@ -1898,7 +1922,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
     }
 
     bool doLog = (k % args.logStep == 0) || doStop;
-    bool leadOut = doLog || useLongCarry;
+    enum LEAD_TYPE leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     squareLL(bufData, leadIn, leadOut);
     leadIn = leadOut;
@@ -1961,7 +1985,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
   u32 k = 0;
   u32 kEnd = task.squarings;
-  bool leadIn = true;
+  enum LEAD_TYPE leadIn = LEAD_NONE;
 
   while (true) {
     ++k;
@@ -1973,7 +1997,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
     }
 
     bool doLog = (k % 100'000 == 0) || doStop;
-    bool leadOut = doLog || useLongCarry;
+    enum LEAD_TYPE leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     squareCERT(bufData, leadIn, leadOut);
     leadIn = leadOut;
