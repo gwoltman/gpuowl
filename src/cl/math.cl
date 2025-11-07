@@ -184,18 +184,58 @@ i32 optional_mod(i32 a, const i32 b) {
 
 // Multiply and add primitives
 
-u64 mad32(u32 a, u32 b, u64 c) {
+u64 OVERLOAD mad32(u32 a, u32 b, u32 c) {
 #if HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
   u32 reslo, reshi;
   __asm("mad.lo.cc.u32 %0, %2, %3, %4;\n\t"
-        "madc.hi.u32   %1, %2, %3, %5;" : "=r"(reslo), "=r"(reshi) : "r"(a), "r"(b), "r"((u32)c), "r"((u32)(c >> 32)));
-  return ((u64)reshi << 32) | reslo;
+        "madc.hi.u32   %1, %2, %3, 0;" : "=r"(reslo), "=r"(reshi) : "r"(a), "r"(b), "r"(c));
+  return as_ulong((uint2)(reslo, reshi));
 #else
   return (u64)a * (u64)b + c;
 #endif
 }
 
-u128 mad64(u64 a, u64 b, u128 c) {
+u64 OVERLOAD mad32(u32 a, u32 b, u64 c) {
+#if HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
+  u32 reslo, reshi;
+  __asm("mad.lo.cc.u32 %0, %2, %3, %4;\n\t"
+        "madc.hi.u32   %1, %2, %3, %5;" : "=r"(reslo), "=r"(reshi) : "r"(a), "r"(b), "r"(lo32(c)), "r"(hi32(c)));
+  return as_ulong((uint2)(reslo, reshi));
+#else
+  return (u64)a * (u64)b + c;
+#endif
+}
+
+u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
+#if 0 && HAS_PTX                           // Slower on TitanV and mobile 4070, don't understand why
+  u64 reslo, reshi;
+  __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
+        "madc.hi.u64   %1, %2, %3, 0;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(u128_lo64(c)));
+  return make_u128(reshi, reslo);
+#elif HAS_PTX                              // Faster on TitanV.  No difference on mobile 4070.  Much cleaner PTX code generated.
+  uint2 a2 = as_uint2(a);
+  uint2 b2 = as_uint2(b);
+  uint2 c2 = as_uint2(c);
+  uint2 rlo2, rhi2;
+  __asm("mad.lo.cc.u32  %0, %4, %6, %8;\n\t"
+        "madc.hi.cc.u32 %1, %4, %6, %9;\n\t"
+        "madc.lo.cc.u32 %2, %5, %7, 0;\n\t"
+        "madc.hi.u32    %3, %5, %7, 0;\n\t"
+	"mad.lo.cc.u32  %1, %5, %6, %1;\n\t"
+        "madc.hi.cc.u32 %2, %5, %6, %2;\n\t"
+        "addc.u32       %3, %3, 0;\n\t"
+	"mad.lo.cc.u32  %1, %4, %7, %1;\n\t"
+        "madc.hi.cc.u32 %2, %4, %7, %2;\n\t"
+        "addc.u32       %3, %3, 0;"
+        : "=r"(rlo2.x), "=r"(rlo2.y), "=r"(rhi2.x), "=r"(rhi2.y)
+        : "r"(a2.x), "r"(a2.y), "r"(b2.x), "r"(b2.y), "r"(c2.x), "r"(c2.y));
+  return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
+#else
+  return add(mul64(a, b), c);
+#endif
+}
+
+u128 OVERLOAD mad64(u64 a, u64 b, u128 c) {
 #if 0 && HAS_PTX                           // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
   __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
@@ -217,7 +257,7 @@ u128 mad64(u64 a, u64 b, u128 c) {
         "mad.lo.cc.u32  %1, %4, %7, %1;\n\t"
         "madc.hi.cc.u32 %2, %4, %7, %2;\n\t"
         "addc.u32       %3, %3, 0;"
-        : "=r"(rlo2.x), "=r"(rlo2.y), "=r"(rhi2.x), "+r"(rhi2.y)
+        : "=r"(rlo2.x), "=r"(rlo2.y), "=r"(rhi2.x), "=r"(rhi2.y)
         : "r"(a2.x), "r"(a2.y), "r"(b2.x), "r"(b2.y), "r"(clo2.x), "r"(clo2.y), "r"(chi2.x), "r"(chi2.y));
   return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
 #else
@@ -498,10 +538,8 @@ GF31 OVERLOAD shr(GF31 a, u32 k) { return U2(shr(a.x, k), shr(a.y, k)); }
 
 Z31 OVERLOAD mul(Z31 a, Z31 b) { u64 t = a * (u64) b; return add((Z31) (t & M31), (Z31) (t >> 31)); }
 
-Z31 OVERLOAD fma(Z31 a, Z31 b, Z31 c) { return add(mul(a, b), c); }             // GWBUG:  Can we do better?
-
 // Multiply by 2
-Z31 OVERLOAD mul2(Z31 a) { return ((a + a) + (a >> 30)) & M31; }        // GWBUG: Can we do better?
+Z31 OVERLOAD mul2(Z31 a) { return add(a, a); }
 GF31 OVERLOAD mul2(GF31 a) { return U2(mul2(a.x), mul2(a.y)); }
 
 // Return conjugate of a
@@ -622,8 +660,6 @@ GF31 OVERLOAD shl(GF31 a, u32 k) { return U2(shl(a.x, k), shl(a.y, k)); }
 
 Z31 OVERLOAD mul(Z31 a, Z31 b) { u64 t = a * (u64) b; return modM31(add((Z31)(t & M31), (Z31)(t >> 31))); }
 
-Z31 OVERLOAD fma(Z31 a, Z31 b, Z31 c) { return add(mul(a, b), c); }             // GWBUG:  Can we do better?
-
 // Multiply by 2
 Z31 OVERLOAD mul2(Z31 a) { return add(a, a); }
 GF31 OVERLOAD mul2(GF31 a) { return U2(mul2(a.x), mul2(a.y)); }
@@ -633,37 +669,37 @@ GF31 OVERLOAD conjugate(GF31 a) { return U2(a.x, neg(a.y)); }
 
 // Complex square.  input, output 31 bits. Uses (a + i*b)^2 == ((a+b)*(a-b) + i*2*a*b).
 GF31 OVERLOAD csq(GF31 a) {
-  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
-  u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
+  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y));      // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
+  u64 i = (a.x + a.x) * (u64) a.y;                   // 63-bit value, max = 7FFF FFFE 0000 0002
   return U2(modM31(r), modM31(i));
 }
 
 // a^2 + c
 GF31 OVERLOAD csq_add(GF31 a, GF31 c) {
-  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
-  u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
-  return U2(modM31(r + c.x), modM31(i + c.y));                          // GWBUG - hopefully the 64-bit adds are "free" via MAD instructions
+  u64 r = mad32(a.x + a.y, a.x + neg(a.y), c.x);      // 64-bit value, mul max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
+  u64 i = mad32(a.x + a.x, a.y, c.y);                 // 63-bit value, mul max = 7FFF FFFE 0000 0002
+  return U2(modM31(r), modM31(i));
 }
 
 // a^2 - c
 GF31 OVERLOAD csq_sub(GF31 a, GF31 c) {
-  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
-  u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
-  return U2(modM31(r + neg(c.x)), modM31((i64) i - c.y));                 // GWBUG - check that the compiler generates MAD instructions
+  u64 r = mad32(a.x + a.y, a.x + neg(a.y), neg(c.x)); // 64-bit value, mul max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
+  u64 i = mad32(a.x + a.x, a.y, neg(c.y));            // 63-bit value, mul max = 7FFF FFFE 0000 0002
+  return U2(modM31(r), modM31(i));
 }
 
 // a^2 + i*c
 GF31 OVERLOAD csq_addi(GF31 a, GF31 c) {
-  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
-  u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
-  return U2(modM31(r + neg(c.y)), modM31(i + c.x));                     // GWBUG - hopefully the 64-bit adds are "free" via MAD instructions
+  u64 r = mad32(a.x + a.y, a.x + neg(a.y), neg(c.y)); // 64-bit value, mul max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
+  u64 i = mad32(a.x + a.x, a.y, c.x);                 // 63-bit value, mul max = 7FFF FFFE 0000 0002
+  return U2(modM31(r), modM31(i));
 }
 
 // a^2 - i*c
 GF31 OVERLOAD csq_subi(GF31 a, GF31 c) {
-  u64 r = (a.x + a.y) * (u64) (a.x + neg(a.y)); // 64-bit value, max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
-  u64 i = (a.x + a.x) * (u64) a.y;              // 63-bit value, max = 7FFF FFFE 0000 0002
-  return U2(modM31(r + c.y), modM31((i64) i - c.x));                    // GWBUG - check that the compiler generates MAD instructions
+  u64 r = mad32(a.x + a.y, a.x + neg(a.y), c.y);      // 64-bit value, mul max = FFFF FFFE 0000 0004 (actually cannot exceed 9000 0000 0000 0000)
+  u64 i = mad32(a.x + a.x, a.y, neg(c.x));            // 63-bit value, max = 7FFF FFFE 0000 0002
+  return U2(modM31(r), modM31(i));
 }
 
 // Complex mul
@@ -695,7 +731,7 @@ GF31 OVERLOAD ccubeTrig(GF31 sq, GF31 w) { Z31 tmp = sq.y + sq.y; return U2(modM
 GF31 OVERLOAD mul_t4(GF31 a) { return U2(neg(a.y), a.x); }                                              // GWBUG:  Can caller use a version that does not negate real?
 
 // mul with (2^15, 2^15). (twiddle of tau/8 aka sqrt(i)). Note: 2 * (+/-2^15)^2 == 1 (mod M31).
-GF31 OVERLOAD mul_t8(GF31 a) { return U2(shl(sub(a.x, a.y), 15), shl(add(a.x, a.y), 15)); }       // GWBUG:  Can caller use a version that does not negate real?  is shl(neg) same as shr???
+GF31 OVERLOAD mul_t8(GF31 a) { return U2(shl(sub(a.x, a.y), 15), shl(add(a.x, a.y), 15)); }
 
 // mul with (-2^15, 2^15). (twiddle of 3*tau/8).
 GF31 OVERLOAD mul_3t8(GF31 a) { return U2(shl(neg(add(a.x, a.y)), 15), shl(sub(a.x, a.y), 15)); }
