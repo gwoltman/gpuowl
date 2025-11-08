@@ -128,6 +128,9 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #if !defined(TABMUL_CHAIN61)
 #define TABMUL_CHAIN61 0
 #endif
+#if !defined(MODM31)
+#define MODM31 0
+#endif
 
 #if !defined(MIDDLE_CHAIN)
 #define MIDDLE_CHAIN 0

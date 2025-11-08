@@ -600,15 +600,18 @@ GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
 #elif 1                                                               // This version is a little sloppy.  Returns values in 0..M31 range.
 
 // Internal routines to return value in 0..M31 range
-//Z31 OVERLOAD modM31(Z31 a) { return (a & M31) + (a >> 31); }                        // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+#if MODM31 == 0
+Z31 OVERLOAD modM31(Z31 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
+#elif MODM31 == 1
 Z31 OVERLOAD modM31(Z31 a) { i32 alt = a + 0x80000001; return select32(a, a, alt); }  // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
-//Z31 OVERLOAD modM31(Z31 a) { return optional_add(a, 0x80000001); }                  // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
-
-//Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }                        // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
 Z31 OVERLOAD modM31(i32 a) { i32 alt = a - 0x80000001; return select32(a, a, alt); }  // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
-//Z31 OVERLOAD modM31(i32 a) { return optional_sub(a, 0x80000001); }                  // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
+#else
+Z31 OVERLOAD modM31(Z31 a) { return optional_add(a, 0x80000001); }                    // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+Z31 OVERLOAD modM31(i32 a) { return optional_sub(a, 0x80000001); }                    // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
+#endif
 
-Z31 OVERLOAD modM31(u64 a) {                                          // a must be less than  0xFFFFFFFF7FFFFFFF
+Z31 OVERLOAD modM31(u64 a) {                                          // a must be less than 0xFFFFFFFF7FFFFFFF
   u32 alo = a & M31;
   u32 amid = (a >> 31) & M31;
   u32 ahi = a >> 62;

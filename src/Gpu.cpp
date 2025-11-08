@@ -274,7 +274,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "TABMUL_CHAIN",
                               "TABMUL_CHAIN31",
                               "TABMUL_CHAIN32",
-                              "TABMUL_CHAIN61"
+                              "TABMUL_CHAIN61",
+                              "MODM31"
                             });
     if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
