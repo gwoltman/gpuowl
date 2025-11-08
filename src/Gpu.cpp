@@ -1130,9 +1130,9 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
 
     for (--p; ; --p) {
       for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-        fftMidIn(buf2, buf3);
-        tailSquare(buf3, buf2);
-        fftMidOut(buf2, buf3);
+        fftMidIn(buf2, buf3, cache_group);
+        tailSquare(buf3, buf2, cache_group);
+        fftMidOut(buf2, buf3, cache_group);
       }
 
       if (testBit(exp, p)) {
@@ -1519,6 +1519,7 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
 
   while (k < warmup) {
     square(bufData, bufData, leadIn, leadOut);
+    leadIn = leadOut;
     ++k;
   }
 
