@@ -148,8 +148,8 @@ i32 optional_add(i32 a, const i32 b) {
 #if HAS_PTX
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
-	" @%%p add.s32 %0, %0, %1;}"      // if (a < 0) a = a + b
-	: "+r"(a) : "n"(b));
+        " @%%p add.s32 %0, %0, %1;}"      // if (a < 0) a = a + b
+        : "+r"(a) : "n"(b));
 #else
   if (a < 0) a = a + b;
 #endif
@@ -161,8 +161,8 @@ i32 optional_sub(i32 a, const i32 b) {
 #if HAS_PTX
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
-	" @%%p sub.s32 %0, %0, %1;}"      // if (a < 0) a = a - b
-	: "+r"(a) : "n"(b));
+        " @%%p sub.s32 %0, %0, %1;}"      // if (a < 0) a = a - b
+        : "+r"(a) : "n"(b));
 #else
   if (a < 0) a = a - b;
 #endif
@@ -174,8 +174,8 @@ i32 optional_mod(i32 a, const i32 b) {
 #if 0 //HAS_PTX  // Not faster on 5xxx GPUs (not sure why)
   __asm("{.reg .pred %%p;\n\t"
         " setp.ge.s32 %%p, %0, %1;\n\t"   // a > b
-	" @%%p sub.s32 %0, %0, %1;}"      // if (a > b) a = a - b
-	: "+r"(a) : "n"(b));
+        " @%%p sub.s32 %0, %0, %1;}"      // if (a > b) a = a - b
+        : "+r"(a) : "n"(b));
 #else
   if (a >= b) a = a - b;
 #endif
@@ -221,10 +221,10 @@ u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
         "madc.hi.cc.u32 %1, %4, %6, %9;\n\t"
         "madc.lo.cc.u32 %2, %5, %7, 0;\n\t"
         "madc.hi.u32    %3, %5, %7, 0;\n\t"
-	"mad.lo.cc.u32  %1, %5, %6, %1;\n\t"
+        "mad.lo.cc.u32  %1, %5, %6, %1;\n\t"
         "madc.hi.cc.u32 %2, %5, %6, %2;\n\t"
         "addc.u32       %3, %3, 0;\n\t"
-	"mad.lo.cc.u32  %1, %4, %7, %1;\n\t"
+        "mad.lo.cc.u32  %1, %4, %7, %1;\n\t"
         "madc.hi.cc.u32 %2, %4, %7, %2;\n\t"
         "addc.u32       %3, %3, 0;"
         : "=r"(rlo2.x), "=r"(rlo2.y), "=r"(rhi2.x), "=r"(rhi2.y)
@@ -717,18 +717,19 @@ GF31 OVERLOAD cmul(GF31 a, GF31 b) {
 }
 #else
 GF31 OVERLOAD cmul(GF31 a, GF31 b) {
-  u64 k1 = b.x * (u64) (a.x + a.y);             // 63-bit value, max = 7FFF FFFE 0000 0002
-  u64 k1k2 = mad32(a.x, b.y + neg(b.x), k1);    // unsigned 64-bit value, max = FFFF FFFC 0000 0004
-  u64 k1k3 = mad32(neg(a.y), b.y + b.x, k1);    // unsigned 64-bit value, max = FFFF FFFC 0000 0004
+  u32 negbx = neg(b.x);                         // Negate and add b values as much as possible in case b is used several times (as in a chainmul)
+  u64 k1 = b.x * (u64)(a.x + a.y);              // 63-bit value, max = 7FFF FFFE 0000 0002
+  u64 k1k2 = mad32(a.x, b.y + negbx, k1);       // unsigned 64-bit value, max = FFFF FFFC 0000 0004
+  u64 k1k3 = mad32(a.y, neg(b.y) + negbx, k1);  // unsigned 64-bit value, max = FFFF FFFC 0000 0004
   return U2(modM31(k1k3), modM31(k1k2));
 }
 #endif
 
 // Square a root of unity complex number
-GF31 OVERLOAD csqTrig(GF31 a) { Z31 two_ay = a.y + a.y; return U2(modM31(1 + two_ay * (u64) neg(a.y)), modM31(a.x * (u64) two_ay)); }
+GF31 OVERLOAD csqTrig(GF31 a) { u32 two_ay = a.y + a.y; return U2(modM31(mad32(two_ay, neg(a.y), (u32)1)), modM31(a.x * (u64)two_ay)); }
 
 // Cube w, a root of unity complex number, given w^2 and w
-GF31 OVERLOAD ccubeTrig(GF31 sq, GF31 w) { Z31 tmp = sq.y + sq.y; return U2(modM31(tmp * (u64) neg(w.y) + w.x), modM31(tmp * (u64) w.x + neg(w.y))); }
+GF31 OVERLOAD ccubeTrig(GF31 sq, GF31 w) { u32 tmp = sq.y + sq.y; return U2(modM31(mad32(tmp, neg(w.y), w.x)), modM31(mad32(tmp, w.x, neg(w.y)))); }
 
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF31 OVERLOAD mul_t4(GF31 a) { return U2(neg(a.y), a.x); }                                              // GWBUG:  Can caller use a version that does not negate real?

@@ -605,31 +605,31 @@ void OVERLOAD tabMul(u32 WG, TrigFP32 trig, F2 *u, u32 n, u32 f, u32 me) {
 void OVERLOAD chainMul4(GF31 *u, GF31 w) {
   u[1] = cmul(u[1], w);
 
-  GF31 base = csq(w);
+  GF31 base = csqTrig(w);
   u[2] = cmul(u[2], base);
 
-  base = cmul(base, w);			//GWBUG - see FP64 version for possible optimization
+  base = ccubeTrig(base, w);
   u[3] = cmul(u[3], base);
 }
 
-void OVERLOAD chainMul8(GF31 *u, GF31 w, u32 tailSquareBcast) {
+void OVERLOAD chainMul8(GF31 *u, GF31 w) {
   u[1] = cmul(u[1], w);
 
-  GF31 w2 = csq(w);
-  u[2] = cmul(u[2], w2);
+  GF31 base = csqTrig(w);
+  u[2] = cmul(u[2], base);
 
-  GF31 base = cmul (w2, w);		//GWBUG - see FP64 version for many possible optimizations
+  base = ccubeTrig(base, w);
   for (int i = 3; i < 8; ++i) {
     u[i] = cmul(u[i], base);
     base = cmul(base, w);
   }
 }
 
-void OVERLOAD chainMul(u32 len, GF31 *u, GF31 w, u32 tailSquareBcast) {
+void OVERLOAD chainMul(u32 len, GF31 *u, GF31 w) {
   // Do a length 4 chain mul
   if (len == 4) chainMul4(u, w);
   // Do a length 8 chain mul
-  if (len == 8) chainMul8(u, w, tailSquareBcast);
+  if (len == 8) chainMul8(u, w);
 }
 
 void OVERLOAD shuflBigLDS(u32 WG, local GF31 *lds, GF31 *u, u32 n, u32 f) {
@@ -689,7 +689,7 @@ void OVERLOAD tabMul(u32 WG, TrigGF31 trig, GF31 *u, u32 n, u32 f, u32 me) {
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
   if (TABMUL_CHAIN31) {
-    chainMul (n, u, trig[p], 0);
+    chainMul (n, u, trig[p]);
     return;
   }
 
