@@ -231,9 +231,13 @@ ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 #define CP(x) const P(x)
 
 // Macros for non-temporal load and store (in case we later want to provide a -use option to turn this off)
-#if NONTEMPORAL && defined(__has_builtin) && __has_builtin(__builtin_nontemporal_load) && __has_builtin(__builtin_nontemporal_store)
+// The throry behind only non-temporal reads is that kernels may end faster if they can write results to a cache rather than to slow memory.
+#if NONTEMPORAL == 1 && defined(__has_builtin) && __has_builtin(__builtin_nontemporal_load) && __has_builtin(__builtin_nontemporal_store)
 #define NTLOAD(mem)        __builtin_nontemporal_load(&(mem))
 #define NTSTORE(mem,val)   __builtin_nontemporal_store(val, &(mem))
+#elif NONTEMPORAL == 2 && defined(__has_builtin) && __has_builtin(__builtin_nontemporal_load)
+#define NTLOAD(mem)        __builtin_nontemporal_load(&(mem))
+#define NTSTORE(mem,val)   (mem) = val
 #else
 #define NTLOAD(mem)        (mem)
 #define NTSTORE(mem,val)   (mem) = val
