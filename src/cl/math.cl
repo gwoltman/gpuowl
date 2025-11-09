@@ -231,7 +231,7 @@ u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
         : "r"(a2.x), "r"(a2.y), "r"(b2.x), "r"(b2.y), "r"(c2.x), "r"(c2.y));
   return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
 #else
-  return add(mul64(a, b), c);
+  return add(mul64(a, b), make_u128(0, c));
 #endif
 }
 
