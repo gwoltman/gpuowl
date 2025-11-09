@@ -227,7 +227,7 @@ private:
   void tailSquare(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
   void tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group = 0);
   void tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group = 0);
-  void fftW(Buffer<double>& out, Buffer<double>& in);
+  void fftW(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
   void carryA(Buffer<double>& out, Buffer<double>& in) { carryA(reinterpret_cast<Buffer<Word>&>(out), in); }
   void carryA(Buffer<Word>& out, Buffer<double>& in);
   void carryM(Buffer<Word>& out, Buffer<double>& in);

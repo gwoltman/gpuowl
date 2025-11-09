@@ -736,10 +736,10 @@ void Gpu::fftP(Buffer<double>& out, Buffer<Word>& in) {
   kfftP(out, in);
 }
 
-void Gpu::fftW(Buffer<double>& out, Buffer<double>& in) {
-  if (fft.FFT_FP64 || fft.FFT_FP32) kfftW(out, in);
-  if (fft.NTT_GF31) kfftWGF31(out, in);
-  if (fft.NTT_GF61) kfftWGF61(out, in);
+void Gpu::fftW(Buffer<double>& out, Buffer<double>& in, int cache_group) {
+  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) kfftW(out, in);
+  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) kfftWGF31(out, in);
+  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) kfftWGF61(out, in);
 }
 
 void Gpu::fftMidIn(Buffer<double>& out, Buffer<double>& in, int cache_group) {
@@ -945,12 +945,12 @@ void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, Buff
       fftMidIn(tmp2, tmp1, cache_group);
       tailMul(tmp1, inB, tmp2, cache_group);
       fftMidOut(tmp2, tmp1, cache_group);
+      fftW(tmp1, tmp2, cache_group);
     }
 
     // Register the current ROE pos as multiplication (vs. a squaring)
     if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos); }
 
-    fftW(tmp1, tmp2);
     if (mul3) { carryM(ioA, tmp1); } else { carryA(ioA, tmp1); }
     carryB(ioA);
 }
@@ -1175,15 +1175,15 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
 
   if (leadIn == LEAD_NONE) fftP(buf2, in);
 
-    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-      if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf2, cache_group);
-      tailSquare(buf2, buf1, cache_group);
-      fftMidOut(buf1, buf2, cache_group);
-    }
+  for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+    if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf2, cache_group);
+    tailSquare(buf2, buf1, cache_group);
+    fftMidOut(buf1, buf2, cache_group);
+    if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
+  }
 
   // If leadOut is not allowed then we cannot use the faster carryFused kernel
   if (leadOut == LEAD_NONE) {
-    fftW(buf2, buf1);
     if (!doLL && !doMul3) {
       carryA(out, buf2);
     } else if (doLL) {
