@@ -111,6 +111,22 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #if FFT_VARIANT_H > 2
 #error FFT_VARIANT_H must be between 0 and 2
 #endif
+// C code ensures that only AMD GPUs use FFT_VARIANT_W=0 and FFT_VARIANT_H=0.  However, this does not guarantee that the OpenCL compiler supports
+// the necessary amdgcn builtins.  If those builtins are not present convert to variant one.
+#if AMDGPU
+#if !defined(__has_builtin) || !__has_builtin(__builtin_amdgcn_mov_dpp) || !__has_builtin(__builtin_amdgcn_ds_swizzle) || !__has_builtin(__builtin_amdgcn_readfirstlane)
+#if FFT_VARIANT_W == 0
+#warning Missing builtins for FFT_VARIANT_W=0, switching to FFT_VARIANT_W=1
+#undef FFT_VARIANT_W
+#define FFT_VARIANT_W 1
+#endif
+#if FFT_VARIANT_H == 0
+#warning Missing builtins for FFT_VARIANT_H=0, switching to FFT_VARIANT_H=1
+#undef FFT_VARIANT_H
+#define FFT_VARIANT_H 1
+#endif
+#endif
+#endif
 
 #if !defined(BIGLIT)
 #define BIGLIT 1
