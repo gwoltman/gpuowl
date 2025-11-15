@@ -246,8 +246,8 @@ ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 #define P(x) global x * restrict
 #define CP(x) const P(x)
 
-// Macros for non-temporal load and store (in case we later want to provide a -use option to turn this off)
-// The throry behind only non-temporal reads is that kernels may end faster if they can write results to a cache rather than to slow memory.
+// Macros for non-temporal load and store.  The theory behind only non-temporal reads (option 2) is that with alternating buffers,
+// read buffers will not be needed for quite a while, but write buffers will be needed soon.
 #if NONTEMPORAL == 1 && defined(__has_builtin) && __has_builtin(__builtin_nontemporal_load) && __has_builtin(__builtin_nontemporal_store)
 #define NTLOAD(mem)        __builtin_nontemporal_load(&(mem))
 #define NTSTORE(mem,val)   __builtin_nontemporal_store(val, &(mem))
@@ -258,6 +258,18 @@ ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 #define NTLOAD(mem)        (mem)
 #define NTSTORE(mem,val)   (mem) = val
 #endif
+
+// Prefetch macros.  Unused at present, I tried using them in fftMiddleInGF61 on a 5080 with no benefit.
+void PREFETCHL1(const __global void *addr) {
+#if HAS_PTX
+  __asm("prefetch.global.L1  [%0];" : : "l"(addr));
+#endif
+}
+void PREFETCHL2(const __global void *addr) {
+#if HAS_PTX
+  __asm("prefetch.global.L2  [%0];" : : "l"(addr));
+#endif
+}
 
 // For reasons unknown, loading trig values into nVidia's constant cache has terrible performance
 #if AMDGPU
