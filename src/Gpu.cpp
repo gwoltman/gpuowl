@@ -24,6 +24,7 @@
 #include <array>
 #include <cinttypes>
 #include <cstring>
+#include <cinttypes>
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -162,8 +163,10 @@ Weights genWeights(FFTConfig fft, u32 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
 
 string toLiteral(i32 value) { return to_string(value); }
 string toLiteral(u32 value) { return to_string(value) + 'u'; }
-[[maybe_unused]] string toLiteral(i64 value) { return to_string(value) + "l"; }
-[[maybe_unused]] string toLiteral(u64 value) { return to_string(value) + "ul"; }
+[[maybe_unused]] string toLiteral(long value) { return to_string(value) + "l"; }
+[[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + "ul"; }
+[[maybe_unused]] string toLiteral(long long value) { return to_string(value) + "ll"; }
+[[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + "ull"; }
 
 template<typename F>
 string toLiteral(F value) {
@@ -644,7 +647,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
     // Sometimes we do want to run a FFT beyond a reasonable BPW (e.g. during -ztune), and these situations
     // coincide with logFftSize == false
     if (fft.maxExp() < E) {
-      log("Warning: %s (max %lu) may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
+      log("Warning: %s (max %" PRIu64 ") may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
     }
   }
 

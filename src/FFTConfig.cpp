@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <array>
 #include <map>
+#include <cinttypes>
 
 using namespace std;
 
@@ -275,7 +276,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u32 E, const string& spec) {
   if (!spec.empty()) {
     FFTConfig fft{spec};
     if (fft.maxExp() * args.fftOverdrive < E) {
-      log("Warning: %s (max %lu) may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
+      log("Warning: %s (max %" PRIu64 ") may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
     }
     return fft;
   }

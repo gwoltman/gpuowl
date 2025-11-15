@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <cassert>
+#include <cinttypes>
 
 using std::accumulate;
 
@@ -1066,7 +1067,7 @@ skip_1K_256 = 0;
 
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         bool isUseful = TuneEntry{cost, fft}.update(results);
-        log("%c %6.1f %12s %9lu\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
+        log("%c %6.1f %12s %9" PRIu64 "\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
 	if (isUseful) TuneEntry::writeTuneFile(results);
       }
     }
