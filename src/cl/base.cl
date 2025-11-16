@@ -66,7 +66,7 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define HAS_PTX 0
 #elif NVIDIAGPU
 #define HAS_ASM 0
-#define HAS_PTX 1
+#define HAS_PTX 1200        // Assume CUDA 12.00 support until we can figure out how to automatically determine this at runtime
 #else
 #define HAS_ASM 0
 #define HAS_PTX 0
@@ -261,12 +261,12 @@ ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 
 // Prefetch macros.  Unused at present, I tried using them in fftMiddleInGF61 on a 5080 with no benefit.
 void PREFETCHL1(const __global void *addr) {
-#if HAS_PTX
+#if HAS_PTX >= 200         // Prefetch instruction requires sm_20 support or higher
   __asm("prefetch.global.L1  [%0];" : : "l"(addr));
 #endif
 }
 void PREFETCHL2(const __global void *addr) {
-#if HAS_PTX
+#if HAS_PTX >= 200         // Prefetch instruction requires sm_20 support or higher
   __asm("prefetch.global.L2  [%0];" : : "l"(addr));
 #endif
 }

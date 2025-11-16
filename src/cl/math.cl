@@ -27,7 +27,7 @@ u64 i96_lo64(i96 val) { return as_ulong((uint2)(val.lo32, val.mid32)); }
 u64 i96_hi64(i96 val) { return as_ulong((uint2)(val.mid32, val.hi32)); }
 i96 OVERLOAD add(i96 a, i96 b) {
   i96 val;
-#if HAS_PTX
+#if HAS_PTX >= 200        // Carry instructions requires sm_20 support or higher
   __asm("add.cc.u32  %0, %3, %6;\n\t"
         "addc.cc.u32 %1, %4, %7;\n\t"
         "addc.u32    %2, %5, %8;"
@@ -42,7 +42,7 @@ i96 OVERLOAD add(i96 a, i96 b) {
 i96 OVERLOAD add(i96 a, i64 b) { return add(a, make_i96(b)); }
 i96 OVERLOAD sub(i96 a, i96 b) {
   i96 val;
-#if HAS_PTX
+#if HAS_PTX >= 200        // Carry instructions requires sm_20 support or higher
   __asm("sub.cc.u32  %0, %3, %6;\n\t"
         "subc.cc.u32 %1, %4, %7;\n\t"
         "subc.u32    %2, %5, %8;"
@@ -134,7 +134,7 @@ u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.lo64 = a.lo64 + b.lo64; val.hi
 
 // Select based on sign of first argument.  This generates less PTX code, but is no faster on 5xxx GPUs
 i32 select32(i32 a, i32 b, i32 c) {
-#if HAS_PTX
+#if HAS_PTX >= 100        // slct instruction requires sm_10 support or higher
   i32 res;
   __asm("slct.s32.s32 %0, %2, %3, %1;" : "=r"(res) : "r"(a), "r"(b), "r"(c));
   return res;
@@ -145,7 +145,7 @@ i32 select32(i32 a, i32 b, i32 c) {
 
 // Optionally add a value if first arg is negative.
 i32 optional_add(i32 a, const i32 b) {
-#if HAS_PTX
+#if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
         " @%%p add.s32 %0, %0, %1;}"      // if (a < 0) a = a + b
@@ -158,7 +158,7 @@ i32 optional_add(i32 a, const i32 b) {
 
 // Optionally subtract a value if first arg is negative.
 i32 optional_sub(i32 a, const i32 b) {
-#if HAS_PTX
+#if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
         " @%%p sub.s32 %0, %0, %1;}"      // if (a < 0) a = a - b
@@ -171,7 +171,7 @@ i32 optional_sub(i32 a, const i32 b) {
 
 // Optionally subtract a value if first arg is greater than value.
 i32 optional_mod(i32 a, const i32 b) {
-#if 0 //HAS_PTX  // Not faster on 5xxx GPUs (not sure why)
+#if 0 //HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher  // Not faster on 5xxx GPUs (not sure why)
   __asm("{.reg .pred %%p;\n\t"
         " setp.ge.s32 %%p, %0, %1;\n\t"   // a > b
         " @%%p sub.s32 %0, %0, %1;}"      // if (a > b) a = a - b
@@ -185,7 +185,7 @@ i32 optional_mod(i32 a, const i32 b) {
 // Multiply and add primitives
 
 u64 OVERLOAD mad32(u32 a, u32 b, u32 c) {
-#if HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
+#if HAS_PTX >= 200        // mad instruction requires sm_20 support or higher           // Same speed on TitanV, any gain may be too small to measure
   u32 reslo, reshi;
   __asm("mad.lo.cc.u32 %0, %2, %3, %4;\n\t"
         "madc.hi.u32   %1, %2, %3, 0;" : "=r"(reslo), "=r"(reshi) : "r"(a), "r"(b), "r"(c));
@@ -196,7 +196,7 @@ u64 OVERLOAD mad32(u32 a, u32 b, u32 c) {
 }
 
 u64 OVERLOAD mad32(u32 a, u32 b, u64 c) {
-#if HAS_PTX                                // Same speed on TitanV, any gain may be too small to measure
+#if HAS_PTX >= 200        // mad instruction requires sm_20 support or higher          // Same speed on TitanV, any gain may be too small to measure
   u32 reslo, reshi;
   __asm("mad.lo.cc.u32 %0, %2, %3, %4;\n\t"
         "madc.hi.u32   %1, %2, %3, %5;" : "=r"(reslo), "=r"(reshi) : "r"(a), "r"(b), "r"(lo32(c)), "r"(hi32(c)));
@@ -207,12 +207,12 @@ u64 OVERLOAD mad32(u32 a, u32 b, u64 c) {
 }
 
 u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
-#if 0 && HAS_PTX                           // Slower on TitanV and mobile 4070, don't understand why
+#if 0 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher    // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
   __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
         "madc.hi.u64   %1, %2, %3, 0;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(u128_lo64(c)));
   return make_u128(reshi, reslo);
-#elif HAS_PTX                              // Faster on TitanV.  No difference on mobile 4070.  Much cleaner PTX code generated.
+#elif HAS_PTX >= 200        // mad instruction requires sm_20 support or higher       // Faster on TitanV.  No difference on mobile 4070.  Much cleaner PTX code generated.
   uint2 a2 = as_uint2(a);
   uint2 b2 = as_uint2(b);
   uint2 c2 = as_uint2(c);
@@ -236,12 +236,12 @@ u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
 }
 
 u128 OVERLOAD mad64(u64 a, u64 b, u128 c) {
-#if 0 && HAS_PTX                           // Slower on TitanV and mobile 4070, don't understand why
+#if 0 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher  // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
   __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
         "madc.hi.u64   %1, %2, %3, %5;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(u128_lo64(c)), "l"(u128_hi64(c)));
   return make_u128(reshi, reslo);
-#elif HAS_PTX                              // Faster on TitanV.  No difference on mobile 4070.  Much cleaner PTX code generated.
+#elif HAS_PTX >= 200        // mad instruction requires sm_20 support or higher     // Faster on TitanV.  No difference on mobile 4070.  Much cleaner PTX code generated.
   uint2 a2 = as_uint2(a);
   uint2 b2 = as_uint2(b);
   uint2 clo2 = as_uint2(u128_lo64(c));

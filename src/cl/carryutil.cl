@@ -24,7 +24,7 @@ typedef i32 CarryABM;
 // Return unsigned low bits (number of bits must be between 1 and 31)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_ubfe)
 u32 OVERLOAD ulowBits(i32 u, u32 bits) { return __builtin_amdgcn_ubfe(u, 0, bits); }
-#elif HAS_PTX
+#elif HAS_PTX >= 700        // szext instruction requires sm_70 support or higher
 u32 OVERLOAD ulowBits(i32 u, u32 bits) { u32 res; __asm("szext.clamp.u32 %0, %1, %2;" : "=r"(res) : "r"(u), "r"(bits)); return res; }
 #else
 u32 OVERLOAD ulowBits(i32 u, u32 bits) { return (((u32) u << (32 - bits)) >> (32 - bits)); }
@@ -44,7 +44,7 @@ u64 OVERLOAD ulowFixedBits(u64 u, const u32 bits) { return ulowFixedBits((i64) u
 // Return signed low bits (number of bits must be between 1 and 31)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_sbfe)
 i32 OVERLOAD lowBits(i32 u, u32 bits) { return __builtin_amdgcn_sbfe(u, 0, bits); }
-#elif HAS_PTX
+#elif HAS_PTX >= 700        // szext instruction requires sm_70 support or higher
 i32 OVERLOAD lowBits(i32 u, u32 bits) { i32 res; __asm("szext.clamp.s32 %0, %1, %2;" : "=r"(res) : "r"(u), "r"(bits)); return res; }
 #else
 i32 OVERLOAD lowBits(i32 u, u32 bits) { return ((u << (32 - bits)) >> (32 - bits)); }
@@ -55,7 +55,7 @@ i64 OVERLOAD lowBits(i64 u, u32 bits) { return ((u << (64 - bits)) >> (64 - bits
 i64 OVERLOAD lowBits(u64 u, u32 bits) { return lowBits((i64)u, bits); }
 
 // Return signed low bits (number of bits must be between 1 and 32)
-#if HAS_PTX
+#if HAS_PTX                 // szext does not return result we are looking for if bits = 32
 i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits(u, bits); }
 #else
 i32 OVERLOAD lowBitsSafe32(i32 u, u32 bits) { return lowBits((u64)u, bits); }
@@ -65,7 +65,7 @@ i32 OVERLOAD lowBitsSafe32(u32 u, u32 bits) { return lowBitsSafe32((i32)u, bits)
 // Return signed low bits where number of bits is known at compile time (number of bits can be 0 to 32)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_sbfe)
 i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; return __builtin_amdgcn_sbfe(u, 0, bits); }
-#elif HAS_PTX
+#elif HAS_PTX >= 700        // szext instruction requires sm_70 support or higher
 i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; i32 res; __asm("szext.clamp.s32 %0, %1, %2;" : "=r"(res) : "r"(u), "r"(bits)); return res; }
 #else
 i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; return (u << (32 - bits)) >> (32 - bits); }
@@ -79,14 +79,14 @@ i64 OVERLOAD lowFixedBits(u64 u, const u32 bits) { return lowFixedBits((i64)u, b
 // Extract 32 bits from a 64-bit value (starting bit offset can be 0 to 31)
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_alignbit)
 i32 xtract32(i64 x, u32 bits) { return __builtin_amdgcn_alignbit(as_int2(x).y, as_int2(x).x, bits); }
-#elif HAS_PTX
+#elif HAS_PTX >= 320        // shf instruction requires sm_32 support or higher
 i32 xtract32(i64 x, u32 bits) { i32 res; __asm("shf.r.clamp.b32 %0, %1, %2, %3;" : "=r"(res) : "r"(as_uint2(x).x), "r"(as_uint2(x).y), "r"(bits)); return res; }
 #else
 i32 xtract32(i64 x, u32 bits) { return x >> bits; }
 #endif
 
 // Extract 32 bits from a 64-bit value (starting bit offset can be 0 to 32)
-#if HAS_PTX
+#if HAS_PTX >= 320        // shf instruction requires sm_32 support or higher
 i32 xtractSafe32(i64 x, u32 bits) { i32 res; __asm("shf.r.clamp.b32 %0, %1, %2, %3;" : "=r"(res) : "r"(as_uint2(x).x), "r"(as_uint2(x).y), "r"(bits)); return res; }
 #else
 i32 xtractSafe32(i64 x, u32 bits) { return x >> bits; }
