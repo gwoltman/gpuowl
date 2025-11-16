@@ -165,8 +165,8 @@ string toLiteral(i32 value) { return to_string(value); }
 string toLiteral(u32 value) { return to_string(value) + 'u'; }
 [[maybe_unused]] string toLiteral(long value) { return to_string(value) + "l"; }
 [[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + "ul"; }
-[[maybe_unused]] string toLiteral(long long value) { return to_string(value) + "ll"; }
-[[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + "ull"; }
+[[maybe_unused]] string toLiteral(long long value) { return to_string(value) + "l"; }              // Yes, this looks wrong.  The Mingw64 C compiler uses
+[[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + "ul"; }    // long long for 64-bits, while openCL uses long for 64 bits.
 
 template<typename F>
 string toLiteral(F value) {
@@ -209,7 +209,6 @@ string toLiteral(const string& s) { return s; }
 [[maybe_unused]] string toLiteral(float2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 [[maybe_unused]] string toLiteral(double2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 [[maybe_unused]] string toLiteral(int2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
-[[maybe_unused]] string toLiteral(long2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 [[maybe_unused]] string toLiteral(uint2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 [[maybe_unused]] string toLiteral(ulong2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 
@@ -1143,8 +1142,8 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
         for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
           fftMidIn(buf2, buf3, cache_group);
           tailMulLow(buf3, buf2, buf1, cache_group);
-	  fftMidOut(buf2, buf3, cache_group);
-	}
+          fftMidOut(buf2, buf3, cache_group);
+        }
       }
 
       if (!p) { break; }

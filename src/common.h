@@ -27,14 +27,14 @@ namespace fs = std::filesystem;
 // C code will use i64 integer data.  The code that reads and writes GPU buffers will downsize the integers to 32 bits when required.
 typedef i64 Word;
 
+// Create datatype names that mimic the ones used in OpenCL code
 using double2 = pair<double, double>;
 using float2 = pair<float, float>;
-using int2 = pair<int, int>;
-using long2 = pair<long, long>;
-using uint = unsigned int;
-using uint2 = pair<unsigned int, unsigned int>;
-using ulong = unsigned long;
-using ulong2 = pair<unsigned long, unsigned long>;
+using int2 = pair<i32, i32>;
+using uint = u32;
+using uint2 = pair<u32, u32>;
+using ulong = u64;
+using ulong2 = pair<u64, u64>;
 
 std::vector<std::string> split(const string& s, char delim);
 
