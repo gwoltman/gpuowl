@@ -92,7 +92,7 @@ void Queue::queueMarkerEvent() {
     }
     // Enqueue a marker for nVidia GPUs
     else {
-      clEnqueueMarkerWithWaitList(get(), 0, NULL, &markerEvent);
+      markerEvent = enqueueMarker(get());
       markerQueued = true;
       queueCount = 0;
     }
@@ -103,7 +103,7 @@ void Queue::waitForMarkerEvent() {
   if (!markerQueued) return;
   // By default, nVidia finish causes a CPU busy wait.  Instead, sleep for a while.  Since we know how many items are enqueued after the marker we can make an
   // educated guess of how long to sleep to keep CPU overhead low.
-  while (getEventInfo(markerEvent) != CL_COMPLETE) {
+  while (getEventInfo(markerEvent.get()) != CL_COMPLETE) {
     // There are 4, 7, or 10 kernels per squaring.  Don't overestimate sleep time.  Divide by much more than the number of kernels.
     std::this_thread::sleep_for(std::chrono::microseconds(1 + queueCount * squareTime / squareKernels / 2));
   }

@@ -363,6 +363,12 @@ EventHolder fillBuf(cl_queue q, vector<cl_event>&& waits,
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
+EventHolder enqueueMarker(cl_queue q) {
+  cl_event event{};
+  CHECK1(clEnqueueMarkerWithWaitList(q, 0, 0, &event));
+  return EventHolder{event};
+}
+
 void waitForEvents(vector<cl_event>&& waits) {
   if (!waits.empty()) {
     CHECK1(clWaitForEvents(waits.size(), waits.data()));
