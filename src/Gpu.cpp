@@ -1970,14 +1970,15 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
   // Get CERT start value
   char fname[32];
   sprintf(fname, "M%u.cert", E);
-  File fi = File::openReadThrow(fname);
 
-//We need to gracefully handle the CERT file missing.  There is a window in primenet.py between worktodo.txt entry and starting value download.
+// Autoprimenet.py does not add the cert entry to worktodo.txt until it has successfully downloaded the .cert file.
 
-  u32 nBytes = (E - 1) / 8 + 1;
-  Words B = fi.readBytesLE(nBytes);
-
-  writeIn(bufData, std::move(B));
+  { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
+    File fi = File::openReadThrow(fname);
+    u32 nBytes = (E - 1) / 8 + 1;
+    Words B = fi.readBytesLE(nBytes);
+    writeIn(bufData, std::move(B));
+  }
 
   Timer elapsedTimer;
 
