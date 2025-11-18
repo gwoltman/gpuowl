@@ -87,7 +87,7 @@ void OVERLOAD chainMul(u32 len, T2 *u, T2 w, u32 tailSquareBcast) {
 }
 
 
-#if AMDGPU
+#if AMDGPU && (FFT_VARIANT_W == 0 || FFT_VARIANT_H == 0)
 
 int bcast4(int x)  { return __builtin_amdgcn_mov_dpp(x, 0, 0xf, 0xf, false); }
 int bcast8(int x)  { return __builtin_amdgcn_ds_swizzle(x, 0x0018); }
