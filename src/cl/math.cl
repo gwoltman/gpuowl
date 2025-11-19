@@ -316,13 +316,13 @@ void OVERLOAD cmul_a_by_b_and_conjb(T2 *res1, T2 *res2, T2 a, T2 b) {
 }
 
 // Square a (cos,sin) complex number.  Fancy squaring returns a fancy value.  Defancy squares a fancy number returning a non-fancy number.
-T2 csqTrig(T2 a) { T two_ay = mul2(a.y); return U2(fma(-two_ay, a.y, 1), a.x * two_ay); }
+T2 OVERLOAD csqTrig(T2 a) { T two_ay = mul2(a.y); return U2(fma(-two_ay, a.y, 1), a.x * two_ay); }
 T2 csqTrigFancy(T2 a) { T two_ay = mul2(a.y); return U2(-two_ay * a.y, fma(a.x, two_ay, two_ay)); }
 T2 csqTrigDefancy(T2 a) { T two_ay = mul2(a.y); return U2(fma (-two_ay, a.y, 1), fma(a.x, two_ay, two_ay)); }
 
 // Cube a complex number w (cos,sin) given w^2 and w.  The squared input can be either fancy or not fancy.
 // Fancy cCube takes a fancy w argument and returns a fancy value.  Defancy takes a fancy w argument and returns a non-fancy value.
-T2 ccubeTrig(T2 sq, T2 w) { T tmp = mul2(sq.y); return U2(fma(tmp, -w.y, w.x), fma(tmp, w.x, -w.y)); }
+T2 OVERLOAD ccubeTrig(T2 sq, T2 w) { T tmp = mul2(sq.y); return U2(fma(tmp, -w.y, w.x), fma(tmp, w.x, -w.y)); }
 T2 ccubeTrigFancy(T2 sq, T2 w) { T tmp = mul2(sq.y); return U2(fma(tmp, -w.y, w.x), fma(tmp, w.x, tmp - w.y)); }
 T2 ccubeTrigDefancy(T2 sq, T2 w) { T tmp = mul2(sq.y); T wx = w.x + 1; return U2(fma(tmp, -w.y, wx), fma(tmp, wx, -w.y)); }
 
@@ -430,13 +430,13 @@ void OVERLOAD cmul_a_by_b_and_conjb(F2 *res1, F2 *res2, F2 a, F2 b) {
 }
 
 // Square a (cos,sin) complex number.  Fancy squaring returns a fancy value.  Defancy squares a fancy number returning a non-fancy number.
-F2 csqTrig(F2 a) { F two_ay = mul2(a.y); return U2(fma(-two_ay, a.y, 1), a.x * two_ay); }
+F2 OVERLOAD csqTrig(F2 a) { F two_ay = mul2(a.y); return U2(fma(-two_ay, a.y, 1), a.x * two_ay); }
 F2 csqTrigFancy(F2 a) { F two_ay = mul2(a.y); return U2(-two_ay * a.y, fma(a.x, two_ay, two_ay)); }
 F2 csqTrigDefancy(F2 a) { F two_ay = mul2(a.y); return U2(fma (-two_ay, a.y, 1), fma(a.x, two_ay, two_ay)); }
 
 // Cube a complex number w (cos,sin) given w^2 and w.  The squared input can be either fancy or not fancy.
 // Fancy cCube takes a fancy w argument and returns a fancy value.  Defancy takes a fancy w argument and returns a non-fancy value.
-F2 ccubeTrig(F2 sq, F2 w) { F tmp = mul2(sq.y); return U2(fma(tmp, -w.y, w.x), fma(tmp, w.x, -w.y)); }
+F2 OVERLOAD ccubeTrig(F2 sq, F2 w) { F tmp = mul2(sq.y); return U2(fma(tmp, -w.y, w.x), fma(tmp, w.x, -w.y)); }
 F2 ccubeTrigFancy(F2 sq, F2 w) { F tmp = mul2(sq.y); return U2(fma(tmp, -w.y, w.x), fma(tmp, w.x, tmp - w.y)); }
 F2 ccubeTrigDefancy(F2 sq, F2 w) { F tmp = mul2(sq.y); F wx = w.x + 1; return U2(fma(tmp, -w.y, wx), fma(tmp, wx, -w.y)); }
 
