@@ -379,10 +379,10 @@ T2 OVERLOAD addsub(T2 a) { return U2(a.x + a.y, a.x - a.y); }
 
 // computes 2*(a.x*b.x+a.y*b.y) + i*2*(a.x*b.y+a.y*b.x)
 // which happens to be the cyclical convolution (a.x, a.y)x(b.x, b.y) * 2
-T2 foo2(T2 a, T2 b) { a = addsub(a); b = addsub(b); return addsub(U2(RE(a) * RE(b), IM(a) * IM(b))); }
+T2 OVERLOAD foo2(T2 a, T2 b) { a = addsub(a); b = addsub(b); return addsub(U2(RE(a) * RE(b), IM(a) * IM(b))); }
 
 // computes 2*[x^2+y^2 + i*(2*x*y)]. i.e. 2 * cyclical autoconvolution of (x, y)
-T2 foo(T2 a) { return foo2(a, a); }
+T2 OVERLOAD foo(T2 a) { return foo2(a, a); }
 
 #endif
 
@@ -493,10 +493,10 @@ F2 OVERLOAD addsub(F2 a) { return U2(a.x + a.y, a.x - a.y); }
 
 // computes 2*(a.x*b.x+a.y*b.y) + i*2*(a.x*b.y+a.y*b.x)
 // which happens to be the cyclical convolution (a.x, a.y)x(b.x, b.y) * 2
-F2 foo2(F2 a, F2 b) { a = addsub(a); b = addsub(b); return addsub(U2(RE(a) * RE(b), IM(a) * IM(b))); }
+F2 OVERLOAD foo2(F2 a, F2 b) { a = addsub(a); b = addsub(b); return addsub(U2(RE(a) * RE(b), IM(a) * IM(b))); }
 
 // computes 2*[x^2+y^2 + i*(2*x*y)]. i.e. 2 * cyclical autoconvolution of (x, y)
-F2 foo(F2 a) { return foo2(a, a); }
+F2 OVERLOAD foo(F2 a) { return foo2(a, a); }
 
 #endif
 
