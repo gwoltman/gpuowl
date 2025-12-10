@@ -553,7 +553,7 @@ void Tune::tune() {
     }
 
     // Find best INPLACE setting
-    if (time_FFTs) {
+    if (1) {
       FFTConfig fft{*defaultShape, 101, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_inplace = 0;
