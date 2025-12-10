@@ -8,7 +8,11 @@
 #error SMALL_HEIGHT must be one of: 256, 512, 1024, 4096
 #endif
 
+#if !INPLACE
 u32 transPos(u32 k, u32 middle, u32 width) { return k / width + k % width * middle; }
+#else
+u32 transPos(u32 k, u32 middle, u32 width) { return k; }
+#endif
 
 #if FFT_FP64
 

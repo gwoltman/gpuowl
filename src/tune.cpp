@@ -439,6 +439,10 @@ void Tune::tune() {
     u32 variant = (defaultShape == &defaultFFTShape) ? 101 : 202;
 //GW: if fft spec on the command line specifies a variant then we should use that variant (I get some interesting results with 000 vs 101 vs 201 vs 202 likely due to rocm optimizer)
 
+    // IN_WG/SIZEX, OUT_WG/SIZEX, PAD, MIDDLE_IN/OUT_LDS_TRANSPOSE apply only if INPLACE=0
+    u32 current_inplace = args->value("INPLACE", 0);
+    args->flags["INPLACE"] = to_string(0);
+
     // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings
     if (1/*option to time IN/OUT settings*/) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
@@ -506,6 +510,65 @@ void Tune::tune() {
       log("Best PAD is %u bytes.  Default PAD is %u bytes.\n", best_pad, AMDGPU ? 256 : 0);
       configsUpdate(current_cost, best_cost, 0.000, "PAD", best_pad, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["PAD"] = to_string(best_pad);
+    }
+
+    // Find best MIDDLE_IN_LDS_TRANSPOSE setting
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_middle_in_lds_transpose = 0;
+      u32 current_middle_in_lds_transpose = args->value("MIDDLE_IN_LDS_TRANSPOSE", 1);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 middle_in_lds_transpose : {0, 1}) {
+        args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(middle_in_lds_transpose);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using MIDDLE_IN_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_in_lds_transpose, cost);
+        if (middle_in_lds_transpose == current_middle_in_lds_transpose) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_in_lds_transpose = middle_in_lds_transpose; }
+      }
+      log("Best MIDDLE_IN_LDS_TRANSPOSE is %u.  Default MIDDLE_IN_LDS_TRANSPOSE is 1.\n", best_middle_in_lds_transpose);
+      configsUpdate(current_cost, best_cost, 0.000, "MIDDLE_IN_LDS_TRANSPOSE", best_middle_in_lds_transpose, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(best_middle_in_lds_transpose);
+    }
+
+    // Find best MIDDLE_OUT_LDS_TRANSPOSE setting
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_middle_out_lds_transpose = 0;
+      u32 current_middle_out_lds_transpose = args->value("MIDDLE_OUT_LDS_TRANSPOSE", 1);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 middle_out_lds_transpose : {0, 1}) {
+        args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(middle_out_lds_transpose);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using MIDDLE_OUT_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_out_lds_transpose, cost);
+        if (middle_out_lds_transpose == current_middle_out_lds_transpose) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_out_lds_transpose = middle_out_lds_transpose; }
+      }
+      log("Best MIDDLE_OUT_LDS_TRANSPOSE is %u.  Default MIDDLE_OUT_LDS_TRANSPOSE is 1.\n", best_middle_out_lds_transpose);
+      configsUpdate(current_cost, best_cost, 0.000, "MIDDLE_OUT_LDS_TRANSPOSE", best_middle_out_lds_transpose, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(best_middle_out_lds_transpose);
+    }
+
+    // Find best INPLACE setting
+    if (time_FFTs) {
+      FFTConfig fft{*defaultShape, 101, CARRY_AUTO};
+      u32 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_inplace = 0;
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 inplace : {0, 1}) {
+        args->flags["INPLACE"] = to_string(inplace);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using INPLACE=%u is %6.1f\n", fft.spec().c_str(), inplace, cost);
+        if (inplace == current_inplace) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_inplace = inplace; }
+      }
+      log("Best INPLACE is %u.  Default INPLACE is 0.  Best INPLACE setting may change when using larger FFTs.\n", best_inplace);
+      configsUpdate(current_cost, best_cost, 0.002, "INPLACE", best_inplace, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["INPLACE"] = to_string(best_inplace);
     }
 
     // Find best NONTEMPORAL setting
@@ -838,46 +901,6 @@ void Tune::tune() {
       args->flags["ZEROHACK_H"] = to_string(best_zerohack_h);
     }
 
-    // Find best MIDDLE_IN_LDS_TRANSPOSE setting
-    if (1) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_middle_in_lds_transpose = 0;
-      u32 current_middle_in_lds_transpose = args->value("MIDDLE_IN_LDS_TRANSPOSE", 1);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 middle_in_lds_transpose : {0, 1}) {
-        args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(middle_in_lds_transpose);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using MIDDLE_IN_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_in_lds_transpose, cost);
-        if (middle_in_lds_transpose == current_middle_in_lds_transpose) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_in_lds_transpose = middle_in_lds_transpose; }
-      }
-      log("Best MIDDLE_IN_LDS_TRANSPOSE is %u.  Default MIDDLE_IN_LDS_TRANSPOSE is 1.\n", best_middle_in_lds_transpose);
-      configsUpdate(current_cost, best_cost, 0.000, "MIDDLE_IN_LDS_TRANSPOSE", best_middle_in_lds_transpose, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["MIDDLE_IN_LDS_TRANSPOSE"] = to_string(best_middle_in_lds_transpose);
-    }
-
-    // Find best MIDDLE_OUT_LDS_TRANSPOSE setting
-    if (1) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_middle_out_lds_transpose = 0;
-      u32 current_middle_out_lds_transpose = args->value("MIDDLE_OUT_LDS_TRANSPOSE", 1);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 middle_out_lds_transpose : {0, 1}) {
-        args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(middle_out_lds_transpose);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using MIDDLE_OUT_LDS_TRANSPOSE=%u is %6.1f\n", fft.spec().c_str(), middle_out_lds_transpose, cost);
-        if (middle_out_lds_transpose == current_middle_out_lds_transpose) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_middle_out_lds_transpose = middle_out_lds_transpose; }
-      }
-      log("Best MIDDLE_OUT_LDS_TRANSPOSE is %u.  Default MIDDLE_OUT_LDS_TRANSPOSE is 1.\n", best_middle_out_lds_transpose);
-      configsUpdate(current_cost, best_cost, 0.000, "MIDDLE_OUT_LDS_TRANSPOSE", best_middle_out_lds_transpose, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(best_middle_out_lds_transpose);
-    }
-
     // Find best BIGLIT setting
     if (time_FFTs) {
       FFTConfig fft{*defaultShape, 101, CARRY_AUTO};
@@ -923,7 +946,7 @@ void Tune::tune() {
     }
     if (args->workers < 2) {
       config.write("\n# Running two workers sometimes gives better throughput.");
-      config.write("\n# Changing TAIL_KERNELS to 1 or 3 with two workers may be better.");
+      config.write("\n# Changing TAIL_KERNELS to 3 with two workers may be better.");
       config.write("\n#  -workers 2 -use TAIL_KERNELS=3\n");
     }
   }

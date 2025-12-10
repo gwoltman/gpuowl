@@ -186,6 +186,8 @@ named "config.txt" in the prpll run directory.
                      2 = calculate from scratch, no memory read
                      1 = calculate using one complex multiply from cached memory and uncached memory
                      0 = read trig values from memory
+  -use INPLACE=n   : Perform tranforms in-place.  Great if the reduced memory usage fits in the GPU's L2 cache.
+                     0 = not in-place, 1 = nVidia friendly access pattern, 2 = AMD friendly access pattern.
   -use PAD=<val>   : insert pad bytes to possibly improve memory access patterns.  Val is number bytes to pad.
   -use MIDDLE_IN_LDS_TRANSPOSE=0|1  : Transpose values in local memory before writing to global memory
   -use MIDDLE_OUT_LDS_TRANSPOSE=0|1 : Transpose values in local memory before writing to global memory
@@ -198,11 +200,11 @@ named "config.txt" in the prpll run directory.
 -tune <options>    : Looks for best settings to include in config.txt.  Times many FFTs to find fastest one to test exponents -- written to tune.txt.
                      An -fft <spec> can be given on the command line to limit which FFTs are timed.
                      Options are not required.  If present, the options are a comma separated list from below.
-			 noconfig     - Skip timings to find best config.txt settings
-			 fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
-			 ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
-			 minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.
-			 maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.
+                         noconfig     - Skip timings to find best config.txt settings
+                         fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
+                         ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
+                         minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.
+                         maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.
 -device <N>        : select the GPU at position N in the list of devices
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
 -pci    <BDF>      : select the GPU with the given PCI BDF, e.g. "0c:00.0"

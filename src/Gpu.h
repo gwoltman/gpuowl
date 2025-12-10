@@ -171,6 +171,7 @@ private:
   // Copy of some -use options needed for Kernel, Trig, and Weights initialization
   bool tail_single_wide;                // TailSquare processes one line at a time
   bool tail_single_kernel;              // TailSquare does not use a separate kernel for line zero
+  u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly.
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
 
   // Twiddles: trigonometry constant buffers, used in FFTs.
@@ -262,13 +263,13 @@ private:
   void writeState(u32 k, const vector<u32>& check, u32 blockSize);
 
   // does either carrryFused() or the expanded version depending on useLongCarry
-  void doCarry(Buffer<double>& out, Buffer<double>& in);
+  void doCarry(Buffer<double>& out, Buffer<double>& in, Buffer<Word>& tmp);
 
   void mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, Buffer<double>& tmp2, bool mul3 = false);
   void mul(Buffer<Word>& io, Buffer<double>& inB);
 
   void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3 = false);
-  void modMul(Buffer<Word>& ioA, enum LEAD_TYPE leadInB, Buffer<Word>& inB, bool mul3 = false);
+  void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, bool mul3 = false);
 
   fs::path saveProof(const Args& args, const ProofSet& proofSet);
   std::pair<RoeInfo, RoeInfo> readROE();
@@ -342,13 +343,13 @@ private:
 
 // Compute the size of an FFT/NTT data buffer depending on the FFT/NTT float/prime.  Size is returned in units of sizeof(double).
 // Data buffers require extra space for padding.  We can probably tighten up the amount of extra memory allocated.
-// The worst case seems to be MIDDLE=4, PAD_SIZE=512.
+// The worst case seems to be !INPLACE, MIDDLE=4, PAD_SIZE=512.
 
-#define MID_ADJUST(size,M,pad)          ((pad == 0 || M != 4) ? (size) : (size) * 5/4)
-#define PAD_ADJUST(N,M,pad)             MID_ADJUST(pad == 0 ? N : pad <= 128 ? 9*N/8 : pad <= 256 ? 5*N/4 : 3*N/2, M, pad)
-#define FP64_DATA_SIZE(W,M,H,pad)       PAD_ADJUST(W*M*H*2, M, pad)
-#define FP32_DATA_SIZE(W,M,H,pad)       PAD_ADJUST(W*M*H*2, M, pad) * sizeof(float) / sizeof(double)
-#define GF31_DATA_SIZE(W,M,H,pad)       PAD_ADJUST(W*M*H*2, M, pad) * sizeof(uint) / sizeof(double)
-#define GF61_DATA_SIZE(W,M,H,pad)       PAD_ADJUST(W*M*H*2, M, pad) * sizeof(ulong) / sizeof(double)
-#define TOTAL_DATA_SIZE(fft,W,M,H,pad)  fft.FFT_FP64 * FP64_DATA_SIZE(W,M,H,pad) + fft.FFT_FP32 * FP32_DATA_SIZE(W,M,H,pad) + \
-                                        fft.NTT_GF31 * GF31_DATA_SIZE(W,M,H,pad) + fft.NTT_GF61 * GF61_DATA_SIZE(W,M,H,pad)
+#define MID_ADJUST(size,M,pad)                  ((pad == 0 || M != 4) ? (size) : (size) * 5/4)
+#define PAD_ADJUST(N,M,inplace,pad)             (inplace ? 3*N/2 : MID_ADJUST(pad == 0 ? N : pad <= 128 ? 9*N/8 : pad <= 256 ? 5*N/4 : 3*N/2, M, pad))
+#define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad)
+#define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad) * sizeof(float) / sizeof(double)
+#define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad) * sizeof(uint) / sizeof(double)
+#define GF61_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad) * sizeof(ulong) / sizeof(double)
+#define TOTAL_DATA_SIZE(fft,W,M,H,inplace,pad)  (int)fft.FFT_FP64 * FP64_DATA_SIZE(W,M,H,inplace,pad) + (int)fft.FFT_FP32 * FP32_DATA_SIZE(W,M,H,inplace,pad) + \
+                                                (int)fft.NTT_GF31 * GF31_DATA_SIZE(W,M,H,inplace,pad) + (int)fft.NTT_GF61 * GF61_DATA_SIZE(W,M,H,inplace,pad)

@@ -345,6 +345,22 @@ void OVERLOAD middleShuffleWrite(global T2 *out, T2 *u, u32 workgroupSize, u32 b
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
 }
 
+// Do an in-place 16x16 transpose during fftMiddleIn/Out
+void OVERLOAD middleShuffle(local T2 *lds, T2 *u) {
+  u32 me = get_local_id(0);
+  u32 y = me / 16;
+  u32 x = me % 16;
+
+  for (int i = 0; i < MIDDLE; ++i) {
+//    lds[x * 16 + y] = u[i];
+    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    bar();
+//    u[i] = lds[me];
+    u[i] = lds[y * 16 + x ^ y];
+    bar();
+  }
+}
+
 #endif
 
 
@@ -604,6 +620,20 @@ void OVERLOAD middleShuffleWrite(global F2 *out, F2 *u, u32 workgroupSize, u32 b
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
 }
 
+// Do an in-place 16x16 transpose during fftMiddleIn/Out
+void OVERLOAD middleShuffle(local F2 *lds, F2 *u) {
+  u32 me = get_local_id(0);
+  u32 y = me / 16;
+  u32 x = me % 16;
+  for (int i = 0; i < MIDDLE; ++i) {
+//    lds[x * 16 + y] = u[i];
+    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    bar();
+//    u[i] = lds[me];
+    u[i] = lds[y * 16 + x ^ y];
+    bar();
+  }
+}
 #endif
 
 
@@ -707,6 +737,21 @@ void OVERLOAD middleShuffleWrite(global GF31 *out, GF31 *u, u32 workgroupSize, u
   u32 me = get_local_id(0);
   out += (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
+}
+
+// Do an in-place 16x16 transpose during fftMiddleIn/Out
+void OVERLOAD middleShuffle(local GF31 *lds, GF31 *u) {
+  u32 me = get_local_id(0);
+  u32 y = me / 16;
+  u32 x = me % 16;
+  for (int i = 0; i < MIDDLE; ++i) {
+//    lds[x * 16 + y] = u[i];
+    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    bar();
+//    u[i] = lds[me];
+    u[i] = lds[y * 16 + x ^ y];
+    bar();
+  }
 }
 
 #endif
@@ -833,6 +878,21 @@ void OVERLOAD middleShuffleWrite(global GF61 *out, GF61 *u, u32 workgroupSize, u
   u32 me = get_local_id(0);
   out += (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
+}
+
+// Do an in-place 16x16 transpose during fftMiddleIn/Out
+void OVERLOAD middleShuffle(local GF61 *lds, GF61 *u) {
+  u32 me = get_local_id(0);
+  u32 y = me / 16;
+  u32 x = me % 16;
+  for (int i = 0; i < MIDDLE; ++i) {
+//    lds[x * 16 + y] = u[i];
+    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    bar();
+//    u[i] = lds[me];
+    u[i] = lds[y * 16 + x ^ y];
+    bar();
+  }
 }
 
 #endif

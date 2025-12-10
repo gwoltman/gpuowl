@@ -228,7 +228,7 @@ constexpr bool isInList(const string& s, initializer_list<string> list) {
 }
 
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u32 E, bool doLog,
-                 bool &tail_single_wide, bool &tail_single_kernel, u32 &pad_size) {
+                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -245,6 +245,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = 0, tail_single_kernel = 1;         // Default tailSquare is double-wide in one kernel
+  in_place = 0;                                         // Default is not in-place
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
   // Validate -use options
@@ -265,6 +266,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "CARRY64",
                               "BIGLIT",
                               "NONTEMPORAL",
+                              "INPLACE",
                               "PAD",
                               "MIDDLE_IN_LDS_TRANSPOSE",
                               "MIDDLE_OUT_LDS_TRANSPOSE",
@@ -290,6 +292,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
       if (atoi(v.c_str()) == 2) tail_single_wide = 0, tail_single_kernel = 1;
       if (atoi(v.c_str()) == 3) tail_single_wide = 0, tail_single_kernel = 0;
     }
+    if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "PAD") pad_size = atoi(v.c_str());
   }
 
@@ -348,7 +351,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   // The openCL code needs to know the offset to the data and trig values.  Distances are in "number of double2 values".
   if (fft.FFT_FP64 && fft.NTT_GF31) {
     // GF31 data is located after the FP64 data.  Compute size of the FP64 data and trigs.
-    defines += toDefine("DISTGF31",      FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTGF31",      FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
@@ -356,25 +359,25 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   else if (fft.FFT_FP32 && fft.NTT_GF31 && fft.NTT_GF61) {
     // GF31 and GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
     u32 sz1, sz2, sz3, sz4;
-    defines += toDefine("DISTGF31",      sz1 = FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTGF31",      sz1 = FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF31", sz2 = SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF31", sz3 = MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", sz4 = SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-    defines += toDefine("DISTGF61",      sz1 + GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTGF61",      sz1 + GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF61", sz2 + SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF61", sz3 + MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", sz4 + SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF31) {
     // GF31 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-    defines += toDefine("DISTGF31",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTGF31",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF61) {
     // GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-    defines += toDefine("DISTGF61",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTGF61",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF61", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
@@ -385,7 +388,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     defines += toDefine("DISTMTRIGGF31", 0);
     defines += toDefine("DISTHTRIGGF31", 0);
     // GF61 data is located after the GF31 data.  Compute size of the GF31 data and trigs.
-    defines += toDefine("DISTGF61",      GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, pad_size) / 2);
+    defines += toDefine("DISTGF61",      GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF61", SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
@@ -529,7 +532,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   nW(fft.shape.nW()),
   nH(fft.shape.nH()),
   useLongCarry{args.carry == Args::CARRY_LONG},
-  compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, pad_size)},
+  compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), queue, __VA_ARGS__)
 
@@ -630,9 +633,9 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
   BUF(bufROE, ROE_SIZE),
   BUF(bufStatsCarry, CARRY_SIZE),
 
-  BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, pad_size)),
-  BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, pad_size)),
-  BUF(buf3, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, pad_size)),
+  BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
+  BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
+  BUF(buf3, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
 #undef BUF
 
   statsBits{u32(args.value("STATS", 0))},
@@ -941,20 +944,30 @@ vector<u32> Gpu::readData() { return readAndCompress(bufData); }
 
 // out := inA * inB; inB is preserved
 void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, Buffer<double>& tmp2, bool mul3) {
-    fftP(tmp1, ioA);
-
+  if (!in_place) {
+    fftP(tmp2, ioA);
     for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-      fftMidIn(tmp2, tmp1, cache_group);
-      tailMul(tmp1, inB, tmp2, cache_group);
-      fftMidOut(tmp2, tmp1, cache_group);
-      fftW(tmp1, tmp2, cache_group);
+      fftMidIn(tmp1, tmp2, cache_group);
+      tailMul(tmp2, inB, tmp1, cache_group);
+      fftMidOut(tmp1, tmp2, cache_group);
+      fftW(tmp2, tmp1, cache_group);
     }
+  }
+  else {
+    fftP(tmp1, ioA);
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      fftMidIn(tmp1, tmp1, cache_group);
+      tailMul(tmp1, inB, tmp1, cache_group);
+      fftMidOut(tmp1, tmp1, cache_group);
+      fftW(tmp2, tmp1, cache_group);
+    }
+  }
 
-    // Register the current ROE pos as multiplication (vs. a squaring)
-    if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos); }
+  // Register the current ROE pos as multiplication (vs. a squaring)
+  if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos); }
 
-    if (mul3) { carryM(ioA, tmp1); } else { carryA(ioA, tmp1); }
-    carryB(ioA);
+  if (mul3) { carryM(ioA, tmp2); } else { carryA(ioA, tmp2); }
+  carryB(ioA);
 }
 
 void Gpu::mul(Buffer<Word>& io, Buffer<double>& buf1) {
@@ -964,13 +977,18 @@ void Gpu::mul(Buffer<Word>& io, Buffer<double>& buf1) {
 
 // out := inA * inB;
 void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3) {
-  modMul(ioA, LEAD_NONE, inB, mul3);
+  modMul(ioA, inB, LEAD_NONE, mul3);
 };
 
 // out := inA * inB; inB will end up in buf1 in the LEAD_MIDDLE state
-void Gpu::modMul(Buffer<Word>& ioA, enum LEAD_TYPE leadInB, Buffer<Word>& inB, bool mul3) {
-  if (leadInB == LEAD_NONE) fftP(buf2, inB);
-  if (leadInB != LEAD_MIDDLE) fftMidIn(buf1, buf2);
+void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, bool mul3) {
+  if (!in_place) {
+    if (leadInB == LEAD_NONE) fftP(buf2, inB);
+    if (leadInB != LEAD_MIDDLE) fftMidIn(buf1, buf2);
+  } else {
+    if (leadInB == LEAD_NONE) fftP(buf1, inB);
+    if (leadInB != LEAD_MIDDLE) fftMidIn(buf1, buf1);
+  }
   mul(ioA, buf1, buf2, buf3, mul3);
 };
 
@@ -1123,32 +1141,51 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
   if (exp == 0) {
     bufInOut.set(1);
   } else if (exp > 1) {
-    fftP(buf3, bufInOut);
-    fftMidIn(buf2, buf3);
+    if (!in_place) {
+      fftP(buf3, bufInOut);
+      fftMidIn(buf2, buf3);
+    } else {
+      fftP(buf2, bufInOut);
+      fftMidIn(buf2, buf2);
+    }
     fftHin(buf1, buf2); // save "base" to buf1
+    bool midInAlreadyDone = 1;
 
     int p = 63;
     while (!testBit(exp, p)) { --p; }
 
     for (--p; ; --p) {
       for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-        fftMidIn(buf2, buf3, cache_group);
-        tailSquare(buf3, buf2, cache_group);
-        fftMidOut(buf2, buf3, cache_group);
+        if (!in_place) {
+          if (!midInAlreadyDone) fftMidIn(buf2, buf3, cache_group);
+          tailSquare(buf3, buf2, cache_group);
+          fftMidOut(buf2, buf3, cache_group);
+        } else {
+          if (!midInAlreadyDone) fftMidIn(buf2, buf2, cache_group);
+          tailSquare(buf2, buf2, cache_group);
+          fftMidOut(buf2, buf2, cache_group);
+        }
       }
+      midInAlreadyDone = 0;
 
       if (testBit(exp, p)) {
-        doCarry(buf3, buf2);
+        doCarry(buf3, buf2, bufInOut);
         for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-          fftMidIn(buf2, buf3, cache_group);
-          tailMulLow(buf3, buf2, buf1, cache_group);
-          fftMidOut(buf2, buf3, cache_group);
+          if (!in_place) {
+            fftMidIn(buf2, buf3, cache_group);
+            tailMulLow(buf3, buf2, buf1, cache_group);
+            fftMidOut(buf2, buf3, cache_group);
+          } else {
+            fftMidIn(buf2, buf2, cache_group);
+            tailMulLow(buf2, buf2, buf1, cache_group);
+            fftMidOut(buf2, buf2, cache_group);
+          }
         }
       }
 
       if (!p) { break; }
 
-      doCarry(buf3, buf2);
+      doCarry(buf3, buf2, bufInOut);
     }
 
     fftW(buf3, buf2);
@@ -1158,30 +1195,63 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
 }
 
 // does either carryFused() or the expanded version depending on useLongCarry
-void Gpu::doCarry(Buffer<double>& out, Buffer<double>& in) {
-  if (useLongCarry) {
-    fftW(out, in);
-    carryA(in, out);
-    carryB(in);
-    fftP(out, in);
+void Gpu::doCarry(Buffer<double>& out, Buffer<double>& in, Buffer<Word>& tmp) {
+  if (!in_place) {
+    if (useLongCarry) {
+      fftW(out, in);
+      carryA(tmp, out);
+      carryB(tmp);
+      fftP(out, tmp);
+    } else {
+      carryFused(out, in);
+    }
   } else {
-    carryFused(out, in);
+    if (useLongCarry) {
+      fftW(out, in);
+      carryA(tmp, out);
+      carryB(tmp);
+      fftP(in, tmp);
+    } else {
+      carryFused(in, in);
+    }
   }
 }
 
+// Use buf1 and buf2 to do a single squaring.
 void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut, bool doMul3, bool doLL) {
   // leadOut = LEAD_MIDDLE is not supported (slower than LEAD_WIDTH)
   assert(leadOut != LEAD_MIDDLE);
   // LL does not do Mul3
   assert(!(doMul3 && doLL));
 
-  if (leadIn == LEAD_NONE) fftP(buf2, in);
+  // Not in place FFTs use buf1 and buf2 in a "ping pong" fashion.
+  // If leadIn is LEAD_NONE, in contains the input data, squaring starts at fftP
+  // If leadIn is LEAD_WIDTH, buf2 contains the input data, squaring starts at fftMidIn
+  // If leadIn is LEAD_MIDDLE, buf1 contains the input data, squaring starts at tailSquare
+  // If leadOut is LEAD_WIDTH, then will buf2 contain the output of carryFused -- to be used as input to the next squaring.
+  if (!in_place) {
+    if (leadIn == LEAD_NONE) fftP(buf2, in);
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf2, cache_group);
+      tailSquare(buf2, buf1, cache_group);
+      fftMidOut(buf1, buf2, cache_group);
+      if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
+    }
+  }
 
-  for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-    if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf2, cache_group);
-    tailSquare(buf2, buf1, cache_group);
-    fftMidOut(buf1, buf2, cache_group);
-    if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
+  // In place FFTs use buf1.
+  // If leadIn is LEAD_NONE, in contains the input data, squaring starts at fftP
+  // If leadIn is LEAD_WIDTH, buf1 contains the input data, squaring starts at fftMidIn
+  // If leadIn is LEAD_MIDDLE, buf1 contains the input data, squaring starts at tailSquare
+  // If leadOut is LEAD_WIDTH, then buf1 will contain the output of carryFused -- to be used as input to the next squaring.
+  else {
+    if (leadIn == LEAD_NONE) fftP(buf1, in);
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf1, cache_group);
+      tailSquare(buf1, buf1, cache_group);
+      fftMidOut(buf1, buf1, cache_group);
+      if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
+    }
   }
 
   // If leadOut is not allowed then we cannot use the faster carryFused kernel
@@ -1201,9 +1271,9 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
     assert(!useLongCarry);
     assert(!doMul3);
     if (doLL) {
-      carryFusedLL(buf2, buf1);
+      carryFusedLL(in_place ? buf1 : buf2, buf1);
     } else {
-      carryFused(buf2, buf1);
+      carryFused(in_place ? buf1 : buf2, buf1);
     }
   }
 }
@@ -1511,7 +1581,7 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
   }
 
   enum LEAD_TYPE leadIn = LEAD_NONE;
-  modMul(bufCheck, leadIn, bufData);
+  modMul(bufCheck, bufData, leadIn);
   leadIn = LEAD_MIDDLE;
 
   enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
@@ -1541,7 +1611,7 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
 
     if (k >= iters) { break; }
 
-    modMul(bufCheck, leadIn, bufData);
+    modMul(bufCheck, bufData, leadIn);
     leadIn = LEAD_MIDDLE;
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
@@ -1585,7 +1655,7 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
   }
 
   enum LEAD_TYPE leadIn = LEAD_NONE;
-  modMul(bufCheck, leadIn, bufData);
+  modMul(bufCheck, bufData, leadIn);
   leadIn = LEAD_MIDDLE;
 
   enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
@@ -1615,7 +1685,7 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
 
     if (k >= iters) { break; }
 
-    modMul(bufCheck, leadIn, bufData);
+    modMul(bufCheck, bufData, leadIn);
     leadIn = LEAD_MIDDLE;
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
@@ -1654,7 +1724,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   assert(dataResidue() == state.res64);
 
   enum LEAD_TYPE leadIn = LEAD_NONE;
-  modMul(bufCheck, leadIn, bufData);
+  modMul(bufCheck, bufData, leadIn);
   leadIn = LEAD_MIDDLE;
 
   enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
@@ -1684,7 +1754,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
 
     if (k >= iters) { break; }
 
-    modMul(bufCheck, leadIn, bufData);
+    modMul(bufCheck, bufData, leadIn);
     leadIn = LEAD_MIDDLE;
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
@@ -1771,7 +1841,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
     if (skipNextCheckUpdate) {
       skipNextCheckUpdate = false;
     } else if (k % blockSize == 0) {
-      modMul(bufCheck, leadIn, bufData);
+      modMul(bufCheck, bufData, leadIn);
       leadIn = LEAD_MIDDLE;
     }
 
