@@ -8,6 +8,7 @@
 #include "Worktodo.h"
 #include "Saver.h"
 #include "version.h"
+#include "Primes.h"
 #include "Proof.h"
 #include "log.h"
 #include "timeutil.h"
@@ -210,6 +211,20 @@ void Task::execute(GpuCommon shared, Queue *q, u32 instance) {
   if (kind == VERIFY) { exponent = proof::getInfo(verifyPath).exp; }
 
   assert(exponent);
+
+  // Testing exponent 140000001 using FFT 512:15:512 fails with severe round off errors.
+  // I'm guessing this is because bot the exponent and FFT size are divisible by 3.
+  // Here we make sure the exponent is prime.  If not we do not raise an error because it
+  // is very common to use command line argument "-prp some-random-exponent" to get a quick
+  // timing.  Instead, we output a warning and test a smaller prime exponent.
+  {
+    Primes primes;
+    if (!primes.isPrime(exponent)) {
+      u32 new_exponent = primes.prevPrime(exponent);
+      log("Warning: Exponent %u is not prime.  Using exponent %u instead.\n", exponent, new_exponent);
+      exponent = new_exponent;
+    }
+  }
 
   LogContext pushContext(std::to_string(exponent));
 
