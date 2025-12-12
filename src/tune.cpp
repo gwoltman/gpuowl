@@ -347,6 +347,7 @@ void Tune::tune() {
   bool tune_config = 1;
   bool time_FFTs = 0;
   bool time_NTTs = 0;
+  bool time_FP32 = 1;
   int quick = 7;                        // Run config from slowest (quick=1) to fastest (quick=10)
   u64 min_exponent = 75000000;
   u64 max_exponent = 350000000;
@@ -358,6 +359,7 @@ void Tune::tune() {
     if (s == "noconfig") tune_config = 0;
     if (s == "fp64") time_FFTs = 1;
     if (s == "ntt") time_NTTs = 1;
+    if (s == "nofp32") time_FP32 = 0;
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
       if (keyVal.front() == "quick") quick = stod(keyVal.back());
@@ -554,7 +556,7 @@ void Tune::tune() {
 
     // Find best INPLACE setting
     if (1) {
-      FFTConfig fft{*defaultShape, 101, CARRY_AUTO};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u32 exponent = primes.prevPrime(fft.maxExp());
       u32 best_inplace = 0;
       double best_cost = -1.0;
@@ -566,7 +568,7 @@ void Tune::tune() {
         if (inplace == current_inplace) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_inplace = inplace; }
       }
-      log("Best INPLACE is %u.  Default INPLACE is 0.  Best INPLACE setting may change when using larger FFTs.\n", best_inplace);
+      log("Best INPLACE is %u.  Default INPLACE is 0.  Best INPLACE setting may be different for other FFT lengths.\n", best_inplace);
       configsUpdate(current_cost, best_cost, 0.002, "INPLACE", best_inplace, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["INPLACE"] = to_string(best_inplace);
     }
@@ -676,7 +678,7 @@ void Tune::tune() {
     }
 
     // Find best TAIL_TRIGS32 setting
-    if (time_NTTs) {
+    if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
       u32 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
@@ -759,7 +761,7 @@ void Tune::tune() {
     }
 
     // Find best TABMUL_CHAIN32 setting
-    if (time_NTTs) {
+    if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
       u32 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
@@ -945,9 +947,10 @@ void Tune::tune() {
       config.write("\n  -log 1000000\n");
     }
     if (args->workers < 2) {
-      config.write("\n# Running two workers sometimes gives better throughput.");
-      config.write("\n# Changing TAIL_KERNELS to 3 with two workers may be better.");
-      config.write("\n#  -workers 2 -use TAIL_KERNELS=3\n");
+      config.write("\n# Running two workers sometimes gives better throughput.  Autoprimenet will need to create up a second worktodo file.");
+      config.write("\n#  -workers 2\n");
+      config.write("\n# Changing TAIL_KERNELS to 3 when running two workers may be better.");
+      config.write("\n#  -use TAIL_KERNELS=3\n");
     }
   }
 
@@ -981,6 +984,7 @@ skip_1K_256 = 0;
     // Skip some FFTs and NTTs
     if (shape.fft_type == FFT64 && !time_FFTs) continue;
     if (shape.fft_type != FFT64 && !time_NTTs) continue;
+    if ((shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231 || shape.fft_type == FFT32) && !time_FP32) continue;
 
     // Time an exponent that's good for all variants and carry-config.
     u32 exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
