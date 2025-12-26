@@ -86,7 +86,7 @@ void Args::readConfig(const fs::path& path) {
   }
 }
 
-u32 Args::getProofPow(u32 exponent) const {
+u32 Args::getProofPow(u64 exponent) const {
   if (proofPow == -1) { return ProofSet::bestPower(exponent); }
   assert(proofPow >= 1);
   return proofPow;
@@ -310,9 +310,9 @@ void Args::parse(const string& line) {
     } else if (key == "-tune") {
       doTune = true;
       if (!s.empty()) { tune = s; }
-    } else if (key == "-ctune") {
-      doCtune = true;
-      if (!s.empty()) { ctune.push_back(s); }
+//    } else if (key == "-ctune") {
+//      doCtune = true;
+//      if (!s.empty()) { ctune.push_back(s); }
     } else if (key == "-ztune") {
       doZtune = true;
     } else if (key == "-carryTune") {

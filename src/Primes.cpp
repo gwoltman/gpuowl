@@ -15,14 +15,14 @@ Primes::Primes() {
   }
 }
 
-bool Primes::isPrimeOdd(u32 n) const {
+bool Primes::isPrimeOdd(u64 n) const {
   assert(n % 2); // must be odd to call here
 
   if (n < 3) { return false; }
   for (u32 k = 0; k < sieve.size(); ++k) {
     if (sieve[k]) {
       u32 p = k * 2 + 3;
-      if (p * p > n) { return true; }
+      if (u64(p) * u64(p) > n) { return true; }
       if (n % p == 0) { return false; }
     }
   }
@@ -30,11 +30,11 @@ bool Primes::isPrimeOdd(u32 n) const {
   return false;
 }
 
-bool Primes::isPrime(u32 n) const {
+bool Primes::isPrime(u64 n) const {
   return (n%2 && isPrimeOdd(n)) || (n == 2);
 }
 
-u32 Primes::prevPrime(u32 n) const {
+u64 Primes::prevPrime(u64 n) const {
   --n;
   if (n % 2 == 0) { --n; }
 
@@ -43,7 +43,7 @@ u32 Primes::prevPrime(u32 n) const {
   return 0;
 }
 
-u32 Primes::nextPrime(u32 n) const {
+u64 Primes::nextPrime(u64 n) const {
   ++n;
   if (n % 2 == 0) { ++n; }
   for (; ; n += 2) { if (isPrimeOdd(n)) { return n; }}
@@ -51,10 +51,10 @@ u32 Primes::nextPrime(u32 n) const {
   return 0;
 }
 
-u32 Primes::nearestPrime(u32 n) const {
+u64 Primes::nearestPrime(u64 n) const {
   if (isPrime(n)) { return n; }
-  u32 a = prevPrime(n);
-  u32 b = nextPrime(n);
+  u64 a = prevPrime(n);
+  u64 b = nextPrime(n);
   assert(a < n && n < b);
   return n-a < b-n ? a : b;
 }

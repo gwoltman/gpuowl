@@ -167,11 +167,11 @@ optional<Task> getWork(Args& args, i32 instance) {
 std::optional<Task> Worktodo::getTask(Args &args, i32 instance) {
   if (instance == 0) {
     if (args.prpExp) {
-      u32 exp = args.prpExp;
+      u64 exp = args.prpExp;
       args.prpExp = 0;
       return Task{Task::PRP, exp};
     } else if (args.llExp) {
-      u32 exp = args.llExp;
+      u64 exp = args.llExp;
       args.llExp = 0;
       return Task{Task::LL, exp};
     } else if (!args.verifyPath.empty()) {

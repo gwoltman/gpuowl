@@ -173,7 +173,7 @@ printf ("Reguess bpw for %s is %.2f first Z22 is %.2f\n", fft.spec().c_str(), bp
 }
 
 float Tune::zForBpw(float bpw, FFTConfig fft, u32 count) {
-  u32 exponent = (count == 1) ? primes.prevPrime(fft.size() * bpw) : primes.nextPrime(fft.size() * bpw);
+  u64 exponent = (count == 1) ? primes.prevPrime(fft.size() * bpw) : primes.nextPrime(fft.size() * bpw);
   float total_z = 0.0;
   for (u32 i = 0; i < count; i++, exponent = primes.nextPrime (exponent + 1)) {
     auto [ok, res, roeSq, roeMul] = Gpu::make(q, exponent, shared, fft, {}, false)->measureROE(true);
@@ -249,7 +249,7 @@ void Tune::carryTune() {
     double m = 0;
     const float mid = fft.shape.carry32BPW();
     for (float bpw : {mid - 0.05, mid + 0.05}) {
-      u32 exponent = primes.nearestPrime(fft.size() * bpw);
+      u64 exponent = primes.nearestPrime(fft.size() * bpw);
       auto [ok, carry] = Gpu::make(q, exponent, shared, fft, {}, false)->measureCarry();
       m = carry.max;
       if (!ok) { log("Error %s at %f\n", fft.spec().c_str(), bpw); }
@@ -257,7 +257,7 @@ void Tune::carryTune() {
     }
 
     float avg = (zv[0] + zv[1]) / 2;
-    u32 exponent = fft.shape.carry32BPW() * fft.size();
+    u64 exponent = fft.shape.carry32BPW() * fft.size();
     double pErr100 = -expm1(-exp(-avg) * exponent * 100);
     log("%14s %.3f : %.3f (%.3f %.3f) %f %.0f%%\n", fft.spec().c_str(), mid, avg, zv[0], zv[1], m, pErr100 * 100);
     fo.printf("%f %f\n", log2(fft.size()), avg);
@@ -292,8 +292,8 @@ void Tune::ctune() {
 
   for (FFTShape shape : shapes) {
     FFTConfig fft{shape, 101, CARRY_32};
-    u32 exponent = primes.prevPrime(fft.maxExp());
-    // log("tuning %10s with exponent %u\n", fft.shape.spec().c_str(), exponent);
+    u64 exponent = primes.prevPrime(fft.maxExp());
+    // log("tuning %10s with exponent %" PRIu64 "\n", fft.shape.spec().c_str(), exponent);
 
     vector<int> bestPos(configsVect.size());
     Entry best{{1, 1, 1}, {}, 1e9};
@@ -448,7 +448,7 @@ void Tune::tune() {
     // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings
     if (1/*option to time IN/OUT settings*/) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_in_wg = 0;
       u32 best_in_sizex = 0;
       u32 current_in_wg = args->value("IN_WG", 128);
@@ -497,7 +497,7 @@ void Tune::tune() {
     // Find best PAD setting.  Default is 256 bytes for AMD, 0 for all others.
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_pad = 0;
       u32 current_pad = args->value("PAD", AMDGPU ? 256 : 0);
       double best_cost = -1.0;
@@ -517,7 +517,7 @@ void Tune::tune() {
     // Find best MIDDLE_IN_LDS_TRANSPOSE setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_in_lds_transpose = 0;
       u32 current_middle_in_lds_transpose = args->value("MIDDLE_IN_LDS_TRANSPOSE", 1);
       double best_cost = -1.0;
@@ -537,7 +537,7 @@ void Tune::tune() {
     // Find best MIDDLE_OUT_LDS_TRANSPOSE setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_out_lds_transpose = 0;
       u32 current_middle_out_lds_transpose = args->value("MIDDLE_OUT_LDS_TRANSPOSE", 1);
       double best_cost = -1.0;
@@ -557,7 +557,7 @@ void Tune::tune() {
     // Find best INPLACE setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_inplace = 0;
       double best_cost = -1.0;
       double current_cost = -1.0;
@@ -576,7 +576,7 @@ void Tune::tune() {
     // Find best NONTEMPORAL setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_nontemporal = 0;
       u32 current_nontemporal = args->value("NONTEMPORAL", 0);
       double best_cost = -1.0;
@@ -596,7 +596,7 @@ void Tune::tune() {
     // Find best FAST_BARRIER setting
     if (AMDGPU) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_fast_barrier = 0;
       u32 current_fast_barrier = args->value("FAST_BARRIER", 0);
       double best_cost = -1.0;
@@ -616,7 +616,7 @@ void Tune::tune() {
     // Find best TAIL_KERNELS setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_kernels = 0;
       u32 current_tail_kernels = args->value("TAIL_KERNELS", 2);
       double best_cost = -1.0;
@@ -639,7 +639,7 @@ void Tune::tune() {
     // Find best TAIL_TRIGS setting
     if (time_FFTs) {
       FFTConfig fft{defaultFFTShape, 101, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_trigs = 0;
       u32 current_tail_trigs = args->value("TAIL_TRIGS", 2);
       double best_cost = -1.0;
@@ -660,7 +660,7 @@ void Tune::tune() {
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_trigs = 0;
       u32 current_tail_trigs = args->value("TAIL_TRIGS31", 0);
       double best_cost = -1.0;
@@ -681,7 +681,7 @@ void Tune::tune() {
     if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
+      u64 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tail_trigs = 0;
       u32 current_tail_trigs = args->value("TAIL_TRIGS32", 2);
       double best_cost = -1.0;
@@ -702,7 +702,7 @@ void Tune::tune() {
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_trigs = 0;
       u32 current_tail_trigs = args->value("TAIL_TRIGS61", 0);
       double best_cost = -1.0;
@@ -722,7 +722,7 @@ void Tune::tune() {
     // Find best TABMUL_CHAIN setting
     if (time_FFTs) {
       FFTConfig fft{defaultFFTShape, 101, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
       u32 current_tabmul_chain = args->value("TABMUL_CHAIN", 0);
       double best_cost = -1.0;
@@ -743,7 +743,7 @@ void Tune::tune() {
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
       u32 current_tabmul_chain = args->value("TABMUL_CHAIN31", 0);
       double best_cost = -1.0;
@@ -764,7 +764,7 @@ void Tune::tune() {
     if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
+      u64 exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tabmul_chain = 0;
       u32 current_tabmul_chain = args->value("TABMUL_CHAIN32", 0);
       double best_cost = -1.0;
@@ -785,7 +785,7 @@ void Tune::tune() {
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
       u32 current_tabmul_chain = args->value("TABMUL_CHAIN61", 0);
       double best_cost = -1.0;
@@ -806,7 +806,7 @@ void Tune::tune() {
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_modm31 = 0;
       u32 current_modm31 = args->value("MODM31", 0);
       double best_cost = -1.0;
@@ -826,7 +826,7 @@ void Tune::tune() {
     // Find best UNROLL_W setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_w = 0;
       u32 current_unroll_w = args->value("UNROLL_W", AMDGPU ? 0 : 1);
       double best_cost = -1.0;
@@ -846,7 +846,7 @@ void Tune::tune() {
     // Find best UNROLL_H setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_h = 0;
       u32 current_unroll_h = args->value("UNROLL_H", AMDGPU && defaultShape->height >= 1024 ? 0 : 1);
       double best_cost = -1.0;
@@ -866,7 +866,7 @@ void Tune::tune() {
     // Find best ZEROHACK_W setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_zerohack_w = 0;
       u32 current_zerohack_w = args->value("ZEROHACK_W", 1);
       double best_cost = -1.0;
@@ -886,7 +886,7 @@ void Tune::tune() {
     // Find best ZEROHACK_H setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_zerohack_h = 0;
       u32 current_zerohack_h = args->value("ZEROHACK_H", 1);
       double best_cost = -1.0;
@@ -906,7 +906,7 @@ void Tune::tune() {
     // Find best BIGLIT setting
     if (time_FFTs) {
       FFTConfig fft{*defaultShape, 101, CARRY_AUTO};
-      u32 exponent = primes.prevPrime(fft.maxExp());
+      u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_biglit = 0;
       u32 current_biglit = args->value("BIGLIT", 1);
       double best_cost = -1.0;
@@ -987,7 +987,7 @@ skip_1K_256 = 0;
     if ((shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231 || shape.fft_type == FFT32) && !time_FP32) continue;
 
     // Time an exponent that's good for all variants and carry-config.
-    u32 exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
+    u64 exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
     u32 adjusted_quick = (exponent < 50000000) ? quick - 1 : (exponent < 170000000) ? quick : (exponent < 350000000) ? quick + 1 : quick + 2;
     if (adjusted_quick < 1) adjusted_quick = 1;
     if (adjusted_quick > 10) adjusted_quick = 10;

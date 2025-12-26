@@ -43,43 +43,43 @@ namespace {
 
 u32 kAt(u32 H, u32 line, u32 col) { return (line + col * H) * 2; }
 
-double weight(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+double weight(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2l((long double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
-double invWeight(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+double invWeight(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2l(-(long double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
-double weightM1(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+double weightM1(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2l((long double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
 }
 
-double invWeightM1(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+double invWeightM1(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2l(- (long double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
 }
 
 double boundUnderOne(double x) { return std::min(x, nexttoward(1, 0)); }
 
-float weight32(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float weight32(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2((double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
-float invWeight32(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float invWeight32(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2(-(double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
-float weightM132(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float weightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2((double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
 }
 
-float invWeightM132(u32 N, u32 E, u32 H, u32 line, u32 col, u32 rep) {
+float invWeightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2(- (double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
 }
 
 float boundUnderOne(float x) { return std::min(x, nexttowardf(1, 0)); }
 
-Weights genWeights(FFTConfig fft, u32 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
+Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
   u32 N = 2u * W * H;
   u32 groupWidth = W / nW;
 
@@ -227,7 +227,7 @@ constexpr bool isInList(const string& s, initializer_list<string> list) {
   return false;
 }
 
-string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u32 E, bool doLog,
+string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size) {
   map<string, string> config;
 
@@ -457,15 +457,15 @@ RoeInfo roeStat(const vector<float>& roe) {
 
 class IterationTimer {
   Timer timer;
-  u32 kStart;
+  u64 kStart;
 
 public:
-  explicit IterationTimer(u32 kStart) : kStart(kStart) { }
+  explicit IterationTimer(u64 kStart) : kStart(kStart) { }
 
-  float reset(u32 k) {
+  float reset(u64 k) {
     float secs = timer.reset();
 
-    u32 its = max(1u, k - kStart);
+    u64 its = max(u64(1), k - kStart);
     kStart = k;
     return secs / its;
   }
@@ -506,7 +506,7 @@ string toHex(const vector<u32>& v) {
 
 // --------
 
-unique_ptr<Gpu> Gpu::make(Queue* q, u32 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize) {
+unique_ptr<Gpu> Gpu::make(Queue* q, u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize) {
   return make_unique<Gpu>(q, shared, fftConfig, E, extraConf, logFftSize);
 }
 
@@ -518,7 +518,7 @@ Gpu::~Gpu() {
 #define ROE_SIZE 100000
 #define CARRY_SIZE 100000
 
-Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>& extraConf, bool logFftSize) :
+Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
   queue(q),
   background{shared.background},
   args{*shared.args},
@@ -649,7 +649,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>&
     // Sometimes we do want to run a FFT beyond a reasonable BPW (e.g. during -ztune), and these situations
     // coincide with logFftSize == false
     if (fft.maxExp() < E) {
-      log("Warning: %s (max %" PRIu64 ") may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
+      log("Warning: %s (max %" PRIu64 ") may be too small for %" PRIu64 "\n", fft.spec().c_str(), fft.maxExp(), E);
     }
   }
 
@@ -992,7 +992,7 @@ void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, b
   mul(ioA, buf1, buf2, buf3, mul3);
 };
 
-void Gpu::writeState(u32 k, const vector<u32>& check, u32 blockSize) {
+void Gpu::writeState(u64 k, const vector<u32>& check, u32 blockSize) {
   assert(blockSize > 0);
   writeIn(bufCheck, check);
 
@@ -1022,7 +1022,7 @@ void Gpu::writeState(u32 k, const vector<u32>& check, u32 blockSize) {
   }
   modMul(bufData, bufAux, true);
 }
-  
+
 bool Gpu::doCheck(u32 blockSize) {
   squareLoop(bufAux, bufCheck, 0, blockSize, true);
   modMul(bufCheck, bufData);
@@ -1278,10 +1278,10 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   }
 }
 
-u32 Gpu::squareLoop(Buffer<Word>& out, Buffer<Word>& in, u32 from, u32 to, bool doTailMul3) {
+u32 Gpu::squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3) {
   assert(from < to);
   enum LEAD_TYPE leadIn = LEAD_NONE;
-  for (u32 k = from; k < to; ++k) {
+  for (u64 k = from; k < to; ++k) {
     enum LEAD_TYPE leadOut = useLongCarry || (k == to - 1) ? LEAD_NONE : LEAD_WIDTH;
     square(out, (k==from) ? in : out, leadIn, leadOut, doTailMul3 && (k == to - 1));
     leadIn = leadOut;
@@ -1350,16 +1350,16 @@ string RoeInfo::toString() const {
   return buf;
 }
 
-static string makeLogStr(const string& status, u32 k, u64 res, float secsPerIt, u32 nIters) {
+static string makeLogStr(const string& status, u64 k, u64 res, float secsPerIt, u64 nIters) {
   char buf[256];
   
-  snprintf(buf, sizeof(buf), "%2s %9u %016" PRIx64 " %4.0f ETA %s; ",
+  snprintf(buf, sizeof(buf), "%2s %9" PRIu64 " %016" PRIx64 " %4.0f ETA %s; ",
            status.c_str(), k, res, /* k / float(nIters) * 100, */
            secsPerIt * 1'000'000, getETA(k, nIters, secsPerIt).c_str());
   return buf;
 }
 
-void Gpu::doBigLog(u32 k, u64 res, bool checkOK, float secsPerIt, u32 nIters, u32 nErrors) {
+void Gpu::doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors) {
   auto [roeSq, roeMul] = readROE();
   double z = roeSq.z();
   zAvg.update(z, roeSq.N);
@@ -1480,7 +1480,7 @@ static u32 mod3(const std::vector<u32> &words) {
   return r % 3;
 }
 
-static void doDiv3(u32 E, Words& words) {
+static void doDiv3(u64 E, Words& words) {
   u32 r = (3 - mod3(words)) % 3;
   assert(r < 3);
   int topBits = E % 32;
@@ -1497,7 +1497,7 @@ static void doDiv3(u32 E, Words& words) {
   }
 }
 
-void Gpu::doDiv9(u32 E, Words& words) {
+void Gpu::doDiv9(u64 E, Words& words) {
   doDiv3(E, words);
   doDiv3(E, words);
 }
@@ -1532,12 +1532,12 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
     u64 res = dataResidue();
 
     if (res == state.res64) {
-      log("OK %9u on-load: blockSize %d, %016" PRIx64 "\n", state.k, state.blockSize, res);
+      log("OK %9" PRIu64 " on-load: blockSize %d, %016" PRIx64 "\n", state.k, state.blockSize, res);
       return state;
       // return {loaded.k, loaded.blockSize, loaded.nErrors};
     }
 
-    log("EE %9u on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", state.k, res, state.res64);
+    log("EE %9" PRIu64 " on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", state.k, res, state.res64);
 
     if (!state.k) { break; }  // We failed on PRP start
   }
@@ -1545,7 +1545,7 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
   throw "Error on load";
 }
 
-u32 Gpu::getProofPower(u32 k) {
+u32 Gpu::getProofPower(u64 k) {
   u32 power = ProofSet::effectivePower(E, args.getProofPow(E), k);
 
   if (power != args.getProofPow(E)) {
@@ -1785,7 +1785,8 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
  reload:
   elapsedTimer.reset();
-  u32 blockSize{}, k{};
+  u32 blockSize{};
+  u64 k{};
   double elapsedBefore = 0;
 
   {
@@ -1814,28 +1815,28 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
   // For M=2^E-1, residue "type-3" == 3^(M+1), and residue "type-1" == type-3 / 9,
   // See http://www.mersenneforum.org/showpost.php?p=468378&postcount=209
   // For both type-1 and type-3 we need to do E squarings (as M+1==2^E).
-  const u32 kEnd = E;
+  const u64 kEnd = E;
   assert(k < kEnd);
 
   // We continue beyound kEnd: to the next multiple of blockSize, to do a check there
-  u32 kEndEnd = roundUp(kEnd, blockSize);
+  u64 kEndEnd = roundUp(kEnd, blockSize);
 
   bool skipNextCheckUpdate = false;
 
-  u32 persistK = proofSet.next(k);
+  u64 persistK = proofSet.next(k);
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
   assert(k % blockSize == 0);
   assert(checkStep % blockSize == 0);
 
-  const u32 startK = k;
+  const u64 startK = k;
   IterationTimer iterationTimer{k};
 
   wantROE = 0; // skip the initial iterations
 
   while (true) {
     assert(k < kEndEnd);
-    
+
     if (!wantROE && k - startK > 30) { wantROE = args.logROE ? ROE_SIZE : 2'000; }
 
     if (skipNextCheckUpdate) {
@@ -1876,7 +1877,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
       res2048.clear();
       assert(words.size() >= 64);
       res2048.insert(res2048.end(), words.begin(), std::next(words.begin(), 64));
-      log("%s %8d / %d, %s\n", isPrime ? "PP" : "CC", kEnd, E, hex(finalRes64).c_str());
+      log("%s %8" PRIu64 " / %" PRIu64 ", %s\n", isPrime ? "PP" : "CC", kEnd, E, hex(finalRes64).c_str());
     }
 
     if (!doCheck && !doLog) continue;
@@ -1888,7 +1889,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
     vector<Word> rawCheck = readChecked(bufCheck);
     if (rawCheck.empty()) {
       ++nErrors;
-      log("%9u %016" PRIx64 " read NULL check\n", k, res);
+      log("%9" PRIu64 " %016" PRIx64 " read NULL check\n", k, res);
       if (++nSeqErrors > 2) { throw "sequential errors"; }
       goto reload;
     }
@@ -1899,7 +1900,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
                                     elapsedBefore + elapsedTimer.at()});
       });
 
-      log("   %9u %016" PRIx64 " %4.0f\n", k, res, /*k / float(kEndEnd) * 100*,*/ secsPerIt * 1'000'000);
+      log("   %9" PRIu64 " %016" PRIx64 " %4.0f\n", k, res, /*k / float(kEndEnd) * 100*,*/ secsPerIt * 1'000'000);
       RoeInfo carryStats = readCarryStats();
       if (carryStats.N) {
         u32 m = ldexp(carryStats.max, 32);
@@ -1965,7 +1966,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
   reload:
   elapsedTimer.reset();
 
-  u32 startK = 0;
+  u64 startK = 0;
   double elapsedBefore = 0;
   {
     LLState state = saver.load();
@@ -1977,13 +1978,13 @@ LLResult Gpu::isPrimeLL(const Task& task) {
     u64 res = dataResidue();
     if (res != expectedRes) { throw "Invalid savefile (res64)"; }
     assert(res == expectedRes);
-    log("LL loaded @ %u : %016" PRIx64 "\n", startK, res);
+    log("LL loaded @ %" PRIu64 " : %016" PRIx64 "\n", startK, res);
   }
 
   IterationTimer iterationTimer{startK};
 
-  u32 k = startK;
-  u32 kEnd = E - 2;
+  u64 k = startK;
+  u64 kEnd = E - 2;
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
   while (true) {
@@ -2009,7 +2010,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
 
     if (isAllZero) {
       if (k < kEnd) {
-        log("Error: early ZERO @ %u\n", k);
+        log("Error: early ZERO @ %" PRIu64 "\n", k);
         if (doStop) {
           throw "stop requested";
         } else {
@@ -2025,7 +2026,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
 
     float secsPerIt = iterationTimer.reset(k);
     queue->setSquareTime((int) (secsPerIt * 1'000'000));
-    log("%9u %016" PRIx64 " %4.0f\n", k, res64, secsPerIt * 1'000'000);
+    log("%9" PRIu64 " %016" PRIx64 " %4.0f\n", k, res64, secsPerIt * 1'000'000);
 
     if (k >= kEnd) { return {isAllZero, res64}; }
 
@@ -2039,13 +2040,13 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
   // Get CERT start value
   char fname[32];
-  sprintf(fname, "M%u.cert", E);
+  sprintf(fname, "M%" PRIu64 ".cert", E);
 
 // Autoprimenet.py does not add the cert entry to worktodo.txt until it has successfully downloaded the .cert file.
 
   { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
     File fi = File::openReadThrow(fname);
-    u32 nBytes = (E - 1) / 8 + 1;
+    u32 nBytes = u32((E - 1) / 8 + 1);
     Words B = fi.readBytesLE(nBytes);
     writeIn(bufData, std::move(B));
   }

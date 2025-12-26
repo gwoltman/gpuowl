@@ -93,7 +93,7 @@ public:
 private:
   std::unique_ptr<Saver<PRPState>> saver;
 
-  u32 E;
+  u64 E;
   u32 N;
 
   FFTConfig fft;
@@ -250,8 +250,8 @@ private:
   void squareCERT(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, false); }
   void squareLL(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, true); }
 
-  u32 squareLoop(Buffer<Word>& out, Buffer<Word>& in, u32 from, u32 to, bool doTailMul3);
-  u32 squareLoop(Buffer<Word>& io, u32 from, u32 to) { return squareLoop(io, io, from, to, false); }
+  u32 squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3);
+  u32 squareLoop(Buffer<Word>& io, u64 from, u64 to) { return squareLoop(io, io, from, to, false); }
 
   bool isEqual(Buffer<Word>& bufCheck, Buffer<Word>& bufAux);
   u64 bufResidue(Buffer<Word>& buf);
@@ -260,7 +260,7 @@ private:
   
   void exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Buffer<double>& buf2, Buffer<double>& buf3);
 
-  void writeState(u32 k, const vector<u32>& check, u32 blockSize);
+  void writeState(u64 k, const vector<u32>& check, u32 blockSize);
 
   // does either carrryFused() or the expanded version depending on useLongCarry
   void doCarry(Buffer<double>& out, Buffer<double>& in, Buffer<Word>& tmp);
@@ -283,13 +283,13 @@ private:
 
   // void measureTransferSpeed();
 
-  static void doDiv9(u32 E, Words& words);
+  static void doDiv9(u64 E, Words& words);
   static bool equals9(const Words& words);
   void selftestTrig();
 
 public:
-  Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u32 E, const vector<KeyVal>& extraConf, bool logFftSize);
-  static unique_ptr<Gpu> make(Queue* q, u32 E, GpuCommon shared, FFTConfig fft,
+  Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize);
+  static unique_ptr<Gpu> make(Queue* q, u64 E, GpuCommon shared, FFTConfig fft,
                               const vector<KeyVal>& extraConf = {}, bool logFftSize = true);
 
   ~Gpu();
@@ -337,8 +337,8 @@ public:
   void clear(bool isPRP);
 
 private:
-  u32 getProofPower(u32 k);
-  void doBigLog(u32 k, u64 res, bool checkOK, float secsPerIt, u32 nIters, u32 nErrors);
+  u32 getProofPower(u64 k);
+  void doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors);
 };
 
 // Compute the size of an FFT/NTT data buffer depending on the FFT/NTT float/prime.  Size is returned in units of sizeof(double).

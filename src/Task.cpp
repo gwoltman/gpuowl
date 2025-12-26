@@ -103,7 +103,9 @@ string json(const vector<string>& v) {
 }
 
 string json(const string& s) { return '"' + s + '"'; }
+string json(int x) { return to_string(x); }
 string json(u32 x) { return to_string(x); }
+string json(u64 x) { return to_string(x); }
 
 template<typename T> string json(const string& key, const T& value) { return json(key) + ':' + json(value); }
 
@@ -112,7 +114,7 @@ string maybe(const string& key, const string& value) { return value.empty() ? ""
 template<typename T> void operator+=(vector<T>& a, const vector<T>& b) { a.insert(a.end(), b.begin(), b.end()); }
 
 
-vector<string> commonFields(u32 E, const char *worktype, const string &status) {
+vector<string> commonFields(u64 E, const char *worktype, const string &status) {
   return {
     json("status", status),
     json("exponent", E),
@@ -140,7 +142,7 @@ vector<string> tailFields(const std::string &AID, const Args &args) {
   };
 }
 
-void writeResult(u32 instance, u32 E, const char *workType, const string &status, const std::string &AID, const Args &args,
+void writeResult(u32 instance, u64 E, const char *workType, const string &status, const std::string &AID, const Args &args,
                  const vector<string>& extras) {
   fs::path resultsFile = "results-" + to_string(instance) + ".txt";
   vector<string> fields = commonFields(E, workType, status);
@@ -220,8 +222,8 @@ void Task::execute(GpuCommon shared, Queue *q, u32 instance) {
   {
     Primes primes;
     if (!primes.isPrime(exponent)) {
-      u32 new_exponent = primes.prevPrime(exponent);
-      log("Warning: Exponent %u is not prime.  Using exponent %u instead.\n", exponent, new_exponent);
+      u64 new_exponent = primes.prevPrime(exponent);
+      log("Warning: Exponent %" PRIu64 " is not prime.  Using exponent %" PRIu64 " instead.\n", exponent, new_exponent);
       exponent = new_exponent;
     }
   }
@@ -253,7 +255,7 @@ void Task::execute(GpuCommon shared, Queue *q, u32 instance) {
     Worktodo::deleteTask(*this, instance);
 
     if (isPrime) {
-      log("%u is PRIME!\n", exponent);
+      log("%" PRIu64 " is PRIME!\n", exponent);
     } else if (shared.args->clean) {
       gpu->clear(kind == PRP);
     }

@@ -182,7 +182,7 @@ if (18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())) > 19.0) return 19.0;
   return 18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size()));
 }
 
-bool FFTShape::needsLargeCarry(u32 E) const {
+bool FFTShape::needsLargeCarry(u64 E) const {
   return E / double(size()) > carry32BPW();
 }
 
@@ -271,12 +271,12 @@ float FFTConfig::maxBpw() const {
   return (carry == CARRY_32 && (shape.fft_type == FFT64 || shape.fft_type == FFT3231)) ? std::min(shape.carry32BPW(), b) : b;
 }
 
-FFTConfig FFTConfig::bestFit(const Args& args, u32 E, const string& spec) {
+FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
   // A FFT-spec was given, simply take the first FFT from the spec that can handle E
   if (!spec.empty()) {
     FFTConfig fft{spec};
     if (fft.maxExp() * args.fftOverdrive < E) {
-      log("Warning: %s (max %" PRIu64 ") may be too small for %u\n", fft.spec().c_str(), fft.maxExp(), E);
+      log("Warning: %s (max %" PRIu64 ") may be too small for %" PRIu64 "\n", fft.spec().c_str(), fft.maxExp(), E);
     }
     return fft;
   }
@@ -288,7 +288,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u32 E, const string& spec) {
     if (E <= e.fft.maxExp() * args.fftOverdrive) { return e.fft; }
   }
 
-  log("No FFTs found in tune.txt that can handle %u. Consider tuning with -tune\n", E);
+  log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);
 
   // Take the first FFT that can handle E
   for (const FFTShape& shape : FFTShape::allShapes()) {
@@ -297,7 +297,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u32 E, const string& spec) {
     }
   }
 
-  log("No FFT found for %u\n", E);
+  log("No FFT found for %" PRIu64 "\n", E);
   throw "No FFT";
 }
 

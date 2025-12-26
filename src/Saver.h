@@ -13,8 +13,8 @@ class SaveMan;
 struct PRPState {
   static const constexpr char* KIND = "prp";
 
-  u32 exponent;
-  u32 k;
+  u64 exponent;
+  u64 k;
   u32 blockSize;
   u64 res64;
   vector<u32> check;
@@ -25,15 +25,15 @@ struct PRPState {
 struct LLState {
   static const constexpr char* KIND = "ll";
 
-  u32 exponent;
-  u32 k;
+  u64 exponent;
+  u64 k;
   vector<u32> data;
   double elapsed{};
 };
 
 template<typename State>
 class Saver {
-  u32 exponent;
+  u64 exponent;
   u32 blockSize;
   fs::path base;
   string prefix;
@@ -45,7 +45,7 @@ class Saver {
   fs::path mostRecentSavefile();
 
 public:
-  Saver(u32 exponent, u32 blockSize, u32 nSavefiles);
+  Saver(u64 exponent, u32 blockSize, u32 nSavefiles);
   ~Saver();
 
   State load();
@@ -53,7 +53,7 @@ public:
 
   void dropMostRecent();
 
-  static void clear(u32 exponent);
+  static void clear(u64 exponent);
 
   // For PRP, we can save a verified save (see save() above) or an unverified save.
   void saveUnverified(const PRPState& s) const;
