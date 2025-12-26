@@ -348,6 +348,7 @@ void Tune::tune() {
   bool time_FFTs = 0;
   bool time_NTTs = 0;
   bool time_FP32 = 1;
+  bool time_inplace_only = 0;
   int quick = 7;                        // Run config from slowest (quick=1) to fastest (quick=10)
   u64 min_exponent = 75000000;
   u64 max_exponent = 350000000;
@@ -360,6 +361,7 @@ void Tune::tune() {
     if (s == "fp64") time_FFTs = 1;
     if (s == "ntt") time_NTTs = 1;
     if (s == "nofp32") time_FP32 = 0;
+    if (s == "inplace") time_inplace_only = 1;
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
       if (keyVal.front() == "quick") quick = stod(keyVal.back());
@@ -446,7 +448,7 @@ void Tune::tune() {
     args->flags["INPLACE"] = to_string(0);
 
     // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings
-    if (1/*option to time IN/OUT settings*/) {
+    if (!time_inplace_only) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_in_wg = 0;
@@ -495,7 +497,7 @@ void Tune::tune() {
     }
 
     // Find best PAD setting.  Default is 256 bytes for AMD, 0 for all others.
-    if (1) {
+    if (!time_inplace_only) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_pad = 0;
@@ -515,7 +517,7 @@ void Tune::tune() {
     }
 
     // Find best MIDDLE_IN_LDS_TRANSPOSE setting
-    if (1) {
+    if (!time_inplace_only) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_in_lds_transpose = 0;
@@ -535,7 +537,7 @@ void Tune::tune() {
     }
 
     // Find best MIDDLE_OUT_LDS_TRANSPOSE setting
-    if (1) {
+    if (!time_inplace_only) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_out_lds_transpose = 0;
@@ -554,8 +556,13 @@ void Tune::tune() {
       args->flags["MIDDLE_OUT_LDS_TRANSPOSE"] = to_string(best_middle_out_lds_transpose);
     }
 
+    // If only timing INPLACE=1 options, then set INPLACE
+    if (time_inplace_only) {
+      args->flags["INPLACE"] = to_string(1);
+      newConfigKeyVals.push_back({"INPLACE", 1});
+    }
     // Find best INPLACE setting
-    if (1) {
+    else {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_inplace = 0;
@@ -905,7 +912,7 @@ void Tune::tune() {
 
     // Find best BIGLIT setting
     if (time_FFTs) {
-      FFTConfig fft{*defaultShape, 101, CARRY_AUTO};
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_biglit = 0;
       u32 current_biglit = args->value("BIGLIT", 1);
