@@ -114,7 +114,7 @@ optional<Task> getWork(Args& args, i32 instance) {
   // Try to get a task from the local worktodo-<N> file.
   if (optional<Task> task = bestTask(localWork, args.smallest)) { return task; }
 
-  if (args.masterDir.empty()) { return {}; }
+  if (args.masterDir.empty()) { log("No work to do found.  Add work to %s.\n", localWork.c_str()); return {}; }
 
   fs::path worktodo = args.masterDir / "worktodo.txt";
 
