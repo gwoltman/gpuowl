@@ -2086,7 +2086,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
     float secsPerIt = iterationTimer.reset(k);
     queue->setSquareTime((int) (secsPerIt * 1'000'000));
-    log("%9u %016" PRIx64 " %4.0f\n", k, res64, secsPerIt * 1'000'000);
+    log("%7u / %7u %016" PRIx64 " %4.0f ETA %s\n", k, kEnd, res64, secsPerIt * 1'000'000, getETA(k, kEnd, secsPerIt).c_str());
 
     if (k >= kEnd) {
       fs::remove (fname);
