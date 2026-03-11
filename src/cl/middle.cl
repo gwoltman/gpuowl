@@ -54,13 +54,13 @@
 //      u[i]      i ranges 0...MIDDLE-1 (multiples of SMALL_HEIGHT)
 //      y         ranges 0...SMALL_HEIGHT-1 (multiples of one)
 
-void OVERLOAD writeCarryFusedLine(T2 *u, P(T2) out, u32 line) {
+void OVERLOAD writeCarryFusedLine(T2 *u, P(T2) out, u32 line, u32 me) {
 #if PAD_SIZE > 0
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
-  out += line * WIDTH + line * PAD_SIZE + line / SMALL_HEIGHT * BIG_PAD_SIZE + (u32) get_local_id(0); // One pad every line + a big pad every SMALL_HEIGHT lines
+  out += line * WIDTH + line * PAD_SIZE + line / SMALL_HEIGHT * BIG_PAD_SIZE + me; // One pad every line + a big pad every SMALL_HEIGHT lines
   for (u32 i = 0; i < NW; ++i) { NTSTORE(out[i * G_W], u[i]); }
 #else
-  out += line * WIDTH + (u32) get_local_id(0);
+  out += line * WIDTH + me;
   for (u32 i = 0; i < NW; ++i) { NTSTORE(out[i * G_W], u[i]); }
 #endif
 }
@@ -311,8 +311,7 @@ void OVERLOAD writeMiddleOutLine (P(T2) out, T2 *u, u32 chunk_y, u32 chunk_x)
 }
 
 // Read a line for carryFused or FFTW.  This line was written by writeMiddleOutLine above.
-void OVERLOAD readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
-  u32 me = get_local_id(0);
+void OVERLOAD readCarryFusedLine(CP(T2) in, T2 *u, u32 line, u32 me) {
   u32 SIZEY = OUT_WG / OUT_SIZEX;
 
 #if PAD_SIZE > 0
@@ -381,13 +380,13 @@ void OVERLOAD readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
 
 #if FFT_FP32 || NTT_GF31
 
-void OVERLOAD writeCarryFusedLine(F2 *u, P(F2) out, u32 line) {
+void OVERLOAD writeCarryFusedLine(F2 *u, P(F2) out, u32 line, u32 me) {
 #if PAD_SIZE > 0
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
-  out += line * WIDTH + line * PAD_SIZE + line / SMALL_HEIGHT * BIG_PAD_SIZE + (u32) get_local_id(0); // One pad every line + a big pad every SMALL_HEIGHT lines
+  out += line * WIDTH + line * PAD_SIZE + line / SMALL_HEIGHT * BIG_PAD_SIZE + me; // One pad every line + a big pad every SMALL_HEIGHT lines
   for (u32 i = 0; i < NW; ++i) { NTSTORE(out[i * G_W], u[i]); }
 #else
-  out += line * WIDTH + (u32) get_local_id(0);
+  out += line * WIDTH + me;
   for (u32 i = 0; i < NW; ++i) { NTSTORE(out[i * G_W], u[i]); }
 #endif
 }
@@ -537,8 +536,7 @@ void OVERLOAD writeMiddleOutLine (P(F2) out, F2 *u, u32 chunk_y, u32 chunk_x)
 #endif
 }
 
-void OVERLOAD readCarryFusedLine(CP(F2) in, F2 *u, u32 line) {
-  u32 me = get_local_id(0);
+void OVERLOAD readCarryFusedLine(CP(F2) in, F2 *u, u32 line, u32 me) {
   u32 SIZEY = OUT_WG / OUT_SIZEX;
 #if PAD_SIZE > 0
   // Adjust in pointer based on the x value used in writeMiddleOutLine
@@ -595,8 +593,8 @@ void OVERLOAD readCarryFusedLine(CP(F2) in, F2 *u, u32 line) {
 
 // Since F2 and GF31 are the same size we can simply call the floats based code
 
-void OVERLOAD writeCarryFusedLine(GF31 *u, P(GF31) out, u32 line) {
-  writeCarryFusedLine((F2 *) u, (P(F2)) out, line);
+void OVERLOAD writeCarryFusedLine(GF31 *u, P(GF31) out, u32 line, u32 me) {
+  writeCarryFusedLine((F2 *) u, (P(F2)) out, line, me);
 }
 
 void OVERLOAD readMiddleInLine(GF31 *u, CP(GF31) in, u32 y, u32 x) {
@@ -623,8 +621,8 @@ void OVERLOAD writeMiddleOutLine (P(GF31) out, GF31 *u, u32 chunk_y, u32 chunk_x
   writeMiddleOutLine ((P(F2)) out, (F2 *) u, chunk_y, chunk_x);
 }
 
-void OVERLOAD readCarryFusedLine(CP(GF31) in, GF31 *u, u32 line) {
-  readCarryFusedLine((CP(F2)) in, (F2 *) u, line);
+void OVERLOAD readCarryFusedLine(CP(GF31) in, GF31 *u, u32 line, u32 me) {
+  readCarryFusedLine((CP(F2)) in, (F2 *) u, line, me);
 }
 
 #endif
@@ -638,8 +636,8 @@ void OVERLOAD readCarryFusedLine(CP(GF31) in, GF31 *u, u32 line) {
 
 // Since T2 and GF61 are the same size we can simply call the doubles based code
 
-void OVERLOAD writeCarryFusedLine(GF61 *u, P(GF61) out, u32 line) {
-  writeCarryFusedLine((T2 *) u, (P(T2)) out, line);
+void OVERLOAD writeCarryFusedLine(GF61 *u, P(GF61) out, u32 line, u32 me) {
+  writeCarryFusedLine((T2 *) u, (P(T2)) out, line, me);
 }
 
 void OVERLOAD readMiddleInLine(GF61 *u, CP(GF61) in, u32 y, u32 x) {
@@ -666,8 +664,8 @@ void OVERLOAD writeMiddleOutLine (P(GF61) out, GF61 *u, u32 chunk_y, u32 chunk_x
   writeMiddleOutLine ((P(T2)) out, (T2 *) u, chunk_y, chunk_x);
 }
 
-void OVERLOAD readCarryFusedLine(CP(GF61) in, GF61 *u, u32 line) {
-  readCarryFusedLine((CP(T2)) in, (T2 *) u, line);
+void OVERLOAD readCarryFusedLine(CP(GF61) in, GF61 *u, u32 line, u32 me) {
+  readCarryFusedLine((CP(T2)) in, (T2 *) u, line, me);
 }
 
 #endif
@@ -778,8 +776,7 @@ void OVERLOAD readCarryFusedLine(CP(GF61) in, GF61 *u, u32 line) {
 //      line      ranges 0...BIG_HEIGHT-1 (multiples of one)
 
 // Read a line for carryFused or FFTW.  This line was written by writeMiddleOutLine above.
-void OVERLOAD readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
-  u32 me = get_local_id(0);             // Multiples of BIG_HEIGHT
+void OVERLOAD readCarryFusedLine(CP(T2) in, T2 *u, u32 line, u32 me) {
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
   in += (me / 16 * SIZEW) + (middle * SIZEM) + (line % 16 * SIZEBLK) + SWIZ(line % 16, line / 16) * 16 + (me % 16);
@@ -787,8 +784,7 @@ void OVERLOAD readCarryFusedLine(CP(T2) in, T2 *u, u32 line) {
 }
 
 // Write a line from carryFused.  This data will be read by fftMiddleIn.
-void OVERLOAD writeCarryFusedLine(T2 *u, P(T2) out, u32 line) {
-  u32 me = get_local_id(0);             // Multiples of BIG_HEIGHT
+void OVERLOAD writeCarryFusedLine(T2 *u, P(T2) out, u32 line, u32 me) {  // me is multiples of BIG_HEIGHT
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
   out += (me / 16 * SIZEW) + (middle * SIZEM) + (line % 16 * SIZEBLK) + SWIZ(line % 16, line / 16) * 16 + (me % 16);
@@ -899,8 +895,7 @@ void OVERLOAD writeMiddleOutLine (P(T2) out, T2 *u, u32 y, u32 x)
 //      line      ranges 0...BIG_HEIGHT-1 (multiples of one)
 
 // Read a line for carryFused or FFTW.  This line was written by writeMiddleOutLine above.
-void OVERLOAD readCarryFusedLine(CP(F2) in, F2 *u, u32 line) {
-  u32 me = get_local_id(0);             // Multiples of BIG_HEIGHT
+void OVERLOAD readCarryFusedLine(CP(F2) in, F2 *u, u32 line, u32 me) {
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
   in += (me / 16 * SIZEW32) + (middle * SIZEM32) + (line % 16 * SIZEBLK32) + SWIZ32(line % 16, line / 16) * 16 + (me % 16);
@@ -908,8 +903,7 @@ void OVERLOAD readCarryFusedLine(CP(F2) in, F2 *u, u32 line) {
 }
 
 // Write a line from carryFused.  This data will be read by fftMiddleIn.
-void OVERLOAD writeCarryFusedLine(F2 *u, P(F2) out, u32 line) {
-  u32 me = get_local_id(0);             // Multiples of BIG_HEIGHT
+void OVERLOAD writeCarryFusedLine(F2 *u, P(F2) out, u32 line, u32 me) {   // me is multiples of BIG_HEIGHT
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
   out += (me / 16 * SIZEW32) + (middle * SIZEM32) + (line % 16 * SIZEBLK32) + SWIZ32(line % 16, line / 16) * 16 + (me % 16);
@@ -990,12 +984,12 @@ void OVERLOAD writeMiddleOutLine (P(F2) out, F2 *u, u32 y, u32 x)
 
 // Since F2 and GF31 are the same size we can simply call the floats based code
 
-void OVERLOAD readCarryFusedLine(CP(GF31) in, GF31 *u, u32 line) {
-  readCarryFusedLine((CP(F2)) in, (F2 *) u, line);
+void OVERLOAD readCarryFusedLine(CP(GF31) in, GF31 *u, u32 line, u32 me) {
+  readCarryFusedLine((CP(F2)) in, (F2 *) u, line, me);
 }
 
-void OVERLOAD writeCarryFusedLine(GF31 *u, P(GF31) out, u32 line) {
-  writeCarryFusedLine((F2 *) u, (P(F2)) out, line);
+void OVERLOAD writeCarryFusedLine(GF31 *u, P(GF31) out, u32 line, u32 me) {
+  writeCarryFusedLine((F2 *) u, (P(F2)) out, line, me);
 }
 
 void OVERLOAD readMiddleInLine(GF31 *u, CP(GF31) in, u32 y, u32 x) {
@@ -1033,12 +1027,12 @@ void OVERLOAD writeMiddleOutLine (P(GF31) out, GF31 *u, u32 y, u32 x) {
 
 // Since T2 and GF61 are the same size we can simply call the doubles based code
 
-void OVERLOAD readCarryFusedLine(CP(GF61) in, GF61 *u, u32 line) {
-  readCarryFusedLine((CP(T2)) in, (T2 *) u, line);
+void OVERLOAD readCarryFusedLine(CP(GF61) in, GF61 *u, u32 line, u32 me) {
+  readCarryFusedLine((CP(T2)) in, (T2 *) u, line, me);
 }
 
-void OVERLOAD writeCarryFusedLine(GF61 *u, P(GF61) out, u32 line) {
-  writeCarryFusedLine((T2 *) u, (P(T2)) out, line);
+void OVERLOAD writeCarryFusedLine(GF61 *u, P(GF61) out, u32 line, u32 me) {
+  writeCarryFusedLine((T2 *) u, (P(T2)) out, line, me);
 }
 
 void OVERLOAD readMiddleInLine(GF61 *u, CP(GF61) in, u32 y, u32 x) {

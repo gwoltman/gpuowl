@@ -58,6 +58,13 @@ G_H        "group height" == SMALL_HEIGHT / NH
 //__builtin_assume(condition)
 #endif // DEBUG
 
+#ifndef AMDGPU
+#define AMDGPU 0
+#endif
+#ifndef NVIDIAGPU
+#define NVIDIAGPU 0
+#endif
+
 #if NO_ASM
 #define HAS_ASM 0
 #define HAS_PTX 0
@@ -128,8 +135,14 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #endif
 #endif
 
-#if !defined(BIGLIT)
-#define BIGLIT 1
+// Shufl width in bytes (can be 4, 8, or 16).  See fftbase.cl.  Allow different shufl widths for fft_width and fft_height.
+// Default is 8 bytes (one double).  Historically best for Radeon VII and TitanV.  This setting will affect how much LDS
+// memory is needed which in turn may affect occupancy and thus performance.
+#if !defined(SHUFL_BYTES_W)
+#define SHUFL_BYTES_W 8
+#endif
+#if !defined(SHUFL_BYTES_H)
+#define SHUFL_BYTES_H 8
 #endif
 
 #if !defined(TABMUL_CHAIN)
@@ -259,6 +272,42 @@ ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 #define NTSTORE(mem,val)   (mem) = val
 #endif
 
+// Routines for storing to L2 cache bypassing L1 cache.
+void OVERLOAD L2STORE(i64 *mem, i64 val) {
+#if ENABLE_L2STORE && HAS_PTX >= 200        // Cache hints requires sm_20 support or higher
+  __asm("st.global.cg.b64  [%0], %1;" : : "l"(mem), "l"(val));
+#else
+  *mem = val;
+#endif
+}
+void OVERLOAD L2STORE(i32 *mem, i32 val) {
+#if ENABLE_L2STORE && HAS_PTX >= 200        // Cache hints requires sm_20 support or higher
+  __asm("st.global.cg.b32  [%0], %1;" : : "l"(mem), "r"(val));
+#else
+  *mem = val;
+#endif
+}
+
+// Routines for loading a value and marking it for "last use".
+i64 OVERLOAD LULOAD(i64 *mem) {
+#if ENABLE_LULOAD && HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
+  i64 retval;
+  __asm("ld.global.lu.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
+  return retval;
+#else
+  return *mem;
+#endif
+}
+i32 OVERLOAD LULOAD(i32 *mem) {
+#if ENABLE_LULOAD && HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
+  i32 retval;
+  __asm("ld.global.lu.b32  %0, [%1];" : "=r"(retval) : "l"(mem));
+  return retval;
+#else
+  return *mem;
+#endif
+}
+
 // Prefetch macros.  Unused at present, I tried using them in fftMiddleInGF61 on a 5080 with no benefit.
 void PREFETCHL1(const __global void *addr) {
 #if HAS_PTX >= 200         // Prefetch instruction requires sm_20 support or higher
@@ -371,7 +420,15 @@ void OVERLOAD bar(void) {
 #endif
 }
 
-void OVERLOAD bar(u32 WG) { if (WG > WAVEFRONT) { bar(); } }
+void OVERLOAD bar(const u32 WG) {
+  if (WG > WAVEFRONT) {
+#if ENABLE_BARSYNC && HAS_PTX >= 200         // bar.sync with thread count requires sm_20 support or higher.  Slower on TitanV, need to try on later nVidia GPUs.
+    __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
+#else
+    bar();
+#endif
+  }
+}
 
 // A half-barrier is only needed when half-a-workgroup needs a barrier.
 // This is used e.g. by the double-wide tailSquare, where LDS is split between the halves.

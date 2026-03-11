@@ -35,76 +35,43 @@ void OVERLOAD fft_NH(T2 *u) {
 #error FFT_VARIANT_H == 0 only supported by AMD GPUs
 #endif
 
-void OVERLOAD fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
-  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
-    if (s > 1) { bar(); }
-    fft_NH(u);
-    w = bcast(w, s);
-
-    chainMul(NH, u, w, 1);
-
-    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
-  }
-  fft_NH(u);
-}
-
-void OVERLOAD fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
+void OVERLOAD fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, const u32 sb, u32 lowMe) {
   u32 WG = SMALL_HEIGHT / NH;
-  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
-    if (s > 1) { bar(WG); }
+  for (u32 s = 1; s < WG; s *= NH) {
     fft_NH(u);
     w = bcast(w, s);
 
     chainMul(NH, u, w, 1);
 
-    shufl2(SMALL_HEIGHT / NH, lds,  u, NH, s);
+    shufl(WG, lds,  u, NH, s, numWG, sb, lowMe);
   }
   fft_NH(u);
 }
 
 #else
 
-void OVERLOAD fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w) {
-  u32 me = get_local_id(0);
-
-#if !UNROLL_H
-  __attribute__((opencl_unroll_hint(1)))
-#endif
-
-  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
-    if (s > 1) { bar(); }
-    fft_NH(u);
-    tabMul(SMALL_HEIGHT / NH, trig, u, NH, s, me);
-    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
-  }
-  fft_NH(u);
-}
-
-void OVERLOAD fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w) {
-  u32 me = get_local_id(0);
+void OVERLOAD fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, const u32 sb, u32 lowMe) {
   u32 WG = SMALL_HEIGHT / NH;
 
 #if !UNROLL_H
   __attribute__((opencl_unroll_hint(1)))
 #endif
-
   for (u32 s = 1; s < WG; s *= NH) {
-    if (s > 1) { bar(WG); }
     fft_NH(u);
-    tabMul(WG, trig, u, NH, s, me % WG);
-    shufl2(WG, lds,  u, NH, s);
+    tabMul(WG, trig, u, NH, s, lowMe);
+    shufl(WG, lds,  u, NH, s, numWG, sb, lowMe);
   }
   fft_NH(u);
 }
 
 #endif
 
-void OVERLOAD new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, int callnum) {
+void OVERLOAD new_fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, const u32 sb, u32 lowMe, int callnum) {
   u32 WG = SMALL_HEIGHT / NH;
-  u32 me = get_local_id(0);
-  // This line mimics shufl2 -- partition lds into halves
-  local T2* partitioned_lds = lds + (me / WG) * SMALL_HEIGHT / 2;
-  me = me % WG;
+
+  // This line mimics shufl -- partition lds
+  local T2* partitioned_lds = lds;
+  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * SMALL_HEIGHT * sb / sizeof(T2);
 
 // Custom code for various SMALL_HEIGHT values
 
@@ -116,27 +83,25 @@ void OVERLOAD new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, int callnum
   trig += WG*4 + 2*WG*4;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul4_trig(WG, trig, preloads, 1, me);
+  preload_tabMul4_trig(WG, trig, preloads, 1, numWG, lowMe);
 
   // Do first fft4, partial tabMul, and shufl.
   fft4(u);
-  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 1, me);
-  shufl2(WG, lds, u, NH, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
+  shufl(WG, lds, u, NH, 1, numWG, sb, lowMe);
 
   // Finish the first tabMul and perform second fft4.  Do second partial tabMul and shufl.
-  finish_tabMul4_fft4(WG, partitioned_lds, trig, preloads, u, 1, me, 1);
-  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 4, me);
-  bar(WG);
-  shufl2(WG, lds, u, NH, 4);
+  finish_tabMul4_fft4(WG, trig, preloads, u, 1, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 4, numWG, lowMe);
+  shufl(WG, lds, u, NH, 4, numWG, sb, lowMe);
 
   // Finish the second tabMul and perform third fft4.  Do third partial tabMul and shufl.
-  finish_tabMul4_fft4(WG, partitioned_lds, trig, preloads, u, 4, me, 1);
-  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 16, me);
-  bar(WG);
-  shufl2(WG, lds, u, NH, 16);
+  finish_tabMul4_fft4(WG, trig, preloads, u, 4, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 16, numWG, lowMe);
+  shufl(WG, lds, u, NH, 16, numWG, sb, lowMe);
 
   // Finish third tabMul and perform final fft4.
-  finish_tabMul4_fft4(WG, partitioned_lds, trig, preloads, u, 16, me, 1);
+  finish_tabMul4_fft4(WG, trig, preloads, u, 16, numWG, lowMe, 1);
 
 #elif SMALL_HEIGHT == 512 && NH == 8 && FFT_VARIANT_H == 2
 
@@ -146,21 +111,20 @@ void OVERLOAD new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, int callnum
   trig += WG*8 + 2*WG*8;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul8_trig(WG, trig, preloads, 1, me);
+  preload_tabMul8_trig(WG, trig, preloads, 1, numWG, lowMe);
 
   // Do first fft8, partial tabMul, and shufl.
   fft8(u);
-  partial_tabMul8(WG, partitioned_lds, trig, preloads, u, 1, me);
-  shufl2(WG, lds, u, NH, 1);
+  partial_tabMul8(WG, partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
+  shufl(WG, lds, u, NH, 1, numWG, sb, lowMe);
 
   // Finish the first tabMul and perform second fft8.  Do second partial tabMul and shufl.
-  finish_tabMul8_fft8(WG, partitioned_lds, trig, preloads, u, 1, me, 1);
-  partial_tabMul8(WG, partitioned_lds, trig, preloads, u, 8, me);
-  bar(WG);
-  shufl2(WG, lds, u, NH, 8);
+  finish_tabMul8_fft8(WG, trig, preloads, u, 1, numWG, lowMe, 1);
+  partial_tabMul8(WG, partitioned_lds, trig, preloads, u, 8, numWG, lowMe);
+  shufl(WG, lds, u, NH, 8, numWG, sb, lowMe);
 
   // Finish second tabMul and perform final fft8.
-  finish_tabMul8_fft8(WG, partitioned_lds, trig, preloads, u, 8, me, 1);
+  finish_tabMul8_fft8(WG, trig, preloads, u, 8, numWG, lowMe, 1);
 
 #elif SMALL_HEIGHT == 1024 && NH == 4 && FFT_VARIANT_H == 2
 
@@ -170,44 +134,41 @@ void OVERLOAD new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, int callnum
   trig += WG*4 + 2*WG*4;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul4_trig(WG, trig, preloads, 1, me);
+  preload_tabMul4_trig(WG, trig, preloads, 1, numWG, lowMe);
 
   // Do first fft4, partial tabMul, and shufl.
   fft4(u);
-  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 1, me);
-  shufl2(WG, lds, u, NH, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
+  shufl(WG, lds, u, NH, 1, numWG, sb, lowMe);
 
   // Finish the first tabMul and perform second fft4.  Do second partial tabMul and shufl.
-  finish_tabMul4_fft4(WG, partitioned_lds, trig, preloads, u, 1, me, 1);
-  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 4, me);
-  bar(WG);
-  shufl2(WG, lds, u, NH, 4);
+  finish_tabMul4_fft4(WG, trig, preloads, u, 1, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 4, numWG, lowMe);
+  shufl(WG, lds, u, NH, 4, numWG, sb, lowMe);
 
   // Finish the second tabMul and perform third fft4.  Do third partial tabMul and shufl.
-  finish_tabMul4_fft4(WG, partitioned_lds, trig, preloads, u, 4, me, 1);
-  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 16, me);
-  bar(WG);
-  shufl2(WG, lds, u, NH, 16);
+  finish_tabMul4_fft4(WG, trig, preloads, u, 4, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 16, numWG, lowMe);
+  shufl(WG, lds, u, NH, 16, numWG, sb, lowMe);
 
   // Finish the third tabMul and perform fourth fft4.  Do fourth partial tabMul and shufl.
-  finish_tabMul4_fft4(WG, partitioned_lds, trig, preloads, u, 16, me, 1);
-  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 64, me);
-  bar(WG);
-  shufl2(WG, lds, u, NH, 64);
+  finish_tabMul4_fft4(WG, trig, preloads, u, 16, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 64, numWG, lowMe);
+  shufl(WG, lds, u, NH, 64, numWG, sb, lowMe);
 
   // Finish fourth tabMul and perform final fft4.
-  finish_tabMul4_fft4(WG, partitioned_lds, trig, preloads, u, 64, me, 1);
+  finish_tabMul4_fft4(WG, trig, preloads, u, 64, numWG, lowMe, 1);
 
 #else
 
   // Old version
-  fft_HEIGHT2(lds, u, trig, w);
+  fft_HEIGHT(lds, u, trig, w, numWG, sb, lowMe);
 
 #endif
 }
 
-void new_fft_HEIGHT2_1(local T2 *lds, T2 *u, Trig trig, T2 w)  { new_fft_HEIGHT2(lds, u, trig, w, 1); }
-void new_fft_HEIGHT2_2(local T2 *lds, T2 *u, Trig trig, T2 w)  { new_fft_HEIGHT2(lds, u, trig, w, 2); }
+void new_fft_HEIGHT1(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, const u32 sb, u32 lowMe)  { new_fft_HEIGHT(lds, u, trig, w, numWG, sb, lowMe, 1); }
+void new_fft_HEIGHT2(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, const u32 sb, u32 lowMe)  { new_fft_HEIGHT(lds, u, trig, w, numWG, sb, lowMe, 2); }
 
 #endif
 
@@ -228,41 +189,22 @@ void OVERLOAD fft_NH(F2 *u) {
 #endif
 }
 
-void OVERLOAD fft_HEIGHT(local F2 *lds, F2 *u, TrigFP32 trig) {
-  u32 me = get_local_id(0);
-
-#if !UNROLL_H
-  __attribute__((opencl_unroll_hint(1)))
-#endif
-
-  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
-    if (s > 1) { bar(); }
-    fft_NH(u);
-    tabMul(SMALL_HEIGHT / NH, trig, u, NH, s, me);
-    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
-  }
-  fft_NH(u);
-}
-
-void OVERLOAD fft_HEIGHT2(local F2 *lds, F2 *u, TrigFP32 trig) {
-  u32 me = get_local_id(0);
+void OVERLOAD fft_HEIGHT(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe) {
   u32 WG = SMALL_HEIGHT / NH;
 
 #if !UNROLL_H
   __attribute__((opencl_unroll_hint(1)))
 #endif
-
   for (u32 s = 1; s < WG; s *= NH) {
-    if (s > 1) { bar(WG); }
     fft_NH(u);
-    tabMul(WG, trig, u, NH, s, me % WG);
-    shufl2(WG, lds,  u, NH, s);
+    tabMul(WG, trig, u, NH, s, lowMe);
+    shufl(WG, lds, u, NH, s, numWG, sb, lowMe);
   }
   fft_NH(u);
 }
 
-void new_fft_HEIGHT2_1(local F2 *lds, F2 *u, TrigFP32 trig)  { fft_HEIGHT2(lds, u, trig); }
-void new_fft_HEIGHT2_2(local F2 *lds, F2 *u, TrigFP32 trig)  { fft_HEIGHT2(lds, u, trig); }
+void new_fft_HEIGHT1(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
+void new_fft_HEIGHT2(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
 
 #endif
 
@@ -283,41 +225,22 @@ void OVERLOAD fft_NH(GF31 *u) {
 #endif
 }
 
-void OVERLOAD fft_HEIGHT(local GF31 *lds, GF31 *u, TrigGF31 trig) {
-  u32 me = get_local_id(0);
-
-#if !UNROLL_H
-  __attribute__((opencl_unroll_hint(1)))
-#endif
-
-  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
-    if (s > 1) { bar(); }
-    fft_NH(u);
-    tabMul(SMALL_HEIGHT / NH, trig, u, NH, s, me);
-    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
-  }
-  fft_NH(u);
-}
-
-void OVERLOAD fft_HEIGHT2(local GF31 *lds, GF31 *u, TrigGF31 trig) {
-  u32 me = get_local_id(0);
+void OVERLOAD fft_HEIGHT(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, const u32 sb, u32 lowMe) {
   u32 WG = SMALL_HEIGHT / NH;
 
 #if !UNROLL_H
   __attribute__((opencl_unroll_hint(1)))
 #endif
-
   for (u32 s = 1; s < WG; s *= NH) {
-    if (s > 1) { bar(WG); }
     fft_NH(u);
-    tabMul(WG, trig, u, NH, s, me % WG);
-    shufl2(WG, lds,  u, NH, s);
+    tabMul(WG, trig, u, NH, s, lowMe);
+    shufl(WG, lds, u, NH, s, numWG, sb, lowMe);
   }
   fft_NH(u);
 }
 
-void OVERLOAD new_fft_HEIGHT2_1(local GF31 *lds, GF31 *u, TrigGF31 trig)  { fft_HEIGHT2(lds, u, trig); }
-void OVERLOAD new_fft_HEIGHT2_2(local GF31 *lds, GF31 *u, TrigGF31 trig)  { fft_HEIGHT2(lds, u, trig); }
+void OVERLOAD new_fft_HEIGHT1(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
+void OVERLOAD new_fft_HEIGHT2(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
 
 #endif
 
@@ -338,40 +261,21 @@ void OVERLOAD fft_NH(GF61 *u) {
 #endif
 }
 
-void OVERLOAD fft_HEIGHT(local GF61 *lds, GF61 *u, TrigGF61 trig) {
-  u32 me = get_local_id(0);
-
-#if !UNROLL_H
-  __attribute__((opencl_unroll_hint(1)))
-#endif
-
-  for (u32 s = 1; s < SMALL_HEIGHT / NH; s *= NH) {
-    if (s > 1) { bar(); }
-    fft_NH(u);
-    tabMul(SMALL_HEIGHT / NH, trig, u, NH, s, me);
-    shufl(SMALL_HEIGHT / NH, lds,  u, NH, s);
-  }
-  fft_NH(u);
-}
-
-void OVERLOAD fft_HEIGHT2(local GF61 *lds, GF61 *u, TrigGF61 trig) {
-  u32 me = get_local_id(0);
+void OVERLOAD fft_HEIGHT(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, const u32 sb, u32 lowMe) {
   u32 WG = SMALL_HEIGHT / NH;
 
 #if !UNROLL_H
   __attribute__((opencl_unroll_hint(1)))
 #endif
-
   for (u32 s = 1; s < WG; s *= NH) {
-    if (s > 1) { bar(WG); }
     fft_NH(u);
-    tabMul(WG, trig, u, NH, s, me % WG);
-    shufl2(WG, lds,  u, NH, s);
+    tabMul(WG, trig, u, NH, s, lowMe);
+    shufl(WG, lds, u, NH, s, numWG, sb, lowMe);
   }
   fft_NH(u);
 }
 
-void OVERLOAD new_fft_HEIGHT2_1(local GF61 *lds, GF61 *u, TrigGF61 trig)  { fft_HEIGHT2(lds, u, trig); }
-void OVERLOAD new_fft_HEIGHT2_2(local GF61 *lds, GF61 *u, TrigGF61 trig)  { fft_HEIGHT2(lds, u, trig); }
+void OVERLOAD new_fft_HEIGHT1(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
+void OVERLOAD new_fft_HEIGHT2(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
 
 #endif

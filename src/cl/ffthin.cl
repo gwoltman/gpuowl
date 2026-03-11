@@ -8,11 +8,11 @@
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local T2 lds[SMALL_HEIGHT / 2];
-  
+  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
+  local T2 lds[lds_bytes / sizeof(T2)];
+
   T2 u[NH];
   u32 g = get_group_id(0);
-
   u32 me = get_local_id(0);
 
   readTailFusedLine(in, u, g, me);
@@ -23,7 +23,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
   T2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
 #endif
 
-  fft_HEIGHT(lds, u, smallTrig, w);
+  fft_HEIGHT(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
 
   write(G_H, NH, u, out, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }
@@ -39,7 +39,8 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local F2 lds[SMALL_HEIGHT / 2];
+  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
+  local F2 lds[lds_bytes / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -57,7 +58,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
   F2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
 #endif
 
-  fft_HEIGHT(lds, u, smallTrigF2);
+  fft_HEIGHT(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
 
   write(G_H, NH, u, outF2, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }
@@ -73,7 +74,8 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local GF31 lds[SMALL_HEIGHT / 2];
+  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
+  local GF31 lds[lds_bytes / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -81,12 +83,11 @@ KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF31 u[NH];
   u32 g = get_group_id(0);
-
   u32 me = get_local_id(0);
 
   readTailFusedLine(in31, u, g, me);
 
-  fft_HEIGHT(lds, u, smallTrig31);
+  fft_HEIGHT(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
 
   write(G_H, NH, u, out31, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }
@@ -102,7 +103,8 @@ KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHinGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local GF61 lds[SMALL_HEIGHT / 2];
+  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
+  local GF61 lds[lds_bytes / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -110,12 +112,11 @@ KERNEL(G_H) fftHinGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF61 u[NH];
   u32 g = get_group_id(0);
-
   u32 me = get_local_id(0);
 
   readTailFusedLine(in61, u, g, me);
 
-  fft_HEIGHT(lds, u, smallTrig61);
+  fft_HEIGHT(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
 
   write(G_H, NH, u, out61, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }

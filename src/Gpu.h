@@ -172,6 +172,7 @@ private:
   bool tail_single_wide;                // TailSquare processes one line at a time
   bool tail_single_kernel;              // TailSquare does not use a separate kernel for line zero
   u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly.
+  u32 wmul;                             // Number of workgroups carryFused kernel should process ("width multiplier").
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
 
   // Twiddles: trigonometry constant buffers, used in FFTs.
@@ -185,7 +186,6 @@ private:
   Weights weights;
   Buffer<double> bufConstWeights;
   Buffer<double> bufWeights;
-  Buffer<u32> bufBits;  // bigWord bits aligned for CarryFused/fftP
 
   // "integer word" buffers. These are "small buffers": N x int.
   Buffer<Word> bufData;   // Main int buffer with the words.

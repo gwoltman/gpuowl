@@ -85,7 +85,6 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
 
   vector<double> weightsConstIF;
   vector<double> weightsIF;
-  vector<u32> bits;
 
   if (fft.FFT_FP64) {
     // Inverse + Forward
@@ -141,24 +140,7 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
     memcpy((double *) weightsIF.data(), weightsIF32.data(), weightsIF32.size() * sizeof(float));
   }
 
-  if (fft.FFT_FP64 || fft.FFT_FP32) {
-    for (u32 line = 0; line < H; ++line) {
-      for (u32 thread = 0; thread < groupWidth; ) {
-        std::bitset<32> b;
-        for (u32 bitoffset = 0; bitoffset < 32; bitoffset += nW*2, ++thread) {
-          for (u32 block = 0; block < nW; ++block) {
-            for (u32 rep = 0; rep < 2; ++rep) {
-              if (isBigWord(N, E, kAt(H, line, block * groupWidth + thread) + rep)) { b.set(bitoffset + block * 2 + rep); }
-            }        
-          }
-        }
-        bits.push_back(b.to_ulong());
-      }
-    }
-    assert(bits.size() == N / 32);
-  }
-
-  return Weights{weightsConstIF, weightsIF, bits};
+  return Weights{weightsConstIF, weightsIF};
 }
 
 string toLiteral(i32 value) { return to_string(value); }
@@ -228,7 +210,7 @@ constexpr bool isInList(const string& s, initializer_list<string> list) {
 }
 
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
-                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size) {
+                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -246,6 +228,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = 0, tail_single_kernel = 1;         // Default tailSquare is double-wide in one kernel
   in_place = 0;                                         // Default is not in-place
+  wmul = 1;						// Default is carryFused processes one workgroup at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
   // Validate -use options
@@ -264,7 +247,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "NO_ASM",
                               "DEBUG",
                               "CARRY64",
-                              "BIGLIT",
+                              "BIGLIT",                 // Deprecated
                               "NONTEMPORAL",
                               "INPLACE",
                               "PAD",
@@ -279,7 +262,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "TABMUL_CHAIN31",
                               "TABMUL_CHAIN32",
                               "TABMUL_CHAIN61",
-                              "MODM31"
+                              "MODM31",
+                              "WMUL"
                             });
     if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
@@ -293,6 +277,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
       if (atoi(v.c_str()) == 3) tail_single_wide = 0, tail_single_kernel = 0;
     }
     if (k == "INPLACE") in_place = atoi(v.c_str());
+    if (k == "WMUL") wmul = atoi(v.c_str());
     if (k == "PAD") pad_size = atoi(v.c_str());
   }
 
@@ -532,7 +517,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   nW(fft.shape.nW()),
   nH(fft.shape.nH()),
   useLongCarry{args.carry == Args::CARRY_LONG},
-  compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size)},
+  compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), queue, __VA_ARGS__)
 
@@ -581,11 +566,11 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   K(kCarryM,               "carry.cl", "carry", hN / CARRY_LEN, "-DMUL3=1"),
   K(kCarryMROE,            "carry.cl", "carry", hN / CARRY_LEN, "-DMUL3=1 -DROE=1"),
   K(kCarryLL,              "carry.cl", "carry", hN / CARRY_LEN, "-DLL=1"),
-  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + 1) / nW),
-  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + 1) / nW, "-DROE=1"),
-  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + 1) / nW, "-DMUL3=1"),
-  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + 1) / nW, "-DMUL3=1 -DROE=1"),
-  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + 1) / nW, "-DLL=1"),
+  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW),
+  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DROE=1"),
+  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DMUL3=1"),
+  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DMUL3=1 -DROE=1"),
+  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DLL=1"),
 
   K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN),
 
@@ -615,7 +600,6 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   weights{genWeights(fft, E, WIDTH, BIG_H, nW, isAmdGpu(q->context->deviceId()))},
   bufConstWeights{q->context, std::move(weights.weightsConstIF)},
   bufWeights{q->context,      std::move(weights.weightsIF)},
-  bufBits{q->context,         std::move(weights.bitsCF)},
 
 #define BUF(name, ...) name{profile.make(#name), queue, __VA_ARGS__}
 
@@ -695,16 +679,16 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
     kfftWGF61.setFixedArgs(2, bufTrigW);
   }
 
-  if (fft.FFT_FP64 || fft.FFT_FP32) {                         // The FP versions take bufWeight arguments  (and bufBits which may be deleted)
+  if (fft.FFT_FP64 || fft.FFT_FP32) {                         // The FP versions take bufWeight arguments
     kfftP.setFixedArgs(2, bufTrigW, bufWeights);
     for (Kernel* k : {&kCarryA, &kCarryAROE, &kCarryM, &kCarryMROE, &kCarryLL}) { k->setFixedArgs(3, bufCarry, bufWeights); }
     for (Kernel* k : {&kCarryA, &kCarryM, &kCarryLL}) { k->setFixedArgs(5, bufStatsCarry); }
     for (Kernel* k : {&kCarryAROE, &kCarryMROE})      { k->setFixedArgs(5, bufROE); }
     for (Kernel* k : {&kCarryFused, &kCarryFusedROE, &kCarryFusedMul, &kCarryFusedMulROE, &kCarryFusedLL}) {
-      k->setFixedArgs(3, bufCarry, bufReady, bufTrigW, bufBits, bufConstWeights, bufWeights);
+      k->setFixedArgs(3, bufCarry, bufReady, bufTrigW, bufConstWeights, bufWeights);
     }
-    for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE})           { k->setFixedArgs(9, bufROE); }
-    for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(9, bufStatsCarry); }
+    for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE})           { k->setFixedArgs(8, bufROE); }
+    for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(8, bufStatsCarry); }
   } else {
     kfftP.setFixedArgs(2, bufTrigW);
     for (Kernel* k : {&kCarryA, &kCarryAROE, &kCarryM, &kCarryMROE, &kCarryLL}) { k->setFixedArgs(3, bufCarry); }
@@ -2042,7 +2026,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
   char fname[32];
   sprintf(fname, "M%" PRIu64 ".cert", E);
 
-// Autoprimenet.py does not add the cert entry to worktodo.txt until it has successfully downloaded the .cert file.
+// AutoPrimenet.py does not add the cert entry to worktodo.txt until it has successfully downloaded the .cert file.
 
   { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
     File fi = File::openReadThrow(fname);
