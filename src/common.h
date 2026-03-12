@@ -46,15 +46,15 @@ using Words = vector<u32>;
 
 inline u64 res64(const Words& words) { return words.empty() ? 0 : ((u64(words[1]) << 32) | words[0]); }
 
-inline u32 nWords(u32 E) { return (E - 1) / 32 + 1; }
+inline u32 nWords(u64 E) { return u32((E - 1) / 32 + 1); }
 
-inline Words makeWords(u32 E, u32 value) {
+inline Words makeWords(u64 E, u32 value) {
   Words ret(nWords(E));
   ret[0] = value;
   return ret;
 }
 
-inline u32 roundUp(u32 x, u32 multiple) { return ((x - 1) / multiple + 1) * multiple; }
+inline u64 roundUp(u64 x, u32 multiple) { return ((x - 1) / multiple + 1) * multiple; }
 
 u32 crc32(const void* data, size_t size);
 

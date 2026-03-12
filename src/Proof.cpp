@@ -19,11 +19,11 @@
 
 namespace proof {
 
-array<u64, 4> hashWords(u32 E, const Words& words) {
+array<u64, 4> hashWords(u64 E, const Words& words) {
   return std::move(SHA3{}.update(words.data(), (E-1)/8+1)).finish();
 }
 
-array<u64, 4> hashWords(u32 E, array<u64, 4> prefix, const Words& words) {
+array<u64, 4> hashWords(u64 E, array<u64, 4> prefix, const Words& words) {
   return std::move(SHA3{}.update(prefix).update(words.data(), (E-1)/8+1)).finish();
 }
 
@@ -39,7 +39,8 @@ string fileHash(const fs::path& filePath) {
 ProofInfo getInfo(const fs::path& proofFile) {
   string hash = proof::fileHash(proofFile);
   File fi = File::openReadThrow(proofFile);
-  u32 E = 0, power = 0;
+  u64 E = 0;
+  u32 power = 0;
   char c = 0;
   if (fi.scanf(Proof::HEADER_v2, &power, &E, &c) != 3 || c != '\n') {
     log("Proof file '%s' has invalid header\n", proofFile.string().c_str());
@@ -68,7 +69,8 @@ void Proof::save(const fs::path& proofFile) const {
 
 Proof Proof::load(const fs::path& path) {
   File fi = File::openReadThrow(path);
-  u32 E = 0, power = 0;
+  u64 E = 0;
+  u32 power = 0;
   char c = 0;
   if (fi.scanf(HEADER_v2, &power, &E, &c) != 3 || c != '\n') {
     log("Proof file '%s' has invalid header\n", path.string().c_str());
@@ -84,7 +86,7 @@ Proof Proof::load(const fs::path& path) {
 bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
   // log("B         %016" PRIx64 "\n", res64(B));
   // for (u32 i = 0; i < middles.size(); ++i) { log("Middle[%u] %016" PRIx64 "\n", i, res64(middles[i])); }
-  
+
   u32 power = middles.size();
   assert(power > 0);
 
@@ -92,10 +94,10 @@ bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
 
   Words A{makeWords(E, 3)};
   Words B{this->B};
-  
+
   auto hash = proof::hashWords(E, B);
 
-  u32 span = E;
+  u64 span = E;
   for (u32 i = 0; i < power; ++i, span = (span + 1) / 2) {
     const Words& M = middles[i];
     hash = proof::hashWords(E, hash, M);
@@ -113,12 +115,12 @@ bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
     if (gpu->args.verbose) { log("proof [%u] : A %016" PRIx64 ", B %016" PRIx64 ", h %016" PRIx64 "\n", i, res64(A), res64(B), h); }
   }
     
-  log("proof verification: doing %d iterations\n", span);
+  log("proof verification: doing %" PRIu64 " iterations\n", span);
   A = gpu->expExp2(A, span);
 
   bool ok = (A == B);
   if (ok) {
-    log("proof: %u proved %s\n", E, isPrime ? "probable prime" : "composite");
+    log("proof: %" PRIu64 " proved %s\n", E, isPrime ? "probable prime" : "composite");
   } else {
     log("proof: invalid (%016" PRIx64 " expected %016" PRIx64 ")\n", res64(A), res64(B));
   }
@@ -127,9 +129,9 @@ bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
 
 // ---- ProofSet ----
 
-ProofSet::ProofSet(u32 E, u32 power)
+ProofSet::ProofSet(u64 E, u32 power)
   : E{E}, power{power} {
-  
+
   assert(E & 1); // E is supposed to be prime
   if (power <= 0 || power > 12) {
     log("Invalid proof power: %u\n", power);
@@ -138,11 +140,13 @@ ProofSet::ProofSet(u32 E, u32 power)
 
   fs::create_directories(proofPath(E));
 
-  vector<u32> spans;
-  for (u32 span = (E + 1) / 2; spans.size() < power; span = (span + 1) / 2) { spans.push_back(span); }
+  vector<u64> spans;
+  for (u64 span = (E + 1) / 2; spans.size() < power; span = (span + 1) / 2) { spans.push_back(span); }
 
   points.push_back(0);
-  for (u32 p = 0, span = (E + 1) / 2; p < power; ++p, span = (span + 1) / 2) {
+  u32 p;
+  u64 span;
+  for (p = 0, span = (E + 1) / 2; p < power; ++p, span = (span + 1) / 2) {
     for (u32 i = 0, end = points.size(); i < end; ++i) {
       points.push_back(points[i] + span);
     }
@@ -160,15 +164,17 @@ ProofSet::ProofSet(u32 E, u32 power)
   points.push_back(u32(-1)); // guard element
   cacheIt = points.begin();
 
-  for ([[maybe_unused]] u32 p : points) {
+  for ([[maybe_unused]] u64 p : points) {
     assert(p > E || isInPoints(E, power, p));
   }
 }
 
-bool ProofSet::isInPoints(u32 E, u32 power, u32 k) {
+bool ProofSet::isInPoints(u64 E, u32 power, u64 k) {
   if (k == E) { return true; } // special-case E
-  u32 start = 0;
-  for (u32 p = 0, span = (E + 1) / 2; p < power; ++p, span = (span + 1) / 2) {
+  u64 start = 0;
+  u32 p;
+  u64 span;
+  for (p = 0, span = (E + 1) / 2; p < power; ++p, span = (span + 1) / 2) {
     assert(k >= start);
     if (k > start + span) {
       start += span;
@@ -179,12 +185,12 @@ bool ProofSet::isInPoints(u32 E, u32 power, u32 k) {
   return false;
 }
 
-bool ProofSet::canDo(u32 E, u32 power, u32 currentK) {
+bool ProofSet::canDo(u64 E, u32 power, u64 currentK) {
   assert(power > 0 && power <= 12);
   return ProofSet{E, power}.isValidTo(currentK);
 }
 
-u32 ProofSet::bestPower(u32 E) {
+u32 ProofSet::bestPower(u64 E) {
   // Best proof powers assuming no disk space concern.
   // We increment power by 1 for each fourfold increase of the exponent.
   // The values below produce power=10 at wavefront, and power=11 at 100Mdigits:
@@ -197,7 +203,7 @@ u32 ProofSet::bestPower(u32 E) {
   return power;
 }
 
-double ProofSet::diskUsageGB(u32 E, u32 power) {
+double ProofSet::diskUsageGB(u64 E, u32 power) {
   //  -3 because convert exponent bits to bytes
   // -30 because convert bytes to GB
   // +power because needs 2^power residues for proof generation
@@ -205,7 +211,7 @@ double ProofSet::diskUsageGB(u32 E, u32 power) {
   return power ? ldexp(E, -33 + int(power)) * 1.05 : 0.0;
 }
 
-u32 ProofSet::effectivePower(u32 E, u32 power, u32 currentK) {
+u32 ProofSet::effectivePower(u64 E, u32 power, u64 currentK) {
   for (u32 p = power; p > 0; --p) {
     // log("validating proof residues for power %u\n", p);
     if (canDo(E, p, currentK)) { return p; }
@@ -213,11 +219,11 @@ u32 ProofSet::effectivePower(u32 E, u32 power, u32 currentK) {
   return 0;
 }
     
-bool ProofSet::fileExists(u32 k) const {
+bool ProofSet::fileExists(u64 k) const {
   return File::size(proofPath(E) / to_string(k)) == i64(E / 32 + 2) * 4;
 }
 
-bool ProofSet::isValidTo(u32 limitK) const {
+bool ProofSet::isValidTo(u64 limitK) const {
   auto it = upper_bound(points.begin(), points.end(), limitK);
 
   if (it == points.begin()) {
@@ -238,14 +244,14 @@ bool ProofSet::isValidTo(u32 limitK) const {
   return true;
 }
 
-u32 ProofSet::next(u32 k) const {
+u64 ProofSet::next(u64 k) const {
   if (*cacheIt <= k || (cacheIt > points.begin() && *prev(cacheIt) > k)) {
     cacheIt = upper_bound(points.begin(), points.end(), k);
   }
   return *cacheIt;
 }
 
-void ProofSet::save(u32 E, u32 power, u32 k, const Words& words) {
+void ProofSet::save(u64 E, u32 power, u64 k, const Words& words) {
   assert(k && k <= E);
   assert(isInPoints(E, power, k));
 
@@ -253,7 +259,7 @@ void ProofSet::save(u32 E, u32 power, u32 k, const Words& words) {
   assert(load(E, power, k) == words);
 }
 
-Words ProofSet::load(u32 E, u32 power, u32 k) {
+Words ProofSet::load(u64 E, u32 power, u64 k) {
   assert(k && k <= E);
   assert(isInPoints(E, power, k));
   return File::openReadThrow(proofPath(E) / to_string(k)).readChecked<u32>(E/32 + 1);

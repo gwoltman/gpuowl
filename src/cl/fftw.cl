@@ -9,13 +9,14 @@
 
 // Do the ending fft_WIDTH after an fftMiddleOut.  This is the same as the first half of carryFused.
 KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local T2 lds[WIDTH / 2];
+  local T2 lds[WIDTH * SHUFL_BYTES_W / sizeof(T2)];
 
   T2 u[NW];
   u32 g = get_group_id(0);
+  u32 me = get_local_id(0);
 
-  readCarryFusedLine(in, u, g);
-  fft_WIDTH(lds, u, smallTrig);  
+  readCarryFusedLine(in, u, g, me);
+  fft_WIDTH(lds, u, smallTrig, 1, SHUFL_BYTES_W, me);
   out += WIDTH * g;
   write(G_W, NW, u, out, 0);
 }
@@ -31,7 +32,7 @@ KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 // Do the ending fft_WIDTH after an fftMiddleOut.  This is the same as the first half of carryFused.
 KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local F2 lds[WIDTH / 2];
+  local F2 lds[WIDTH * SHUFL_BYTES_W / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -39,9 +40,10 @@ KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   F2 u[NW];
   u32 g = get_group_id(0);
+  u32 me = get_local_id(0);
 
-  readCarryFusedLine(inF2, u, g);
-  fft_WIDTH(lds, u, smallTrigF2);  
+  readCarryFusedLine(inF2, u, g, me);
+  fft_WIDTH(lds, u, smallTrigF2, 1, SHUFL_BYTES_W, me);
   outF2 += WIDTH * g;
   write(G_W, NW, u, outF2, 0);
 }
@@ -56,7 +58,7 @@ KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if NTT_GF31
 
 KERNEL(G_W) fftWGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local GF31 lds[WIDTH / 2];
+  local GF31 lds[WIDTH * SHUFL_BYTES_W / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -64,9 +66,10 @@ KERNEL(G_W) fftWGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF31 u[NW];
   u32 g = get_group_id(0);
+  u32 me = get_local_id(0);
 
-  readCarryFusedLine(in31, u, g);
-  fft_WIDTH(lds, u, smallTrig31);
+  readCarryFusedLine(in31, u, g, me);
+  fft_WIDTH(lds, u, smallTrig31, 1, SHUFL_BYTES_W, me);
   out31 += WIDTH * g;
   write(G_W, NW, u, out31, 0);
 }
@@ -81,7 +84,7 @@ KERNEL(G_W) fftWGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if NTT_GF61
 
 KERNEL(G_W) fftWGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  local GF61 lds[WIDTH / 2];
+  local GF61 lds[WIDTH * SHUFL_BYTES_W / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -89,9 +92,10 @@ KERNEL(G_W) fftWGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF61 u[NW];
   u32 g = get_group_id(0);
+  u32 me = get_local_id(0);
 
-  readCarryFusedLine(in61, u, g);
-  fft_WIDTH(lds, u, smallTrig61);  
+  readCarryFusedLine(in61, u, g, me);
+  fft_WIDTH(lds, u, smallTrig61, 1, SHUFL_BYTES_W, me);
   out61 += WIDTH * g;
   write(G_W, NW, u, out61, 0);
 }

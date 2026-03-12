@@ -8,10 +8,10 @@
 #include <cassert>
 #include <cfenv>
 
-vector<u32> compactBits(const vector<Word> &dataVect, u32 E);
-vector<Word> expandBits(const vector<u32> &compactBits, u32 N, u32 E);
+vector<u32> compactBits(const vector<Word> &dataVect, u64 E);
+vector<Word> expandBits(const vector<u32> &compactBits, u32 N, u64 E);
 
-constexpr u32 step(u32 N, u32 E) { return N - (E % N); }
-constexpr u32 extra(u32 N, u32 E, u32 k) { return u64(step(N, E)) * k % N; }
-constexpr bool isBigWord(u32 N, u32 E, u32 k) { return extra(N, E, k) + step(N, E) < N; }
-constexpr u32 bitlen(u32 N, u32 E, u32 k) { return E / N + isBigWord(N, E, k); }
+constexpr u32 step(u32 N, u64 E) { return N - (E % N); }
+constexpr u32 extra(u32 N, u64 E, u32 k) { return u64(step(N, E)) * k % N; }
+constexpr bool isBigWord(u32 N, u64 E, u32 k) { return extra(N, E, k) + step(N, E) < N; }
+constexpr u32 bitlen(u32 N, u64 E, u32 k) { return E / N + isBigWord(N, E, k); }

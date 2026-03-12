@@ -15,19 +15,19 @@
 namespace {
 
 // E, k, block-size, res64, nErrors, CRC
-static constexpr const char *PRP_v12 = "OWL PRP 12 %u %u %u %016" SCNx64 " %u %u\n";
+static constexpr const char *PRP_v12 = "OWL PRP 12 %" PRIu64 " %" PRIu64 " %u %016" SCNx64 " %u %u\n";
 
 // Anticipated next version of the header.
 // Has general number form N=k*b^E+c, and labels for values.
-static constexpr const char *PRP_v13 = "OWL PRP 13 N=1*2^%u-1 k=%u block=%u res64=%016" SCNx64 " err=%u time=%lf\n";
+static constexpr const char *PRP_v13 = "OWL PRP 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " block=%u res64=%016" SCNx64 " err=%u time=%lf\n";
 // static constexpr const char *PRP_v13_PRI = "OWL PRP 13 N=1*2^%u-1 k=%u block=%u res64=%016" PRIx64 " err=%u time=%.0lf\n";
 
 // E, k, CRC
-static constexpr const char *LL_v1 = "OWL LL 1 E=%u k=%u CRC=%u\n";
+static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%u\n";
 
 // Anticipated next version.
 // Push version number to sync it with PRP.
-static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%u-1 k=%u time=%lf\n";
+static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
 
 struct BadHeaderError { string name; };
 
@@ -35,8 +35,8 @@ bool startsWith(const string& s, const string& prefix) {
   return s.rfind(prefix, 0) == 0;
 }
 
-vector<u32> savefiles(fs::path dir, const string& prefix, const string& kind) {
-  vector<u32> v;
+vector<u64> savefiles(fs::path dir, const string& prefix, const string& kind) {
+  vector<u64> v;
   for (const auto& entry: fs::directory_iterator(dir)) {
     if (entry.is_regular_file()) {
       string filename = entry.path().filename().string();
@@ -45,7 +45,7 @@ vector<u32> savefiles(fs::path dir, const string& prefix, const string& kind) {
         assert(dot > prefix.size());
         string id = filename.substr(prefix.size(), dot - prefix.size());
         if (id == "unverified") { continue; }
-        u32 k = 0;
+        u64 k = 0;
         const char* first = id.data();
         const char* end   = first + id.size();
         auto res = from_chars(first, end, k);
@@ -61,13 +61,13 @@ vector<u32> savefiles(fs::path dir, const string& prefix, const string& kind) {
   return v;
 }
 
-string str9(u32 k) {
+string str9(u64 k) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "%09u", k);
+  snprintf(buf, sizeof(buf), "%09" PRIu64, k);
   return buf;
 }
 
-fs::path pathFor(fs::path base, const string& prefix, const string& kind, u32 k) {
+fs::path pathFor(fs::path base, const string& prefix, const string& kind, u64 k) {
   return base / (prefix + str9(k) + '.' + kind);
 }
 
@@ -79,16 +79,17 @@ fs::path pathUnverified(fs::path base, const string& prefix) {
 // <prefix><id>.<kind>
 // e.g.: 125784077-010000000.prp
 fs::path findLast(fs::path dir, const string& prefix, const string& kind) {
-  vector<u32> v = savefiles(dir, prefix, kind);
+  vector<u64> v = savefiles(dir, prefix, kind);
   if (v.empty()) { return {}; }
-  u32 lastK = v.back();
+  u64 lastK = v.back();
   fs::path path = pathFor(dir, prefix, kind, lastK);
   assert(is_regular_file(path));
   return path;
 }
 
 PRPState readState(const PRPState& dummy, File fi) {
-  u32 exponent{}, k{}, blockSize{}, nErrors{};
+  u64 exponent{}, k{};
+  u32 blockSize{}, nErrors{};
   u64 res64{};
   double elapsed{};
 
@@ -108,7 +109,7 @@ PRPState readState(const PRPState& dummy, File fi) {
 }
 
 LLState readState(const LLState& dummy, File fi) {
-  u32 exponent{}, k{};
+  u64 exponent{}, k{};
   double elapsed{};
 
   string header = fi.readLine();
@@ -142,7 +143,7 @@ void writeState(const File& fo, const LLState& state) {
   fo.writeChecked(state.data);
 }
 
-double roundNumberScore(u32 x) {
+double roundNumberScore(u64 x) {
   if (x == 0) { return 1; }
 
   double score = 0;
@@ -169,7 +170,7 @@ template<> LLState Saver<LLState>::initState() {
 // ---- Saver ----
 
 template<typename State>
-Saver<State>::Saver(u32 exponent, u32 blockSize, u32 nSavefiles) :
+Saver<State>::Saver(u64 exponent, u32 blockSize, u32 nSavefiles) :
   exponent{exponent},
   blockSize{blockSize},
   prefix{to_string(exponent) + '-'},
@@ -188,7 +189,7 @@ template<typename State>
 Saver<State>::~Saver() = default;
 
 template<typename State>
-void Saver<State>::clear(u32 exponent) {
+void Saver<State>::clear(u64 exponent) {
   error_code dummy;
   fs::path base = std::is_same_v<State, PRPState> ?
         fs::current_path() / to_string(exponent)
@@ -244,16 +245,16 @@ State Saver<State>::load() {
 
 template<typename State>
 void Saver<State>::trimFiles() {
-  vector<u32> v = savefiles(base, prefix, State::KIND);
+  vector<u64> v = savefiles(base, prefix, State::KIND);
 
   assert(nSavefiles > 0);
   while (v.size() > nSavefiles) {
     int bestIdx = -1;
     double bestSpan = 1e20;
-    u32 prevK = 0;
+    u64 prevK = 0;
 
     for (u32 i = 0; i < v.size() - 1; ++i) {
-      u32 k = v[i];
+      u64 k = v[i];
       double niceBias = std::min(1.0, roundNumberScore(k) - 4);
       double span = (v[i + 1] - prevK) * niceBias;
       prevK = k;
@@ -263,8 +264,8 @@ void Saver<State>::trimFiles() {
       }
     }
     assert(bestIdx >= 0);
-    u32 k = v[bestIdx];
-    // log("Deleting savefile %u\n", k);
+    u64 k = v[bestIdx];
+    // log("Deleting savefile %" PRIu64 "\n", k);
     fs::path path = pathFor(base, prefix, State::KIND, k);
     fs::remove(path);
     v.erase(v.begin() + bestIdx);

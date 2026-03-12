@@ -10,7 +10,7 @@
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS) {
-  local T2 lds[WIDTH / 2];
+  local T2 lds[WIDTH * SHUFL_BYTES_W / sizeof(T2)];
   T2 u[NW];
 
   u32 g = get_group_id(0);
@@ -27,9 +27,9 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
     u[i] = U2(in[p].x * w1, in[p].y * w2);
   }
 
-  fft_WIDTH(lds, u, smallTrig);
+  fft_WIDTH(lds, u, smallTrig, 1, SHUFL_BYTES_W, me);
 
-  writeCarryFusedLine(u, out, g);
+  writeCarryFusedLine(u, out, g, me);
 }
 
 
@@ -41,7 +41,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local F2 lds[WIDTH / 2];
+  local F2 lds[WIDTH * SHUFL_BYTES_W / sizeof(F2)];
   F2 u[NW];
 
   u32 g = get_group_id(0);
@@ -58,9 +58,9 @@ KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_
     u[i] = U2(in[p].x * w1, in[p].y * w2);
   }
 
-  fft_WIDTH(lds, u, smallTrig);
+  fft_WIDTH(lds, u, smallTrig, 1, SHUFL_BYTES_W, me);
 
-  writeCarryFusedLine(u, out, g);
+  writeCarryFusedLine(u, out, g, me);
 }
 
 
@@ -72,7 +72,7 @@ KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
-  local GF31 lds[WIDTH / 2];
+  local GF31 lds[WIDTH * SHUFL_BYTES_W / sizeof(GF31)];
   GF31 u[NW];
 
   u32 g = get_group_id(0);
@@ -113,9 +113,9 @@ KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  fft_WIDTH(lds, u, smallTrig);
+  fft_WIDTH(lds, u, smallTrig, 1, SHUFL_BYTES_W, me);
 
-  writeCarryFusedLine(u, out, g);
+  writeCarryFusedLine(u, out, g, me);
 }
 
 
@@ -127,7 +127,7 @@ KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(GF61) out, CP(Word2) in, TrigGF61 smallTrig) {
-  local GF61 lds[WIDTH / 2];
+  local GF61 lds[WIDTH * SHUFL_BYTES_W / sizeof(GF61)];
   GF61 u[NW];
 
   u32 g = get_group_id(0);
@@ -170,9 +170,9 @@ KERNEL(G_W) fftP(P(GF61) out, CP(Word2) in, TrigGF61 smallTrig) {
     if (weight_shift > 61) weight_shift -= 61;
   }
 
-  fft_WIDTH(lds, u, smallTrig);
+  fft_WIDTH(lds, u, smallTrig, 1, SHUFL_BYTES_W, me);
 
-  writeCarryFusedLine(u, out, g);
+  writeCarryFusedLine(u, out, g, me);
 }
 
 
@@ -184,7 +184,7 @@ KERNEL(G_W) fftP(P(GF61) out, CP(Word2) in, TrigGF61 smallTrig) {
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS) {
-  local T2 lds[WIDTH / 2];
+  local T2 lds[WIDTH * SHUFL_BYTES_W / sizeof(T2)];
   local GF31 *lds31 = (local GF31 *) lds;
   T2 u[NW];
   GF31 u31[NW];
@@ -236,11 +236,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  fft_WIDTH(lds, u, smallTrig);
-  writeCarryFusedLine(u, out, g);
-  bar();
-  fft_WIDTH(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, g);
+  fft_WIDTH(lds, u, smallTrig, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u, out, g, me);
+
+  fft_WIDTH(lds31, u31, smallTrig31, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u31, out31, g, me);
 }
 
 
@@ -252,7 +252,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local F2 ldsF2[WIDTH / 2];
+  local F2 ldsF2[WIDTH * SHUFL_BYTES_W / sizeof(F2)];
   local GF31 *lds31 = (local GF31 *) ldsF2;
   F2 uF2[NW];
   GF31 u31[NW];
@@ -306,11 +306,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  fft_WIDTH(ldsF2, uF2, smallTrigF2);
-  writeCarryFusedLine(uF2, outF2, g);
-  bar();
-  fft_WIDTH(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, g);
+  fft_WIDTH(ldsF2, uF2, smallTrigF2, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(uF2, outF2, g, me);
+
+  fft_WIDTH(lds31, u31, smallTrig31, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u31, out31, g, me);
 }
 
 
@@ -322,7 +322,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local GF61 lds61[WIDTH / 2];
+  local GF61 lds61[WIDTH * SHUFL_BYTES_W / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
   F2 uF2[NW];
   GF61 u61[NW];
@@ -376,11 +376,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
     if (weight_shift > 61) weight_shift -= 61;
   }
 
-  fft_WIDTH(ldsF2, uF2, smallTrigF2);
-  writeCarryFusedLine(uF2, outF2, g);
-  bar();
-  fft_WIDTH(lds61, u61, smallTrig61);
-  writeCarryFusedLine(u61, out61, g);
+  fft_WIDTH(ldsF2, uF2, smallTrigF2, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(uF2, outF2, g, me);
+
+  fft_WIDTH(lds61, u61, smallTrig61, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u61, out61, g, me);
 }
 
 
@@ -392,7 +392,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
-  local GF61 lds61[WIDTH / 2];
+  local GF61 lds61[WIDTH * SHUFL_BYTES_W / sizeof(GF61)];
   local GF31 *lds31 = (local GF31 *) lds61;
   GF31 u31[NW];
   GF61 u61[NW];
@@ -459,11 +459,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
     m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
-  fft_WIDTH(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, g);
-  bar();
-  fft_WIDTH(lds61, u61, smallTrig61);
-  writeCarryFusedLine(u61, out61, g);
+  fft_WIDTH(lds31, u31, smallTrig31, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u31, out31, g, me);
+
+  fft_WIDTH(lds61, u61, smallTrig61, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u61, out61, g, me);
 }
 
 
@@ -475,7 +475,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local GF61 lds61[WIDTH / 2];
+  local GF61 lds61[WIDTH * SHUFL_BYTES_W / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
   local GF31 *lds31 = (local GF31 *) lds61;
   F2 uF2[NW];
@@ -551,14 +551,14 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
     m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
-  fft_WIDTH(ldsF2, uF2, smallTrigF2);
-  writeCarryFusedLine(uF2, outF2, g);
-  bar();
-  fft_WIDTH(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, g);
-  bar();
-  fft_WIDTH(lds61, u61, smallTrig61);
-  writeCarryFusedLine(u61, out61, g);
+  fft_WIDTH(ldsF2, uF2, smallTrigF2, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(uF2, outF2, g, me);
+
+  fft_WIDTH(lds31, u31, smallTrig31, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u31, out31, g, me);
+
+  fft_WIDTH(lds61, u61, smallTrig61, 1, SHUFL_BYTES_W, me);
+  writeCarryFusedLine(u61, out61, g, me);
 }
 
 

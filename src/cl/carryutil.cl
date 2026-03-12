@@ -681,7 +681,7 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
 //  i64 xhi = i96_hi64(x) + xmid_topbit;
 //  *outCarry = xhi >> (nBits - 32);
 //  return as_long((int2)(i96_lo32(x), whi));
-#elif EXP / NWORDS == 31 || SLOPPY_MAXBPW >= 3200       // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance)
+#elif EXP / NWORDS == 31 || (SLOPPY_MAXBPW >= 3200 && EXP / NWORDS >= 22) // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance)
   i32 w = i96_lo32(x);                                  // lowBits(x, bigwordBits = 32);
   *outCarry = (i96_hi64(x) + (w < 0)) << (32 - nBits);
   return w;

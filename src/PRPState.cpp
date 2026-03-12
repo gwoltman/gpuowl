@@ -8,7 +8,8 @@ PRPState::PRPState(File&& fi) {
 
   string header = fi.readLine();
 
-  u32 fileE, fileK, blockSize, nErrors, crc;
+  u64 fileE, fileK;
+  u32 blockSize, nErrors, crc;
   u64 res64;
   vector<u32> check;
   u32 b1, nBits, start, nextK;

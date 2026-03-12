@@ -6,14 +6,14 @@
 #include "common.h"
 
 class Primes {
-  std::bitset<50000> sieve;
-  bool isPrimeOdd(u32 n) const;
+  std::bitset<50000> sieve;           // Allows for testing prims up to 10 billion
+  bool isPrimeOdd(u64 n) const;
 
 public:
   Primes();
 
-  bool isPrime(u32 n) const;
-  u32 prevPrime(u32 n) const;
-  u32 nextPrime(u32 n) const;
-  u32 nearestPrime(u32 n) const;
+  bool isPrime(u64 n) const;
+  u64 prevPrime(u64 n) const;
+  u64 nextPrime(u64 n) const;
+  u64 nearestPrime(u64 n) const;
 };

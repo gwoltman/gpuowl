@@ -4,6 +4,7 @@
 
 #include "File.h"
 #include "common.h"
+#include <cinttypes>
 
 namespace fs = std::filesystem;
 
@@ -11,15 +12,15 @@ class Gpu;
 
 struct ProofInfo {
   u32 power;
-  u32 exp;
+  u64 exp;
   string md5;
 };
 
 namespace proof {
 
-array<u64, 4> hashWords(u32 E, const Words& words);
+array<u64, 4> hashWords(u64 E, const Words& words);
 
-array<u64, 4> hashWords(u32 E, array<u64, 4> prefix, const Words& words);
+array<u64, 4> hashWords(u64 E, array<u64, 4> prefix, const Words& words);
 
 string fileHash(const fs::path& filePath);
 
@@ -29,7 +30,7 @@ ProofInfo getInfo(const fs::path& proofFile);
 
 class Proof {  
 public:
-  const u32 E;
+  const u64 E;
   const Words B;
   const vector<Words> middles;
 
@@ -40,7 +41,7 @@ public:
     POWER=8\n
     NUMBER=M216091\n
   */
-  static const constexpr char* HEADER_v2 = "PRP PROOF\nVERSION=2\nHASHSIZE=64\nPOWER=%u\nNUMBER=M%u%c";
+  static const constexpr char* HEADER_v2 = "PRP PROOF\nVERSION=2\nHASHSIZE=64\nPOWER=%u\nNUMBER=M%" PRIu64 "%c";
 
   static Proof load(const fs::path& path);
 
@@ -53,38 +54,37 @@ public:
 
 class ProofSet {
 public:
-  const u32 E;
+  const u64 E;
   const u32 power;
   
 private:  
-  vector<u32> points;  
+  vector<u64> points;  
   
-  bool isValidTo(u32 limitK) const;
+  bool isValidTo(u64 limitK) const;
 
-  static bool canDo(u32 E, u32 power, u32 currentK);
+  static bool canDo(u64 E, u32 power, u64 currentK);
 
   mutable decltype(points)::const_iterator cacheIt{};
 
-  bool fileExists(u32 k) const;
+  bool fileExists(u64 k) const;
 
-  static fs::path proofPath(u32 E) { return fs::path(to_string(E)) / "proof"; }
+  static fs::path proofPath(u64 E) { return fs::path(to_string(E)) / "proof"; }
 public:
   
-  static u32 bestPower(u32 E);
-  static u32 effectivePower(u32 E, u32 power, u32 currentK);
-  static double diskUsageGB(u32 E, u32 power);
-  static bool isInPoints(u32 E, u32 power, u32 k);
+  static u32 bestPower(u64 E);
+  static u32 effectivePower(u64 E, u32 power, u64 currentK);
+  static double diskUsageGB(u64 E, u32 power);
+  static bool isInPoints(u64 E, u32 power, u64 k);
   
-  ProofSet(u32 E, u32 power);
-    
-  u32 next(u32 k) const;
+  ProofSet(u64 E, u32 power);
 
-  static void save(u32 E, u32 power, u32 k, const Words& words);
-  static Words load(u32 E, u32 power, u32 k);
-        
-  void save(u32 k, const Words& words) const { return save(E, power, k, words); }
-  Words load(u32 k) const { return load(E, power, k); }
+  u64 next(u64 k) const;
 
+  static void save(u64 E, u32 power, u64 k, const Words& words);
+  static Words load(u64 E, u32 power, u64 k);
+
+  void save(u64 k, const Words& words) const { return save(E, power, k, words); }
+  Words load(u64 k) const { return load(E, power, k); }
 
   std::pair<Proof, vector<u64>> computeProof(Gpu *gpu) const;
 };

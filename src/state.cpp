@@ -10,7 +10,7 @@
 
 static i64 lowBits(i64 u, int bits) { return (u << (64 - bits)) >> (64 - bits); }
 
-std::vector<u32> compactBits(const vector<Word> &dataVect, u32 E) {
+std::vector<u32> compactBits(const vector<Word> &dataVect, u64 E) {
   if (dataVect.empty()) { return {}; } // Indicating all zero
 
   u32 N = dataVect.size();
@@ -87,7 +87,7 @@ struct BitBucket {
   }
 };
 
-vector<Word> expandBits(const vector<u32> &compactBits, u32 N, u32 E) {
+vector<Word> expandBits(const vector<u32> &compactBits, u32 N, u64 E) {
   assert(E % 32 != 0);
 
   std::vector<Word> out(N);

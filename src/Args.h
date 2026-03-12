@@ -30,7 +30,7 @@ public:
   bool uses(const std::string& key) const { return flags.find(key) != flags.end(); }
   int value(const std::string& key, int valNotFound = -1) const;
   void readConfig(const fs::path& path);
-  u32 getProofPow(u32 exponent) const;
+  u32 getProofPow(u64 exponent) const;
   string tailDir() const;
 
   bool hasFlag(const string& key) const;
@@ -78,8 +78,8 @@ public:
   u32 logStep = 20000;
   string fftSpec;
 
-  u32 prpExp = 0;
-  u32 llExp = 0;
+  u64 prpExp = 0;
+  u64 llExp = 0;
   
   size_t maxAlloc = 0;
 

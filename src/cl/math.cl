@@ -171,7 +171,7 @@ i32 optional_sub(i32 a, const i32 b) {
 
 // Optionally subtract a value if first arg is greater than value.
 i32 optional_mod(i32 a, const i32 b) {
-#if 0 //HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher  // Not faster on 5xxx GPUs (not sure why)
+#if ENABLE_OPTIONAL_MOD && HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher  // Not faster on 5xxx GPUs (not sure why)
   __asm("{.reg .pred %%p;\n\t"
         " setp.ge.s32 %%p, %0, %1;\n\t"   // a > b
         " @%%p sub.s32 %0, %0, %1;}"      // if (a > b) a = a - b
@@ -207,7 +207,7 @@ u64 OVERLOAD mad32(u32 a, u32 b, u64 c) {
 }
 
 u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
-#if 0 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher    // Slower on TitanV and mobile 4070, don't understand why
+#if ENABLE_MAD64 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher    // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
   __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
         "madc.hi.u64   %1, %2, %3, 0;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(u128_lo64(c)));
@@ -236,7 +236,7 @@ u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
 }
 
 u128 OVERLOAD mad64(u64 a, u64 b, u128 c) {
-#if 0 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher  // Slower on TitanV and mobile 4070, don't understand why
+#if ENABLE_MAD64 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher  // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
   __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
         "madc.hi.u64   %1, %2, %3, %5;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(u128_lo64(c)), "l"(u128_hi64(c)));

@@ -16,18 +16,101 @@ void spin() {
 #endif
 }
 
+// Increasing WMUL to 2 will reduce carryShuttle activity.  This led to a 1% speedup on Titan V.  Testing on other GPUs is needed.
+#ifndef WMUL
+#define WMUL 1
+#endif
+
+#if AMDGPU
+#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
+//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
+#else
+#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
+#endif
+
+// The last WMUL workgroup's carries have been written to global memory.  Now we shuffle WMUL-1 workgroups carries up using local memory.
+void OVERLOAD shufl_carries_up(local void *lds2, i64 *carry, u32 me, u32 lowMe) {
+  // If WMUL is one, there is no shuffling of carries
+  if (WMUL == 1) return;
+
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes used by shufl for each WMUL workgroup
+  const u32 lds_i64s = lds_bytes / sizeof(i64);                 // Number of i64s in LDS used by shufl for each WMUL workgroup
+  local i64 *lds = (local i64 *) lds2;
+
+  // Handle nasty case where we are writing 8-byte quantities but SHUFL_BYTES_W is only 4 bytes
+  if (SHUFL_BYTES_W == 4) {
+    if (WMUL == 2) {
+      // Full barrier needed as we are using the entire LDS buffer.
+      bar();
+      // Write the carries.  This will use the entire LDS buffer.
+      if (me < G_W) for (i32 i = 0; i < NW; ++i) lds[i * G_W + lowMe] = carry[i];
+      // Read carries from previous WMUL workgroup
+      bar();
+      if (me >= G_W) for (i32 i = 0; i < NW; ++i) carry[i] = lds[i * G_W + lowMe];
+      // Full barrier needed as one workgroup just read data from two workgroups LDS buffer.  Not compatible with shufl().
+      bar();
+    }
+
+    // The really nasty case where all the carries will not fit in LDS memory
+    else {
+      lds += (me / G_W) * lds_i64s + lowMe;                         // This WMUL workgroup's LDS area
+      // Write half the carries to next WMUL's workgroup LDS area
+      bar();
+      if (me < (WMUL-1) * G_W) for (i32 i = 0; i < NW/2; ++i) lds[lds_i64s + i * G_W] = carry[i];
+      // Read carries from our WMUL workgroup LDS area
+      bar();
+      if (me >= G_W) for (i32 i = 0; i < NW/2; ++i) carry[i] = lds[i * G_W];
+      // Write the other half of the carries
+      bar();
+      if (me < (WMUL-1) * G_W) for (i32 i = 0; i < NW/2; ++i) lds[lds_i64s + i * G_W] = carry[i + NW/2];
+      // Read carries from our WMUL workgroup LDS area.  Compatible with shufl, no trailing bar() needed.
+      bar();
+      if (me >= G_W) for (i32 i = 0; i < NW/2; ++i) carry[i + NW/2] = lds[i * G_W];
+    }
+  }
+
+  // Easy case.  Write carries to local memory (except last WMUL workgroup which was written to global memory).
+  else {
+    lds += (me / G_W) * lds_i64s + lowMe;                         // This WMUL workgroup's LDS area
+    // Full barrier needed as we are moving data to next WMUL workgroup's LDS area
+    bar();
+    if (me < (WMUL-1) * G_W) for (i32 i = 0; i < NW; ++i) lds[lds_i64s + i * G_W] = carry[i];
+    // Full barrier needed as we just moved data from one WMUL workgroup LDS area to the another WMUL workgroup's LDS area
+    bar();
+    // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl and no trailing bar() is required.
+    if (me >= G_W) for (i32 i = 0; i < NW; ++i) carry[i] = lds[i * G_W];
+  }
+}
+
+// The last WMUL workgroup's carries have been written to global memory.  Now we shuffle WMUL-1 workgroup carries up using local memory.
+void OVERLOAD shufl_carries_up(local void *lds2, i32 *carry, u32 me, u32 lowMe) {
+  // If WMUL is one, there is no shuffling of carries
+  if (WMUL == 1) return;
+
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes used by shufl for each WMUL workgroup
+  const u32 lds_i32s = lds_bytes / sizeof(i32);                 // Number of i32s in LDS used by shufl for each WMUL workgroup
+  local i32 *lds = (local i32 *) lds2;
+  lds += (me / G_W) * lds_i32s + lowMe;                         // This WMUL workgroup's LDS area
+
+  // Write carries to local memory (except last WMUL workgroup which was written to global memory)
+  // Full barrier needed as we are moving data to next WMUL workgroup's LDS area
+  bar();
+  if (me < (WMUL-1) * G_W) for (i32 i = 0; i < NW; ++i) lds[lds_i32s + i * G_W] = carry[i];
+  // Full barrier needed as we just moved data from one WMUL workgroup LDS area to the another WMUL workgroup's LDS area
+  bar();
+  // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl and no trailing bar() is required.
+  if (me >= G_W) for (i32 i = 0; i < NW; ++i) carry[i] = lds[i * G_W];
+}
+
+
 #if FFT_TYPE == FFT64
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
-                       CP(u32) bits, ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
-
-#if 0   // fft_WIDTH uses shufl_int instead of shufl
-  local T2 lds[WIDTH / 4];
-#else
-  local T2 lds[WIDTH / 2];
-#endif
+KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+                              ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local T2 lds[WMUL * lds_bytes / sizeof(T2)];
 
   T2 u[NW];
 
@@ -35,36 +118,31 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
 #if HAS_ASM
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in, u, line);
-
-// Split 32 bits into NW groups of 2 bits.  See later for different way to do this.
-#if !BIGLIT
-#define GPW (16 / NW)
-  u32 b = NTLOAD(bits[(G_W * line + me) / GPW]) >> (me % GPW * (2 * NW));
-#undef GPW
-#endif
+  readCarryFusedLine(in, u, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack);
-#else
-  new_fft_WIDTH1(lds, u, smallTrig);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 #if AMDGPU
-  T2 weights = fancyMul(THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);
+  T2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
 #else
-  T2 weights = fancyMul(CONST_THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  T2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
 #endif
 
 #if MUL3
@@ -75,24 +153,13 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   CFcarry carry[NW+1];
 #endif
 
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
-
   float roundMax = 0;
   float carryMax = 0;
 
-  // On Titan V it is faster to derive the big vs. little flags from the fractional number of bits in each FFT word rather than read the flags from memory.
-  // On Radeon VII this code is about the same speed.  Not sure which is better on other GPUs.
-#if BIGLIT
   // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
   u32 frac_bits = word_index * FRAC_BPW_HI + mad_hi (word_index, FRAC_BPW_LO, FRAC_BPW_HI);
   const u32 frac_bits_bigstep = ((G_W * H * 2) * FRAC_BPW_HI + (u32)(((u64)(G_W * H * 2) * FRAC_BPW_LO) >> 32));
-#endif
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
@@ -103,13 +170,8 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
 
     // Generate big-word/little-word flags
-#if BIGLIT
     bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
     bool biglit1 = frac_bits + i * frac_bits_bigstep >= -FRAC_BPW_HI;   // Same as frac_bits + i * frac_bits_bigstep + FRAC_BPW_HI <= FRAC_BPW_HI;
-#else
-    bool biglit0 = test(b, 2 * i);
-    bool biglit1 = test(b, 2 * i + 1);
-#endif
 
     // Apply the inverse weights, optionally compute roundoff error, and convert to integer.  Also apply MUL3 here.
     // Then propagate carries through two words (the first carry does not have to be accurately calculated because it will
@@ -126,28 +188,28 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) {
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -163,68 +225,66 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     u[i] = U2(weight1, weight2);
   }
 
+  // Shuffle carries up
+  shufl_carries_up(lds, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H/WMUL we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
   // Apply each 32 or 64 bit carry to the 2 words
   for (i32 i = 0; i < NW; ++i) {
-#if BIGLIT
     bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
-#else
-    bool biglit0 = test(b, 2 * i);
-#endif
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
     u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);
   }
 
-  bar();
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
 
-//  fft_WIDTH(lds, u, smallTrig);
-  new_fft_WIDTH2(lds, u, smallTrig);
-
-  writeCarryFusedLine(u, out, line);
+  writeCarryFusedLine(u, out, line, lowMe);
 }
 
 
@@ -236,14 +296,10 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigFP32 smallTrig,
-                       CP(u32) bits, ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-
-#if 0   // fft_WIDTH uses shufl_int instead of shufl
-  local F2 lds[WIDTH / 4];
-#else
-  local F2 lds[WIDTH / 2];
-#endif
+KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigFP32 smallTrig,
+                              ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local F2 lds[WMUL * lds_bytes / sizeof(F2)];
 
   F2 u[NW];
 
@@ -251,46 +307,41 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
 #if HAS_ASM
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in, u, line);
+  readCarryFusedLine(in, u, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack);
-#else
-  new_fft_WIDTH1(lds, u, smallTrig);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 #if AMDGPU
-  F2 weights = fancyMul(THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);
+  F2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
 #else
-  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
 #endif
 
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;
   CFcarry carry[NW+1];
 
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
-
   float roundMax = 0;
   float carryMax = 0;
 
   // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
   u32 frac_bits = word_index * FRAC_BPW_HI + mad_hi (word_index, FRAC_BPW_LO, FRAC_BPW_HI);
   const u32 frac_bits_bigstep = ((G_W * H * 2) * FRAC_BPW_HI + (u32)(((u64)(G_W * H * 2) * FRAC_BPW_LO) >> 32));
 
@@ -321,28 +372,28 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) { 
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -358,48 +409,53 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
     u[i] = U2(weight1, weight2);
   }
 
+  // Shuffle carries up
+  shufl_carries_up(lds, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -410,12 +466,9 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
     u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);
   }
 
-  bar();
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
 
-//  fft_WIDTH(lds, u, smallTrig);
-  new_fft_WIDTH2(lds, u, smallTrig);
-
-  writeCarryFusedLine(u, out, line);
+  writeCarryFusedLine(u, out, line, lowMe);
 }
 
 
@@ -427,13 +480,9 @@ KERNEL(G_W) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF31 smallTrig, P(uint) bufROE) {
-
-#if 0   // fft_WIDTH uses shufl_int instead of shufl
-  local GF31 lds[WIDTH / 4];
-#else
-  local GF31 lds[WIDTH / 2];
-#endif
+KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF31 smallTrig, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local GF31 lds[WMUL * lds_bytes / sizeof(GF31)];
 
   GF31 u[NW];
 
@@ -441,40 +490,35 @@ KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
 #if HAS_ASM
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in, u, line);
+  readCarryFusedLine(in, u, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack);
-#else
-  new_fft_WIDTH1(lds, u, smallTrig);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;
   CFcarry carry[NW+1];
 
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
-
   u32 roundMax = 0;
   float carryMax = 0;
 
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Weights can be applied with shifts because 2 is the 60th root GF31.
@@ -537,28 +581,28 @@ KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) { 
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -566,48 +610,52 @@ KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle
   __asm("s_setprio 0");
 #endif
 
+  // Shuffle carries up
+  shufl_carries_up(lds, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -627,11 +675,9 @@ KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  bar();
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
 
-  new_fft_WIDTH2(lds, u, smallTrig);
-
-  writeCarryFusedLine(u, out, line);
+  writeCarryFusedLine(u, out, line, lowMe);
 }
 
 
@@ -643,13 +689,9 @@ KERNEL(G_W) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF61 smallTrig, P(uint) bufROE) {
-
-#if 0   // fft_WIDTH uses shufl_int instead of shufl
-  local GF61 lds[WIDTH / 4];
-#else
-  local GF61 lds[WIDTH / 2];
-#endif
+KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF61 smallTrig, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local GF61 lds[WMUL * lds_bytes / sizeof(GF61)];
 
   GF61 u[NW];
 
@@ -657,23 +699,25 @@ KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
 #if HAS_ASM
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in, u, line);
+  readCarryFusedLine(in, u, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack);
-#else
-  new_fft_WIDTH1(lds, u, smallTrig);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 
@@ -685,17 +729,10 @@ KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle
   CFcarry carry[NW+1];
 #endif
 
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
-
   u32 roundMax = 0;
   float carryMax = 0;
 
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Weights can be applied with shifts because 2 is the 60th root GF61.
@@ -758,28 +795,28 @@ KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) { 
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -787,48 +824,53 @@ KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle
   __asm("s_setprio 0");
 #endif
 
+  // Shuffle carries up
+  shufl_carries_up(lds, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -848,11 +890,9 @@ KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle
     if (weight_shift > 61) weight_shift -= 61;
   }
 
-  bar();
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
 
-  new_fft_WIDTH2(lds, u, smallTrig);
-
-  writeCarryFusedLine(u, out, line);
+  writeCarryFusedLine(u, out, line, lowMe);
 }
 
 
@@ -864,10 +904,10 @@ KERNEL(G_W) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
-                       CP(u32) bits, ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
-
-  local T2 lds[WIDTH / 2];
+KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+                              ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local T2 lds[WMUL * lds_bytes / sizeof(T2)];
   local GF31 *lds31 = (local GF31 *) lds;
 
   T2 u[NW];
@@ -877,7 +917,13 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -887,43 +933,30 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in, u, line);
-  readCarryFusedLine(in31, u31, line);
+  readCarryFusedLine(in, u, line, lowMe);
+  readCarryFusedLine(in31, u31, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack);
-  bar();
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack);
-#else
-  new_fft_WIDTH1(lds, u, smallTrig);
-  bar();
-  new_fft_WIDTH1(lds31, u31, smallTrig31);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 #if AMDGPU
-  T2 weights = fancyMul(THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);
+  T2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
 #else
-  T2 weights = fancyMul(CONST_THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  T2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
 #endif
+
   P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
   i64 carry[NW+1];
-
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
 
   float roundMax = 0;
   float carryMax = 0;
 
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 31.
@@ -987,28 +1020,28 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+  // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) { 
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -1024,48 +1057,53 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     u[i] = U2(weight1, weight2);
   }
 
+  // Shuffle carries up
+  shufl_carries_up(lds, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H/WMUL we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -1087,15 +1125,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  bar();
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u, out, line, lowMe);
 
-  new_fft_WIDTH2(lds, u, smallTrig);
-  writeCarryFusedLine(u, out, line);
-
-  bar();
-
-  new_fft_WIDTH2(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, line);
+  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u31, out31, line, lowMe);
 }
 
 
@@ -1107,10 +1141,10 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
-                       CP(u32) bits, ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-
-  local F2 ldsF2[WIDTH / 2];
+KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+                              ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local F2 ldsF2[WMUL * lds_bytes / sizeof(F2)];
   local GF31 *lds31 = (local GF31 *) ldsF2;
 
   F2 uF2[NW];
@@ -1120,7 +1154,13 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -1133,43 +1173,30 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(inF2, uF2, line);
-  readCarryFusedLine(in31, u31, line);
+  readCarryFusedLine(inF2, uF2, line, lowMe);
+  readCarryFusedLine(in31, u31, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack);
-  bar();
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack);
-#else
-  new_fft_WIDTH1(ldsF2, uF2, smallTrigF2);
-  bar();
-  new_fft_WIDTH1(lds31, u31, smallTrig31);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 #if AMDGPU
-  F2 weights = fancyMul(THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);
+  F2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
 #else
-  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
 #endif
+
   P(i32) carryShuttlePtr = (P(i32)) carryShuttle;
   i32 carry[NW+1];
-
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
 
   float roundMax = 0;
   float carryMax = 0;
 
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 31.
@@ -1233,28 +1260,28 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) { 
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -1270,48 +1297,53 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     uF2[i] = U2(weight1, weight2);
   }
 
+  // Shuffle carries up
+  shufl_carries_up(ldsF2, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H/WMUL we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -1333,15 +1365,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  bar();
+  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(uF2, outF2, line, lowMe);
 
-  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2);
-  writeCarryFusedLine(uF2, outF2, line);
-
-  bar();
-
-  new_fft_WIDTH2(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, line);
+  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u31, out31, line, lowMe);
 }
 
 
@@ -1353,10 +1381,10 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
-                       CP(u32) bits, ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-
-  local GF61 lds61[WIDTH / 2];
+KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+                              ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local GF61 lds61[WMUL * lds_bytes / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
 
   F2 uF2[NW];
@@ -1366,7 +1394,13 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -1379,43 +1413,30 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(inF2, uF2, line);
-  readCarryFusedLine(in61, u61, line);
+  readCarryFusedLine(inF2, uF2, line, lowMe);
+  readCarryFusedLine(in61, u61, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack);
-  bar();
-  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack);
-#else
-  new_fft_WIDTH1(ldsF2, uF2, smallTrigF2);
-  bar();
-  new_fft_WIDTH1(lds61, u61, smallTrig61);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 #if AMDGPU
-  F2 weights = fancyMul(THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);
+  F2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
 #else
-  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
 #endif
+
   P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
   i64 carry[NW+1];
-
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
 
   float roundMax = 0;
   float carryMax = 0;
 
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 61.
@@ -1479,28 +1500,28 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) { 
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -1516,48 +1537,53 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     uF2[i] = U2(weight1, weight2);
   }
 
+  // Shuffle carries up
+  shufl_carries_up(lds61, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H/WMUL we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -1579,15 +1605,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     if (weight_shift > 61) weight_shift -= 61;
   }
 
-  bar();
+  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(uF2, outF2, line, lowMe);
 
-  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2);
-  writeCarryFusedLine(uF2, outF2, line);
-
-  bar();
-
-  new_fft_WIDTH2(lds61, u61, smallTrig61);
-  writeCarryFusedLine(u61, out61, line);
+  new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u61, out61, line, lowMe);
 }
 
 
@@ -1599,13 +1621,9 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig, P(uint) bufROE) {
-
-#if 0   // fft_WIDTH uses shufl_int instead of shufl
-  local GF61 lds61[WIDTH / 4];
-#else
-  local GF61 lds61[WIDTH / 2];
-#endif
+KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local GF61 lds61[WMUL * lds_bytes / sizeof(GF61)];
   local GF31 *lds31 = (local GF31 *) lds61;
 
   GF31 u31[NW];
@@ -1615,7 +1633,13 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -1628,38 +1652,25 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in31, u31, line);
-  readCarryFusedLine(in61, u61, line);
+  readCarryFusedLine(in31, u31, line, lowMe);
+  readCarryFusedLine(in61, u61, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack);
-  bar();
-  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack);
-#else
-  new_fft_WIDTH1(lds31, u31, smallTrig31);
-  bar();
-  new_fft_WIDTH1(lds61, u61, smallTrig61);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
+
   P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
   i64 carry[NW+1];
-
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
 
   u32 roundMax = 0;
   float carryMax = 0;
 
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 31.
@@ -1738,28 +1749,28 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) {
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -1767,48 +1778,53 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   __asm("s_setprio 0");
 #endif
 
+  // Shuffle carries up
+  shufl_carries_up(lds61, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H/WMUL we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -1836,15 +1852,11 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
-  bar();
+  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u31, out31, line, lowMe);
 
-  new_fft_WIDTH2(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, line);
-
-  bar();
-
-  new_fft_WIDTH2(lds61, u61, smallTrig61);
-  writeCarryFusedLine(u61, out61, line);
+  new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u61, out61, line, lowMe);
 }
 
 
@@ -1856,14 +1868,10 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
-                       CP(u32) bits, ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-
-#if 0   // fft_WIDTH uses shufl_int instead of shufl
-  local GF61 lds61[WIDTH / 4];
-#else
-  local GF61 lds61[WIDTH / 2];
-#endif
+KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+                              ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
+  const u32 lds_bytes = WIDTH * SHUFL_BYTES_W;                  // LDS bytes needed for each WMUL workgroup
+  local GF61 lds61[WMUL * lds_bytes / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
   local GF31 *lds31 = (local GF31 *) lds61;
 
@@ -1875,7 +1883,13 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   u32 me = get_local_id(0);
 
   u32 H = BIG_HEIGHT;
+#if WMUL == 1
+  u32 lowMe = me;
   u32 line = gr % H;
+#else
+  u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
+  u32 line = (gr * WMUL + me / G_W) % H;
+#endif
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -1891,48 +1905,32 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(inF2, uF2, line);
-  readCarryFusedLine(in31, u31, line);
-  readCarryFusedLine(in61, u61, line);
+  readCarryFusedLine(inF2, uF2, line, lowMe);
+  readCarryFusedLine(in31, u31, line, lowMe);
+  readCarryFusedLine(in61, u61, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
-#if ZEROHACK_W
-  u32 zerohack = get_group_id(0) / 131072;
-  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack);
-  bar();
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack);
-  bar();
-  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack);
-#else
-  new_fft_WIDTH1(ldsF2, uF2, smallTrigF2);
-  bar();
-  new_fft_WIDTH1(lds31, u31, smallTrig31);
-  bar();
-  new_fft_WIDTH1(lds61, u61, smallTrig61);
-#endif
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
 #if AMDGPU
-  F2 weights = fancyMul(THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);
+  F2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
 #else
-  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[me], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
 #endif
+
   P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
   i64 carry[NW+1];
-
-#if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
-#else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
-#endif
 
   float roundMax = 0;
   float carryMax = 0;
 
-  u32 word_index = (me * H + line) * 2;
+  u32 word_index = (lowMe * H + line) * 2;
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 31.
@@ -2013,28 +2011,28 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
   updateStats(bufROE, posROE, carryMax);
 #endif
 
-  // Write out our carries. Only groups 0 to H-1 need to write carries out.
-  // Group H is a duplicate of group 0 (producing the same results) so we don't care about group H writing out,
+  // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
+  // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
-  if (gr < H) { for (i32 i = 0; i < NW; ++i) { carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(me, i)] = carry[i]; } }
+  if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+    for (i32 i = 0; i < NW; ++i) { L2STORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next line that its carries are ready
-  if (gr < H) {
+    // Tell next group that its carries are ready
 #if OLD_FENCE
     // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    bar();
-    if (me == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    bar(G_W);
+    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (me % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (lowMe % WAVEFRONT == 0) { 
+      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
 
-  // Line zero will be redone when gr == H
+  // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
@@ -2050,48 +2048,53 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     uF2[i] = U2(weight1, weight2);
   }
 
+  // Shuffle carries up
+  shufl_carries_up(lds61, carry, me, lowMe);
+
   // Wait until our carries are ready
+  if (me < G_W) {
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
-  bar();
-  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me == 0) ready[gr - 1] = 0;
+    if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    bar();
+    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me == 0) ready[gr - 1] = 0;
 #else
-  u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-  if (me % WAVEFRONT == 0) {
-    do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
-  }
-  mem_fence(CLK_GLOBAL_MEM_FENCE);
-  // Clear carry ready flag for next iteration
-  if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
+    if (me % WAVEFRONT == 0) {
+      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+    }
+    mem_fence(CLK_GLOBAL_MEM_FENCE);
+    // Clear carry ready flag for next iteration
+    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
 #if HAS_ASM
-  __asm("s_setprio 1");
+    __asm("s_setprio 1");
 #endif
 
-  // Read from the carryShuttle carries produced by the previous WIDTH row.  Rotate carries from the last WIDTH row.
-  // The new carry layout lets the compiler generate global_load_dwordx4 instructions.
-  if (gr < H) {
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)];
-    }
-  } else {
+    // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
+    // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
+    if (gr < H / WMUL) {
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+      }
+    } else {
 
 #if !OLD_FENCE
-    // For gr==H we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
-    bar();
+      // For gr==H/WMUL we need the barrier since the carry reading is shifted, thus the per-wavefront trick does not apply.
+      bar();
 #endif
 
-    for (i32 i = 0; i < NW; ++i) {
-      carry[i] = carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/];
-    }
+      for (i32 i = 0; i < NW; ++i) {
+        carry[i] = LULOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+      }
 
-    if (me == 0) {
-      carry[NW] = carry[NW-1];
-      for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
-      carry[0] = carry[NW];
+      if (me == 0) {
+        carry[NW] = carry[NW-1];
+        for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
+        carry[0] = carry[NW];
+      }
     }
   }
 
@@ -2120,20 +2123,14 @@ KERNEL(G_W) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(
     m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
-  bar();
+  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(uF2, outF2, line, lowMe);
 
-  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2);
-  writeCarryFusedLine(uF2, outF2, line);
+  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u31, out31, line, lowMe);
 
-  bar();
-
-  new_fft_WIDTH2(lds31, u31, smallTrig31);
-  writeCarryFusedLine(u31, out31, line);
-
-  bar();
-
-  new_fft_WIDTH2(lds61, u61, smallTrig61);
-  writeCarryFusedLine(u61, out61, line);
+  new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
+  writeCarryFusedLine(u61, out61, line, lowMe);
 }
 
 

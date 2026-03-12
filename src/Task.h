@@ -20,7 +20,7 @@ public:
   enum Kind {PRP, VERIFY, LL, CERT};
 
   Kind kind;
-  u32 exponent;
+  u64 exponent;
   string AID;  // Assignment ID
   string line; // the verbatim worktodo line, used in deleteTask().
   u32 squarings;  // For CERTs

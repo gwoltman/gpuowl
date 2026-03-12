@@ -27,7 +27,7 @@ class FFTShape {
 public:
   static std::vector<FFTShape> allShapes(u32 from=0, u32 to = -1);
 
-  static tuple<u32, u32, bool> getChainLengths(u32 fftSize, u32 exponent, u32 middle);
+  static tuple<u32, u32, bool> getChainLengths(u32 fftSize, u64 exponent, u32 middle);
 
   static vector<FFTShape> multiSpec(const string& spec);
 
@@ -51,7 +51,7 @@ public:
   std::string spec() const { return (fft_type ? to_string(fft_type) + ':' : "") + numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
 
   float carry32BPW() const;
-  bool needsLargeCarry(u32 E) const;
+  bool needsLargeCarry(u64 E) const;
   bool isFavoredShape() const;
 };
 
@@ -73,7 +73,7 @@ enum CARRY_KIND {CARRY_32=0, CARRY_64=1, CARRY_AUTO=2};
 
 struct FFTConfig {
 public:
-  static FFTConfig bestFit(const Args& args, u32 E, const std::string& spec);
+  static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec);
 
   // Which FP and NTT primes are involved in the FFT
   bool FFT_FP64;
