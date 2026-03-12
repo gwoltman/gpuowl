@@ -210,7 +210,7 @@ u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
 #if ENABLE_MAD64 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher    // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
   __asm("mad.lo.cc.u64 %0, %2, %3, %4;\n\t"
-        "madc.hi.u64   %1, %2, %3, 0;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(u128_lo64(c)));
+        "madc.hi.u64   %1, %2, %3, 0;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b), "l"(c));
   return make_u128(reshi, reslo);
 #elif HAS_PTX >= 200        // mad instruction requires sm_20 support or higher       // Faster on TitanV.  No difference on mobile 4070.  Much cleaner PTX code generated.
   uint2 a2 = as_uint2(a);
