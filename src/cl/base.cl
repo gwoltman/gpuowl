@@ -189,6 +189,14 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define ZEROHACK_H 1
 #endif
 
+#if !defined(ENABLE_L2STORE)
+#define ENABLE_L2STORE 1
+#endif
+
+#if !defined(ENABLE_LULOAD)
+#define ENABLE_LULOAD 1
+#endif
+
 // Expected defines: EXP the exponent.
 // WIDTH, SMALL_HEIGHT, MIDDLE.
 

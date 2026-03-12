@@ -228,7 +228,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = 0, tail_single_kernel = 1;         // Default tailSquare is double-wide in one kernel
   in_place = 0;                                         // Default is not in-place
-  wmul = 1;						// Default is carryFused processes one workgroup at a time
+  wmul = 2;						// Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
   // Validate -use options
@@ -263,6 +263,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "TABMUL_CHAIN32",
                               "TABMUL_CHAIN61",
                               "MODM31",
+                              "ENABLE_L2STORE",
+                              "ENABLE_LULOAD",
                               "WMUL"
                             });
     if (!isValid) {

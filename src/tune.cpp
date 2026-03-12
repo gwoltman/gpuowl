@@ -343,6 +343,7 @@ void Tune::tune() {
   
   // There are some options and variants that are different based on GPU manufacturer
   bool AMDGPU = isAmdGpu(q->context->deviceId());
+  bool NVIDIAGPU = isNvidiaGpu(q->context->deviceId());
 
   bool tune_config = 1;
   bool time_FFTs = 0;
@@ -601,7 +602,7 @@ void Tune::tune() {
     }
 
     // Find best FAST_BARRIER setting
-    if (AMDGPU) {
+    if (1 /*AMDGPU*/) {			// FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_fast_barrier = 0;
@@ -908,6 +909,66 @@ void Tune::tune() {
       log("Best ZEROHACK_H is %u.  Default ZEROHACK_H is 1.\n", best_zerohack_h);
       configsUpdate(current_cost, best_cost, 0.003, "ZEROHACK_H", best_zerohack_h, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["ZEROHACK_H"] = to_string(best_zerohack_h);
+    }
+
+    // Find best WMUL setting
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_wmul = 0;
+      u32 current_wmul = args->value("WMUL", 2);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 wmul : {1, 2, 4}) {
+        args->flags["WMUL"] = to_string(wmul);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using WMUL=%u is %6.1f\n", fft.spec().c_str(), wmul, cost);
+        if (wmul == current_wmul) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_wmul = wmul; }
+      }
+      log("Best WMUL is %u.  Default WMUL is 2.\n", best_wmul);
+      configsUpdate(current_cost, best_cost, 0.003, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["WMUL"] = to_string(best_wmul);
+    }
+
+    // Find best ENABLE_L2STORE setting
+    if (NVIDIAGPU) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_enable_l2store = 0;
+      u32 current_enable_l2store = args->value("ENABLE_L2STORE", 2);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 enable_l2store : {0, 1}) {
+        args->flags["ENABLE_L2STORE"] = to_string(enable_l2store);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using ENABLE_L2STORE=%u is %6.1f\n", fft.spec().c_str(), enable_l2store, cost);
+        if (enable_l2store == current_enable_l2store) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_enable_l2store = enable_l2store; }
+      }
+      log("Best ENABLE_L2STORE is %u.  Default ENABLE_L2STORE is 1.\n", best_enable_l2store);
+      configsUpdate(current_cost, best_cost, 0.003, "ENABLE_L2STORE", best_enable_l2store, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["ENABLE_L2STORE"] = to_string(best_enable_l2store);
+    }
+
+    // Find best ENABLE_LULOAD setting
+    if (NVIDIAGPU) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_enable_luload = 0;
+      u32 current_enable_luload = args->value("ENABLE_LULOAD", 2);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 enable_luload : {0, 1}) {
+        args->flags["ENABLE_LULOAD"] = to_string(enable_luload);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using ENABLE_LULOAD=%u is %6.1f\n", fft.spec().c_str(), enable_luload, cost);
+        if (enable_luload == current_enable_luload) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_enable_luload = enable_luload; }
+      }
+      log("Best ENABLE_LULOAD is %u.  Default ENABLE_LULOAD is 1.\n", best_enable_luload);
+      configsUpdate(current_cost, best_cost, 0.003, "ENABLE_LULOAD", best_enable_luload, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["ENABLE_LULOAD"] = to_string(best_enable_luload);
     }
 
     // Find best BIGLIT setting
