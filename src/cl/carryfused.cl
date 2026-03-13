@@ -18,7 +18,7 @@ void spin() {
 
 // Increasing WMUL to 2 will reduce carryShuttle activity.  This led to a 1% speedup on Titan V.  Testing on other GPUs is needed.
 #ifndef WMUL
-#define WMUL 1
+#define WMUL 2
 #endif
 
 #if AMDGPU
