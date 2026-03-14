@@ -5,6 +5,9 @@
 #include "trig.cl"
 #include "fftheight.cl"
 
+// LDS bytes used by shufl for each line processed in fft_HEIGHT
+#define LDS_BYTES  (SMALL_HEIGHT * SHUFL_BYTES_H)
+
 #if FFT_FP64
 
 // Handle the final multiplication step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
@@ -49,8 +52,7 @@ void OVERLOAD pairMul(u32 N, T2 *u, T2 *v, T2 *p, T2 *q, T2 base_squared, bool s
 }
 
 KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes / sizeof(T2)];
+  local T2 lds[LDS_BYTES / sizeof(T2)];
 
   T2 u[NH], v[NH];
   T2 p[NH], q[NH];
@@ -161,8 +163,7 @@ void OVERLOAD pairMul(u32 N, F2 *u, F2 *v, F2 *p, F2 *q, F2 base_squared, bool s
 }
 
 KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes / sizeof(F2)];
+  local F2 lds[LDS_BYTES / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   CP(F2) aF2 = (CP(F2)) a;
@@ -270,8 +271,7 @@ void OVERLOAD pairMul(u32 N, GF31 *u, GF31 *v, GF31 *p, GF31 *q, GF31 base_squar
 }
 
 KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   CP(GF31) a31 = (CP(GF31)) (a + DISTGF31);
@@ -394,8 +394,7 @@ void OVERLOAD pairMul(u32 N, GF61 *u, GF61 *v, GF61 *p, GF61 *q, GF61 base_squar
 }
 
 KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   CP(GF61) a61 = (CP(GF61)) (a + DISTGF61);

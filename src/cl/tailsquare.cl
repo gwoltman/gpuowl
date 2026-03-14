@@ -4,6 +4,9 @@
 #include "trig.cl"
 #include "fftheight.cl"
 
+// LDS bytes used by shufl for each line processed in fft_HEIGHT
+#define LDS_BYTES  (SMALL_HEIGHT * SHUFL_BYTES_H)
+
 #if FFT_FP64
 
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
@@ -54,8 +57,7 @@ void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes / sizeof(T2)];
+  local T2 lds[LDS_BYTES / sizeof(T2)];
   T2 u[NH];
   u32 H = ND / SMALL_HEIGHT;
 
@@ -89,8 +91,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes / sizeof(T2)];
+  local T2 lds[LDS_BYTES / sizeof(T2)];
 
   T2 u[NH], v[NH];
 
@@ -198,8 +199,7 @@ void OVERLOAD pairSq2_special(T2 *u, T2 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes * 2 / sizeof(T2)];
+  local T2 lds[2 * LDS_BYTES / sizeof(T2)];
 
   T2 u[NH];
 
@@ -332,8 +332,7 @@ void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes / sizeof(F2)];
+  local F2 lds[LDS_BYTES / sizeof(F2)];
   F2 u[NH];
   u32 H = ND / SMALL_HEIGHT;
 
@@ -363,8 +362,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes / sizeof(F2)];
+  local F2 lds[LDS_BYTES / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -468,8 +466,7 @@ void OVERLOAD pairSq2_special(F2 *u, F2 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes * 2 / sizeof(F2)];
+  local F2 lds[2 * LDS_BYTES / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -601,8 +598,7 @@ void OVERLOAD pairSq(u32 N, GF31 *u, GF31 *v, GF31 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -650,8 +646,7 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -750,8 +745,7 @@ void OVERLOAD pairSq2_special(GF31 *u, GF31 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes * 2 / sizeof(GF31)];
+  local GF31 lds[2 * LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -879,8 +873,7 @@ void OVERLOAD pairSq(u32 N, GF61 *u, GF61 *v, GF61 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -928,8 +921,7 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -1028,8 +1020,7 @@ void OVERLOAD pairSq2_special(GF61 *u, GF61 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes * 2 / sizeof(GF61)];
+  local GF61 lds[2 * LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
