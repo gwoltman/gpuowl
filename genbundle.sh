@@ -19,10 +19,14 @@ do
     names=${names}\"${x}\",
 
     echo "// $xx"
-    #echo const char ${x}_cl[] = R\"cltag\(
-    echo 'R"cltag('
-    cat "$xx"
+
+    # MSVC cannot handle string constants longer than 16KB.  Thus, output one raw line at a time and concatenate them using the C++ preprocessor
+    echo '        R"cltag('
+    while IFS= read -r line; do
+        echo ')cltag" R"cltag('"$line"
+    done < $xx
     echo ')cltag",'
+
     echo
 done
 echo '};'

@@ -593,7 +593,7 @@ private:
 
         static uint64_t _mul(const uint64_t a, const uint64_t b)
         {
-                const __uint128_t t = a * __uint128_t(b);
+                const u128 t = a * u128(b);
                 const uint64_t lo = uint64_t(t), hi = uint64_t(t >> 64);
                 const uint64_t lo61 = lo & _p, hi61 = (lo >> 61) | (hi << 3);
                 return _add(lo61, hi61);

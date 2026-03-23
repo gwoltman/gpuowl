@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cassert>
+#ifndef _MSC_VER		// unistd.h does not exist for MSVC
 #include <unistd.h>
+#endif
 #include <filesystem>
 #include <vector>
 #include <string>
@@ -26,6 +28,15 @@
 #define HAS_SETLINEBUF 1
 #else
 #define HAS_SETLINEBUF 0
+#endif
+
+//! Macros for __attribute__ compiler/crossplatform support
+#ifndef _MSC_VER
+#define FORMAT_PRINTF(fmt_idx, arg_idx) __attribute__((format(printf, fmt_idx, arg_idx)))
+#define FORMAT_SCANF(fmt_idx, arg_idx) __attribute__((format(scanf, fmt_idx, arg_idx)))
+#else
+#define FORMAT_PRINTF(fmt_idx, arg_idx)
+#define FORMAT_SCANF(fmt_idx, arg_idx)
 #endif
 
 namespace fs = std::filesystem;
@@ -48,7 +59,7 @@ class File {
   
   File(const fs::path &path, const string& mode, bool throwOnError);
 
-  bool readNoThrow(void* data, u32 nBytes) const { return fread(data, nBytes, 1, get()); }
+  bool readNoThrow(void* data, u32 nBytes) const { return fread(data, nBytes, 1, this->get()); }
   
   void read(void* data, u32 nBytes) const {
     if (!readNoThrow(data, nBytes)) { throw ReadError{name}; }
@@ -128,18 +139,18 @@ public:
   void write(const T& x) const { write(&x, sizeof(T)); }
 
   void write(const void* data, u32 nBytes) const {
-    if (!fwrite(data, nBytes, 1, get())) { throw WriteError{name}; }
+    if (!fwrite(data, nBytes, 1, this->get())) { throw WriteError{name}; }
   }
   
   void seek(long offset, int whence = SEEK_SET) {
-    int ret = fseek(get(), offset, whence);
+    int ret = fseek(this->get(), offset, whence);
     if (ret) { throw ReadError{name}; }
       // throw(std::ios_base::failure(("fseek: "s + to_string(ret)).c_str()));
   }
 
-  void flush() { fflush(get()); }
+  void flush() { fflush(this->get()); }
   
-  int printf(const char *fmt, ...) const __attribute__((format(printf, 2, 3))) {
+  int printf(const char *fmt, ...) const FORMAT_PRINTF(2, 3) {
     va_list va;
     va_start(va, fmt);
     int ret = vfprintf(f, fmt, va);
@@ -152,7 +163,7 @@ public:
     return ret;
   }
 
-  int scanf(const char *fmt, ...) __attribute__((format(scanf, 2, 3))) {
+  int scanf(const char *fmt, ...) FORMAT_SCANF(2, 3) {
     va_list va;
     va_start(va, fmt);
     int ret = vfscanf(f, fmt, va);
@@ -162,13 +173,13 @@ public:
   
   void write(const string& s) { write(string_view(s)); }
   void write(const char* s) { write(string_view(s)); }
-  void write(string_view s) { write(s.data(), s.size()); }
+  void write(string_view s) { write(s.data(), u32(s.size())); }
 
   operator bool() const { return f != nullptr; }
   FILE* get() const { return f; }
 
   long ftell() const {
-    long pos = ::ftell(get());
+    long pos = ::ftell(this->get());
     assert(pos >= 0);
     return pos;
   }
@@ -191,7 +202,7 @@ public:
   std::string readLine() {
     char buf[1024];
     buf[0] = 0;
-    bool ok = fgets(buf, sizeof(buf), get());
+    bool ok = fgets(buf, sizeof(buf), this->get());
     if (!ok) { return ""; }  // EOF or error
     string line = buf;
     if (line.empty() || line.back() != '\n') {
@@ -244,11 +255,11 @@ public:
     read(data.data(), nBytes);
     return data;
   }
-  
-  u32 readUpTo(void* data, u32 nUpToBytes) { return fread(data, 1, nUpToBytes, get()); }
-  
+
+  u32 readUpTo(void* data, u32 nUpToBytes) { return u32(fread(data, 1, nUpToBytes, this->get())); }
+
   string readAll() {
-    size_t sz = size();
+    u32 sz = u32(size());
     return {read<char>(sz).data(), sz};
   }
 };

@@ -27,8 +27,6 @@ class FFTShape {
 public:
   static std::vector<FFTShape> allShapes(u32 from=0, u32 to = -1);
 
-  static tuple<u32, u32, bool> getChainLengths(u32 fftSize, u64 exponent, u32 middle);
-
   static vector<FFTShape> multiSpec(const string& spec);
 
   enum FFT_TYPES fft_type;
@@ -87,14 +85,14 @@ public:
 
   FFTShape shape{};
   u32 variant;
-  u32 carry;
+  enum CARRY_KIND carry;
 
   explicit FFTConfig(const string& spec);
-  FFTConfig(FFTShape shape, u32 variant, u32 carry);
+  FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry);
 
   std::string spec() const;
   u64 size() const { return shape.size(); }
-  u64 maxExp()  const { return maxBpw() * shape.size(); }
+  u64 maxExp()  const { return u64(maxBpw() * shape.size()); }
 
   float minBpw() const { return shape.minBpw(); }
   float maxBpw() const;

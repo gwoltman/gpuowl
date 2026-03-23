@@ -45,11 +45,17 @@ extern int putenv(char *);
 #endif
 
 int main(int argc, char **argv) {
+//!MSVC version support
+#ifdef _MSC_VER
+  _set_printf_count_output(1);    // I'm not sure what this does (it's from CrazeTheDragon)
+#endif
 
 #if defined(__MSYS__)
   // I was unable to get putenv to link in MSYS2
 #elif defined(__MINGW32__) || defined(__MINGW64__)
   putenv("ROC_SIGNAL_POOL_SIZE=32");
+#elif defined(_WIN32)
+  _putenv_s("ROC_SIGNAL_POOL_SIZE", "32");  // For MSVC
 #else
   // Required to work around a ROCm bug when using multiple queues
   setenv("ROC_SIGNAL_POOL_SIZE", "32", 0);

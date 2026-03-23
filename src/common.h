@@ -11,8 +11,13 @@ using i32 = int32_t;
 using u32 = uint32_t;
 using i64 = int64_t;
 using u64 = uint64_t;
+#ifndef _MSC_VER                        // MSVC does not suppport 128-bit values
 using i128 = __int128;
 using u128 = unsigned __int128;
+#else
+#include "U128.h"
+using u128 = U128;
+#endif
 // using f128 = __float128;
 
 static_assert(sizeof(u8)  == 1, "size u8");

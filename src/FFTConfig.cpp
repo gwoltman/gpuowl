@@ -34,7 +34,7 @@ u32 parseInt(const string& s) {
   assert(!s.empty());
   char c = s.back();
   u32 multiple = c == 'k' || c == 'K' ? 1024 : c == 'm' || c == 'M' ? 1024 * 1024 : 1;
-  return strtod(s.c_str(), nullptr) * multiple;
+  return u32(strtod(s.c_str(), nullptr) * multiple);
 }
 
 } // namespace
@@ -157,7 +157,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
       while (h < 256) { h *= 2; m /= 2; }
       if (m == 1) m = 2;
       bpw = FFTShape{w, m, h}.bpw;
-      for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] -= 0.05;   // Assume this fft spec is worse than measured fft specs
+      for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] -= 0.05f;   // Assume this fft spec is worse than measured fft specs
       if (this->isFavoredShape()) {  // Don't output this warning message for non-favored shapes (we expect the BPW info to be missing)
         printf("BPW info for %s not found, defaults={", s.c_str());
         for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) printf("%s%.2f", j ? ", " : "", (double) bpw[j]);
@@ -177,9 +177,9 @@ float FFTShape::carry32BPW() const {
 
 //GW:  I have no idea why this is needed.  Without it, -tune fails on FFT sizes from 256K to 1M
 // Perhaps it has something to do with RNDVALdoubleToLong in carryutil
-if (18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())) > 19.0) return 19.0;
+if (18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())) > 19.0) return 19.0f;
 
-  return 18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size()));
+  return float(18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())));
 }
 
 bool FFTShape::needsLargeCarry(u64 E) const {
@@ -227,7 +227,7 @@ FFTConfig::FFTConfig(const string& spec) {
   }
 }
 
-FFTConfig::FFTConfig(FFTShape shape, u32 variant, u32 carry) :
+FFTConfig::FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry) :
   shape{shape},
   variant{variant},
   carry{carry}
@@ -265,7 +265,7 @@ float FFTConfig::maxBpw() const {
   else {
     float b1 = shape.bpw[variant_M(variant) * 3 + variant_W(variant)];
     float b2 = shape.bpw[variant_M(variant) * 3 + variant_H(variant)];
-    b = (b1 + b2) / 2.0;
+    b = (b1 + b2) / 2.0f;
   }
   // Only some FFTs support both 32 and 64 bit carries.
   return (carry == CARRY_32 && (shape.fft_type == FFT64 || shape.fft_type == FFT3231)) ? std::min(shape.carry32BPW(), b) : b;

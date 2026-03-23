@@ -107,6 +107,6 @@ vector<Word> expandBits(const vector<u32> &compactBits, u32 N, u64 E) {
   assert(it == itEnd);
   assert(bucket.size == 32 - E % 32);
   assert(bucket.bits == 0 || bucket.bits == 1);
-  data[0] += bucket.bits; // carry wrap-around.
+  data[0] += u32(bucket.bits); // carry wrap-around.
   return out;
 }
