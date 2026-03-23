@@ -246,7 +246,7 @@ void OVERLOAD tabMul(u32 WG, Trig trig, T2 *u, u32 n, u32 f, u32 me) {
 // Apparently, chained Fancy muls at these short n=4 and n=8 lengths are very accurate.
 
   if (TABMUL_CHAIN) {
-    T2 w = trig[p];
+    T2 w = TFLOAD(&trig[p]);
     chainMul(n, u, w, 0);
     return;
   }
@@ -255,7 +255,7 @@ void OVERLOAD tabMul(u32 WG, Trig trig, T2 *u, u32 n, u32 f, u32 me) {
 // Radeon VII loves this case, it is faster than the chainmul case.  nVidia Titan V hates this case.
 
   if (!TABMUL_CHAIN) {
-    T2 w = trig[p];
+    T2 w = TFLOAD(&trig[p]);
 
     if (n >= 8) {
       u[1] = cmulFancy(u[1], w);
@@ -264,7 +264,7 @@ void OVERLOAD tabMul(u32 WG, Trig trig, T2 *u, u32 n, u32 f, u32 me) {
     }
 
     for (u32 i = 2; i < n; ++i) {
-      u[i] = cmul(u[i], trig[(i-1)*WG + p]);
+      u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
   }
@@ -292,11 +292,11 @@ void preload_tabMul4_trig(u32 WG, Trig trig, T *preloads, u32 f, u32 numWG, u32 
 
   // Read 3 lines of sine/cosine values for the first fft4.  Read two of the lines as a pair as AMD likes T2 global memory reads
   Trig trig2 = (Trig) trig1;
-  T2 sine_over_cosines = trig2[me];
+  T2 sine_over_cosines = TFLOAD(&trig2[me]);
   preloads[0] = sine_over_cosines.x;
   preloads[1] = sine_over_cosines.y;
   // Read 3rd line
-  preloads[2] = trig1[2*WG + me];
+  preloads[2] = TFLOAD(&trig1[2*WG + me]);
 }
 
 // Do a partial tabMul.  Save the mul-by-cosine for later FMA instructions.
@@ -326,7 +326,7 @@ void partial_tabMul4(u32 WG, local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f
     // Read pairs of lines to make AMD happy with T2 global memory loads
     for (u32 i = 0; i < 4; i += 2) {
       Trig trig2 = (Trig) (trig1 + i*WG);
-      T2 cosines = trig2[me];
+      T2 cosines = TFLOAD(&trig2[me]);
       preloads[i] = cosines.x;
       preloads[i+1] = cosines.y;
     }
@@ -357,8 +357,8 @@ void finish_tabMul4_fft4(u32 WG, Trig trig, T *preloads, T2 *u, u32 f, u32 numWG
 
   // Preload one line of sine/cosines and one line of cosines for later tabMuls.  We'll later broadcast these values as needed using LDS.
   if (f == 1) {
-    preloads[4] = trig1[3*WG + me];             // Sine/cosines for later tabMuls
-    preloads[5] = trig1[4*WG + 4*WG + me];      // Cosines for later tabMuls
+    preloads[4] = TFLOAD(&trig1[3*WG + me]);             // Sine/cosines for later tabMuls
+    preloads[5] = TFLOAD(&trig1[4*WG + 4*WG + me]);      // Cosines for later tabMuls
   }
 
   // Do the last level of fft4 applying cosine1
@@ -380,12 +380,12 @@ void preload_tabMul8_trig(u32 WG, Trig trig, T *preloads, u32 f, u32 numWG, u32 
   // Read 7 lines of sine/cosine values for the first fft8.  Read six of the lines as pairs as AMD likes T2 global memory reads
   for (u32 i = 1; i < 7; i += 2) {
     Trig trig2 = (Trig) (trig1 + (i-1)*WG);
-    T2 sine_over_cosines = trig2[me];
+    T2 sine_over_cosines = TFLOAD(&trig2[me]);
     preloads[i-1] = sine_over_cosines.x;
     preloads[i] = sine_over_cosines.y;
   }
   // Read 7th line
-  preloads[6] = trig1[6*WG + me];
+  preloads[6] = TFLOAD(&trig1[6*WG + me]);
 }
 
 // Do a partial tabMul.  Save the mul-by-cosine for later FMA instructions.
@@ -415,7 +415,7 @@ void partial_tabMul8(u32 WG, local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f
     // Read pairs of lines to make AMD happy with T2 global memory loads
     for (u32 i = 0; i < 8; i += 2) {
       Trig trig2 = (Trig) (trig1 + i*WG);
-      T2 cosines = trig2[me];
+      T2 cosines = TFLOAD(&trig2[me]);
       preloads[i] = cosines.x;
       preloads[i+1] = cosines.y;
     }
@@ -455,8 +455,8 @@ void finish_tabMul8_fft8(u32 WG, Trig trig, T *preloads, T2 *u, u32 f, u32 numWG
 
     // Preload one line of sine/cosines and one line of cosines for second tabMul.  We'll later broadcast these values as needed using LDS.
     if (f == 1) {
-      preloads[8] = trig1[7*WG + me];             // Sine/cosines for second tabMul
-      preloads[9] = trig1[8*WG + 8*WG + me];      // Cosines for second tabMul
+      preloads[8] = TFLOAD(&trig1[7*WG + me]);             // Sine/cosines for second tabMul
+      preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
     }
 
     // Do the fft4Core and fft4CoreSpecial applying cosine2, cosine3/cosine1
@@ -486,8 +486,8 @@ void finish_tabMul8_fft8(u32 WG, Trig trig, T *preloads, T2 *u, u32 f, u32 numWG
 
     // Preload one line of sine/cosines and one line of cosines for second tabMul.  We'll later broadcast these values as needed using LDS.
     if (f == 1) {
-      preloads[8] = trig1[7*WG + me];             // Sine/cosines for second tabMul
-      preloads[9] = trig1[8*WG + 8*WG + me];      // Cosines for second tabMul
+      preloads[8] = TFLOAD(&trig1[7*WG + me]);             // Sine/cosines for second tabMul
+      preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
     }
 
     // Do the fft4Core and fft4CoreSpecial applying cosine2, cosine3
@@ -562,7 +562,7 @@ void OVERLOAD tabMul(u32 WG, TrigFP32 trig, F2 *u, u32 n, u32 f, u32 me) {
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
   if (TABMUL_CHAIN32) {
-    chainMul(n, u, trig[p], 0);
+    chainMul(n, u, TFLOAD(&trig[p]), 0);
     return;
   }
 
@@ -570,12 +570,12 @@ void OVERLOAD tabMul(u32 WG, TrigFP32 trig, F2 *u, u32 n, u32 f, u32 me) {
 
   if (!TABMUL_CHAIN32) {
     if (n >= 8) {
-      u[1] = cmulFancy(u[1], trig[p]);
+      u[1] = cmulFancy(u[1], TFLOAD(&trig[p]));
     } else {
-      u[1] = cmul(u[1], trig[p]);
+      u[1] = cmul(u[1], TFLOAD(&trig[p]));
     }
     for (u32 i = 2; i < n; ++i) {
-      u[i] = cmul(u[i], trig[(i-1)*WG + p]);
+      u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
   }
@@ -630,7 +630,7 @@ void OVERLOAD tabMul(u32 WG, TrigGF31 trig, GF31 *u, u32 n, u32 f, u32 me) {
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
   if (TABMUL_CHAIN31) {
-    chainMul(n, u, trig[p]);
+    chainMul(n, u, TFLOAD(&trig[p]));
     return;
   }
 
@@ -638,7 +638,7 @@ void OVERLOAD tabMul(u32 WG, TrigGF31 trig, GF31 *u, u32 n, u32 f, u32 me) {
 
   if (!TABMUL_CHAIN31) {
     for (u32 i = 1; i < n; ++i) {
-      u[i] = cmul(u[i], trig[(i-1)*WG + p]);
+      u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
   }
@@ -693,7 +693,7 @@ void OVERLOAD tabMul(u32 WG, TrigGF61 trig, GF61 *u, u32 n, u32 f, u32 me) {
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
   if (TABMUL_CHAIN61) {
-    chainMul(n, u, trig[p], 0);
+    chainMul(n, u, TFLOAD(&trig[p]), 0);
     return;
   }
 
@@ -701,7 +701,7 @@ void OVERLOAD tabMul(u32 WG, TrigGF61 trig, GF61 *u, u32 n, u32 f, u32 me) {
 
   if (!TABMUL_CHAIN61) {
     for (u32 i = 1; i < n; ++i) {
-      u[i] = cmul(u[i], trig[(i-1)*WG + p]);
+      u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
   }

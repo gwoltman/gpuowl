@@ -100,7 +100,7 @@ void OVERLOAD middleMul(T2 *u, u32 s, Trig trig) {
   if (MIDDLE == 1) return;
 
   if (WIDTH == SMALL_HEIGHT) trig += SMALL_HEIGHT;     // In this case we can share the MiddleMul2 trig table.  Skip over the MiddleMul trig table.
-  T2 w = trig[s];           // s / BIG_HEIGHT
+  T2 w = TFLOAD(&trig[s]);           // s / BIG_HEIGHT
 
   if (MIDDLE < SHARP_MIDDLE) {
     WADD(1, w);
@@ -191,8 +191,8 @@ void OVERLOAD middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
     return;
   }
 
-  trig += SMALL_HEIGHT;     // Skip over the MiddleMul trig table
-  T2 w = trig[x];           // x / (MIDDLE * WIDTH)
+  trig += SMALL_HEIGHT;          // Skip over the MiddleMul trig table
+  T2 w = TFLOAD(&trig[x]);       // x / (MIDDLE * WIDTH)
 
   if (MIDDLE < SHARP_MIDDLE) {
     T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, ND / MIDDLE * 2) * factor;
@@ -208,7 +208,7 @@ void OVERLOAD middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
 
     Trig trig2 = trig + WIDTH;          // Skip over the fist MiddleMul2 trig table
     u32 desired_root = x * y;
-    T2 base = cmulFancy(trig2[desired_root % SMALL_HEIGHT], trig[desired_root / SMALL_HEIGHT]) * factor;   //Optimization to do: put multiply by factor in trig2 table
+    T2 base = cmulFancy(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig[desired_root / SMALL_HEIGHT])) * factor;   //Optimization to do: put multiply by factor in trig2 table
 
     WADD(0, base);
     for (u32 k = 1; k < MIDDLE; ++k) {
@@ -396,8 +396,8 @@ void OVERLOAD middleMul(F2 *u, u32 s, TrigFP32 trig) {
   if (MIDDLE == 1) return;
 
   if (WIDTH == SMALL_HEIGHT) trig += SMALL_HEIGHT;     // In this case we can share the MiddleMul2 trig table.  Skip over the MiddleMul trig table.
-  F2 w = trig[s];           // s / BIG_HEIGHT
-  
+  F2 w = TFLOAD(&trig[s]);           // s / BIG_HEIGHT
+
   if (MIDDLE < SHARP_MIDDLE) {
     WADD(1, w);
 #if MM_CHAIN == 0
@@ -488,7 +488,7 @@ void OVERLOAD middleMul2(F2 *u, u32 x, u32 y, float factor, TrigFP32 trig) {
   }
 
   trig += SMALL_HEIGHT;     // Skip over the MiddleMul trig table
-  F2 w = trig[x];           // x / (MIDDLE * WIDTH)
+  F2 w = TFLOAD(&trig[x]);           // x / (MIDDLE * WIDTH)
 
   if (MIDDLE < SHARP_MIDDLE) {
     F2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, ND / MIDDLE * 2) * factor;
@@ -504,7 +504,7 @@ void OVERLOAD middleMul2(F2 *u, u32 x, u32 y, float factor, TrigFP32 trig) {
 
     TrigFP32 trig2 = trig + WIDTH;          // Skip over the fist MiddleMul2 trig table
     u32 desired_root = x * y;
-    F2 base = cmulFancy(trig2[desired_root % SMALL_HEIGHT], trig[desired_root / SMALL_HEIGHT]) * factor;   //Optimization to do: put multiply by factor in trig2 table
+    F2 base = cmulFancy(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig[desired_root / SMALL_HEIGHT])) * factor;   //Optimization to do: put multiply by factor in trig2 table
 
     WADD(0, base);
     for (u32 k = 1; k < MIDDLE; ++k) {
@@ -668,13 +668,13 @@ void OVERLOAD middleMul(GF31 *u, u32 s, TrigGF31 trig) {
 #if !MIDDLE_CHAIN           // Read all trig values from memory
 
   for (u32 k = 1; k < MIDDLE; ++k) {
-    WADD(k, trig[s]);
+    WADD(k, TFLOAD(&trig[s]));
     s += SMALL_HEIGHT;
   }
 
 #else
 
-  GF31 w = trig[s];         // s / BIG_HEIGHT
+  GF31 w = TFLOAD(&trig[s]);         // s / BIG_HEIGHT
   WADD(1, w);
   if (MIDDLE == 2) return;
 
@@ -705,9 +705,9 @@ void OVERLOAD middleMul2(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
   // The first trig table can be shared with MiddleMul trig table if WIDTH = HEIGHT.
   if (WIDTH == SMALL_HEIGHT) trig1 = trig;
 
-  GF31 w = trig1[x];         // x / (MIDDLE * WIDTH)
+  GF31 w = TFLOAD(&trig1[x]);         // x / (MIDDLE * WIDTH)
   u32 desired_root = x * y;
-  GF31 base = cmul(trig2[desired_root % SMALL_HEIGHT], trig1[desired_root / SMALL_HEIGHT]);
+  GF31 base = cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
 
   WADD(0, base);
   for (u32 k = 1; k < MIDDLE; ++k) {
@@ -788,13 +788,13 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
 #if !MIDDLE_CHAIN           // Read all trig values from memory
 
   for (u32 k = 1; k < MIDDLE; ++k) {
-    WADD(k, trig[s]);
+    WADD(k, TFLOAD(&trig[s]));
     s += SMALL_HEIGHT;
   }
 
 #else
 
-  GF61 w = trig[s];         // s / BIG_HEIGHT
+  GF61 w = TFLOAD(&trig[s]);         // s / BIG_HEIGHT
   WADD(1, w);
   if (MIDDLE == 2) return;
 
@@ -825,9 +825,9 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
   // The first trig table can be shared with MiddleMul trig table if WIDTH = HEIGHT.
   if (WIDTH == SMALL_HEIGHT) trig1 = trig;
 
-  GF61 w = trig1[x];                      // x / (MIDDLE * WIDTH)
+  GF61 w = TFLOAD(&trig1[x]);                      // x / (MIDDLE * WIDTH)
   u32 desired_root = x * y;
-  GF61 base = cmul(trig2[desired_root % SMALL_HEIGHT], trig1[desired_root / SMALL_HEIGHT]);
+  GF61 base = cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
 
   WADD(0, base);
   for (u32 k = 1; k < MIDDLE; ++k) {

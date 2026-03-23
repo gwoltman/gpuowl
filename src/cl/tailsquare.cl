@@ -4,6 +4,9 @@
 #include "trig.cl"
 #include "fftheight.cl"
 
+// LDS bytes used by shufl for each line processed in fft_HEIGHT
+#define LDS_BYTES  (SMALL_HEIGHT * SHUFL_BYTES_H)
+
 #if FFT_FP64
 
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
@@ -54,8 +57,7 @@ void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes / sizeof(T2)];
+  local T2 lds[LDS_BYTES / sizeof(T2)];
   T2 u[NH];
   u32 H = ND / SMALL_HEIGHT;
 
@@ -89,8 +91,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes / sizeof(T2)];
+  local T2 lds[LDS_BYTES / sizeof(T2)];
 
   T2 u[NH], v[NH];
 
@@ -132,8 +133,8 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*5;
   // Read a hopefully cached line of data and one non-cached T2 per line
-  T2 trig = smallTrig[height_trigs + me];                    // Trig values for line zero, should be cached
-  T2 mult = smallTrig[height_trigs + G_H + line1];           // Line multiplier
+  T2 trig = TFLOAD(&smallTrig[height_trigs + me]);                    // Trig values for line zero, should be cached
+  T2 mult = TSLOAD(&smallTrig[height_trigs + G_H + line1]);           // Line multiplier
   trig = cmulFancy(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -142,7 +143,7 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*5;
   // Read pre-computed trig values
-  T2 trig = NTLOAD(smallTrig[height_trigs + line1*G_H + me]);
+  T2 trig = TOLOAD(&smallTrig[height_trigs + line1*G_H + me]);
 #endif
 
 #if SINGLE_KERNEL
@@ -198,8 +199,7 @@ void OVERLOAD pairSq2_special(T2 *u, T2 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes * 2 / sizeof(T2)];
+  local T2 lds[2 * LDS_BYTES / sizeof(T2)];
 
   T2 u[NH];
 
@@ -245,8 +245,8 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*5;
   // Read a hopefully cached line of data and one non-cached T2 per line
-  T2 trig = smallTrig[height_trigs + lowMe];                                 // Trig values for line zero, should be cached
-  T2 mult = smallTrig[height_trigs + G_H + line_u*2 + isSecondHalf];         // Two multipliers.  One for line u, one for line v.
+  T2 trig = TFLOAD(&smallTrig[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
+  T2 mult = TSLOAD(&smallTrig[height_trigs + G_H + line_u*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
   trig = cmulFancy(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -255,7 +255,7 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*5;
   // Read pre-computed trig values
-  T2 trig = NTLOAD(smallTrig[height_trigs + line_u*G_H*2 + me]);
+  T2 trig = TOLOAD(&smallTrig[height_trigs + line_u*G_H*2 + me]);
 #endif
 
 #if SINGLE_KERNEL
@@ -332,8 +332,7 @@ void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes / sizeof(F2)];
+  local F2 lds[LDS_BYTES / sizeof(F2)];
   F2 u[NH];
   u32 H = ND / SMALL_HEIGHT;
 
@@ -363,8 +362,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes / sizeof(F2)];
+  local F2 lds[LDS_BYTES / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -402,8 +400,8 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read a hopefully cached line of data and one non-cached F2 per line
-  F2 trig = smallTrigF2[height_trigs + me];                    // Trig values for line zero, should be cached
-  F2 mult = smallTrigF2[height_trigs + G_H + line1];           // Line multiplier
+  F2 trig = TFLOAD(&smallTrigF2[height_trigs + me]);                    // Trig values for line zero, should be cached
+  F2 mult = TSLOAD(&smallTrigF2[height_trigs + G_H + line1]);           // Line multiplier
   trig = cmulFancy(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -412,7 +410,7 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read pre-computed trig values
-  F2 trig = NTLOAD(smallTrigF2[height_trigs + line1*G_H + me]);
+  F2 trig = TOLOAD(&smallTrigF2[height_trigs + line1*G_H + me]);
 #endif
 
 #if SINGLE_KERNEL
@@ -468,8 +466,7 @@ void OVERLOAD pairSq2_special(F2 *u, F2 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes * 2 / sizeof(F2)];
+  local F2 lds[2 * LDS_BYTES / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -511,8 +508,8 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read a hopefully cached line of data and one non-cached F2 per line
-  F2 trig = smallTrigF2[height_trigs + lowMe];                                 // Trig values for line zero, should be cached
-  F2 mult = smallTrigF2[height_trigs + G_H + line_u*2 + isSecondHalf];         // Two multipliers.  One for line u, one for line v.
+  F2 trig = TFLOAD(&smallTrigF2[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
+  F2 mult = TSLOAD(&smallTrigF2[height_trigs + G_H + line_u*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
   trig = cmulFancy(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -521,7 +518,7 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read pre-computed trig values
-  F2 trig = NTLOAD(smallTrigF2[height_trigs + line_u*G_H*2 + me]);
+  F2 trig = TOLOAD(&smallTrigF2[height_trigs + line_u*G_H*2 + me]);
 #endif
 
 #if SINGLE_KERNEL
@@ -601,8 +598,7 @@ void OVERLOAD pairSq(u32 N, GF31 *u, GF31 *v, GF31 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -623,18 +619,18 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
 #if TAIL_TRIGS31 >= 1
-  GF31 trig = smallTrig31[height_trigs + me];
+  GF31 trig = TFLOAD(&smallTrig31[height_trigs + me]);
 #if SINGLE_WIDE
-  GF31 mult = smallTrig31[height_trigs + G_H + line];
+  GF31 mult = TSLOAD(&smallTrig31[height_trigs + G_H + line]);
 #else
-  GF31 mult = smallTrig31[height_trigs + G_H + which];
+  GF31 mult = TSLOAD(&smallTrig31[height_trigs + G_H + which]);
 #endif
   trig = cmul(trig, mult);
 #else
 #if SINGLE_WIDE
-  GF31 trig = NTLOAD(smallTrig31[height_trigs + line*G_H + me]);
+  GF31 trig = TOLOAD(&smallTrig31[height_trigs + line*G_H + me]);
 #else
-  GF31 trig = NTLOAD(smallTrig31[height_trigs + which*G_H + me]);
+  GF31 trig = TOLOAD(&smallTrig31[height_trigs + which*G_H + me]);
 #endif
 #endif
 
@@ -650,8 +646,7 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -685,8 +680,8 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read a hopefully cached line of data and one non-cached GF31 per line
-  GF31 trig = smallTrig31[height_trigs + me];                    // Trig values for line zero, should be cached
-  GF31 mult = smallTrig31[height_trigs + G_H + line1];           // Line multiplier
+  GF31 trig = TFLOAD(&smallTrig31[height_trigs + me]);                    // Trig values for line zero, should be cached
+  GF31 mult = TSLOAD(&smallTrig31[height_trigs + G_H + line1]);           // Line multiplier
   trig = cmul(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -695,7 +690,7 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read pre-computed trig values
-  GF31 trig = NTLOAD(smallTrig31[height_trigs + line1*G_H + me]);
+  GF31 trig = TOLOAD(&smallTrig31[height_trigs + line1*G_H + me]);
 #endif
 
 #if SINGLE_KERNEL
@@ -750,8 +745,7 @@ void OVERLOAD pairSq2_special(GF31 *u, GF31 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes * 2 / sizeof(GF31)];
+  local GF31 lds[2 * LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -789,8 +783,8 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read a hopefully cached line of data and one non-cached GF31 per line
-  GF31 trig = smallTrig31[height_trigs + lowMe];                                 // Trig values for line zero, should be cached
-  GF31 mult = smallTrig31[height_trigs + G_H + line_u*2 + isSecondHalf];         // Two multipliers.  One for line u, one for line v.
+  GF31 trig = TFLOAD(&smallTrig31[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
+  GF31 mult = TSLOAD(&smallTrig31[height_trigs + G_H + line_u*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
   trig = cmul(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -799,7 +793,7 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read pre-computed trig values
-  GF31 trig = NTLOAD(smallTrig31[height_trigs + line_u*G_H*2 + me]);
+  GF31 trig = TOLOAD(&smallTrig31[height_trigs + line_u*G_H*2 + me]);
 #endif
 
 #if SINGLE_KERNEL
@@ -879,8 +873,7 @@ void OVERLOAD pairSq(u32 N, GF61 *u, GF61 *v, GF61 base_squared, bool special) {
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -901,18 +894,18 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
 #if TAIL_TRIGS61 >= 1
-  GF61 trig = smallTrig61[height_trigs + me];
+  GF61 trig = TFLOAD(&smallTrig61[height_trigs + me]);
 #if SINGLE_WIDE
-  GF61 mult = smallTrig61[height_trigs + G_H + line];
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + line]);
 #else
-  GF61 mult = smallTrig61[height_trigs + G_H + which];
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + which]);
 #endif
   trig = cmul(trig, mult);
 #else
 #if SINGLE_WIDE
-  GF61 trig = NTLOAD(smallTrig61[height_trigs + line*G_H + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + line*G_H + me]);
 #else
-  GF61 trig = NTLOAD(smallTrig61[height_trigs + which*G_H + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + which*G_H + me]);
 #endif
 #endif
 
@@ -928,8 +921,7 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_WIDE
 
 KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -963,8 +955,8 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read a hopefully cached line of data and one non-cached GF61 per line
-  GF61 trig = smallTrig61[height_trigs + me];                    // Trig values for line zero, should be cached
-  GF61 mult = smallTrig61[height_trigs + G_H + line1];           // Line multiplier
+  GF61 trig = TFLOAD(&smallTrig61[height_trigs + me]);                    // Trig values for line zero, should be cached
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + line1]);           // Line multiplier
   trig = cmul(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -973,7 +965,7 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read pre-computed trig values
-  GF61 trig = NTLOAD(smallTrig61[height_trigs + line1*G_H + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + line1*G_H + me]);
 #endif
 
 #if SINGLE_KERNEL
@@ -1028,8 +1020,7 @@ void OVERLOAD pairSq2_special(GF61 *u, GF61 base_squared) {
 }
 
 KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes * 2 / sizeof(GF61)];
+  local GF61 lds[2 * LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -1067,8 +1058,8 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read a hopefully cached line of data and one non-cached GF61 per line
-  GF61 trig = smallTrig61[height_trigs + lowMe];                                 // Trig values for line zero, should be cached
-  GF61 mult = smallTrig61[height_trigs + G_H + line_u*2 + isSecondHalf];         // Two multipliers.  One for line u, one for line v.
+  GF61 trig = TFLOAD(&smallTrig61[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + line_u*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
   trig = cmul(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
@@ -1077,7 +1068,7 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
   u32 height_trigs = SMALL_HEIGHT*1;
   // Read pre-computed trig values
-  GF61 trig = NTLOAD(smallTrig61[height_trigs + line_u*G_H*2 + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + line_u*G_H*2 + me]);
 #endif
 
 #if SINGLE_KERNEL

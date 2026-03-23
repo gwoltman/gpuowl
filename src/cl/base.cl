@@ -189,14 +189,6 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define ZEROHACK_H 1
 #endif
 
-#if !defined(ENABLE_L2STORE)
-#define ENABLE_L2STORE 1
-#endif
-
-#if !defined(ENABLE_LULOAD)
-#define ENABLE_LULOAD 1
-#endif
-
 // Expected defines: EXP the exponent.
 // WIDTH, SMALL_HEIGHT, MIDDLE.
 
@@ -267,66 +259,8 @@ ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 #define P(x) global x * restrict
 #define CP(x) const P(x)
 
-// Macros for non-temporal load and store.  The theory behind only non-temporal reads (option 2) is that with alternating buffers,
-// read buffers will not be needed for quite a while, but write buffers will be needed soon.
-#if NONTEMPORAL == 1 && defined(__has_builtin) && __has_builtin(__builtin_nontemporal_load) && __has_builtin(__builtin_nontemporal_store)
-#define NTLOAD(mem)        __builtin_nontemporal_load(&(mem))
-#define NTSTORE(mem,val)   __builtin_nontemporal_store(val, &(mem))
-#elif NONTEMPORAL == 2 && defined(__has_builtin) && __has_builtin(__builtin_nontemporal_load)
-#define NTLOAD(mem)        __builtin_nontemporal_load(&(mem))
-#define NTSTORE(mem,val)   (mem) = val
-#else
-#define NTLOAD(mem)        (mem)
-#define NTSTORE(mem,val)   (mem) = val
-#endif
+#define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
 
-// Routines for storing to L2 cache bypassing L1 cache.
-void OVERLOAD L2STORE(i64 *mem, i64 val) {
-#if ENABLE_L2STORE && HAS_PTX >= 200        // Cache hints requires sm_20 support or higher
-  __asm("st.global.cg.b64  [%0], %1;" : : "l"(mem), "l"(val));
-#else
-  *mem = val;
-#endif
-}
-void OVERLOAD L2STORE(i32 *mem, i32 val) {
-#if ENABLE_L2STORE && HAS_PTX >= 200        // Cache hints requires sm_20 support or higher
-  __asm("st.global.cg.b32  [%0], %1;" : : "l"(mem), "r"(val));
-#else
-  *mem = val;
-#endif
-}
-
-// Routines for loading a value and marking it for "last use".
-i64 OVERLOAD LULOAD(i64 *mem) {
-#if ENABLE_LULOAD && HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
-  i64 retval;
-  __asm("ld.global.lu.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
-  return retval;
-#else
-  return *mem;
-#endif
-}
-i32 OVERLOAD LULOAD(i32 *mem) {
-#if ENABLE_LULOAD && HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
-  i32 retval;
-  __asm("ld.global.lu.b32  %0, [%1];" : "=r"(retval) : "l"(mem));
-  return retval;
-#else
-  return *mem;
-#endif
-}
-
-// Prefetch macros.  Unused at present, I tried using them in fftMiddleInGF61 on a 5080 with no benefit.
-void PREFETCHL1(const __global void *addr) {
-#if HAS_PTX >= 200         // Prefetch instruction requires sm_20 support or higher
-  __asm("prefetch.global.L1  [%0];" : : "l"(addr));
-#endif
-}
-void PREFETCHL2(const __global void *addr) {
-#if HAS_PTX >= 200         // Prefetch instruction requires sm_20 support or higher
-  __asm("prefetch.global.L2  [%0];" : : "l"(addr));
-#endif
-}
 
 // For reasons unknown, loading trig values into nVidia's constant cache has terrible performance
 #if AMDGPU
@@ -356,7 +290,364 @@ typedef global const double2* BigTab;
 typedef global const float2* BigTabFP32;
 #endif
 
-#define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
+//
+// nVidia GPUs have lots of different caching options for loads and stores.
+// AMD GPUs have have far fewer options for loads and stores.
+// These routines let us try the different options.
+//
+
+// Basic load and store.  Presumably stored in all caches using a standard LRU algorithm.
+
+#define LOAD(mem)        *(mem)
+#define STORE(mem,val)   *(mem) = val
+
+// Non-temporal load and store.
+
+#if defined(__has_builtin) && __has_builtin(__builtin_nontemporal_load)
+#define NTLOAD(mem)        __builtin_nontemporal_load(mem)
+#else
+#define NTLOAD           LOAD
+#endif
+
+#if defined(__has_builtin) && __has_builtin(__builtin_nontemporal_store)
+#define NTSTORE(mem,val)   __builtin_nontemporal_store(val, mem)
+#else
+#define NTSTORE          STORE
+#endif
+
+// Routines for loading data from memory into the L2 cache but not the L1 cache.
+
+#if HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
+T2 OVERLOAD L2LOAD(CP(T2) mem) {
+  T2 retval;
+  __asm("ld.global.cg.v2.f64  {%0, %1}, [%2];" : "=d"(retval.x), "=d"(retval.y) : "l"(mem));
+  return retval;
+}
+T OVERLOAD L2LOAD(TrigSingle mem) {
+  T retval;
+  __asm("ld.global.cg.f64  %0, [%1];" : "=d"(retval) : "l"(mem));
+  return retval;
+}
+F2 OVERLOAD L2LOAD(CP(F2) mem) {
+  F2 retval;
+  __asm("ld.global.cg.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
+  return retval;
+}
+i64 OVERLOAD L2LOAD(i64 *mem) {
+  i64 retval;
+  __asm("ld.global.cg.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
+  return retval;
+}
+GF61 OVERLOAD L2LOAD(TrigGF61 mem) {
+  GF61 retval;
+  __asm("ld.global.cg.v2.b64  {%0, %1}, [%2];" : "=l"(retval.x), "=l"(retval.y) : "l"(mem));
+  return retval;
+}
+i32 OVERLOAD L2LOAD(i32 *mem) {
+  i32 retval;
+  __asm("ld.global.cg.b32  %0, [%1];" : "=r"(retval) : "l"(mem));
+  return retval;
+}
+GF31 OVERLOAD L2LOAD(TrigGF31 mem) {
+  GF31 retval;
+  __asm("ld.global.cg.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
+  return retval;
+}
+#else
+#define L2LOAD     LOAD
+#endif
+
+// Routines for storing to L2 cache bypassing L1 cache.
+
+#if HAS_PTX >= 200        // Cache hints requires sm_20 support or higher
+void OVERLOAD L2STORE(P(T2) mem, T2 val) {
+  __asm("st.global.cg.v2.f64  [%0], {%1, %2};" : : "l"(mem), "d"(val.x), "d"(val.y));
+}
+void OVERLOAD L2STORE(P(F2) mem, F2 val) {
+  __asm("st.global.cg.v2.f32  [%0], {%1, %2};" : : "l"(mem), "f"(val.x), "f"(val.y));
+}
+void OVERLOAD L2STORE(i64 *mem, i64 val) {
+  __asm("st.global.cg.b64  [%0], %1;" : : "l"(mem), "l"(val));
+}
+void OVERLOAD L2STORE(i32 *mem, i32 val) {
+  __asm("st.global.cg.b32  [%0], %1;" : : "l"(mem), "r"(val));
+}
+#else
+#define L2STORE    STORE
+#endif
+
+// Routines for loading data from memory into the L1 and L2 caches, but cache line is marked evict first.
+
+#if HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
+T2 OVERLOAD EFLOAD(CP(T2) mem) {
+  T2 retval;
+  __asm("ld.global.cs.v2.f64  {%0, %1}, [%2];" : "=d"(retval.x), "=d"(retval.y) : "l"(mem));
+  return retval;
+}
+T OVERLOAD EFLOAD(TrigSingle mem) {
+  T retval;
+  __asm("ld.global.cs.f64  %0, [%1];" : "=d"(retval) : "l"(mem));
+  return retval;
+}
+F2 OVERLOAD EFLOAD(CP(F2) mem) {
+  F2 retval;
+  __asm("ld.global.cs.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
+  return retval;
+}
+i64 OVERLOAD EFLOAD(i64 *mem) {
+  i64 retval;
+  __asm("ld.global.cs.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
+  return retval;
+}
+GF61 OVERLOAD EFLOAD(TrigGF61 mem) {
+  GF61 retval;
+  __asm("ld.global.cs.v2.b64  {%0, %1}, [%2];" : "=l"(retval.x), "=l"(retval.y) : "l"(mem));
+  return retval;
+}
+i32 OVERLOAD EFLOAD(i32 *mem) {
+  i32 retval;
+  __asm("ld.global.cs.b32  %0, [%1];" : "=r"(retval) : "l"(mem));
+  return retval;
+}
+GF31 OVERLOAD EFLOAD(TrigGF31 mem) {
+  GF31 retval;
+  __asm("ld.global.cs.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
+  return retval;
+}
+#else
+#define EFLOAD    LOAD
+#endif
+
+// Routines for storing to L1 and L2 caches with cache line marked evict first.
+
+#if HAS_PTX >= 200        // Cache hints requires sm_20 support or higher
+void OVERLOAD EFSTORE(P(T2) mem, T2 val) {
+  __asm("st.global.cs.v2.f64  [%0], {%1, %2};" : : "l"(mem), "d"(val.x), "d"(val.y));
+}
+void OVERLOAD EFSTORE(P(F2) mem, F2 val) {
+  __asm("st.global.cs.v2.f32  [%0], {%1, %2};" : : "l"(mem), "f"(val.x), "f"(val.y));
+}
+void OVERLOAD EFSTORE(i64 *mem, i64 val) {
+  __asm("st.global.cs.b64  [%0], %1;" : : "l"(mem), "l"(val));
+}
+void OVERLOAD EFSTORE(i32 *mem, i32 val) {
+  __asm("st.global.cs.b32  [%0], %1;" : : "l"(mem), "r"(val));
+}
+#else
+#define EFSTORE   STORE
+#endif
+
+// Routines for loading a value and marking it for "last use".
+
+#if HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
+T2 OVERLOAD LULOAD(Trig mem) {
+  T2 retval;
+  __asm("ld.global.lu.v2.f64  {%0, %1}, [%2];" : "=d"(retval.x), "=d"(retval.y) : "l"(mem));
+  return retval;
+}
+T OVERLOAD LULOAD(TrigSingle mem) {
+  T retval;
+  __asm("ld.global.lu.f64  %0, [%1];" : "=d"(retval) : "l"(mem));
+  return retval;
+}
+F2 OVERLOAD LULOAD(TrigFP32 mem) {
+  F2 retval;
+  __asm("ld.global.lu.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
+  return retval;
+}
+i64 OVERLOAD LULOAD(i64 *mem) {
+  i64 retval;
+  __asm("ld.global.lu.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
+  return retval;
+}
+GF61 OVERLOAD LULOAD(TrigGF61 mem) {
+  GF61 retval;
+  __asm("ld.global.lu.v2.b64  {%0, %1}, [%2];" : "=l"(retval.x), "=l"(retval.y) : "l"(mem));
+  return retval;
+}
+i32 OVERLOAD LULOAD(i32 *mem) {
+  i32 retval;
+  __asm("ld.global.lu.b32  %0, [%1];" : "=r"(retval) : "l"(mem));
+  return retval;
+}
+GF31 OVERLOAD LULOAD(TrigGF31 mem) {
+  GF31 retval;
+  __asm("ld.global.lu.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
+  return retval;
+}
+#else
+#define LULOAD    LOAD
+#endif
+
+// Routines for loading a read-only and placing it in the non-coherent texture cache.
+
+#if HAS_PTX >= 500         // Texture cache requires sm_50 support or higher
+T2 OVERLOAD NCLOAD(Trig mem) {
+  T2 retval;
+  __asm("ld.global.nc.v2.f64  {%0, %1}, [%2];" : "=d"(retval.x), "=d"(retval.y) : "l"(mem));
+  return retval;
+}
+T OVERLOAD NCLOAD(TrigSingle mem) {
+  T retval;
+  __asm("ld.global.nc.f64  %0, [%1];" : "=d"(retval) : "l"(mem));
+  return retval;
+}
+F2 OVERLOAD NCLOAD(TrigFP32 mem) {
+  F2 retval;
+  __asm("ld.global.nc.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
+  return retval;
+}
+i64 OVERLOAD NCLOAD(i64 *mem) {
+  i64 retval;
+  __asm("ld.global.nc.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
+  return retval;
+}
+GF61 OVERLOAD NCLOAD(TrigGF61 mem) {
+  GF61 retval;
+  __asm("ld.global.nc.v2.b64  {%0, %1}, [%2];" : "=l"(retval.x), "=l"(retval.y) : "l"(mem));
+  return retval;
+}
+i32 OVERLOAD NCLOAD(i32 *mem) {
+  i32 retval;
+  __asm("ld.global.nc.b32  %0, [%1];" : "=r"(retval) : "l"(mem));
+  return retval;
+}
+GF31 OVERLOAD NCLOAD(TrigGF31 mem) {
+  GF31 retval;
+  __asm("ld.global.lu.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
+  return retval;
+}
+#else
+#define NCLOAD    LOAD
+#endif
+
+//
+//  These macros map various types of data accesses to one of the load/store routines above
+//
+
+// Routines for loading/storing FFT data.  Lots of data, kernels read it once, write it once.  If possible, data should not be written to L1 cache.
+// If L2 cache is "small", we should look for ways to prioritize keeping data that is re-used in the L2 cache.
+
+#define FFTLOAD_TYPE     LOADS % 10
+#define CSLOAD_TYPE      (LOADS / 10) % 10
+#define TFLOAD_TYPE      (LOADS / 100) % 10
+#define TSLOAD_TYPE      (LOADS / 1000) % 10
+#define TOLOAD_TYPE      (LOADS / 10000) % 10
+
+#define FFTSTORE_TYPE     STORES % 10
+#define CSSTORE_TYPE      (STORES / 10) % 10
+
+#if FFTLOAD_TYPE == 1
+#define FFTLOAD    NTLOAD
+#elif FFTLOAD_TYPE == 2
+#define FFTLOAD    L2LOAD
+#elif FFTLOAD_TYPE == 3
+#define FFTLOAD    EFLOAD
+#elif FFTLOAD_TYPE == 4
+#define FFTLOAD    LULOAD
+#else
+#define FFTLOAD    LOAD
+#endif
+
+#if FFTSTORE_TYPE == 1
+#define FFTSTORE   NTSTORE
+#elif FFTSTORE_TYPE == 2
+#define FFTSTORE   L2STORE
+#elif FFTSTORE_TYPE == 3
+#define FFTSTORE   EFSTORE
+#else
+#define FFTSTORE   STORE
+#endif
+
+// Routines for loading/storing carryShuttle data.  CarryFused writes it once, and reads it once.  The data is never used again.
+// If possible, data should not be written to L1 cache and not written to memory after it is read.
+
+#if CSLOAD_TYPE == 1
+#define CSLOAD    NTLOAD
+#elif CSLOAD_TYPE == 2
+#define CSLOAD    L2LOAD
+#elif CSLOAD_TYPE == 3
+#define CSLOAD    EFLOAD
+#elif CSLOAD_TYPE == 4
+#define CSLOAD    LULOAD
+#else
+#define CSLOAD    LOAD
+#endif
+
+#if CSSTORE_TYPE == 1
+#define CSSTORE   NTSTORE
+#elif CSSTORE_TYPE == 2
+#define CSSTORE   L2STORE
+#elif CSSTORE_TYPE == 3
+#define CSSTORE   EFSTORE
+#else
+#define CSSTORE   STORE
+#endif
+
+// Routines for loading trig data that is frequently reused.  If possible, data should saved in L1 and L2 caches and perhaps marked evict last.
+// TF stands for "Trig Frequently reused".  It is highly unlikely that any option other than the default LOAD makes sense.
+
+#if TFLOAD_TYPE == 1
+#define TFLOAD    NTLOAD
+#elif TFLOAD_TYPE == 2
+#define TFLOAD    L2LOAD
+#elif TFLOAD_TYPE == 3
+#define TFLOAD    EFLOAD
+#elif TFLOAD_TYPE == 4
+#define TFLOAD    LULOAD
+#elif TFLOAD_TYPE == 5
+#define TFLOAD    NCLOAD
+#else
+#define TFLOAD    LOAD
+#endif
+
+// Routines for loading trig data that is used once but is smaller than a cache line.  The rest of the cache line will be needed soon.
+// If possible, data should saved in L1(?) and L2 caches and perhaps marked evict first.
+// TS stands for "Trig Several reuses".
+
+#if TSLOAD_TYPE == 1
+#define TSLOAD    NTLOAD
+#elif TSLOAD_TYPE == 2
+#define TSLOAD    L2LOAD
+#elif TSLOAD_TYPE == 3
+#define TSLOAD    EFLOAD
+#elif TSLOAD_TYPE == 4
+#define TSLOAD    LULOAD
+#elif TSLOAD_TYPE == 5
+#define TSLOAD    NCLOAD
+#else
+#define TSLOAD    LOAD
+#endif
+
+// Routines for loading trig data that is used once and is a cache line or larger.
+// If possible, data should saved in L2 caches if the L2 cache is very large.
+// TO stands for "Trig used Once".
+
+#if TOLOAD_TYPE == 1
+#define TOLOAD    NTLOAD
+#elif TOLOAD_TYPE == 2
+#define TOLOAD    L2LOAD
+#elif TOLOAD_TYPE == 3
+#define TOLOAD    EFLOAD
+#elif TOLOAD_TYPE == 4
+#define TOLOAD    LULOAD
+#elif TOLOAD_TYPE == 5
+#define TOLOAD    NCLOAD
+#else
+#define TOLOAD    LOAD
+#endif
+
+// Prefetch macros.  Unused at present, I tried using them in fftMiddleInGF61 on a 5080 with no benefit.
+void PREFETCHL1(const __global void *addr) {
+#if HAS_PTX >= 200         // Prefetch instruction requires sm_20 support or higher
+  __asm("prefetch.global.L1  [%0];" : : "l"(addr));
+#endif
+}
+void PREFETCHL2(const __global void *addr) {
+#if HAS_PTX >= 200         // Prefetch instruction requires sm_20 support or higher
+  __asm("prefetch.global.L2  [%0];" : : "l"(addr));
+#endif
+}
 
 #if FFT_FP64
 void OVERLOAD read(u32 WG, u32 N, T2 *u, const global T2 *in, u32 base) {
@@ -441,3 +732,4 @@ void OVERLOAD bar(const u32 WG) {
 // A half-barrier is only needed when half-a-workgroup needs a barrier.
 // This is used e.g. by the double-wide tailSquare, where LDS is split between the halves.
 void halfBar() { if (get_enqueued_local_size(0) / 2 > WAVEFRONT) { bar(); } }
+
