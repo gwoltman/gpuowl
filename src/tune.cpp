@@ -133,36 +133,36 @@ float Tune::maxBpw(FFTConfig fft) {
   // Fine tune our estimate for Z=34
   float z1 = zForBpw(bpw1, fft, 1);
 printf ("Guess bpw for %s is %.2f first Z34 is %.2f\n", fft.spec().c_str(), bpw1, z1);
-  while (z1 < 31.0 || z1 > 37.0) {
+  while (z1 < 31.0f || z1 > 37.0f) {
     float prev_bpw1 = bpw1;
     float prev_z1 = z1;
-    bpw1 = bpw1 + (z1 - 34) * bpw_step;
+    bpw1 = bpw1 + (z1 - 34.0f) * bpw_step;
     z1 = zForBpw(bpw1, fft, 1);
 printf ("Reguess bpw for %s is %.2f first Z34 is %.2f\n", fft.spec().c_str(), bpw1, z1);
     bpw_step = - (bpw1 - prev_bpw1) / (z1 - prev_z1);
-    if (bpw_step < 0.005) bpw_step = 0.005;
-    if (bpw_step > 0.025) bpw_step = 0.025;
+    if (bpw_step < 0.005f) bpw_step = 0.005f;
+    if (bpw_step > 0.025f) bpw_step = 0.025f;
   }
 
   // Get more samples for this bpw -- average in the sample we already have
   z1 = (z1 + (sample_size - 1) * zForBpw(bpw1, fft, sample_size - 1)) / sample_size;
 
   // Pick a bpw somewhere near Z=22 then fine tune the guess
-  float bpw2 = bpw1 + (z1 - 22) * bpw_step;
+  float bpw2 = bpw1 + (z1 - 22.0f) * bpw_step;
   float z2 = zForBpw(bpw2, fft, 1);
 printf ("Guess bpw for %s is %.2f first Z22 is %.2f\n", fft.spec().c_str(), bpw2, z2);
-  while (z2 < 20.0 || z2 > 25.0) {
+  while (z2 < 20.0f || z2 > 25.0f) {
     float prev_bpw2 = bpw2;
     float prev_z2 = z2;
 //    bool error_recovery = (z2 <= 0.0);
 //    if (error_recovery) bpw2 -= bpw_step; else
-    bpw2 = bpw2 + (z2 - 21) * bpw_step;
+    bpw2 = bpw2 + (z2 - 21.0f) * bpw_step;
     z2 = zForBpw(bpw2, fft, 1);
 printf ("Reguess bpw for %s is %.2f first Z22 is %.2f\n", fft.spec().c_str(), bpw2, z2);
 //  if (error_recovery) { if (z2 >= 20.0) break; else continue; }
     bpw_step = - (bpw2 - prev_bpw2) / (z2 - prev_z2);
-    if (bpw_step < 0.005) bpw_step = 0.005;
-    if (bpw_step > 0.025) bpw_step = 0.025;
+    if (bpw_step < 0.005f) bpw_step = 0.005f;
+    if (bpw_step > 0.025f) bpw_step = 0.025f;
   }
 
   // Get more samples for this bpw -- average in the sample we already have
@@ -174,7 +174,7 @@ printf ("Reguess bpw for %s is %.2f first Z22 is %.2f\n", fft.spec().c_str(), bp
 
 float Tune::zForBpw(float bpw, FFTConfig fft, u32 count) {
   u64 exponent = (count == 1) ? primes.prevPrime(fft.size() * bpw) : primes.nextPrime(fft.size() * bpw);
-  float total_z = 0.0;
+  float total_z = 0.0f;
   for (u32 i = 0; i < count; i++, exponent = primes.nextPrime (exponent + 1)) {
     auto [ok, res, roeSq, roeMul] = Gpu::make(q, exponent, shared, fft, {}, false)->measureROE(true);
     float z = roeSq.z();
@@ -196,7 +196,7 @@ void Tune::ztune() {
     u32 variant = 202;
     u32 sample_size = 5;
     FFTConfig fft{shape, variant, CARRY_AUTO};
-    for (float bpw = 18.18; bpw < 18.305; bpw += 0.02) {
+    for (float bpw = 18.18f; bpw < 18.305f; bpw += 0.02f) {
       float z = zForBpw(bpw, fft, sample_size);
       log ("Avg zForBpw %s %.2f %.2f\n", fft.spec().c_str(), bpw, z);
     }
@@ -248,7 +248,7 @@ void Tune::carryTune() {
     vector<float> zv;
     double m = 0;
     const float mid = fft.shape.carry32BPW();
-    for (float bpw : {mid - 0.05, mid + 0.05}) {
+    for (float bpw : {mid - 0.05f, mid + 0.05f}) {
       u64 exponent = primes.nearestPrime(fft.size() * bpw);
       auto [ok, carry] = Gpu::make(q, exponent, shared, fft, {}, false)->measureCarry();
       m = carry.max;
@@ -340,7 +340,7 @@ void configsUpdate(double current_cost, double best_cost, double threshold, cons
 void Tune::tune() {
   Args *args = shared.args;
   vector<FFTShape> shapes = FFTShape::multiSpec(args->fftSpec);
-  
+
   // There are some options and variants that are different based on GPU manufacturer
   bool AMDGPU = isAmdGpu(q->context->deviceId());
   bool NVIDIAGPU = isNvidiaGpu(q->context->deviceId());
@@ -349,8 +349,8 @@ void Tune::tune() {
   bool time_FFTs = 0;
   bool time_NTTs = 0;
   bool time_FP32 = 1;
-  bool time_inplace_only = 0;
-  int quick = 7;                        // Run config from slowest (quick=1) to fastest (quick=10)
+  bool time_inplace_only = NVIDIAGPU ? 1 : 0;           // Default is nVidia is better off with INPLACE=1, AMD GPUs need to time extra options used when INPLACE=0
+  int quick = 7;                                        // Run config from slowest (quick=1) to fastest (quick=10)
   u64 min_exponent = 75000000;
   u64 max_exponent = 350000000;
   if (!args->fftSpec.empty()) { min_exponent = 0; max_exponent = 1000000000000ull; }
@@ -581,28 +581,212 @@ void Tune::tune() {
       args->flags["INPLACE"] = to_string(best_inplace);
     }
 
-    // Find best NONTEMPORAL setting
+    // Find best LOADS/STORES settings
+    if (1) {
+      u32 loads = args->value("LOADS", 0);
+      u32 stores = args->value("STORES", 0);
+
+      // Find best FFT data LOADS setting
+      if (1) {
+        FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+        u64 exponent = primes.prevPrime(fft.maxExp());
+        u32 best_fft_load = 0;
+        double best_cost = -1.0;
+	for (u32 fft_load : {0, 1, 2, 3, 4}) {
+          if (!NVIDIAGPU && fft_load >= 2) continue;
+          args->flags["LOADS"] = to_string(loads / 10 * 10 + fft_load);
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+          log("Time for %12s using FFT load=%u is %6.1f\n", fft.spec().c_str(), fft_load, cost);
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_fft_load = fft_load; }
+        }
+        log("Best FFT load is %u.  Default is 0.\n", best_fft_load);
+        loads = loads / 10 * 10 + best_fft_load;
+        args->flags["LOADS"] = to_string(loads);
+      }
+
+      // Find best FFT data STORES setting
+      if (1) {
+        FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+        u64 exponent = primes.prevPrime(fft.maxExp());
+        u32 best_fft_store = 0;
+        double best_cost = -1.0;
+	for (u32 fft_store : {0, 1, 2, 3, 4}) {
+          if (!NVIDIAGPU && fft_store >= 2) continue;
+          args->flags["STORES"] = to_string(stores / 10 * 10 + fft_store);
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+          log("Time for %12s using FFT store=%u is %6.1f\n", fft.spec().c_str(), fft_store, cost);
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_fft_store = fft_store; }
+        }
+        log("Best FFT store is %u.  Default is 0.\n", best_fft_store);
+        stores = stores / 10 * 10 + best_fft_store;
+        args->flags["STORES"] = to_string(stores);
+      }
+
+      // Find best carryShuttle LOADS/STORES settings
+      if (1) {
+        FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+        u64 exponent = primes.prevPrime(fft.maxExp());
+        u32 best_cs_load = 0, best_cs_store = 0;
+        double best_cost = -1.0;
+	for (u32 cs : {0, 1, 2}) {   // Test three combinations:  Default load/store, non-temporal, last-use load and L2 store
+          if (!NVIDIAGPU && cs == 2) continue;
+	  u32 cs_load = cs == 0 ? 0 : cs == 1 ? 1 : 4;
+	  u32 cs_store = cs == 0 ? 0 : cs == 1 ? 1 : 2;
+          args->flags["LOADS"] = to_string(loads / 100 * 100 + cs_load * 10 + loads % 10);
+          args->flags["STORES"] = to_string(stores / 100 * 100 + cs_store * 10 + stores % 10);
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+          log("Time for %12s using carry shuttle load=%u, store=%u is %6.1f\n", fft.spec().c_str(), cs_load, cs_store, cost);
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_cs_load = cs_load; best_cs_store = cs_store; }
+        }
+        log("Best carry shuttle load/store is %u/%u.  Default is 0/0.\n", best_cs_load, best_cs_store);
+        loads = loads / 100 * 100 + best_cs_load * 10 + loads % 10;
+        stores = stores / 100 * 100 + best_cs_store * 10 + stores % 10;
+        args->flags["LOADS" ] = to_string(loads);
+        args->flags["STORES"] = to_string(stores);
+      }
+
+      // Find best TRIG frequently used data LOADS setting
+      if (1) {
+        FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+        u64 exponent = primes.prevPrime(fft.maxExp());
+        u32 best_trig_load = 0;
+        double best_cost = -1.0;
+	for (u32 trig_load : {0, 5}) {
+          if (!NVIDIAGPU && trig_load >= 2) continue;
+          args->flags["LOADS"] = to_string(loads / 1000 * 1000 + trig_load * 100 + loads % 100);
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+          log("Time for %12s using Trig frequently used load=%u is %6.1f\n", fft.spec().c_str(), trig_load, cost);
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_trig_load = trig_load; }
+        }
+        log("Best Trig frquently used load is %u.  Default is 0.\n", best_trig_load);
+        loads = loads / 1000 * 1000 + best_trig_load * 100 + loads % 100;
+        args->flags["LOADS" ] = to_string(loads);
+      }
+
+      // Find best TRIG several uses data LOADS setting
+      if (1) {
+        FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+        u64 exponent = primes.prevPrime(fft.maxExp());
+        u32 best_trig_load = 0;
+        double best_cost = -1.0;
+	for (u32 trig_load : {0, 1, 2, 3, 4, 5}) {
+          if (!NVIDIAGPU && trig_load >= 2) continue;
+          args->flags["LOADS"] = to_string(loads / 10000 * 10000 + trig_load * 1000 + loads % 1000);
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+          log("Time for %12s using Trig several uses load=%u is %6.1f\n", fft.spec().c_str(), trig_load, cost);
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_trig_load = trig_load; }
+        }
+        log("Best Trig several uses load is %u.  Default is 0.\n", best_trig_load);
+        loads = loads / 10000 * 10000 + best_trig_load * 1000 + loads % 1000;
+        args->flags["LOADS" ] = to_string(loads);
+      }
+
+      // Find best TRIG used once data LOADS setting
+      if (1) {
+        FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+        u64 exponent = primes.prevPrime(fft.maxExp());
+        u32 best_trig_load = 0;
+        double best_cost = -1.0;
+	for (u32 trig_load : {0, 1, 2, 3, 4, 5}) {
+          if (!NVIDIAGPU && trig_load >= 2) continue;
+          args->flags["LOADS"] = to_string(trig_load * 10000 + loads % 10000);
+          double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+          log("Time for %12s using Trig used once load=%u is %6.1f\n", fft.spec().c_str(), trig_load, cost);
+          if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_trig_load = trig_load; }
+        }
+        log("Best Trig used once load is %u.  Default is 0.\n", best_trig_load);
+        loads = best_trig_load * 10000 + loads % 10000;
+        args->flags["LOADS" ] = to_string(loads);
+      }
+
+      // Write accumulated LOADS/STORES settings
+      configsUpdate(1.000, 0.000, 0.000, "LOADS", loads, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["LOADS"] = to_string(loads);
+      configsUpdate(1.000, 0.000, 0.000, "STORES", stores, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["STORES"] = to_string(stores);
+    }
+
+    // Find best CUDA compiler options
+#if CUDA_BACKEND
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_nontemporal = 0;
-      u32 current_nontemporal = args->value("NONTEMPORAL", 0);
+      u32 best_cfblks = 0;
+      u32 current_cfblks = args->value("CFBLKS", 0);
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 nontemporal : {0, 1, 2}) {
-        args->flags["NONTEMPORAL"] = to_string(nontemporal);
+      for (u32 cfblks : {0, 1, 2}) {
+        args->flags["CFBLKS"] = to_string(cfblks);
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using NONTEMPORAL=%u is %6.1f\n", fft.spec().c_str(), nontemporal, cost);
-        if (nontemporal == current_nontemporal) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_nontemporal = nontemporal; }
+        log("Time for %12s using CFBLKS=%u is %6.1f\n", fft.spec().c_str(), cfblks, cost);
+        if (cfblks == current_cfblks) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_cfblks = cfblks; }
       }
-      log("Best NONTEMPORAL is %u.  Default NONTEMPORAL is 0.\n", best_nontemporal);
-      configsUpdate(current_cost, best_cost, 0.000, "NONTEMPORAL", best_nontemporal, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["NONTEMPORAL"] = to_string(best_nontemporal);
+      log("Best CFBLKS is %u.  Default CFBLKS is 0.\n", best_cfblks);
+      configsUpdate(current_cost, best_cost, 0.000, "CFBLKS", best_cfblks, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["CFBLKS"] = to_string(best_cfblks);
     }
 
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_miblks = 0;
+      u32 current_miblks = args->value("MIBLKS", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 miblks : {0, 1, 2}) {
+        args->flags["MIBLKS"] = to_string(miblks);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using MIBLKS=%u is %6.1f\n", fft.spec().c_str(), miblks, cost);
+        if (miblks == current_miblks) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_miblks = miblks; }
+      }
+      log("Best MIBLKS is %u.  Default MIBLKS is 0.\n", best_miblks);
+      configsUpdate(current_cost, best_cost, 0.000, "MIBLKS", best_miblks, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["MIBLKS"] = to_string(best_miblks);
+    }
+
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_moblks = 0;
+      u32 current_moblks = args->value("MOBLKS", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 moblks : {0, 1, 2}) {
+        args->flags["MOBLKS"] = to_string(moblks);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using MOBLKS=%u is %6.1f\n", fft.spec().c_str(), moblks, cost);
+        if (moblks == current_moblks) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_moblks = moblks; }
+      }
+      log("Best MOBLKS is %u.  Default MOBLKS is 0.\n", best_moblks);
+      configsUpdate(current_cost, best_cost, 0.000, "MOBLKS", best_moblks, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["MOBLKS"] = to_string(best_moblks);
+    }
+
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_tsblks = 0;
+      u32 current_tsblks = args->value("TSBLKS", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 tsblks : {0, 1, 2}) {
+        args->flags["TSBLKS"] = to_string(tsblks);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using TSBLKS=%u is %6.1f\n", fft.spec().c_str(), tsblks, cost);
+        if (tsblks == current_tsblks) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tsblks = tsblks; }
+      }
+      log("Best TSBLKS is %u.  Default TSBLKS is 0.\n", best_tsblks);
+      configsUpdate(current_cost, best_cost, 0.000, "TSBLKS", best_tsblks, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TSBLKS"] = to_string(best_tsblks);
+    }
+#endif
+
     // Find best FAST_BARRIER setting
-    if (1 /*AMDGPU*/) {			// FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
+    if (1 /*AMDGPU*/) {                 // FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_fast_barrier = 0;
@@ -912,7 +1096,7 @@ void Tune::tune() {
     }
 
     // Find best WMUL setting
-    if (1) {
+    if (1 && defaultShape->width != 4096) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_wmul = 0;
@@ -929,46 +1113,6 @@ void Tune::tune() {
       log("Best WMUL is %u.  Default WMUL is 2.\n", best_wmul);
       configsUpdate(current_cost, best_cost, 0.003, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["WMUL"] = to_string(best_wmul);
-    }
-
-    // Find best ENABLE_L2STORE setting
-    if (NVIDIAGPU) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_enable_l2store = 0;
-      u32 current_enable_l2store = args->value("ENABLE_L2STORE", 2);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 enable_l2store : {0, 1}) {
-        args->flags["ENABLE_L2STORE"] = to_string(enable_l2store);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using ENABLE_L2STORE=%u is %6.1f\n", fft.spec().c_str(), enable_l2store, cost);
-        if (enable_l2store == current_enable_l2store) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_enable_l2store = enable_l2store; }
-      }
-      log("Best ENABLE_L2STORE is %u.  Default ENABLE_L2STORE is 1.\n", best_enable_l2store);
-      configsUpdate(current_cost, best_cost, 0.003, "ENABLE_L2STORE", best_enable_l2store, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["ENABLE_L2STORE"] = to_string(best_enable_l2store);
-    }
-
-    // Find best ENABLE_LULOAD setting
-    if (NVIDIAGPU) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_enable_luload = 0;
-      u32 current_enable_luload = args->value("ENABLE_LULOAD", 2);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 enable_luload : {0, 1}) {
-        args->flags["ENABLE_LULOAD"] = to_string(enable_luload);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using ENABLE_LULOAD=%u is %6.1f\n", fft.spec().c_str(), enable_luload, cost);
-        if (enable_luload == current_enable_luload) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_enable_luload = enable_luload; }
-      }
-      log("Best ENABLE_LULOAD is %u.  Default ENABLE_LULOAD is 1.\n", best_enable_luload);
-      configsUpdate(current_cost, best_cost, 0.003, "ENABLE_LULOAD", best_enable_luload, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["ENABLE_LULOAD"] = to_string(best_enable_luload);
     }
 
     // Find best BIGLIT setting
@@ -1070,14 +1214,14 @@ skip_1K_256 = 0;
       if (variant_W(variant) == 0) {
         if (!AMDGPU) continue;
         if (shape.width > 1024) continue;
-	if (args->value("NO_ASM", 0)) continue;
+        if (args->value("NO_ASM", 0)) continue;
       }
 
       // Only AMD GPUs support variant zero (BCAST) and only if height <= 1024.
       if (variant_H(variant) == 0) {
         if (!AMDGPU) continue;
         if (shape.height > 1024) continue;
-	if (args->value("NO_ASM", 0)) continue;
+        if (args->value("NO_ASM", 0)) continue;
       }
 
       // Reject shapes that won't be used to test exponents in the user's desired range
@@ -1165,7 +1309,7 @@ skip_1K_256 = 0;
         double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
         bool isUseful = TuneEntry{cost, fft}.update(results);
         log("%c %6.1f %12s %9" PRIu64 "\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
-	if (isUseful) TuneEntry::writeTuneFile(results);
+        if (isUseful) TuneEntry::writeTuneFile(results);
       }
     }
   }

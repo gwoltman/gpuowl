@@ -65,9 +65,16 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
   if (!dump.empty()) {
     args += " -save-temps="s + dump + "/" + fileName;
   }
+#ifdef CUDA_BACKEND
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
                              clSources.size(), (const cl_program*) (clSources.data()), getClFileNames().data(),
                              nullptr, nullptr);
+#else
+  // Skip first file (opencl_compat.cuh) if this is a standard openCL application rather than a CUDA translation
+  int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
+                             clSources.size()-1, (const cl_program*) (clSources.data()+1), getClFileNames().data()+1,
+                             nullptr, nullptr);
+#endif
   if (string mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }
   if (err != CL_SUCCESS) {
     log("Compiling '%s' error %s (args %s)\n", fileName.c_str(), errMes(err).c_str(), args.c_str());

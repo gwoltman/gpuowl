@@ -20,7 +20,7 @@
 
 PRPLL implements two primality tests for Mersenne numbers: PRP ("PRobable Prime") and LL ("Lucas-Lehmer") as the name suggests.
 
-PRPLL is an OpenCL (GPU) program for primality testing Mersenne numbers.
+PRPLL is an OpenCL (GPU) and CUDA program for primality testing Mersenne numbers.
 
 
 ## Build
@@ -32,11 +32,20 @@ Invoke `make` in the source directory.
 See `prpll -h` for the command line options.
 
 
+## License
+
+This project is licensed under the **GNU General Public License v3.0** - see [LICENSE](LICENSE) for details.
+
+
+## Credits
+
+[PRPLL](https://github.com/preda/gpuowl) was originally authored (as gpuowl) by **Mihai Preda**.  **George Woltman** authored optimizations and NTT code contributions.  The CUDA backend was authored by **"Sherpa"** in honor of John Allen Frey.
+
+
 ## Why LL
 
 For Mersenne primes search, the PRP test is by far preferred over LL, such that LL is not used anymore for search.
 But LL is still used to verify a prime found by PRP (which is a very rare occurence).
-
 
 ### Lucas-Lehmer (LL)
 This is a test that proves whether a Mersenne number is prime or not, but without providing a factor in the case where it is not prime.

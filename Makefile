@@ -1,4 +1,4 @@
-# Use "make DEBUG=1" for a debug build
+# Use "make CUDA=1" for a CUDA build, use "make DEBUG=1" for a debug build
 
 # The build artifacts are put in the "build-release" subfolder (or "build-debug" for a debug build).
 
@@ -19,31 +19,38 @@ else
 CXX ?= g++
 endif
 
+ifeq ($(CUDA), 1)
+ BIN=build-cuda
+ CUDASRCS1 = clwrap_cuda.cpp cudawrap.cpp
+ CUDAFLAGS = -DCUDA_BACKEND -Isrc/cuda -I/usr/local/cuda/include
+ CUDAOBJS = $(CUDASRCS1:%.cpp=$(BIN)/%.o)
+ OPENCL_LIBS = -L/usr/local/cuda/lib64 -lcuda -lnvrtc
+else
+ BIN=build-release
+ CUDAFLAGS =
+ CUDAOBJS =
+ ifeq ($(HOST_OS), Darwin)
+  OPENCL_LIBS = -framework OpenCL
+ else
+  OPENCL_LIBS = -lOpenCL
+ endif
+endif
+
 ifneq ($(findstring MINGW, $(HOST_OS)), MINGW)
-COMMON_FLAGS = -Wall -std=c++20 -static-libstdc++ -static-libgcc
+ COMMON_FLAGS = -Wall $(CUDAFLAGS) -std=c++20 -static-libstdc++ -static-libgcc
 else
 # For mingw-64 use this:
-COMMON_FLAGS = -Wall -std=c++20 -static-libstdc++ -static-libgcc -static
+ COMMON_FLAGS = -Wall $(CUDAFLAGS) -std=c++20 -static-libstdc++ -static-libgcc -static
 endif
 # -fext-numeric-literals
-
-ifeq ($(HOST_OS), Darwin)
-OPENCL_LIBS = -framework OpenCL
-else
-OPENCL_LIBS = -lOpenCL
-endif
-
 
 ifeq ($(DEBUG), 1)
 
 BIN=build-debug
-
 CXXFLAGS = -g $(COMMON_FLAGS)
 STRIP=
 
 else
-
-BIN=build-release
 
 CXXFLAGS = -O3 -DNDEBUG $(COMMON_FLAGS)
 STRIP=-s
@@ -56,7 +63,7 @@ SRCS2 = test.cpp
 
 # SRCS=$(addprefix src/, $(SRCS1))
 
-OBJS = $(SRCS1:%.cpp=$(BIN)/%.o)
+OBJS = $(CUDAOBJS) $(SRCS1:%.cpp=$(BIN)/%.o)
 DEPDIR := $(BIN)/.d
 $(shell mkdir -p $(DEPDIR) >/dev/null)
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEPDIR)/$*.Td
@@ -80,16 +87,19 @@ $(BIN)/prpll-amd: ${OBJS}
 	$(CXX) $(CXXFLAGS) -o $@ ${OBJS} $(LIBPATH) -lamdocl64 -L/opt/rocm/lib ${STRIP}
 
 clean:
-	rm -rf build-debug build-release
+	rm -rf build-debug build-release build-cuda
 
 $(BIN)/%.o : src/%.cpp $(DEPDIR)/%.d
 	$(COMPILE.cc) $(OUTPUT_OPTION) $<
 	$(POSTCOMPILE)
 
+$(BIN)/%.o : src/cuda/%.cpp $(DEPDIR)/%.d
+	$(COMPILE.cc) $(OUTPUT_OPTION) $<
+	$(POSTCOMPILE)
 
-# src/bundle.cpp is just a wrapping of the OpenCL sources (*.cl) as a C string.
+# src/bundle.cpp is just a wrapping of the OpenCL sources (*.cl) as a C string (as well as the CUDA OpenCL translation code)
 
-src/bundle.cpp: genbundle.sh src/cl/*.cl
+src/bundle.cpp: genbundle.sh src/cuda/*.cuh src/cl/*.cl
 	bash genbundle.sh $^ > src/bundle.cpp
 
 $(DEPDIR)/%.d: ;

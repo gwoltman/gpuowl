@@ -2,7 +2,11 @@
 
 #pragma once
 
+#ifdef CUDA_BACKEND
+#include "tinycuda.h"
+#else
 #include "tinycl.h"
+#endif
 
 #include <string>
 #include <string_view>
@@ -123,3 +127,10 @@ std::array<i64, 3> getEventNanos(cl_event event);
 u32 getEventInfo(cl_event event);
 
 cl_context getQueueContext(cl_command_queue q);
+
+#ifdef CUDA_BACKEND
+// Set L2 cache persistence for multiple read-only buffers on the given stream.
+// Computes the address span covering all buffers and sets a single access policy window.
+// Buffers that are nullptr or zero-size are skipped.
+void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers);
+#endif

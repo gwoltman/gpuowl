@@ -228,7 +228,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = 0, tail_single_kernel = 1;         // Default tailSquare is double-wide in one kernel
   in_place = 0;                                         // Default is not in-place
-  wmul = 2;						// Default is carryFused processes two lines at a time
+  wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
   // Validate -use options
@@ -248,7 +248,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "DEBUG",
                               "CARRY64",
                               "BIGLIT",                 // Deprecated
-                              "NONTEMPORAL",
+                              "NONTEMPORAL",            // Deprecated
                               "INPLACE",
                               "PAD",
                               "MIDDLE_IN_LDS_TRANSPOSE",
@@ -263,8 +263,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "TABMUL_CHAIN32",
                               "TABMUL_CHAIN61",
                               "MODM31",
-                              "ENABLE_L2STORE",
-                              "ENABLE_LULOAD",
+                              "LOADS","STORES",
+                              "CFBLKS","MIBLKS","MOBLKS","TSBLKS",  // CUDA - experimental
                               "WMUL"
                             });
     if (!isValid) {
@@ -281,6 +281,13 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
     if (k == "PAD") pad_size = atoi(v.c_str());
+  }
+
+  // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W)
+  {
+    u32 shufl_bytes_w = args.value("SHUFL_BYTES_W", 8);
+    u32 max_wmul = 32768 / (fft.shape.width * shufl_bytes_w);
+    if (wmul > max_wmul) wmul = max_wmul;
   }
 
   string defines = toDefine(config);
@@ -505,40 +512,53 @@ Gpu::~Gpu() {
 #define ROE_SIZE 100000
 #define CARRY_SIZE 100000
 
+#if CUDA_BACKEND
+#define CARRYFUSED_BLOCKS(x)  args.value("CFBLKS", 0) == 0 ? x : args.value("CFBLKS", 0) == 1 ? x " -DCUDA_MIN_BLOCKS=3" : x " -maxregcount 84"
+#define MIDDLEIN_BLOCKS    args.value("MIBLKS", 0) == 0 ? "" : args.value("MIBLKS", 0) == 1 ? " -DCUDA_MIN_BLOCKS=3" : " -maxregcount 84"
+#define MIDDLEOUT_BLOCKS   args.value("MOBLKS", 0) == 0 ? "" : args.value("MOBLKS", 0) == 1 ? " -DCUDA_MIN_BLOCKS=3" : " -maxregcount 84"
+#define TAILSQUARE_BLOCKS  args.value("TSBLKS", 0) == 0 ? "" : args.value("TSBLKS", 0) == 1 ? " -DCUDA_MIN_BLOCKS=3" : " -maxregcount 84"
+#else
+#define CARRYFUSED_BLOCKS(x)  ""
+#define MIDDLEIN_BLOCKS    ""
+#define MIDDLEOUT_BLOCKS   ""
+#define TAILSQUARE_BLOCKS  ""
+#endif
+
 Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
   queue(q),
   background{shared.background},
   args{*shared.args},
   E(E),
   N(fft.shape.size()),
-  fft(fft),  
+  fft(fft),
   WIDTH(fft.shape.width),
   SMALL_H(fft.shape.height),
   BIG_H(SMALL_H * fft.shape.middle),
   hN(N / 2),
   nW(fft.shape.nW()),
   nH(fft.shape.nH()),
-  useLongCarry{args.carry == Args::CARRY_LONG},
+  useLongCarry{args.carry == CARRY_64},
   compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), queue, __VA_ARGS__)
 
-  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H)),
+  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), MIDDLEIN_BLOCKS),
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH),
   K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2),                                                           // Single-wide tailSquare with one kernel
+                                               hN / nH / 2,                                                            // Single-wide tailSquare with one kernel
+                                               TAILSQUARE_BLOCKS),
   K(ktailMul,              "tailmul.cl", "tailMul", hN / nH / 2),
   K(ktailMulLow,           "tailmul.cl", "tailMul", hN / nH / 2, "-DMUL_LOW=1"),
-  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H)),
+  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), MIDDLEOUT_BLOCKS),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW),
 
-  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H)),
+  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), MIDDLEIN_BLOCKS),
   K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH),
-  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2),
+  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2, TAILSQUARE_BLOCKS),
   K(ktailSquareGF31,       "tailsquare.cl", "tailSquareGF31",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
@@ -546,20 +566,21 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
                                                hN / nH / 2),                                                           // Single-wide tailSquare with one kernel
   K(ktailMulGF31,          "tailmul.cl", "tailMulGF31", hN / nH / 2),
   K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31", hN / nH / 2, "-DMUL_LOW=1"),
-  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H)),
+  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), MIDDLEOUT_BLOCKS),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW),
 
-  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H)),
+  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), MIDDLEIN_BLOCKS),
   K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH),
   K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2),
   K(ktailSquareGF61,       "tailsquare.cl", "tailSquareGF61",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2),                                                           // Single-wide tailSquare with one kernel
+                                               hN / nH / 2,                                                            // Single-wide tailSquare with one kernel
+                                               TAILSQUARE_BLOCKS),
   K(ktailMulGF61,          "tailmul.cl", "tailMulGF61", hN / nH / 2),
   K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61", hN / nH / 2, "-DMUL_LOW=1"),
-  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H)),
+  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), MIDDLEOUT_BLOCKS),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW),
 
   K(kfftP,                 "fftp.cl", "fftP", hN / nW),
@@ -568,11 +589,11 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   K(kCarryM,               "carry.cl", "carry", hN / CARRY_LEN, "-DMUL3=1"),
   K(kCarryMROE,            "carry.cl", "carry", hN / CARRY_LEN, "-DMUL3=1 -DROE=1"),
   K(kCarryLL,              "carry.cl", "carry", hN / CARRY_LEN, "-DLL=1"),
-  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW),
-  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DROE=1"),
-  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DMUL3=1"),
-  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DMUL3=1 -DROE=1"),
-  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, "-DLL=1"),
+  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("")),
+  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DROE=1")),
+  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DMUL3=1")),
+  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DMUL3=1 -DROE=1")),
+  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DLL=1")),
 
   K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN),
 

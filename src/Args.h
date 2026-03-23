@@ -3,6 +3,7 @@
 #pragma once
 
 #include "common.h"
+#include "FFTConfig.h"
 
 #include <string>
 #include <map>
@@ -21,10 +22,8 @@ public:
   static vector<KeyVal> splitUses(std::string ss);
   static std::string mergeArgs(int argc, char **argv);
 
-  enum {CARRY_AUTO = 0, CARRY_SHORT, CARRY_LONG};
-
   explicit Args(bool silent = false) : silent{silent} {}
-  
+
   void parse(const string& line);
   void setDefaults();
   bool uses(const std::string& key) const { return flags.find(key) != flags.end(); }
@@ -56,7 +55,7 @@ public:
   std::map<std::string, vector<KeyVal>> perFftConfig;
 
   int device = 0;
-  
+
   bool safeMath = true;
   bool clean = true;
   bool verbose = false;
@@ -72,7 +71,7 @@ public:
 
   bool keepProof = false;
 
-  int carry = CARRY_AUTO;
+  enum CARRY_KIND carry = CARRY_AUTO;
   u32 workers = 1;
   u32 blockSize = 1000;
   u32 logStep = 20000;

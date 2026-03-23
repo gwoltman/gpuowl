@@ -21,7 +21,7 @@
 #include <cmath>
 
 struct PRPResult;
-struct Task;
+class Task;
 
 class Signal;
 class ProofSet;

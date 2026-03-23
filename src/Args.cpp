@@ -2,7 +2,6 @@
 
 #include "Args.h"
 #include "File.h"
-#include "FFTConfig.h"
 #include "clwrap.h"
 #include "gpuid.h"
 #include "Proof.h"
@@ -99,14 +98,13 @@ bool Args::hasFlag(const string& key) const { return flags.find(key) != flags.en
 void Args::printHelp() {
   printf(R"(
 PRPLL is "PRobable Prime and Lucas-Lehmer Categorizer", AKA "Purple-cat"
-PRPLL is under active development and not ready for production use.
 
-PRPLL is an OpenCL (GPU) program for primality testing Mersenne numbers (of the form 2^n - 1).
+PRPLL is an OpenCL/CUDA (GPU) program for primality testing Mersenne numbers (of the form 2^n - 1).
 
 To check that OpenCL is installed correctly use the command "clinfo". If clinfo does not find any
 devices or otherwise fails, this program will not run.
 
-This program is tested on Linux/ROCm (AMD GPUs); it may also run on Windows and on Nvidia GPUs.
+This program is tested on Linux/ROCm (AMD GPUs); it also runs on Windows and on Nvidia GPUs.
 
 For information about Mersenne primes search see https://www.mersenne.org/
 
@@ -168,8 +166,8 @@ named "config.txt" in the prpll run directory.
 -roe               : measure the Round-Off Error (Z) for more iterations (slow)
 
 -use <define>      : comma separated list of defines for configuring gpuowl.cl, such as:
-  -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier(). Do not use
-                     this option on Nvidia GPUs or on RDNA AMD GPUs where it produces errors
+  -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
+                     may not work on Nvidia GPUs or on RDNA AMD GPUs where it produces errors
                      (which are nevertheless detected).
   -use NO_ASM      : do not use __asm() blocks (inline assembly)
   -use STATS=<val> : enable carry statistics collection & logging, for the kernel according to <val>:
@@ -200,11 +198,14 @@ named "config.txt" in the prpll run directory.
 -tune <options>    : Looks for best settings to include in config.txt.  Times many FFTs to find fastest one to test exponents -- written to tune.txt.
                      An -fft <spec> can be given on the command line to limit which FFTs are timed.
                      Options are not required.  If present, the options are a comma separated list from below.
-                         noconfig     - Skip timings to find best config.txt settings
-                         fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
+                         noconfig     - Skip timings to find best config.txt settings.
+			 inplace      - Skip timings for not-in-place FFTs and NTTs.  All nVidia GPUs seem to prefer in-place FFTs and NTTs.
+			 fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
                          ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
+                         nofp32       - Do not tune for settings that affect FP32 FFTs.  Some openCL compilers have trouble with FP32.
                          minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.
                          maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.
+                         quick=<val> - Higher values equals a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
 -device <N>        : select the GPU at position N in the list of devices
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
 -pci    <BDF>      : select the GPU with the given PCI BDF, e.g. "0c:00.0"
@@ -380,7 +381,7 @@ void Args::parse(const string& line) {
     else if (key == "-dir") { dir = s; }
     else if (key == "-carry") {
       if (s == "short" || s == "long") {
-        carry = s == "short" ? CARRY_SHORT : CARRY_LONG;
+        carry = s == "short" ? CARRY_32 : CARRY_64;
       } else {
         log("-carry expects short|long\n");
         throw "-carry expects short|long";
