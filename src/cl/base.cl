@@ -248,7 +248,7 @@ error - unsupported integer WordSize
 double2 OVERLOAD U2(double a, double b) { return (double2) (a, b); }
 float2 OVERLOAD U2(float a, float b) { return (float2) (a, b); }
 int2 OVERLOAD U2(int a, int b) { return (int2) (a, b); }
-long2 OVERLOAD U2(long a, long b) { return (long2) (a, b); }
+long2 OVERLOAD U2(i64 a, i64 b) { return (long2) (a, b); }
 uint2 OVERLOAD U2(uint a, uint b) { return (uint2) (a, b); }
 ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 

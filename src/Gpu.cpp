@@ -145,10 +145,10 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
 
 string toLiteral(i32 value) { return to_string(value); }
 string toLiteral(u32 value) { return to_string(value) + 'u'; }
-[[maybe_unused]] string toLiteral(long value) { return to_string(value) + "l"; }
-[[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + "ul"; }
-[[maybe_unused]] string toLiteral(long long value) { return to_string(value) + "l"; }              // Yes, this looks wrong.  The Mingw64 C compiler uses
-[[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + "ul"; }    // long long for 64-bits, while openCL uses long for 64 bits.
+[[maybe_unused]] string toLiteral(long value) { return to_string(value) + "ll"; }              // Yes, this looks wrong.  MSVC and CUDA requires we always use long long.
+[[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + "ull"; }    // See discussion in opencl_compat.cuh.
+[[maybe_unused]] string toLiteral(long long value) { return to_string(value) + "ll"; }
+[[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + "ull"; }
 
 template<typename F>
 string toLiteral(F value) {

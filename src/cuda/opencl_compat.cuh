@@ -69,25 +69,29 @@
 #define CP(x) const x* __restrict__
 
 // ---- OpenCL type aliases ----
-// CRITICAL: On Linux x86_64, CUDA's built-in vector types (long2, ulong2) use
-// 'long' / 'unsigned long' for their members. These are DISTINCT C++ types from
-// 'long long' / 'unsigned long long' even though both are 64-bit.
-// We MUST use 'unsigned long' for ulong so that Z61 (typedef'd from ulong) matches
-// ulong2 member types. Otherwise overloaded functions like add(Z31,Z31) vs add(Z61,Z61)
-// become ambiguous when called with ulong2 member values (which are 'unsigned long').
-typedef unsigned long ulong;
-typedef long          slong;  // OpenCL's signed 'long' (64-bit)
 
 // Standard PRPLL type aliases
 typedef unsigned int uint;
 
-// These match OpenCL's types exactly. The preprocessor strips base.cl's
-// re-definitions of i32/u32/i64/u64 to avoid redeclaration errors.
-// Must use 'long' / 'unsigned long' to match CUDA vector type members.
-typedef unsigned int  u32;
+// These match OpenCL's types exactly. The preprocessor strips base.cl's re-definitions of i32/u32 to avoid redeclaration errors.
 typedef int           i32;
-typedef unsigned long u64;
-typedef long          i64;
+typedef unsigned int  u32;
+
+// OpenCL defines long, ulong, long2, ulong2, etc. as 64-bits.  CUDA defines them as 32-bits (MSVC) or 64-bits (Linux).
+// CUDA defines longlong, ulonglong, longlong2, ulonglong2, etc. as 64-bits.  Map OpenCL types to CUDA types.
+
+//#define long       long long        // Obviously, we can't uncomment this #define.  Instead, we must make sure the opencl code never uses this data type.  Use i64 instead.
+#define long2	     longlong2
+#define ulong	     unsigned long long
+#define ulong2	     ulonglong2
+#define make_long2   make_longlong2
+#define make_ulong2  make_ulonglong2
+
+// These must match the 64-bit data types defined above.  The preprocessor strips base.cl's re-definitions of i64/u64 to avoid redeclaration errors.
+// Must use 'long long' / 'unsigned long long' to match CUDA vector type members so that Z61 (typedef'd from ulong) matches ulong2 member types.
+// Otherwise overloaded functions like add(Z31,Z31) vs add(Z61,Z61) become ambiguous when called with ulong2 member values (which are 'unsigned long').
+typedef long long          i64;
+typedef unsigned long long u64;
 
 // ---- Math constants ----
 #ifndef M_PI
@@ -152,13 +156,13 @@ __device__ __forceinline__ ulong2& operator-=(ulong2& a, ulong2 b) { a.x-=b.x; a
 // Scalar * vector operators for types not built-in to NVRTC
 // (NVRTC already provides double2*double, int2*int, uint2*uint, etc.)
 // These cover cross-type scalar*vector that OpenCL supports natively.
-__device__ __forceinline__ long2 operator*(long long s, long2 v) { return {s*v.x, s*v.y}; }
-__device__ __forceinline__ long2 operator*(long2 v, long long s) { return {v.x*s, v.y*s}; }
-__device__ __forceinline__ ulong2 operator*(unsigned long long s, ulong2 v) { return {s*v.x, s*v.y}; }
-__device__ __forceinline__ ulong2 operator*(ulong2 v, unsigned long long s) { return {v.x*s, v.y*s}; }
+__device__ __forceinline__ long2 operator*(i64 s, long2 v) { return {s*v.x, s*v.y}; }
+__device__ __forceinline__ long2 operator*(long2 v, i64 s) { return {v.x*s, v.y*s}; }
+__device__ __forceinline__ ulong2 operator*(ulong s, ulong2 v) { return {s*v.x, s*v.y}; }
+__device__ __forceinline__ ulong2 operator*(ulong2 v, ulong s) { return {v.x*s, v.y*s}; }
 // int * ulong2 (common in NTT code: int literal * GF61)
-__device__ __forceinline__ ulong2 operator*(int s, ulong2 v) { return {(unsigned long long)s*v.x, (unsigned long long)s*v.y}; }
-__device__ __forceinline__ ulong2 operator*(ulong2 v, int s) { return {v.x*(unsigned long long)s, v.y*(unsigned long long)s}; }
+__device__ __forceinline__ ulong2 operator*(int s, ulong2 v) { return {(ulong)s*v.x, (ulong)s*v.y}; }
+__device__ __forceinline__ ulong2 operator*(ulong2 v, int s) { return {v.x*(ulong)s, v.y*(ulong)s}; }
 
 // ---- Vector constructors (U2) ----
 // OpenCL (type2)(a,b) cast syntax is converted to make_type2(a,b) by the preprocessor.
@@ -170,77 +174,54 @@ __device__ __forceinline__ ulong2 operator*(ulong2 v, int s) { return {v.x*(unsi
 
 // as_uint2: split 64-bit value into two 32-bit halves
 __device__ __forceinline__ uint2 as_uint2(double v) {
-  unsigned long long bits = __double_as_longlong(v);
-  return make_uint2((unsigned int)(bits), (unsigned int)(bits >> 32));
+  ulong bits = __double_as_longlong(v);
+  return make_uint2((uint)(bits), (uint)(bits >> 32));
 }
-__device__ __forceinline__ uint2 as_uint2(unsigned long long v) {
-  return make_uint2((unsigned int)(v), (unsigned int)(v >> 32));
+__device__ __forceinline__ uint2 as_uint2(ulong v) {
+  return make_uint2((uint)(v), (uint)(v >> 32));
 }
-__device__ __forceinline__ uint2 as_uint2(unsigned long v) {
-  return make_uint2((unsigned int)(v), (unsigned int)((unsigned long long)v >> 32));
-}
-__device__ __forceinline__ uint2 as_uint2(long long v) {
-  return make_uint2((unsigned int)((unsigned long long)v), (unsigned int)((unsigned long long)v >> 32));
-}
-__device__ __forceinline__ uint2 as_uint2(long v) {
-  return make_uint2((unsigned int)((unsigned long)v), (unsigned int)((unsigned long long)v >> 32));
+__device__ __forceinline__ uint2 as_uint2(i64 v) {
+  return make_uint2((uint)((ulong)v), (uint)((ulong)v >> 32));
 }
 
 // as_int2: split 64-bit value into two signed 32-bit halves
 __device__ __forceinline__ int2 as_int2(double v) {
-  unsigned long long bits = __double_as_longlong(v);
-  return make_int2((int)(unsigned int)(bits), (int)(unsigned int)(bits >> 32));
+  ulong bits = __double_as_longlong(v);
+  return make_int2((int)(uint)(bits), (int)(uint)(bits >> 32));
 }
-__device__ __forceinline__ int2 as_int2(long long v) {
-  return make_int2((int)(unsigned int)((unsigned long long)v), (int)(unsigned int)((unsigned long long)v >> 32));
-}
-__device__ __forceinline__ int2 as_int2(long v) {
-  return make_int2((int)(unsigned int)((unsigned long)v), (int)(unsigned int)((unsigned long long)v >> 32));
+__device__ __forceinline__ int2 as_int2(i64 v) {
+  return make_int2((int)(uint)((ulong)v), (int)(uint)((ulong)v >> 32));
 }
 
 // as_double: reinterpret bits as double
 __device__ __forceinline__ double as_double(int2 v) {
-  unsigned long long bits = ((unsigned long long)(unsigned int)v.y << 32) | (unsigned int)v.x;
+  ulong bits = ((ulong)(uint)v.y << 32) | (uint)v.x;
   return __longlong_as_double(bits);
 }
 __device__ __forceinline__ double as_double(uint2 v) {
-  unsigned long long bits = ((unsigned long long)v.y << 32) | v.x;
+  ulong bits = ((ulong)v.y << 32) | v.x;
   return __longlong_as_double(bits);
 }
-__device__ __forceinline__ double as_double(unsigned long long v) {
+__device__ __forceinline__ double as_double(ulong v) {
   return __longlong_as_double(v);
 }
-__device__ __forceinline__ double as_double(unsigned long v) {
-  return __longlong_as_double((unsigned long long)v);
-}
-__device__ __forceinline__ double as_double(long long v) { return __longlong_as_double(v); }
-__device__ __forceinline__ double as_double(long v) { return __longlong_as_double((long long)v); }
+__device__ __forceinline__ double as_double(i64 v) { return __longlong_as_double(v); }
 
-// as_ulong: reinterpret as unsigned 64-bit (returns 'unsigned long' to match ulong typedef)
-__device__ __forceinline__ unsigned long as_ulong(uint2 v) {
-  return (unsigned long)(((unsigned long long)v.y << 32) | v.x);
-}
-__device__ __forceinline__ unsigned long as_ulong(int2 v) {
-  return (unsigned long)(((unsigned long long)(unsigned int)v.y << 32) | (unsigned int)v.x);
-}
-__device__ __forceinline__ unsigned long as_ulong(double v) {
-  return (unsigned long)__double_as_longlong(v);
-}
+// as_ulong: reinterpret as unsigned 64-bit
+__device__ __forceinline__ ulong as_ulong(uint2 v) { return (((ulong)v.y << 32) | v.x); }
+__device__ __forceinline__ ulong as_ulong(int2 v) { return (((ulong)(uint)v.y << 32) | (uint)v.x); }
+__device__ __forceinline__ ulong as_ulong(double v) { return (ulong)__double_as_longlong(v); }
 
-// as_long: reinterpret as signed 64-bit (returns 'long' to match slong/i64)
-__device__ __forceinline__ long as_long(int2 v) {
-  return (long)(((unsigned long long)(unsigned int)v.y << 32) | (unsigned int)v.x);
-}
-__device__ __forceinline__ long as_long(uint2 v) {
-  return (long)(((unsigned long long)v.y << 32) | v.x);
-}
-__device__ __forceinline__ long as_long(double v) { return (long)__double_as_longlong(v); }
+// as_long: reinterpret as signed 64-bit
+__device__ __forceinline__ i64 as_long(int2 v) { return (i64)(((ulong)(uint)v.y << 32) | (uint)v.x); }
+__device__ __forceinline__ i64 as_long(uint2 v) { return (i64)(((ulong)v.y << 32) | v.x); }
+__device__ __forceinline__ i64 as_long(double v) { return (i64)__double_as_longlong(v); }
 
 // as_float / as_int / as_uint: 32-bit reinterprets
 __device__ __forceinline__ float as_float(int v) { return __int_as_float(v); }
-__device__ __forceinline__ float as_float(unsigned int v) { return __int_as_float((int)v); }
+__device__ __forceinline__ float as_float(uint v) { return __int_as_float((int)v); }
 __device__ __forceinline__ int as_int(float v) { return __float_as_int(v); }
-__device__ __forceinline__ unsigned int as_uint(float v) { return (unsigned int)__float_as_int(v); }
+__device__ __forceinline__ uint as_uint(float v) { return (uint)__float_as_int(v); }
 
 // 16-byte reinterprets: int4 ↔ double2 ↔ ulong2
 __device__ __forceinline__ int4 as_int4(double2 v) {
@@ -291,17 +272,13 @@ __device__ __forceinline__ float2 fma(float a, float2 b, float2 c) {
 }
 
 // mul_hi: upper half of multiplication
-__device__ __forceinline__ unsigned int mul_hi(unsigned int a, unsigned int b) {
+__device__ __forceinline__ uint mul_hi(uint a, uint b) {
   return __umulhi(a, b);
 }
-// Overloads for both 'unsigned long long' and 'unsigned long' (distinct types on Linux x86_64)
-__device__ __forceinline__ unsigned long long mul_hi(unsigned long long a, unsigned long long b) {
+__device__ __forceinline__ ulong mul_hi(ulong a, ulong b) {
   return __umul64hi(a, b);
 }
-__device__ __forceinline__ unsigned long mul_hi(unsigned long a, unsigned long b) {
-  return (unsigned long)__umul64hi((unsigned long long)a, (unsigned long long)b);
-}
-__device__ __forceinline__ unsigned int mad_hi(unsigned int a, unsigned int b, unsigned int c) {
+__device__ __forceinline__ uint mad_hi(uint a, uint b, uint c) {
   return __umulhi(a, b) + c;
 }
 
@@ -348,7 +325,7 @@ typedef volatile unsigned int atomic_uint;
 // The preprocessor converts (Word2)(a, b) → make_Word2(a, b).
 // Must key on WordSize, not CARRY64, because FFT3261 has WordSize=8 without CARRY64.
 #if WordSize == 8
-__device__ __forceinline__ long2 make_Word2(long a, long b) { return make_long2(a, b); }
+__device__ __forceinline__ long2 make_Word2(i64 a, i64 b) { return make_long2(a, b); }
 #else
 __device__ __forceinline__ int2 make_Word2(int a, int b) { return make_int2(a, b); }
 #endif

@@ -67,7 +67,10 @@ class File {
 
   void datasync() {
     fflush(f);
-#if defined(_WIN32) || defined(__WIN32__)
+#if defined(_MSC_VER)
+// We'd really like to use FlushFileBuffers(h), but we do not have easy access to the Windows file handle.
+// We might could get that by getting the pathname and opening the file with native Windows routines.
+#elif defined(_WIN32) || defined(__WIN32__)
     _commit(fileno(f));
 #elif defined(__APPLE__)
     fcntl(fileno(f), F_FULLFSYNC, 0);
