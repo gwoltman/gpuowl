@@ -4,12 +4,14 @@
 #include "math.cl"
 #include "fftheight.cl"
 
+// LDS bytes used by shufl for each line processed in fft_HEIGHT
+#define LDS_BYTES  (SMALL_HEIGHT * SHUFL_BYTES_H)
+
 #if FFT_FP64
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local T2 lds[lds_bytes / sizeof(T2)];
+  local T2 lds[LDS_BYTES / sizeof(T2)];
 
   T2 u[NH];
   u32 g = get_group_id(0);
@@ -39,8 +41,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local F2 lds[lds_bytes / sizeof(F2)];
+  local F2 lds[LDS_BYTES / sizeof(F2)];
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -74,8 +75,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF31 lds[lds_bytes / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES / sizeof(GF31)];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -103,8 +103,7 @@ KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHinGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
-  const u32 lds_bytes = SMALL_HEIGHT * SHUFL_BYTES_H;
-  local GF61 lds[lds_bytes / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES / sizeof(GF61)];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
