@@ -145,8 +145,8 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
 
 string toLiteral(i32 value) { return to_string(value); }
 string toLiteral(u32 value) { return to_string(value) + 'u'; }
-[[maybe_unused]] string toLiteral(long value) { return to_string(value) + "ll"; }              // Yes, this looks wrong.  MSVC and CUDA requires we always use long long.
-[[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + "ull"; }    // See discussion in opencl_compat.cuh.
+[[maybe_unused]] string toLiteral(long value) { return to_string(value) + "ll"; }
+[[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + "ull"; }
 [[maybe_unused]] string toLiteral(long long value) { return to_string(value) + "ll"; }
 [[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + "ull"; }
 

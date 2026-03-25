@@ -250,7 +250,8 @@ float2 OVERLOAD U2(float a, float b) { return (float2) (a, b); }
 int2 OVERLOAD U2(int a, int b) { return (int2) (a, b); }
 long2 OVERLOAD U2(i64 a, i64 b) { return (long2) (a, b); }
 uint2 OVERLOAD U2(uint a, uint b) { return (uint2) (a, b); }
-ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
+ulong2 OVERLOAD U2(unsigned long a, unsigned long b) { return (ulong2) ((ulong)a, (ulong)b); }              // Two versions dealing with longs to handle TAILTGF61 constant
+ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2) ((ulong)a, (ulong)b); }
 
 // Other handy macros
 #define RE(a) (a.x)
