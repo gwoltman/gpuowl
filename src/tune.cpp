@@ -344,6 +344,7 @@ void Tune::tune() {
   // There are some options and variants that are different based on GPU manufacturer
   bool AMDGPU = isAmdGpu(q->context->deviceId());
   bool NVIDIAGPU = isNvidiaGpu(q->context->deviceId());
+  int NO_ASM = args->value("NO_ASM", 0);
 
   bool tune_config = 1;
   bool time_FFTs = 0;
@@ -593,7 +594,7 @@ void Tune::tune() {
         u32 best_fft_load = 0;
         double best_cost = -1.0;
 	for (u32 fft_load : {0, 1, 2, 3, 4}) {
-          if (!NVIDIAGPU && fft_load >= 2) continue;
+          if (fft_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(loads / 10 * 10 + fft_load);
           double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
           log("Time for %12s using FFT load=%u is %6.1f\n", fft.spec().c_str(), fft_load, cost);
@@ -611,7 +612,7 @@ void Tune::tune() {
         u32 best_fft_store = 0;
         double best_cost = -1.0;
 	for (u32 fft_store : {0, 1, 2, 3, 4}) {
-          if (!NVIDIAGPU && fft_store >= 2) continue;
+          if (fft_store >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["STORES"] = to_string(stores / 10 * 10 + fft_store);
           double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
           log("Time for %12s using FFT store=%u is %6.1f\n", fft.spec().c_str(), fft_store, cost);
@@ -628,8 +629,8 @@ void Tune::tune() {
         u64 exponent = primes.prevPrime(fft.maxExp());
         u32 best_cs_load = 0, best_cs_store = 0;
         double best_cost = -1.0;
-	for (u32 cs : {0, 1, 2}) {   // Test three combinations:  Default load/store, non-temporal, last-use load and L2 store
-          if (!NVIDIAGPU && cs == 2) continue;
+	for (u32 cs : {0, 1, 2}) {   // Test three combinations:  Default load/store, non-temporal, last-use load with L2 store
+          if (cs >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
 	  u32 cs_load = cs == 0 ? 0 : cs == 1 ? 1 : 4;
 	  u32 cs_store = cs == 0 ? 0 : cs == 1 ? 1 : 2;
           args->flags["LOADS"] = to_string(loads / 100 * 100 + cs_load * 10 + loads % 10);
@@ -652,7 +653,7 @@ void Tune::tune() {
         u32 best_trig_load = 0;
         double best_cost = -1.0;
 	for (u32 trig_load : {0, 5}) {
-          if (!NVIDIAGPU && trig_load >= 2) continue;
+          if (trig_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(loads / 1000 * 1000 + trig_load * 100 + loads % 100);
           double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
           log("Time for %12s using Trig frequently used load=%u is %6.1f\n", fft.spec().c_str(), trig_load, cost);
@@ -670,7 +671,7 @@ void Tune::tune() {
         u32 best_trig_load = 0;
         double best_cost = -1.0;
 	for (u32 trig_load : {0, 1, 2, 3, 4, 5}) {
-          if (!NVIDIAGPU && trig_load >= 2) continue;
+          if (trig_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(loads / 10000 * 10000 + trig_load * 1000 + loads % 1000);
           double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
           log("Time for %12s using Trig several uses load=%u is %6.1f\n", fft.spec().c_str(), trig_load, cost);
@@ -688,7 +689,7 @@ void Tune::tune() {
         u32 best_trig_load = 0;
         double best_cost = -1.0;
 	for (u32 trig_load : {0, 1, 2, 3, 4, 5}) {
-          if (!NVIDIAGPU && trig_load >= 2) continue;
+          if (trig_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(trig_load * 10000 + loads % 10000);
           double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
           log("Time for %12s using Trig used once load=%u is %6.1f\n", fft.spec().c_str(), trig_load, cost);
