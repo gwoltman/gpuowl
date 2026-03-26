@@ -513,15 +513,15 @@ Gpu::~Gpu() {
 #define CARRY_SIZE 100000
 
 #if CUDA_BACKEND
-#define CARRYFUSED_BLOCKS(x)  args.value("CFBLKS", 0) == 0 ? x : args.value("CFBLKS", 0) == 1 ? x " -DCUDA_MIN_BLOCKS=3" : x " -maxregcount 84"
-#define MIDDLEIN_BLOCKS    args.value("MIBLKS", 0) == 0 ? "" : args.value("MIBLKS", 0) == 1 ? " -DCUDA_MIN_BLOCKS=3" : " -maxregcount 84"
-#define MIDDLEOUT_BLOCKS   args.value("MOBLKS", 0) == 0 ? "" : args.value("MOBLKS", 0) == 1 ? " -DCUDA_MIN_BLOCKS=3" : " -maxregcount 84"
-#define TAILSQUARE_BLOCKS  args.value("TSBLKS", 0) == 0 ? "" : args.value("TSBLKS", 0) == 1 ? " -DCUDA_MIN_BLOCKS=3" : " -maxregcount 84"
+#define CARRYFUSED_BLOCKS(x)  args.value("CFBLKS", 0) == 0 ? x  : args.value("CFBLKS", 0) == 1 ? x " -DCUDA_MIN_BLOCKS=2" : x " -maxregcount=128"
+#define MIDDLEIN_BLOCKS       args.value("MIBLKS", 0) == 0 ? "" : args.value("MIBLKS", 0) == 1 ?   " -DCUDA_MIN_BLOCKS=3" :   " -maxregcount=84"
+#define MIDDLEOUT_BLOCKS      args.value("MOBLKS", 0) == 0 ? "" : args.value("MOBLKS", 0) == 1 ?   " -DCUDA_MIN_BLOCKS=3" :   " -maxregcount=84"
+#define TAILSQUARE_BLOCKS     args.value("TSBLKS", 0) == 0 ? "" : args.value("TSBLKS", 0) == 1 ?   " -DCUDA_MIN_BLOCKS=3" :   " -maxregcount=84"
 #else
-#define CARRYFUSED_BLOCKS(x)  ""
-#define MIDDLEIN_BLOCKS    ""
-#define MIDDLEOUT_BLOCKS   ""
-#define TAILSQUARE_BLOCKS  ""
+#define CARRYFUSED_BLOCKS(x)  x
+#define MIDDLEIN_BLOCKS       ""
+#define MIDDLEOUT_BLOCKS      ""
+#define TAILSQUARE_BLOCKS     ""
 #endif
 
 Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
