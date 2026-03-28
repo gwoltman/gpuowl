@@ -820,7 +820,7 @@ Z61 OVERLOAD mul(Z61 a, Z61 b) {
   return add(lo61, hi61);
 }
 
-Z61 OVERLOAD fma(Z61 a, Z61 b, Z61 c) { return add(mul(a, b), c); }             // GWBUG:  Can we do better?
+Z61 OVERLOAD z61_fma(Z61 a, Z61 b, Z61 c) { return add(mul(a, b), c); }             // GWBUG:  Can we do better?  (Not named fma: clashes with float fma on some OpenCL compilers.)
 
 // Multiply by 2
 Z61 OVERLOAD mul2(Z61 a) { return ((a + a) + (a >> 60)) & M61; }        // GWBUG: Make sure "+ a>>60" does an add to lower u32 without a followup adc.
@@ -962,7 +962,7 @@ Z61 OVERLOAD weakMul(Z61 a, Z61 b, const u32 a_m61_count, const u32 b_m61_count)
 
 Z61 OVERLOAD mul(Z61 a, Z61 b) { return modM61(weakMul(a, b, 2, 2)); }
 
-Z61 OVERLOAD fma(Z61 a, Z61 b, Z61 c) { return modM61(weakMul(a, b, 2, 2) + c); }             // GWBUG:  Can we do better?
+Z61 OVERLOAD z61_fma(Z61 a, Z61 b, Z61 c) { return modM61(weakMul(a, b, 2, 2) + c); }             // GWBUG:  Can we do better?  (Not named fma: clashes with float fma on some OpenCL compilers.)
 
 // Multiply by 2
 Z61 OVERLOAD mul2(Z61 a) { return add(a, a); }
