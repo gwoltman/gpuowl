@@ -495,11 +495,32 @@ std::string NvrtcProgram::compile(const std::string& source, const std::string& 
 // ---- Kernel launcher ----
 
 void CudaKernelLauncher::launch(CUstream stream, u32 gridSize, void** args, u32 sharedMem) {
-  CU_CHECK(cuLaunchKernel(func,
+#if CUDA_VERSION >= 12000 && ENABLE_PDL
+   // enable pdl in kernel launch attributes
+   CUlaunchAttribute attrs[1];
+   attrs[0].id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;
+   attrs[0].value.programmaticStreamSerializationAllowed = 1;
+   // set kernel launch configuration
+   CUlaunchConfig_st config = {0};
+   config.gridDimX = gridSize;
+   config.gridDimY = 1;
+   config.gridDimZ = 1;
+   config.blockDimX = blockSize;
+   config.blockDimY = 1;
+   config.blockDimZ = 1;
+   config.hStream = stream;
+   config.sharedMemBytes = sharedMem;
+   config.attrs = attrs;
+   config.numAttrs = 1;
+   // launch the kernel
+   CU_CHECK(cuLaunchKernelEx(&config, func, args, nullptr));
+#else
+   CU_CHECK(cuLaunchKernel(func,
                            gridSize, 1, 1,   // grid dimensions
                            blockSize, 1, 1,   // block dimensions
                            sharedMem,         // shared memory bytes
                            stream,            // stream
                            args,              // kernel arguments
-                           nullptr));         // extra
+			   nullptr));         // extra
+#endif
 }

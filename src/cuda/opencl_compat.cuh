@@ -7,6 +7,9 @@
 
 #pragma once
 
+// Set flag that OpenCL can access.  Let's us add CUDA-only code to the OpenCL sources.
+#define CUDA_BACKEND 1
+
 // ---- Qualifiers ----
 // __kernel / kernel → extern "C" __global__ (CUDA kernel launch qualifier)
 // extern "C" is needed so cuModuleGetFunction() can find kernels by unmangled name

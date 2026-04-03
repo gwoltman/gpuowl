@@ -130,6 +130,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 3");
 #endif
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutFP64
+
   readCarryFusedLine(in, u, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
@@ -282,8 +284,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);
   }
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  dependentLaunch();   // Next kernel will be fftMiddleInFP64
 
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -317,6 +320,8 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 #if HAS_ASM
   __asm("s_setprio 3");
 #endif
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutFP32
 
   readCarryFusedLine(in, u, line, lowMe);
 
@@ -465,8 +470,9 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
     u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);
   }
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -499,6 +505,8 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
 #if HAS_ASM
   __asm("s_setprio 3");
 #endif
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
   readCarryFusedLine(in, u, line, lowMe);
 
@@ -673,8 +681,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  dependentLaunch();   // Next kernel will be fftMiddleInGF31
 
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -707,6 +716,8 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
 #if HAS_ASM
   __asm("s_setprio 3");
 #endif
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
   readCarryFusedLine(in, u, line, lowMe);
 
@@ -887,8 +898,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
     if (weight_shift > 61) weight_shift -= 61;
   }
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  dependentLaunch();   // Next kernel will be fftMiddleInGF61
 
+  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -929,14 +941,17 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in, u, line, lowMe);
-  readCarryFusedLine(in31, u31, line, lowMe);
-
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+
+  readCarryFusedLine(in, u, line, lowMe);
   new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
+
+  readCarryFusedLine(in31, u31, line, lowMe);
   new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
@@ -1124,6 +1139,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 
+  dependentLaunch();   // Next kernel will be fftMiddleInFP32
+
   new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);
 }
@@ -1168,14 +1185,17 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(inF2, uF2, line, lowMe);
-  readCarryFusedLine(in31, u31, line, lowMe);
-
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+
+  readCarryFusedLine(inF2, uF2, line, lowMe);
   new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
+
+  readCarryFusedLine(in31, u31, line, lowMe);
   new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
@@ -1363,6 +1383,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(uF2, outF2, line, lowMe);
 
+  dependentLaunch();   // Next kernel will be fftMiddleInFP32
+
   new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);
 }
@@ -1407,14 +1429,17 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(inF2, uF2, line, lowMe);
-  readCarryFusedLine(in61, u61, line, lowMe);
-
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+
+  readCarryFusedLine(inF2, uF2, line, lowMe);
   new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
+
+  readCarryFusedLine(in61, u61, line, lowMe);
   new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
@@ -1602,6 +1627,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(uF2, outF2, line, lowMe);
 
+  dependentLaunch();   // Next kernel will be fftMiddleInFP32
+
   new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u61, out61, line, lowMe);
 }
@@ -1645,14 +1672,17 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(in31, u31, line, lowMe);
-  readCarryFusedLine(in61, u61, line, lowMe);
-
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+
+  readCarryFusedLine(in31, u31, line, lowMe);
   new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
+
+  readCarryFusedLine(in61, u61, line, lowMe);
   new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
@@ -1848,6 +1878,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);
 
+  dependentLaunch();   // Next kernel will be fftMiddleInGF31
+
   new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u61, out61, line, lowMe);
 }
@@ -1897,16 +1929,20 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 3");
 #endif
 
-  readCarryFusedLine(inF2, uF2, line, lowMe);
-  readCarryFusedLine(in31, u31, line, lowMe);
-  readCarryFusedLine(in61, u61, line, lowMe);
-
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+
+  readCarryFusedLine(inF2, uF2, line, lowMe);
   new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+
+  readCarryFusedLine(in31, u31, line, lowMe);
   new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
+
+  readCarryFusedLine(in61, u61, line, lowMe);
   new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
@@ -2117,6 +2153,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 
   new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(uF2, outF2, line, lowMe);
+
+  dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
   new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);

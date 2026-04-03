@@ -30,6 +30,10 @@ KERNEL(IN_WG) fftMiddleIn(P(T2) out, CP(T2) in, Trig trig) {
   u32 x = startx + mx;
   u32 y = starty + my;
 
+#if FFT_TYPE == FFT64
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP64 data
+#endif
+
   readMiddleInLine(u, in, y, x);
 
   middleMul2(u, x, y, 1, trig);
@@ -37,6 +41,8 @@ KERNEL(IN_WG) fftMiddleIn(P(T2) out, CP(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trig);
+
+  dependentLaunch();       // Next kernel will be tailSquareFP64 which must dependentLaunchWait before reading data
 
 #if MIDDLE_IN_LDS_TRANSPOSE
   // Transpose the x and y values
@@ -85,6 +91,10 @@ KERNEL(IN_WG) fftMiddleIn(P(T2) out, CP(T2) in, Trig trig) {
   u32 x = startx + mx;
   u32 y = starty + my;
 
+#if FFT_TYPE == FFT32
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP32 data
+#endif
+
   readMiddleInLine(u, inF2, y, x);
 
   middleMul2(u, x, y, 1, trigF2);
@@ -92,6 +102,8 @@ KERNEL(IN_WG) fftMiddleIn(P(T2) out, CP(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trigF2);
+
+  dependentLaunch();       // Next kernel will be tailSquareFP32 which must dependentLaunchWait before reading data
 
 #if MIDDLE_IN_LDS_TRANSPOSE
   // Transpose the x and y values
@@ -140,6 +152,10 @@ KERNEL(IN_WG) fftMiddleInGF31(P(T2) out, CP(T2) in, Trig trig) {
   u32 x = startx + mx;
   u32 y = starty + my;
 
+#if FFT_TYPE == FFT31
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
+#endif
+
   readMiddleInLine(u, in31, y, x);
 
   middleMul2(u, x, y, trig31);
@@ -147,6 +163,8 @@ KERNEL(IN_WG) fftMiddleInGF31(P(T2) out, CP(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trig31);
+
+  dependentLaunch();       // Next kernel will be tailSquareGF31 which must dependentLaunchWait before reading data
 
 #if MIDDLE_IN_LDS_TRANSPOSE
   // Transpose the x and y values
@@ -195,6 +213,10 @@ KERNEL(IN_WG) fftMiddleInGF61(P(T2) out, CP(T2) in, Trig trig) {
   u32 x = startx + mx;
   u32 y = starty + my;
 
+#if FFT_TYPE == FFT61
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
+#endif
+
   readMiddleInLine(u, in61, y, x);
 
   middleMul2(u, x, y, trig61);
@@ -202,6 +224,8 @@ KERNEL(IN_WG) fftMiddleInGF61(P(T2) out, CP(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trig61);
+
+  dependentLaunch();       // Next kernel will be tailSquareGF61 which must dependentLaunchWait before reading data
 
 #if MIDDLE_IN_LDS_TRANSPOSE
   // Transpose the x and y values
@@ -248,6 +272,10 @@ KERNEL(256) fftMiddleIn(P(T2) out, P(T2) in, Trig trig) {
   u32 x = startx + me % 16;
   u32 y = starty + me / 16;
 
+#if FFT_TYPE == FFT64
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP64 data
+#endif
+
   readMiddleInLine(u, in, y, x);
 
   middleMul2(u, x, y, 1, trig);
@@ -255,6 +283,8 @@ KERNEL(256) fftMiddleIn(P(T2) out, P(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trig);
+
+  dependentLaunch();       // Next kernel will be tailSquareFP64 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
   local T2 lds[256];
@@ -297,6 +327,10 @@ KERNEL(256) fftMiddleIn(P(T2) out, P(T2) in, Trig trig) {
   u32 x = startx + me % 16;
   u32 y = starty + me / 16;
 
+#if FFT_TYPE == FFT32
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP32 data
+#endif
+
   readMiddleInLine(u, inF2, y, x);
 
   middleMul2(u, x, y, 1, trigF2);
@@ -304,6 +338,8 @@ KERNEL(256) fftMiddleIn(P(T2) out, P(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trigF2);
+
+  dependentLaunch();       // Next kernel will be tailSquareFP32 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
   local F2 lds[256];
@@ -346,6 +382,10 @@ KERNEL(256) fftMiddleInGF31(P(T2) out, P(T2) in, Trig trig) {
   u32 x = startx + me % 16;
   u32 y = starty + me / 16;
 
+#if FFT_TYPE == FFT31
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
+#endif
+
   readMiddleInLine(u, in31, y, x);
 
   middleMul2(u, x, y, trig31);
@@ -353,6 +393,8 @@ KERNEL(256) fftMiddleInGF31(P(T2) out, P(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trig31);
+
+  dependentLaunch();       // Next kernel will be tailSquareGF31 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
   local GF31 lds[256];
@@ -395,6 +437,10 @@ KERNEL(256) fftMiddleInGF61(P(T2) out, P(T2) in, Trig trig) {
   u32 x = startx + me % 16;
   u32 y = starty + me / 16;
 
+#if FFT_TYPE == FFT61
+  dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
+#endif
+
   readMiddleInLine(u, in61, y, x);
 
   middleMul2(u, x, y, trig61);
@@ -402,6 +448,8 @@ KERNEL(256) fftMiddleInGF61(P(T2) out, P(T2) in, Trig trig) {
   fft_MIDDLE(u);
 
   middleMul(u, y, trig61);
+
+  dependentLaunch();       // Next kernel will be tailSquareGF61 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
   local GF61 lds[256];

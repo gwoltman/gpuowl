@@ -67,6 +67,10 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = which ? (H/2) : 0;
   u32 me = get_local_id(0);
+
+  dependentLaunch();       // Next kernel will be tailSquareFP64 which must dependentLaunchWait before reading data from fftMiddleInFP64
+  dependentLaunchWait();   // Previous kernel was fftMiddleInFP64 that launched dependents before writing FP64 data
+
   readTailFusedLine(in, u, line, me);
 
 #if FFT_VARIANT_H != 0
@@ -108,6 +112,9 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
   u32 me = get_local_id(0);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleInFP64 that launched dependents before writing FP64 data
+
   readTailFusedLine(in, u, line1, me);
   readTailFusedLine(in, v, line2, me);
 
@@ -168,6 +175,8 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
     reverseLine(G_H, lds, v);
   }
 
+  dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
+
   fft_HEIGHT(lds, v, smallTrig, w, 1, SHUFL_BYTES_H, me);
   fft_HEIGHT(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
 
@@ -221,6 +230,8 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = !isSecondHalf ? line_u : line_v;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleInFP64 that launched dependents before writing FP64 data
+
   // Read lines u and v
   readTailFusedLine(in, u, line, lowMe);
 
@@ -273,6 +284,8 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
     pairSq(NH/2, u, u + NH/2, trig, false);
     revCrossLine(lds, u);
   }
+
+  dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
 
   new_fft_HEIGHT2(lds, u, smallTrig, w, 2, SHUFL_BYTES_H, lowMe);
 
@@ -346,6 +359,10 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = which ? (H/2) : 0;
   u32 me = get_local_id(0);
+
+  dependentLaunch();       // Next kernel will be tailSquareFP32 which must dependentLaunchWait before reading data from fftMiddleInFP32
+  dependentLaunchWait();   // Previous kernel was fftMiddleInFP32 that launched dependents before writing FP32 data
+
   readTailFusedLine(inF2, u, line, me);
 
   F2 trig = slowTrig_N(line + me * H, ND / NH);
@@ -383,6 +400,9 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
   u32 me = get_local_id(0);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleInFP32 that launched dependents before writing FP32 data
+
   readTailFusedLine(inF2, u, line1, me);
   readTailFusedLine(inF2, v, line2, me);
 
@@ -434,6 +454,8 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
     pairSq(NH, u, v, trig, false);
     reverseLine(G_H, lds, v);
   }
+
+  dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
 
   fft_HEIGHT(lds, v, smallTrigF2, 1, SHUFL_BYTES_H, me);
   fft_HEIGHT(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
@@ -492,6 +514,8 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = !isSecondHalf ? line_u : line_v;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleInFP32 that launched dependents before writing FP32 data
+
   // Read lines u and v
   readTailFusedLine(inF2, u, line, lowMe);
 
@@ -536,6 +560,8 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
     pairSq(NH/2, u, u + NH/2, trig, false);
     revCrossLine(lds, u);
   }
+
+  dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
 
   new_fft_HEIGHT2(lds, u, smallTrigF2, 2, SHUFL_BYTES_H, lowMe);
 
@@ -613,6 +639,10 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = which ? (H/2) : 0;
   u32 me = get_local_id(0);
+
+  dependentLaunch();       // Next kernel will be tailSquareGF31 which must dependentLaunchWait before reading data from fftMiddleInGF31
+  dependentLaunchWait();   // Previous kernel was fftMiddleInGF31 that launched dependents before writing GF31 data
+
   readTailFusedLine(in31, u, line, me);
 
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
@@ -667,6 +697,9 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
   u32 me = get_local_id(0);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleInGF31 that launched dependents before writing GF31 data
+
   readTailFusedLine(in31, u, line1, me);
   readTailFusedLine(in31, v, line2, me);
 
@@ -714,6 +747,8 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
     pairSq(NH, u, v, trig, false);
     reverseLine(G_H, lds, v);
   }
+
+  dependentLaunch();       // Next kernel will be fftMiddleOutGF31 which must dependentLaunchWait before reading data
 
   fft_HEIGHT(lds, v, smallTrig31, 1, SHUFL_BYTES_H, me);
   fft_HEIGHT(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
@@ -771,6 +806,8 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = !isSecondHalf ? line_u : line_v;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleInGF31 that launched dependents before writing GF31 data
+
   // Read lines u and v
   readTailFusedLine(in31, u, line, lowMe);
 
@@ -812,6 +849,8 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
     revCrossLine(lds, u);
   }
 
+  dependentLaunch();       // Next kernel will be fftMiddleOutGF31 which must dependentLaunchWait before reading data
+
   new_fft_HEIGHT2(lds, u, smallTrig31, 2, SHUFL_BYTES_H, lowMe);
 
   // Write lines u and v
@@ -821,7 +860,7 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 
 #endif
-  
+
 
 /**************************************************************************/
 /*          Similar to above, but for an NTT based on GF(M61^2)           */
@@ -888,6 +927,10 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = which ? (H/2) : 0;
   u32 me = get_local_id(0);
+
+  dependentLaunch();       // Next kernel will be tailSquareGF61 which must dependentLaunchWait before reading data from fftMiddleInGF61
+  dependentLaunchWait();   // Previous kernel was fftMiddleInGF61 that launched dependents before writing GF61 data
+
   readTailFusedLine(in61, u, line, me);
 
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
@@ -942,6 +985,9 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
   u32 me = get_local_id(0);
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleInGF61 that launched dependents before writing GF61 data
+
   readTailFusedLine(in61, u, line1, me);
   readTailFusedLine(in61, v, line2, me);
 
@@ -989,6 +1035,8 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
     pairSq(NH, u, v, trig, false);
     reverseLine(G_H, lds, v);
   }
+
+  dependentLaunch();       // Next kernel will be fftMiddleOutGF61 which must dependentLaunchWait before reading data
 
   fft_HEIGHT(lds, v, smallTrig61, 1, SHUFL_BYTES_H, me);
   fft_HEIGHT(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
@@ -1046,6 +1094,8 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   u32 line = !isSecondHalf ? line_u : line_v;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleInGF61 that launched dependents before writing GF61 data
+
   // Read lines u and v
   readTailFusedLine(in61, u, line, lowMe);
 
@@ -1086,6 +1136,8 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
     pairSq(NH/2, u, u + NH/2, trig, false);
     revCrossLine(lds, u);
   }
+
+  dependentLaunch();       // Next kernel will be fftMiddleOutGF61 which must dependentLaunchWait before reading data
 
   new_fft_HEIGHT2(lds, u, smallTrig61, 2, SHUFL_BYTES_H, lowMe);
 
