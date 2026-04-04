@@ -235,6 +235,7 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
     }
   }
 
+  int maxregcount = 0;
   if (options) {
     istringstream iss(options);
     string tok;
@@ -262,6 +263,9 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
         // FMA contraction already enabled above via --fmad=true.
         // Do NOT use -use_fast_math here — it enables flush-to-zero and
         // reduced-precision division/sqrt which breaks tailMul accuracy.
+      } else if (tok.substr(0, 14) == "--maxrregcount") {
+        nvrtcOpts.push_back(tok);
+        maxregcount = atoi(tok.substr(15, 3).c_str());
       }
       // Skip other -cl-* options (not applicable to NVRTC)
     }
@@ -281,16 +285,17 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
       // Preprocess OpenCL source for CUDA compatibility
       string processedSrc = NvrtcProgram::preprocessOpenCL(headers[i]->source);
       // Debug: verify KERNEL macro replacement
-      {
-        static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-        if (dumpPrefix && string(headerNames[i]) == "base.cl") {
-          auto pos = processedSrc.find("KERNEL");
-          if (pos != string::npos) {
-            string ctx = processedSrc.substr(pos > 20 ? pos-20 : 0, 120);
-            fprintf(stderr, "base.cl KERNEL context: [%s]\n", ctx.c_str());
-          }
-        }
-      }
+// I'm not sure what Sherpa was trying to print out here.  It prints out nothing useful.
+//      {
+//        static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
+//        if (dumpPrefix && string(headerNames[i]) == "base.cl") {
+//          auto pos = processedSrc.find("KERNEL");
+//          if (pos != string::npos) {
+//            string ctx = processedSrc.substr(pos > 20 ? pos-20 : 0, 120);
+//            fprintf(stderr, "base.cl KERNEL context: [%s]\n", ctx.c_str());
+//          }
+//        }
+//      }
       nvrtcHeaders.push_back({headerNames[i], processedSrc});
     }
   }
@@ -341,7 +346,6 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
     prog->ptx = NvrtcProgram::compile(processedSource, "prpll_kernel.cu", nvrtcOpts, nvrtcHeaders);
     prog->compiled = true;
     g_lastBuildLog.clear();
-    return CL_SUCCESS;
   } catch (const exception& e) {
     g_lastBuildLog = e.what();
     prog->compiled = false;
@@ -363,6 +367,21 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
     }
     return CL_COMPILE_PROGRAM_FAILURE;
   }
+
+  // If --maxrregcount is set it seems nvrtc compile ignores the setting.  Instead modify the PTX and load the modified PTX.
+
+  if (maxregcount) {
+    string maxntidPattern = ".maxntid ";
+    string maxnregPattern = ".maxnreg " + to_string(maxregcount) + "\n";
+    for (size_t startpos = 0; ; ) {
+      size_t pos = prog->ptx.find(maxntidPattern, startpos);
+      if (pos == string::npos) break;
+      prog->ptx.insert(pos, maxnregPattern);
+      startpos = pos + 20;
+    }
+  }
+
+  return CL_SUCCESS;
 }
 
 cl_program clLinkProgram(cl_context ctx, unsigned nDevices, const cl_device_id*,
@@ -515,14 +534,15 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
   {
     static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
     if (dumpPrefix) {
-      int numRegs = 0, shmem = 0, maxThreads = 0;
+      int numRegs = 0, shmem = 0, localmem = 0, maxThreads = 0;
       cuFuncGetAttribute(&numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
       cuFuncGetAttribute(&shmem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);
+      cuFuncGetAttribute(&localmem, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES , k->func);
       cuFuncGetAttribute(&maxThreads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k->func);
-      fprintf(stderr, "  %-25s: %3d regs, %5d shmem, maxThreads=%d\n", name, numRegs, shmem, maxThreads);
+      fprintf(stderr, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads);
       // Also write to file since WSL2+CUDA swallows stderr
       FILE* regLog = fopen("kernel_regs.log", "a");
-      if (regLog) { fprintf(regLog, "  %-25s: %3d regs, %5d shmem, maxThreads=%d\n", name, numRegs, shmem, maxThreads); fclose(regLog); }
+      if (regLog) { fprintf(regLog, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads); fclose(regLog); }
     }
   }
 
