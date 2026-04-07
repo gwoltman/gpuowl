@@ -306,7 +306,7 @@ public:
   Saver<PRPState> *getSaver();
 
   void writeIn(Buffer<Word>& buf, const vector<u32> &words);
-  
+
   u64 dataResidue()  { return bufResidue(bufData); }
   u64 checkResidue() { return bufResidue(bufCheck); }
 
@@ -317,7 +317,6 @@ public:
   Words readAndCompress(Buffer<Word>& buf);
   vector<u32> readCheck();
   vector<u32> readData();
-
 
   u32 getFFTSize() { return N; }
 
@@ -339,6 +338,8 @@ public:
 private:
   u32 getProofPower(u64 k);
   void doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors);
+  enum WHICH_KERNEL {CARRYFUSED=0, MIDIN=1, MIDIN31=2, MIDIN61=3, TAIL=4, TAIL31=5, TAIL61=6, MIDOUT=7, MIDOUT31=8, MIDOUT61=9};
+  string numCudaRegisters(enum WHICH_KERNEL which_kernel);
 };
 
 // Compute the size of an FFT/NTT data buffer depending on the FFT/NTT float/prime.  Size is returned in units of sizeof(double).

@@ -264,7 +264,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "TABMUL_CHAIN61",
                               "MODM31",
                               "LOADS","STORES",
-                              "CFBLKS","MIBLKS","MOBLKS","TSBLKS",  // CUDA - experimental
+                              "NOREG",                  // CUDA - experimental
                               "WMUL"
                             });
     if (!isValid) {
@@ -509,20 +509,157 @@ Gpu::~Gpu() {
   background->waitEmpty();
 }
 
+// Part of GPU initialization is to compute the default number of registers each kernel should target during compilation.
+// Kernel register usage is critical for maximizing GPU occupancy.  The default values can be overrriden with command line arguments.
+// This feature currently only works for the CUDA compiler.
+string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
+#if CUDA_BACKEND
+  int regs = 0;
+  const char *use_override = "";
+  // Allow command line to prefer the CUDA compiler's default number of registers
+  if (args.value("NOREG", 0)) return string("");
+  // Determine a kernel specific default maximum number of GPU registers (values set to -1 have not been tuned for best default value)
+  switch (which_kernel) {
+  case CARRYFUSED:         // Register usage depends on NW, the FFT/NTT type, and perhaps the long carry setting
+    switch (fft.shape.fft_type) {
+    case FFT64:
+      regs = nW == 8 ? 72 : 64;
+      use_override = "REGCF64";
+      break;
+    case FFT3161:
+      regs = nW == 8 ? 96 : 56;
+      use_override = "REGCF3161";
+      break;
+    case FFT3261:
+      regs = nW == 8 ? 96 : 56;
+      use_override = "REGCF3261";
+      break;
+    case FFT61:
+      regs = nW == 8 ? 80 : 64;
+      use_override = "REGCF61";
+      break;
+    case FFT323161:
+      regs = nW == 8 ? 128 : 72;
+      use_override = "REGCF323161";
+      break;
+    case FFT3231:
+      regs = -1;
+      use_override = "REGCF3231";
+      break;
+    case FFT6431:
+      regs = -1;
+      use_override = "REGCF6431";
+      break;
+    case FFT31:
+      regs = -1;
+      use_override = "REGCF31";
+      break;
+    case FFT32:
+      regs = -1;
+      use_override = "REGCF32";
+      break;
+    }
+    break;
+  case MIDIN:              // Register usage depends on MIDDLE and the FP32/FP64
+    if (fft.FFT_FP64) {
+      if (fft.shape.middle >= 16) regs = 96;
+      else if (fft.shape.middle >= 14) regs = 88;
+      else if (fft.shape.middle >= 13) regs = 80;
+      else if (fft.shape.middle >= 10) regs = 72;
+      else if (fft.shape.middle >= 7) regs = 64;
+      else if (fft.shape.middle >= 5) regs = 56;
+      else if (fft.shape.middle >= 4) regs = 48;
+      else regs = -1;
+      use_override = "REGMI64";
+    } else {
+      if (fft.shape.middle == 16) regs = 56;
+      else if (fft.shape.middle == 8) regs = 40;
+      else if (fft.shape.middle == 4) regs = 32;
+      else regs = -1;
+      use_override = "REGMI32";
+    }
+    break;
+  case MIDIN31:            // Register usage depends on MIDDLE
+    if (fft.shape.middle == 16) regs = 56;
+    else if (fft.shape.middle == 8) regs = 44;
+    else if (fft.shape.middle == 4) regs = 32;
+    else regs = -1;  
+    use_override = "REGMI31";
+    break;
+  case MIDIN61:            // Register usage depends on MIDDLE
+    if (fft.shape.middle == 16) regs = 96;
+    else if (fft.shape.middle == 8) regs = 72;
+    else if (fft.shape.middle == 4) regs = 64;
+    else regs = -1;  
+    use_override = "REGMI61";
+    break;
+  case TAIL:               // Register usage depends on NH and the FP32/FP64 (assumes double-wide kernel)
+    if (fft.FFT_FP64) {
+      regs = nH == 8 ? 80 : 64;
+      use_override = "REGTS64";
+    } else {
+      regs = nH == 8 ? 64 : 48;
+      use_override = "REGTS32";
+    }
+    break;
+  case TAIL31:             // Register usage depends on NH (assumes double-wide kernel)
+    regs = nH == 8 ? 56 : 48;
+    use_override = "REGTS31";
+    break;
+  case TAIL61:             // Register usage depends on NH (assumes double-wide kernel)
+    regs = nH == 8 ? 96 : 64;
+    use_override = "REGTS61";
+    break;
+  case MIDOUT:             // Register usage depends on MIDDLE and the FFT/NTT type
+    if (fft.FFT_FP64) {
+      if (fft.shape.middle >= 15) regs = 96;
+      else if (fft.shape.middle >= 14) regs = 88;
+      else if (fft.shape.middle >= 11) regs = 80;
+      else if (fft.shape.middle >= 10) regs = 72;
+      else if (fft.shape.middle >= 7) regs = 64;
+      else if (fft.shape.middle >= 5) regs = 56;
+      else if (fft.shape.middle >= 4) regs = 48;
+      else regs = -1;
+      use_override = "REGMO64";
+    } else {
+      if (fft.shape.middle == 16) regs = 56;
+      else if (fft.shape.middle == 8) regs = 40;
+      else if (fft.shape.middle == 4) regs = 32;
+      else regs = -1;
+      use_override = "REGMO32";
+    }
+    break;
+  case MIDOUT31:           // Register usage depends on MIDDLE
+    if (fft.shape.middle == 16) regs = 48;
+    else if (fft.shape.middle == 8) regs = 40;
+    else if (fft.shape.middle == 4) regs = 32;
+    else regs = -1;
+    use_override = "REGMO31";
+    break;
+  case MIDOUT61:           // Register usage depends on MIDDLE
+    if (fft.shape.middle == 16) regs = 96;
+    else if (fft.shape.middle == 8) regs = 64;
+    else if (fft.shape.middle == 4) regs = 64;
+    else regs = -1;
+    use_override = "REGMO61";
+    break;
+  }
+  int override_regs = args.value(use_override, 0);
+  // Allow command line to set CUDA launch_bounds rather than explicit maximum register count
+  if (override_regs && args.value("REGLB", 0)) return string("-DCUDA_MIN_BLOCKS=") + to_string(override_regs) + " ";
+  // Return the maximum register count
+  if (override_regs) regs = override_regs;
+  // Sometimes the results using default launch_bounds without setting an explicit maxrrregcount can't be beat
+  if (regs == -1) return string("");
+  // Format an explicit register count setting
+  return string("--maxrregcount=") + to_string(regs) + " ";
+#else
+  return string("");
+#endif
+}
+
 #define ROE_SIZE 100000
 #define CARRY_SIZE 100000
-
-#if CUDA_BACKEND
-#define CARRYFUSED_BLOCKS(x)  args.value("CFBLKS", 0) == 0 ? x  : args.value("CFBLKS", 0) == 1 ? x " -DCUDA_MIN_BLOCKS=2" : x " -maxregcount=128"
-#define MIDDLEIN_BLOCKS       args.value("MIBLKS", 0) == 0 ? "" : args.value("MIBLKS", 0) == 1 ?   " -DCUDA_MIN_BLOCKS=3" :   " -maxregcount=84"
-#define MIDDLEOUT_BLOCKS      args.value("MOBLKS", 0) == 0 ? "" : args.value("MOBLKS", 0) == 1 ?   " -DCUDA_MIN_BLOCKS=3" :   " -maxregcount=84"
-#define TAILSQUARE_BLOCKS     args.value("TSBLKS", 0) == 0 ? "" : args.value("TSBLKS", 0) == 1 ?   " -DCUDA_MIN_BLOCKS=3" :   " -maxregcount=84"
-#else
-#define CARRYFUSED_BLOCKS(x)  x
-#define MIDDLEIN_BLOCKS       ""
-#define MIDDLEOUT_BLOCKS      ""
-#define TAILSQUARE_BLOCKS     ""
-#endif
 
 Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
   queue(q),
@@ -542,45 +679,43 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), queue, __VA_ARGS__)
 
-  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), MIDDLEIN_BLOCKS),
+  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), numCudaRegisters(MIDIN).c_str()),
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH),
   K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2,                                                            // Single-wide tailSquare with one kernel
-                                               TAILSQUARE_BLOCKS),
+                                               hN / nH / 2, numCudaRegisters(TAIL).c_str()),                           // Single-wide tailSquare with one kernel
   K(ktailMul,              "tailmul.cl", "tailMul", hN / nH / 2),
   K(ktailMulLow,           "tailmul.cl", "tailMul", hN / nH / 2, "-DMUL_LOW=1"),
-  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), MIDDLEOUT_BLOCKS),
+  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), numCudaRegisters(MIDOUT).c_str()),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW),
 
-  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), MIDDLEIN_BLOCKS),
+  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), numCudaRegisters(MIDIN31).c_str()),
   K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH),
-  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2, TAILSQUARE_BLOCKS),
+  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2),
   K(ktailSquareGF31,       "tailsquare.cl", "tailSquareGF31",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2),                                                           // Single-wide tailSquare with one kernel
+                                               hN / nH / 2, numCudaRegisters(TAIL31).c_str()),                         // Single-wide tailSquare with one kernel
   K(ktailMulGF31,          "tailmul.cl", "tailMulGF31", hN / nH / 2),
   K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31", hN / nH / 2, "-DMUL_LOW=1"),
-  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), MIDDLEOUT_BLOCKS),
+  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), numCudaRegisters(MIDOUT31).c_str()),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW),
 
-  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), MIDDLEIN_BLOCKS),
+  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), numCudaRegisters(MIDIN61).c_str()),
   K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH),
   K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2),
   K(ktailSquareGF61,       "tailsquare.cl", "tailSquareGF61",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2,                                                            // Single-wide tailSquare with one kernel
-                                               TAILSQUARE_BLOCKS),
+                                               hN / nH / 2, numCudaRegisters(TAIL61).c_str()),                         // Single-wide tailSquare with one kernel
   K(ktailMulGF61,          "tailmul.cl", "tailMulGF61", hN / nH / 2),
   K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61", hN / nH / 2, "-DMUL_LOW=1"),
-  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), MIDDLEOUT_BLOCKS),
+  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), numCudaRegisters(MIDOUT61).c_str()),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW),
 
   K(kfftP,                 "fftp.cl", "fftP", hN / nW),
@@ -589,11 +724,11 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   K(kCarryM,               "carry.cl", "carry", hN / CARRY_LEN, "-DMUL3=1"),
   K(kCarryMROE,            "carry.cl", "carry", hN / CARRY_LEN, "-DMUL3=1 -DROE=1"),
   K(kCarryLL,              "carry.cl", "carry", hN / CARRY_LEN, "-DLL=1"),
-  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("")),
-  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DROE=1")),
-  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DMUL3=1")),
-  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DMUL3=1 -DROE=1")),
-  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, CARRYFUSED_BLOCKS("-DLL=1")),
+  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, numCudaRegisters(CARRYFUSED).c_str()),
+  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (numCudaRegisters(CARRYFUSED) + "-DROE=1").c_str()),
+  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (numCudaRegisters(CARRYFUSED) + "-DMUL3=1").c_str()),
+  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (numCudaRegisters(CARRYFUSED) + "-DMUL3=1 -DROE=1").c_str()),
+  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (numCudaRegisters(CARRYFUSED) + "-DLL=1").c_str()),
 
   K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN),
 

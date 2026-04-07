@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+// This is a copy of the args.verbose flag.  It allows the CUDA wrapper to access the flag.
+extern bool prpll_verbose;
+
 using u8  = uint8_t;
 using i32 = int32_t;
 using u32 = uint32_t;

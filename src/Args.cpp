@@ -15,6 +15,9 @@
 #include <sstream>
 #include <algorithm>
 
+// This is a copy of the args.verbose flag.  It allows the CUDA wrapper to access the flag.
+bool prpll_verbose = 0;
+
 int Args::value(const string& key, int valNotFound) const {
   auto it = flags.find(key);
   if (it == flags.end()) { return valNotFound; }
@@ -320,6 +323,7 @@ void Args::parse(const string& line) {
       carryTune = true;
     } else if (key == "-verbose" || key == "-v") {
       verbose = true;
+      prpll_verbose = true;
     } else if (key == "-time") {
       profile = true;
     } else if (key == "-workers") {

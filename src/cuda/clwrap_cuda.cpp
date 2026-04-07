@@ -533,7 +533,7 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
   // Log register and shared memory usage per kernel when PRPLL_DUMP_PTX is set
   {
     static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    if (dumpPrefix) {
+    if (prpll_verbose || dumpPrefix) {
       int numRegs = 0, shmem = 0, localmem = 0, maxThreads = 0;
       cuFuncGetAttribute(&numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
       cuFuncGetAttribute(&shmem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);
@@ -541,8 +541,10 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
       cuFuncGetAttribute(&maxThreads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k->func);
       fprintf(stderr, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads);
       // Also write to file since WSL2+CUDA swallows stderr
-      FILE* regLog = fopen("kernel_regs.log", "a");
-      if (regLog) { fprintf(regLog, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads); fclose(regLog); }
+      if (dumpPrefix) {
+        FILE* regLog = fopen("kernel_regs.log", "a");
+	if (regLog) { fprintf(regLog, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads); fclose(regLog); }
+      }
     }
   }
 

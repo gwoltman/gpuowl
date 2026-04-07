@@ -659,7 +659,7 @@ void Tune::tune() {
           log("Time for %12s using Trig frequently used load=%u is %6.1f\n", fft.spec().c_str(), trig_load, cost);
           if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_trig_load = trig_load; }
         }
-        log("Best Trig frquently used load is %u.  Default is 0.\n", best_trig_load);
+        log("Best Trig frequently used load is %u.  Default is 0.\n", best_trig_load);
         loads = loads / 1000 * 1000 + best_trig_load * 100 + loads % 100;
         args->flags["LOADS" ] = to_string(loads);
       }
@@ -706,85 +706,6 @@ void Tune::tune() {
       configsUpdate(1.000, 0.000, 0.000, "STORES", stores, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["STORES"] = to_string(stores);
     }
-
-    // Find best CUDA compiler options
-#if CUDA_BACKEND
-    if (1) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_cfblks = 0;
-      u32 current_cfblks = args->value("CFBLKS", 0);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 cfblks : {0, 1, 2}) {
-        args->flags["CFBLKS"] = to_string(cfblks);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using CFBLKS=%u is %6.1f\n", fft.spec().c_str(), cfblks, cost);
-        if (cfblks == current_cfblks) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_cfblks = cfblks; }
-      }
-      log("Best CFBLKS is %u.  Default CFBLKS is 0.\n", best_cfblks);
-      configsUpdate(current_cost, best_cost, 0.000, "CFBLKS", best_cfblks, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["CFBLKS"] = to_string(best_cfblks);
-    }
-
-    if (1) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_miblks = 0;
-      u32 current_miblks = args->value("MIBLKS", 0);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 miblks : {0, 1, 2}) {
-        args->flags["MIBLKS"] = to_string(miblks);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using MIBLKS=%u is %6.1f\n", fft.spec().c_str(), miblks, cost);
-        if (miblks == current_miblks) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_miblks = miblks; }
-      }
-      log("Best MIBLKS is %u.  Default MIBLKS is 0.\n", best_miblks);
-      configsUpdate(current_cost, best_cost, 0.000, "MIBLKS", best_miblks, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["MIBLKS"] = to_string(best_miblks);
-    }
-
-    if (1) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_moblks = 0;
-      u32 current_moblks = args->value("MOBLKS", 0);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 moblks : {0, 1, 2}) {
-        args->flags["MOBLKS"] = to_string(moblks);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using MOBLKS=%u is %6.1f\n", fft.spec().c_str(), moblks, cost);
-        if (moblks == current_moblks) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_moblks = moblks; }
-      }
-      log("Best MOBLKS is %u.  Default MOBLKS is 0.\n", best_moblks);
-      configsUpdate(current_cost, best_cost, 0.000, "MOBLKS", best_moblks, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["MOBLKS"] = to_string(best_moblks);
-    }
-
-    if (1) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
-      u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_tsblks = 0;
-      u32 current_tsblks = args->value("TSBLKS", 0);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 tsblks : {0, 1, 2}) {
-        args->flags["TSBLKS"] = to_string(tsblks);
-        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
-        log("Time for %12s using TSBLKS=%u is %6.1f\n", fft.spec().c_str(), tsblks, cost);
-        if (tsblks == current_tsblks) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tsblks = tsblks; }
-      }
-      log("Best TSBLKS is %u.  Default TSBLKS is 0.\n", best_tsblks);
-      configsUpdate(current_cost, best_cost, 0.000, "TSBLKS", best_tsblks, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["TSBLKS"] = to_string(best_tsblks);
-    }
-#endif
 
     // Find best FAST_BARRIER setting
     if (1 /*AMDGPU*/) {                 // FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
@@ -1115,6 +1036,28 @@ void Tune::tune() {
       configsUpdate(current_cost, best_cost, 0.003, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["WMUL"] = to_string(best_wmul);
     }
+
+    // Find best CUDA compiler options
+#if CUDA_BACKEND
+    if (0) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_noreg = 0;
+      u32 current_noreg = args->value("NOREG", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 noreg : {0, 1}) {
+        args->flags["NOREG"] = to_string(noreg);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using NOREG=%u is %6.1f\n", fft.spec().c_str(), noreg, cost);
+        if (noreg == current_noreg) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_noreg = noreg; }
+      }
+      log("Best NOREG is %u.  Default NOREG is 0.\n", best_noreg);
+      configsUpdate(current_cost, best_cost, 0.000, "NOREG", best_noreg, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["NOREG"] = to_string(best_noreg);
+    }
+#endif
 
     // Find best BIGLIT setting
     if (0 && time_FFTs) {        // Deprecated
