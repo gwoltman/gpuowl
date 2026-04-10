@@ -352,12 +352,13 @@ void OVERLOAD middleShuffle(local T2 *lds, T2 *u) {
   u32 x = me % 16;
 
   for (int i = 0; i < MIDDLE; ++i) {
-//    lds[x * 16 + y] = u[i];
-    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
     bar();
-//    u[i] = lds[me];
-    u[i] = lds[y * 16 + x ^ y];
+    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    if (++i == MIDDLE) break;
+    lds[y * 16 + x ^ y] = u[i];
     bar();
+    u[i] = lds[x * 16 + y ^ x];
   }
 }
 
@@ -626,12 +627,13 @@ void OVERLOAD middleShuffle(local F2 *lds, F2 *u) {
   u32 y = me / 16;
   u32 x = me % 16;
   for (int i = 0; i < MIDDLE; ++i) {
-//    lds[x * 16 + y] = u[i];
-    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
     bar();
-//    u[i] = lds[me];
-    u[i] = lds[y * 16 + x ^ y];
+    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    if (++i == MIDDLE) break;
+    lds[y * 16 + x ^ y] = u[i];
     bar();
+    u[i] = lds[x * 16 + y ^ x];
   }
 }
 #endif
@@ -745,12 +747,13 @@ void OVERLOAD middleShuffle(local GF31 *lds, GF31 *u) {
   u32 y = me / 16;
   u32 x = me % 16;
   for (int i = 0; i < MIDDLE; ++i) {
-//    lds[x * 16 + y] = u[i];
-    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
     bar();
-//    u[i] = lds[me];
-    u[i] = lds[y * 16 + x ^ y];
+    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    if (++i == MIDDLE) break;
+    lds[y * 16 + x ^ y] = u[i];
     bar();
+    u[i] = lds[x * 16 + y ^ x];
   }
 }
 
@@ -886,12 +889,13 @@ void OVERLOAD middleShuffle(local GF61 *lds, GF61 *u) {
   u32 y = me / 16;
   u32 x = me % 16;
   for (int i = 0; i < MIDDLE; ++i) {
-//    lds[x * 16 + y] = u[i];
-    lds[x * 16 + y ^ x] = u[i];		// Swizzling with XOR should reduce LDS bank conflicts
+    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
     bar();
-//    u[i] = lds[me];
-    u[i] = lds[y * 16 + x ^ y];
+    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    if (++i == MIDDLE) break;
+    lds[y * 16 + x ^ y] = u[i];
     bar();
+    u[i] = lds[x * 16 + y ^ x];
   }
 }
 
