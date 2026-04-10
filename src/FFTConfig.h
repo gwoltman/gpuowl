@@ -35,8 +35,7 @@ public:
   u32 height = 0;
   array<float, NUM_BPW_ENTRIES> bpw;
 
-  FFTShape(u32 w = 1, u32 m = 1, u32 h = 1);
-  FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h);
+  FFTShape(enum FFT_TYPES t = FFT64, u32 w = 1, u32 m = 1, u32 h = 1);
   FFTShape(enum FFT_TYPES t, const string& w, const string& m, const string& h);
   explicit FFTShape(const string& spec);
 

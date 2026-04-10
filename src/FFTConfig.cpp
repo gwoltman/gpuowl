@@ -126,10 +126,6 @@ FFTShape::FFTShape(enum FFT_TYPES t, const string& w, const string& m, const str
   FFTShape{t, parseInt(w), parseInt(m), parseInt(h)}
 {}
 
-FFTShape::FFTShape(u32 w, u32 m, u32 h) :
-  FFTShape(FFT64, w, m, h) {
-}
-
 FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
   fft_type{t}, width{w}, middle{m}, height{h} {
   assert(w && m && h);
@@ -142,7 +138,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
     bpw = it->second;
   } else {
     if (height > width) {
-      bpw = FFTShape{h, m, w}.bpw;
+      bpw = FFTShape{t, h, m, w}.bpw;
     } else {
       // Make up some defaults
 
@@ -156,7 +152,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
       while (w < h || w < 256 || w == 2048) { w *= 2; h /= 2; }
       while (h < 256) { h *= 2; m /= 2; }
       if (m == 1) m = 2;
-      bpw = FFTShape{w, m, h}.bpw;
+      bpw = FFTShape{t, w, m, h}.bpw;
       for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] -= 0.05f;   // Assume this fft spec is worse than measured fft specs
       if (this->isFavoredShape()) {  // Don't output this warning message for non-favored shapes (we expect the BPW info to be missing)
         printf("BPW info for %s not found, defaults={", s.c_str());

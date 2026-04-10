@@ -192,7 +192,7 @@ void Tune::ztune() {
 
   // Study a specific shape and variant
   if (0) {
-    FFTShape shape = FFTShape(512, 15, 512);
+    FFTShape shape = FFTShape(FFT64, 512, 15, 512);
     u32 variant = 202;
     u32 sample_size = 5;
     FFTConfig fft{shape, variant, CARRY_AUTO};
@@ -296,7 +296,7 @@ void Tune::ctune() {
     // log("tuning %10s with exponent %" PRIu64 "\n", fft.shape.spec().c_str(), exponent);
 
     vector<int> bestPos(configsVect.size());
-    Entry best{{1, 1, 1}, {}, 1e9};
+    Entry best{{}, {}, 1e9};
 
     for (u32 i = 0; i < configsVect.size(); ++i) {
       for (u32 pos = i ? 1 : 0; pos < configsVect[i].size(); ++pos) {
@@ -1192,7 +1192,7 @@ skip_1K_256 = 0;
           if (auto it = fastest_width_variants.find(shape.width); it != fastest_width_variants.end()) {
             fastest_width = it->second;
           } else {
-            FFTShape test = FFTShape(shape.width, 12, 256);
+            FFTShape test = FFTShape(FFT64, shape.width, 12, 256);
             double cost, min_cost = -1.0;
             for (u32 w = 0; w < N_VARIANT_W; w++) {
               if (w == 0 && !AMDGPU) continue;
@@ -1214,7 +1214,7 @@ skip_1K_256 = 0;
           if (auto it = fastest_height_variants.find(shape.height); it != fastest_height_variants.end()) {
             fastest_height = it->second;
           } else {
-            FFTShape test = FFTShape(shape.height, 12, shape.height);
+            FFTShape test = FFTShape(FFT64, shape.height, 12, shape.height);
             double cost, min_cost = -1.0;
             for (u32 h = 0; h < N_VARIANT_H; h++) {
               if (h == 0 && !AMDGPU) continue;
