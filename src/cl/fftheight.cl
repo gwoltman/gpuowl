@@ -203,8 +203,109 @@ void OVERLOAD fft_HEIGHT(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u
   fft_NH(u);
 }
 
-void new_fft_HEIGHT1(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
-void new_fft_HEIGHT2(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe)  { fft_HEIGHT(lds, u, trig, numWG, sb, lowMe); }
+void OVERLOAD new_fft_HEIGHT(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe, int callnum) {
+  u32 WG = SMALL_HEIGHT / NH;
+
+  // This line mimics shufl -- partition lds
+  local F2* partitioned_lds = lds;
+  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * SMALL_HEIGHT * sb / sizeof(F2);
+
+// Custom code for various SMALL_HEIGHT values
+
+#if ENABLE_FP32_VARIANT_2 && SMALL_HEIGHT == 256 && NH == 4 && FFT_VARIANT_H == 2
+
+// Custom code for SMALL_HEIGHT=256, NH=4
+
+  F preloads[6];              // Place to store preloaded trig values.  We want F64 ops to hide load latencies without creating register pressure.
+  trig += WG*4 + 2*WG*4;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
+
+  // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
+  preload_tabMul4_trig(WG, trig, preloads, 1, numWG, lowMe);
+
+  // Do first fft4, partial tabMul, and shufl.
+  fft4(u);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
+  shufl(WG, lds, u, NH, 1, numWG, sb, lowMe);
+
+  // Finish the first tabMul and perform second fft4.  Do second partial tabMul and shufl.
+  finish_tabMul4_fft4(WG, trig, preloads, u, 1, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 4, numWG, lowMe);
+  shufl(WG, lds, u, NH, 4, numWG, sb, lowMe);
+
+  // Finish the second tabMul and perform third fft4.  Do third partial tabMul and shufl.
+  finish_tabMul4_fft4(WG, trig, preloads, u, 4, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 16, numWG, lowMe);
+  shufl(WG, lds, u, NH, 16, numWG, sb, lowMe);
+
+  // Finish third tabMul and perform final fft4.
+  finish_tabMul4_fft4(WG, trig, preloads, u, 16, numWG, lowMe, 1);
+
+#elif ENABLE_FP32_VARIANT_2 && SMALL_HEIGHT == 512 && NH == 8 && FFT_VARIANT_H == 2
+
+// Custom code for SMALL_HEIGHT=512, NH=8
+
+  F preloads[10];             // Place to store preloaded trig values.  We want F64 ops to hide load latencies without creating register pressure.
+  trig += WG*8 + 2*WG*8;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
+
+  // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
+  preload_tabMul8_trig(WG, trig, preloads, 1, numWG, lowMe);
+
+  // Do first fft8, partial tabMul, and shufl.
+  fft8(u);
+  partial_tabMul8(WG, partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
+  shufl(WG, lds, u, NH, 1, numWG, sb, lowMe);
+
+  // Finish the first tabMul and perform second fft8.  Do second partial tabMul and shufl.
+  finish_tabMul8_fft8(WG, trig, preloads, u, 1, numWG, lowMe, 1);
+  partial_tabMul8(WG, partitioned_lds, trig, preloads, u, 8, numWG, lowMe);
+  shufl(WG, lds, u, NH, 8, numWG, sb, lowMe);
+
+  // Finish second tabMul and perform final fft8.
+  finish_tabMul8_fft8(WG, trig, preloads, u, 8, numWG, lowMe, 1);
+
+#elif ENABLE_FP32_VARIANT_2 && SMALL_HEIGHT == 1024 && NH == 4 && FFT_VARIANT_H == 2
+
+// Custom code for SMALL_HEIGHT=1024, NH=4
+
+  F preloads[6];              // Place to store preloaded trig values.  We want F64 ops to hide load latencies without creating register pressure.
+  trig += WG*4 + 2*WG*4;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
+
+  // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
+  preload_tabMul4_trig(WG, trig, preloads, 1, numWG, lowMe);
+
+  // Do first fft4, partial tabMul, and shufl.
+  fft4(u);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
+  shufl(WG, lds, u, NH, 1, numWG, sb, lowMe);
+
+  // Finish the first tabMul and perform second fft4.  Do second partial tabMul and shufl.
+  finish_tabMul4_fft4(WG, trig, preloads, u, 1, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 4, numWG, lowMe);
+  shufl(WG, lds, u, NH, 4, numWG, sb, lowMe);
+
+  // Finish the second tabMul and perform third fft4.  Do third partial tabMul and shufl.
+  finish_tabMul4_fft4(WG, trig, preloads, u, 4, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 16, numWG, lowMe);
+  shufl(WG, lds, u, NH, 16, numWG, sb, lowMe);
+
+  // Finish the third tabMul and perform fourth fft4.  Do fourth partial tabMul and shufl.
+  finish_tabMul4_fft4(WG, trig, preloads, u, 16, numWG, lowMe, 1);
+  partial_tabMul4(WG, partitioned_lds, trig, preloads, u, 64, numWG, lowMe);
+  shufl(WG, lds, u, NH, 64, numWG, sb, lowMe);
+
+  // Finish fourth tabMul and perform final fft4.
+  finish_tabMul4_fft4(WG, trig, preloads, u, 64, numWG, lowMe, 1);
+
+#else
+
+  // Old version
+  fft_HEIGHT(lds, u, trig, numWG, sb, lowMe);
+
+#endif
+}
+
+void new_fft_HEIGHT1(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe)  { new_fft_HEIGHT(lds, u, trig, numWG, sb, lowMe, 1); }
+void new_fft_HEIGHT2(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, const u32 sb, u32 lowMe)  { new_fft_HEIGHT(lds, u, trig, numWG, sb, lowMe, 2); }
 
 #endif
 

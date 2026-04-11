@@ -454,7 +454,7 @@ void cmul_a_by_fancyb_and_conjfancyb(F2 *res1, F2 *res2, F2 a, F2 b) {
 
 F2 OVERLOAD mul_t4(F2 a)  { return U2(-a.y, a.x); } // i.e. a * i
 
-F2 OVERLOAD mul_t8(F2 a)  { // mul(a, U2(1, 1)) * (T)(M_SQRT1_2); }
+F2 OVERLOAD mul_t8(F2 a)  { // mul(a, U2(1, 1)) * (F)(M_SQRT1_2); }
   // One mul, two FMAs
   F ay = a.y * (float) M_SQRT1_2;
   return U2(fma(a.x, (float) M_SQRT1_2, -ay), fma(a.x, (float) M_SQRT1_2, ay));
@@ -462,7 +462,7 @@ F2 OVERLOAD mul_t8(F2 a)  { // mul(a, U2(1, 1)) * (T)(M_SQRT1_2); }
 //  return U2(a.x - a.y, a.x + a.y) * M_SQRT1_2;
 }
 
-F2 OVERLOAD mul_3t8(F2 a) { // mul(a, U2(-1, 1)) * (T)(M_SQRT1_2); }
+F2 OVERLOAD mul_3t8(F2 a) { // mul(a, U2(-1, 1)) * (F)(M_SQRT1_2); }
   // One mul, two FMAs
   F ay = a.y * (float) M_SQRT1_2;
   return U2(fma(-a.x, (float) M_SQRT1_2, -ay), fma(a.x, (float) M_SQRT1_2, -ay));

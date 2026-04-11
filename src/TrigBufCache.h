@@ -57,14 +57,14 @@ float2 root1FP32(u32 N, u32 k);
 uint2 root1GF31(u32 N, u32 k);
 ulong2 root1GF61(u32 N, u32 k);
 
-// Compute the size of the largest possible trig buffer given width, middle, height (in number of float2 values)
+// Compute the size of the largest possible trig buffer given width, middle, height (in number of double2 values)
 #define SMALLTRIG_FP64_SIZE(W,M,H,nH)           (W != H || H == 0 ? W * 5 : SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)) // See genSmallTrigFP64
 #define SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)      (H * 5 + (W * M / 2 + 1) * 2 * H / nH)                          // See genSmallTrigComboFP64
 #define MIDDLETRIG_FP64_SIZE(W,M,H)             (H + W + H)                                                     // See genMiddleTrigFP64
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of float2 values)
-#define SMALLTRIG_FP32_SIZE(W,M,H,nH)           (W != H || H == 0 ? W : SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH))     // See genSmallTrigFP32
-#define SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)      (H + (W * M / 2 + 1) * 2 * H / nH)                              // See genSmallTrigComboFP32
+#define SMALLTRIG_FP32_SIZE(W,M,H,nH)           (W != H || H == 0 ? W * 5 : SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)) // See genSmallTrigFP32
+#define SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)      (H * 5 + (W * M / 2 + 1) * 2 * H / nH)                          // See genSmallTrigComboFP32
 #define MIDDLETRIG_FP32_SIZE(W,M,H)             (H + W + H)                                                     // See genMiddleTrigFP32
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of uint2 values)

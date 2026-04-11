@@ -337,6 +337,58 @@ float2 root1FP32(u32 N, u32 k) {
   }
 }
 
+// Epsilon value, 2^-50, should have an exact representation as a float.  Used to avoid divide-by-zero in root1overFP32.
+const double epsilonFP32 = 8.8817841970012523233890533447266e-16;  // Protect against divide by zero
+
+// Returns the primitive root of unity of order N, to the power k.  Returned format is cosine, sine/cosine.
+float2 root1overFP32(u32 N, u32 k) {
+  assert(k < N);
+
+  double angle = M_PI * k / (N / 2);
+  double c = cos(angle);
+  double s = sin(angle);
+
+  if (c > -1.0e-15 && c < 1.0e-15) c = epsilonFP32;
+  s = s / c;
+  return {float(c), float(s)};
+}
+
+// Returns the primitive root of unity of order N, to the power k.  Returns only the cosine value.
+float root1cosFP32(u32 N, u32 k) {
+  assert(k < N);
+
+  double angle = M_PI * k / (N / 2);
+  double c = cos(angle);
+
+  if (c > -1.0e-15 && c < 1.0e-15) c = epsilonFP32;
+  return float(c);
+}
+
+// Returns the primitive root of unity of order N, to the power k.  Returns only the cosine value divided by another cosine value.
+float root1cosoverFP32(u32 N, u32 k, double over) {
+  assert(k < N);
+
+  double angle = M_PI * k / (N / 2);
+  double c = cos(angle);
+
+  if (c > -1.0e-15 && c < 1.0e-15) c = epsilonFP32;
+  return float(c / over);
+}
+
+// Interleave two lines of trig values so that AMD GPUs can use global_load_dwordx4 instructions
+void F2shuffle(u32 size, u32 radix, u32 line, vector<float> &tab) {
+  vector<float> line1, line2;
+  u32 line_size = size / radix;
+  for (u32 col = 0; col < line_size; ++col) {
+    line1.push_back(tab[line*line_size + col]);
+    line2.push_back(tab[(line+1)*line_size + col]);
+  }
+  for (u32 col = 0; col < line_size; ++col) {
+    tab[line*line_size + 2*col] = line1[col];
+    tab[line*line_size + 2*col + 1] = line2[col];
+  }
+}
+
 vector<float2> genSmallTrigFP32(u32 size, u32 radix) {
   u32 WG = size / radix;
   vector<float2> tab;
@@ -348,6 +400,74 @@ vector<float2> genSmallTrigFP32(u32 size, u32 radix) {
     }
   }
   tab.resize(size);
+
+// New fft_WIDTH and fft_HEIGHT
+// We need two versions of trig values.  One where we save one more mul and one where we don't.
+// In theory, we should always use save one more mul but the rocm optimizer is doing something weird in fft_WIDTH.
+
+  for (u32 save_one_more_mul = 0; save_one_more_mul <= 1; ++save_one_more_mul) {
+    vector<float> tab1;
+    if (save_one_more_mul) tab.resize(3*size);
+
+    // Sine/cosine values for first fft4 or fft8
+    for (u32 line = 1; line < radix; ++line) {
+      for (u32 col = 0; col < WG; ++col) {
+        float2 root = root1overFP32(size, col * line);
+        tab1.push_back(root.second);
+      }
+    }
+
+    // Sine/cosine values for later fft4 or fft8
+    for (u32 line = 0; line < radix; ++line) {
+      for (u32 col = 0; col < WG; col += radix) {
+        float2 root = root1overFP32(size, col * line);
+        tab1.push_back(root.second);
+      }
+    }
+
+    // Cosine values for first fft4 or fft8 (output in post-shufl order)
+    for (u32 grp = 0; grp < WG; ++grp) {
+      u32 line = grp / (WG/radix);  // Output "line" number, where each line multiplies a different u[i].  There are radix lines.  Each line has WG values.
+      for (u32 col = 0; col < radix; ++col) {
+        float divide_by = 1.0;
+        // Compute cosine3 / cosine1
+        if ((radix == 4 && line == 3) || (radix == 8 && save_one_more_mul && line == 3)) {
+          divide_by = root1cosFP32(size, col * (grp - 2*(WG/radix)));
+        }
+        // Compute cosine5 / cosine1, cosine6 / cosine2, cosine7 / cosine3
+        if (radix == 8 && ((save_one_more_mul && line == 5) || line == 6 || line == 7)) {
+          divide_by = root1cosFP32(size, col * (grp - 4*(WG/radix)));
+        }
+        tab1.push_back(root1cosoverFP32(size, col * grp, divide_by));
+      }
+    }
+
+    // Cosine values for later fft4 or fft8 (output in post-shufl order).  Similar to cosines above but output every radix-th value.
+    for (u32 grp = 0; grp < radix; ++grp) {
+      for (u32 col = 0; col < WG; col += radix) {
+        u32 line = col / (WG/radix);
+        double divide_by = 1.0;
+        // Compute cosine3 / cosine1
+        if ((radix == 4 && line == 3) || (radix == 8 && save_one_more_mul && line == 3)) {
+          divide_by = root1cosFP32(size, grp * (col - 2*(WG/radix)));
+        }
+        // Compute cosine5 / cosine1, cosine6 / cosine2, cosine7 / cosine3
+        if (radix == 8 && ((save_one_more_mul && line == 5) || line == 6 || line == 7)) {
+          divide_by = root1cosFP32(size, grp * (col - 4*(WG/radix)));
+        }
+        tab1.push_back(root1cosoverFP32(size, grp * col, divide_by));
+      }
+    }
+
+    // Interleave first fft4 or fft8 trig values for faster AMD GPU access
+    for (u32 i = 0; i < radix-2; i += 2) F2shuffle(size, radix, i, tab1);
+    for (u32 i = radix; i < 2*radix; i += 2) F2shuffle(size, radix, i, tab1);
+
+    // Convert to a vector of float2
+    for (u32 i = 0; i < tab1.size(); i += 2) tab.push_back({tab1[i], tab1[i+1]});
+  }
+
+  tab.resize(5*size);
   return tab;
 }
 

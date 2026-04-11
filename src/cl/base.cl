@@ -268,12 +268,14 @@ ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2)
 typedef constant const T2* Trig;
 typedef constant const T* TrigSingle;
 typedef constant const F2* TrigFP32;
+typedef constant const F* TrigSingleFP32;
 typedef constant const GF31* TrigGF31;
 typedef constant const GF61* TrigGF61;
 #else
 typedef global const T2* Trig;
 typedef global const T* TrigSingle;
 typedef global const F2* TrigFP32;
+typedef global const F* TrigSingleFP32;
 typedef global const GF31* TrigGF31;
 typedef global const GF61* TrigGF61;
 #endif
@@ -332,6 +334,11 @@ T OVERLOAD L2LOAD(TrigSingle mem) {
 F2 OVERLOAD L2LOAD(CP(F2) mem) {
   F2 retval;
   __asm("ld.global.cg.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
+  return retval;
+}
+F OVERLOAD L2LOAD(TrigSingleFP32 mem) {
+  F retval;
+  __asm("ld.global.cg.f32  %0, [%1];" : "=f"(retval) : "l"(mem));
   return retval;
 }
 i64 OVERLOAD L2LOAD(i64 *mem) {
@@ -395,6 +402,11 @@ F2 OVERLOAD EFLOAD(CP(F2) mem) {
   __asm("ld.global.cs.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
   return retval;
 }
+F OVERLOAD EFLOAD(TrigSingleFP32 mem) {
+  F retval;
+  __asm("ld.global.cs.f32  %0, [%1];" : "=f"(retval) : "l"(mem));
+  return retval;
+}
 i64 OVERLOAD EFLOAD(i64 *mem) {
   i64 retval;
   __asm("ld.global.cs.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
@@ -456,6 +468,11 @@ F2 OVERLOAD LULOAD(TrigFP32 mem) {
   __asm("ld.global.lu.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
   return retval;
 }
+F OVERLOAD LULOAD(TrigSingleFP32 mem) {
+  F retval;
+  __asm("ld.global.lu.f32  %0, [%1];" : "=f"(retval) : "l"(mem));
+  return retval;
+}
 i64 OVERLOAD LULOAD(i64 *mem) {
   i64 retval;
   __asm("ld.global.lu.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
@@ -496,6 +513,11 @@ T OVERLOAD NCLOAD(TrigSingle mem) {
 F2 OVERLOAD NCLOAD(TrigFP32 mem) {
   F2 retval;
   __asm("ld.global.nc.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
+  return retval;
+}
+F OVERLOAD NCLOAD(TrigSingleFP32 mem) {
+  F retval;
+  __asm("ld.global.nc.f32  %0}, [%1];" : "=f"(retval) : "l"(mem));
   return retval;
 }
 i64 OVERLOAD NCLOAD(i64 *mem) {

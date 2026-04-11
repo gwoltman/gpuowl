@@ -114,17 +114,23 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
     vector<float> weightsIF32;
     // Inverse + Forward
     for (u32 thread = 0; thread < groupWidth; ++thread) {
-      auto iw = invWeight32(N, E, H, 0, thread, 0);
-      auto w = weight32(N, E, H, 0, thread, 0);
+      auto iw = invWeight32(N, E, H, 0, thread, 0) ;// * 17592186044416.0f;
+      auto w = weight32(N, E, H, 0, thread, 0) ;// * 0.0000002384185791015625f;
+      // Play with the weight so that optionalDouble and optionalHalve work
+      iw = 2.0f * boundUnderOne(iw);
+      w = 2.0f * w;
+      // Weights are scaled by 2^-24 and 2^48 so that multiplicaton by 1/epsilon does not generate infinty results (width and height variant 2).
+      iw = iw * 281474976710656.0f;
+      w = w * 0.000000059604644775390625f;
       // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
       // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
       // buffer, so there is an unfortunate duplication of these weights.
       if (!AmdGpu) {
-        weightsConstIF32.push_back(2 * boundUnderOne(iw));
-        weightsConstIF32.push_back(2 * w);
+        weightsConstIF32.push_back(iw);
+        weightsConstIF32.push_back(w);
       }
-      weightsIF32.push_back(2 * boundUnderOne(iw));
-      weightsIF32.push_back(2 * w);
+      weightsIF32.push_back(iw);
+      weightsIF32.push_back(w);
     }
 
     // the group order matches CarryA/M (not fftP/CarryFused).
