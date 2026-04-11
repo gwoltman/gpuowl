@@ -18,6 +18,7 @@ i32 OVERLOAD hi32(i64 x) { uint2 x2 = as_uint2(x); return (i32)x2.y; }
 typedef struct { i32 hi32; u32 mid32; u32 lo32; } i96;
 i96 OVERLOAD make_i96(i64 v) { i96 val; val.lo32 = lo32(v); val.mid32 = hi32(v); val.hi32 = (i32)val.mid32 >> 31; return val; }
 i96 OVERLOAD make_i96(i32 v) { i96 val; val.lo32 = v; val.mid32 = val.hi32 = (i32)val.lo32 >> 31; return val; }
+i96 OVERLOAD make_i96(i64 hi, u32 lo) { i96 val; val.hi32 = hi32(hi); val.mid32 = lo32(hi); val.lo32 = lo; return val; }
 i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.hi32 = hi; val.mid32 = hi32(lo); val.lo32 = lo32(lo); return val; }
 i96 OVERLOAD make_i96(i32 hi, u64 lo) { i96 val; val.hi32 = hi; val.mid32 = hi32(lo); val.lo32 = lo32(lo); return val; }
 u32 i96_hi32(i96 val) { return val.hi32; }

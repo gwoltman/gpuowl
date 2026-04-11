@@ -427,8 +427,8 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, bo
   *maxROE = max(*maxROE, roundoff);
 
   // Compute the value using i96 math
-  i64 vhi = n61 >> 33;
-  u64 vlo = ((u64)n61 << 31) | n31;
+  i64 vhi = n61 >> 1;
+  u32 vlo = ((u32)n61 << 31) | n31;
   i96 value = make_i96(vhi, vlo);                // (n61 << 31) + n31
   value = sub(value, n61);                       // n61 * M31 + n31
 
