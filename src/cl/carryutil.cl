@@ -285,7 +285,7 @@ i64 weightAndCarryOne(Z61 u, u32 invWeight, i64 inCarry, u32* maxROE) {
   i64 value = get_balanced_Z61(u);
 
   // Optionally calculate roundoff error as proximity to M61/2.  28 bits of accuracy should be sufficient.
-  u32 roundoff = (u32) abs((i32) (value >> 32));
+  u32 roundoff = (u32) abs((i32) hi32(value));
   *maxROE = max(*maxROE, roundoff);
 
   // Mul by 3 and add carry
@@ -375,9 +375,9 @@ i96 weightAndCarryOne(float uF2, Z61 u61, float F2_invWeight, u32 m61_invWeight,
   u61 = shr(u61, m61_invWeight);
   u64 n61 = get_Z61(u61);
 
-  // The final result must be n61 mod M61.  Use FP32 data to calculate this value.
-  float n61f = (float)((u32)(n61 >> 32)) * -4294967296.0f;                    // Conversion from u64 to float might be slow, this might be faster
-  uF2 = fma(uF2, F2_invWeight, n61f);                                         // This should be close to a multiple of M61
+  // The final result mod M61 must be n61.  Use FP32 data to calculate how many multiples of M61 need to be added to n61.
+  float n61f = (float)hi32(n61) * -4294967296.0f;                             // Estimate -n61 as a float.
+  uF2 = fma(uF2, F2_invWeight, n61f);                                         // This should be close to an integer multiple of M61
   float uF2int = fma(uF2, 4.3368086899420177360298112034798e-19f, RNDVAL);    // Divide by M61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
@@ -423,7 +423,7 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, bo
   i64 n61 = get_balanced_Z61(u61);
 
   // Optionally calculate roundoff error as proximity to M61/2.  28 bits of accuracy should be sufficient.
-  u32 roundoff = (u32) abs((i32)(n61 >> 32));
+  u32 roundoff = (u32) abs((i32)hi32(n61));
   *maxROE = max(*maxROE, roundoff);
 
   // Compute the value using i96 math
@@ -458,20 +458,34 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
   u61 = subq(u61, make_Z61(n31), 2);                 // u61 - u31
   u61 = add(u61, shl(u61, 31));                      // u61 + (u61 << 31)
   u64 n61 = get_Z61(u61);
+  // Let's call the 92-bit CRT result n3161.  At this point, n3161 = n61 * M31 + n31.
 
-  i128 n3161 = make_i128(n61 >> 33, (n61 << 31) | n31);  // n61 << 31 + n31
-  n3161 = sub(n3161, n61);                               // n61 * M31 + n31
-
-  // The final result must be n3161 mod M31*M61.  Use FP32 data to calculate this value.
-  float n3161f = (float)((u32)(n61 >> 32)) * -9223372036854775808.0f;        // Converting n3161 from i128 to float might be slow, this might be faster
-  uF2 = fma(uF2, F2_invWeight, n3161f);                                      // This should be close to a multiple of M31*M61
+  // The final result mod M31*M61 must be n3161.  Use FP32 data to calculate how many multiples of M31*M61 need to be added to n31n61.
+  float n3161f = (float)hi32(n61) * -9223372036854775808.0f;                 // Estimate -n3161 as a float.  -n61 << 31 should be close enough.
+  uF2 = fma(uF2, F2_invWeight, n3161f);                                      // This should be close to an integer multiple of M31*M61
   float uF2int = fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL);   // Divide by M31*M61 and round to int
   i32 nF2 = RNDVALfloatToInt(uF2int);
 
-  i64 nF2m31 = ((i64)nF2 << 31) - nF2;                   // nF2 * M31
-  i128 v = make_i128(nF2m31 >> 3, (u64)nF2m31 << 61);    // nF2m31 << 61
-  v = sub(v, nF2m31);                                    // nF2m31 * M61
-  v = add(v, n3161);                                     // nF2m31 * M61 + n3161
+  // The final result will be nF2 * M31*M61 + n3161.  Rearranging to use as few 128-bit and 64-bit ops as possible:
+  // = nF2 * M61 * M31 + n61 * M31 + n31
+  // = (nF2 * M61 + n61) * M31 + n31
+  // = ((nF2 << 61) - nF2 + n61) * M31 + n31
+  // = (((nF2 << 61) - nF2 + n61) << 31) - ((nF2 << 61) - nF2 + n61) + n31
+  // = (nF2 << 92) + ((n61 - nF2) << 31) - (nF2 << 61) - (n61 - nF2) + n31
+  // = (nF2 << 92) - (nF2 << 61) + ((n61 - nF2) << 31) - (n61 - nF2) + n31
+  // = (((nF2 << 31) - nF2) << 61) + ((n61 - nF2) << 31) - (n61 - nF2) + n31
+  // = (((nF2 << 32) - nF2*2) << 60) + ((n61 - nF2) << 31) - (n61 - nF2) + n31
+
+  // Compute x = (n61 - nF2)
+  i64 x = (i64)n61 - nF2;
+  // Compute y = ((n61 - nF2) << 31) + n31
+  i128 y = make_i128(x >> 33, (x << 31) | n31);
+  // Compute z = ((nF2 << 32) - nF2*2) << 60
+  i64 tmp = make_i64(nF2, 0) - (i64)(nF2 + nF2);
+  i128 z = make_i128(tmp >> 4, tmp << 60);
+
+  // Put the parts together
+  i128 v = sub(add(z, y), x);
 
   // Optionally calculate roundoff error
   float roundoff = fabs(fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL - uF2int));
@@ -538,7 +552,7 @@ Word OVERLOAD carryStep(i64 x, i64 *outCarry, bool isBigWord) {
 #elif EXP / NWORDS == 32
   i32 xhi = hi32(x);
   i64 w = lowBits(x, nBits);
-  xhi -= (i32)(w >> 32);
+  xhi -= (i32)hi32(w);
   *outCarry = xhi >> (nBits - 32);
   return w;
 #elif EXP / NWORDS == 31
@@ -717,7 +731,7 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i32 *outCarry, bool isBigWord) {
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
   u64 x_topbit = x & ((u64)1 << (bigwordBits - 1));
   i64 w = ulowFixedBits(x, bigwordBits - 1) - x_topbit;
-  i32 xhi = (i32)(x >> 32) + (i32)(x_topbit >> 32);
+  i32 xhi = (i32)hi32(x) + (i32)hi32(x_topbit);
   *outCarry = xhi >> (nBits - 32);
   return w;
 // nBits = 31 or 32, bigwordBits = 32 (or allowed to create 32-bit word for better performance).  For reasons I don't fully understand the sloppy
@@ -725,7 +739,7 @@ Word OVERLOAD carryStepSignedSloppy(i64 x, i32 *outCarry, bool isBigWord) {
 // Not a major concern as end users should avoid small BPW as there is probably a more efficient NTT that could be used.
 #elif EXP / NWORDS == 31 || (EXP / NWORDS >= 23 && SLOPPY_MAXBPW >= 3200)        
   i32 w = x;                                            // lowBits(x, bigwordBits = 32);
-  *outCarry = ((i32)(x >> 32) + (w < 0)) << (32 - nBits);
+  *outCarry = ((i32)hi32(x) + (w < 0)) << (32 - nBits);
   return w;
 #else                                                   // nBits less than 32         //GWBUG - is there a faster version?  Is this faster than plain old carryStep? No
 //  u32 x_topbit = (u32) x & (1 << (bigwordBits - 1));

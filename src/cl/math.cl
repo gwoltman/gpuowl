@@ -6,10 +6,13 @@
 
 // Access parts of a 64-bit value
 
-u32 OVERLOAD lo32(u64 x) { uint2 x2 = as_uint2(x); return (u32)x2.x; }
-u32 OVERLOAD hi32(u64 x) { uint2 x2 = as_uint2(x); return (u32)x2.y; }
-u32 OVERLOAD lo32(i64 x) { uint2 x2 = as_uint2(x); return (u32)x2.x; }
-i32 OVERLOAD hi32(i64 x) { uint2 x2 = as_uint2(x); return (i32)x2.y; }
+u32 OVERLOAD lo32(u64 x) { return (u32)x; }
+u32 OVERLOAD hi32(u64 x) { union { uint2 ui2; u64 ul; } u; u.ul = x; return u.ui2.y; }
+u32 OVERLOAD lo32(i64 x) { return (u32)x; }
+u32 OVERLOAD hi32(i64 x) { union { uint2 ui2; u64 ul; } u; u.ul = x; return u.ui2.y; }
+
+u64 OVERLOAD make_u64(u32 hi, u32 lo) { union { uint2 ui2; u64 ul; } u; u.ui2.x = lo; u.ui2.y = hi; return u.ul; }
+i64 OVERLOAD make_i64(i32 hi, u32 lo) { union { uint2 ui2; u64 ul; } u; u.ui2.x = lo; u.ui2.y = hi; return u.ul; }
 
 // A primitive partial implementation of an i96 integer type
 #if 1
@@ -65,7 +68,7 @@ i96 OVERLOAD make_i96(i32 v) { i96 val; val.x = v; return val; }
 i96 OVERLOAD make_i96(i64 hi, u64 lo) { i96 val; val.x = ((unsigned __int128)hi << 64) + lo; return val; }
 i96 OVERLOAD make_i96(i32 hi, u64 lo) { return make_i96((i64)hi, lo); }
 u32 i96_hi32(i96 val) { return (unsigned __int128)val.x >> 64; }
-u32 i96_mid32(i96 val) { return (u64)val.x >> 32; }
+u32 i96_mid32(i96 val) { return hi32((u64)val.x); }
 u32 i96_lo32(i96 val) { return val.x; }
 u64 i96_lo64(i96 val) { return val.x; }
 u64 i96_hi64(i96 val) { return (unsigned __int128)val.x >> 32; }
@@ -86,7 +89,7 @@ u32 i96_hi32(i96 val) { return val.hi32; }
 u32 i96_mid32(i96 val) { return hi32(val.lo64); }
 u32 i96_lo32(i96 val) { return val.lo64; }
 u64 i96_lo64(i96 val) { return val.lo64; }
-u64 i96_hi64(i96 val) { return ((u64) val.hi32 << 32) | i96_mid32(val); }
+u64 i96_hi64(i96 val) { return make_64(val.hi32, i96_mid32(val)); }
 i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 + b.lo64; val.hi32 = a.hi32 + b.hi32 + (val.lo64 < a.lo64); return val; }
 i96 OVERLOAD add(i96 a, i64 b) { return add(a, make_i96(b)); }
 i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 - b.lo64; val.hi32 = a.hi32 - b.hi32 - (val.lo64 > a.lo64); return val; }
@@ -172,7 +175,7 @@ i32 optional_sub(i32 a, const i32 b) {
 
 // Optionally subtract a value if first arg is greater than value.
 i32 optional_mod(i32 a, const i32 b) {
-#if ENABLE_OPTIONAL_MOD && HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher  // Not faster on 5xxx GPUs (not sure why)
+#if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher  // Not faster on 5xxx GPUs (too small a gain to measure??)
   __asm("{.reg .pred %%p;\n\t"
         " setp.ge.s32 %%p, %0, %1;\n\t"   // a > b
         " @%%p sub.s32 %0, %0, %1;}"      // if (a > b) a = a - b
@@ -182,6 +185,34 @@ i32 optional_mod(i32 a, const i32 b) {
 #endif
   return a;
 }
+
+#if 0  // These are not used because there is no asm constraint to indicate a 64-bit constant
+// Optionally subtract c from a if a >= b.
+u64 OVERLOAD optional_sub(u64 a, const u64 b, const u64 c) {
+#if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.ge.u64 %%p, %0, %1;\n\t"   // a >= b
+        " @%%p sub.u64 %0, %0, %2;}"      // if (a >= b) a = a - c
+        : "+l"(a) : "l"(b), "l"(c));
+#else
+  if (a >= b) a = a - c;
+#endif
+  return a;
+}
+
+// Optionally subtract c from a if hi32(a) >= b.
+u64 OVERLOAD optional_sub(u64 a, const u32 b, const u64 c) {
+#if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.ge.u32 %%p, %1, %2;\n\t"   // hi32(a) >= b
+        " @%%p sub.u64 %0, %0, %3;}"      // if (hi32(a) >= b) a = a - c
+        : "+l"(a) : "r"(hi32(a)), "n"(b), "l"(c));
+#else
+  if (hi32(a) >= b) a = a - c;
+#endif
+  return a;
+}
+#endif
 
 // Multiply and add primitives
 
@@ -912,8 +943,8 @@ void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, u32 m61_count) { X2_conjb_internal(a, 
 
 #elif 1   // Faster version that keeps results in the range 0 .. M61+epsilon
 
-u64 OVERLOAD get_Z61(Z61 a) { Z61 m = a - M61; return (m & 0x8000000000000000ULL) ? a : m; }  // Get value in range 0 to M61-1
-i64 OVERLOAD get_balanced_Z61(Z61 a) { return (a >= 0x1000000000000000ULL) ? (i64) a - (i64) M61 : (i64) a; }  // Get balanced value in range -M61/2 to M61/2
+u64 OVERLOAD get_Z61(Z61 a) { Z61 m = a - M61; return (m & 0x8000000000000000ULL) ? a : m; }        // Get value in range 0 to M61-1
+i64 OVERLOAD get_balanced_Z61(Z61 a) { return (hi32(a) >= 0x10000000) ? (i64)(a - M61) : (i64)a; }  // Get balanced value in range -M61/2 to M61/2
 
 // Internal routine to bring Z61 value into the range 0..M61+epsilon
 Z61 OVERLOAD modM61(Z61 a) { return (a & M61) + (a >> 61); }

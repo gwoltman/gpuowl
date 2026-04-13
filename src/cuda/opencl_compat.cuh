@@ -176,48 +176,28 @@ __device__ __forceinline__ ulong2 operator*(ulong2 v, int s) { return {v.x*(ulon
 // Scalar ↔ vector bitwise reinterpretations (OpenCL as_type functions)
 
 // as_uint2: split 64-bit value into two 32-bit halves
-__device__ __forceinline__ uint2 as_uint2(double v) {
-  ulong bits = __double_as_longlong(v);
-  return make_uint2((uint)(bits), (uint)(bits >> 32));
-}
-__device__ __forceinline__ uint2 as_uint2(ulong v) {
-  return make_uint2((uint)(v), (uint)(v >> 32));
-}
-__device__ __forceinline__ uint2 as_uint2(i64 v) {
-  return make_uint2((uint)((ulong)v), (uint)((ulong)v >> 32));
-}
+__device__ __forceinline__ uint2 as_uint2(double v) { union { uint2 ui2; double d; } u; u.d = v; return u.ui2; }
+__device__ __forceinline__ uint2 as_uint2(ulong v) { union { uint2 ui2; ulong ul; } u; u.ul = v; return u.ui2; }
+__device__ __forceinline__ uint2 as_uint2(i64 v) { union { uint2 ui2; i64 l; } u; u.l = v; return u.ui2; }
 
 // as_int2: split 64-bit value into two signed 32-bit halves
-__device__ __forceinline__ int2 as_int2(double v) {
-  ulong bits = __double_as_longlong(v);
-  return make_int2((int)(uint)(bits), (int)(uint)(bits >> 32));
-}
-__device__ __forceinline__ int2 as_int2(i64 v) {
-  return make_int2((int)(uint)((ulong)v), (int)(uint)((ulong)v >> 32));
-}
+__device__ __forceinline__ int2 as_int2(double v) { union { int2 i2; double d; } u; u.d = v; return u.i2; }
+__device__ __forceinline__ int2 as_int2(i64 v) { union { int2 i2; i64 l; } u; u.l = v; return u.i2; }
 
 // as_double: reinterpret bits as double
-__device__ __forceinline__ double as_double(int2 v) {
-  ulong bits = ((ulong)(uint)v.y << 32) | (uint)v.x;
-  return __longlong_as_double(bits);
-}
-__device__ __forceinline__ double as_double(uint2 v) {
-  ulong bits = ((ulong)v.y << 32) | v.x;
-  return __longlong_as_double(bits);
-}
-__device__ __forceinline__ double as_double(ulong v) {
-  return __longlong_as_double(v);
-}
+__device__ __forceinline__ double as_double(int2 v) { union { int2 i2; double d; } u; u.i2 = v; return u.d; }
+__device__ __forceinline__ double as_double(uint2 v) { union { uint2 ui2; double d; } u; u.ui2 = v; return u.d; }
+__device__ __forceinline__ double as_double(ulong v) { return __longlong_as_double(v); }
 __device__ __forceinline__ double as_double(i64 v) { return __longlong_as_double(v); }
 
 // as_ulong: reinterpret as unsigned 64-bit
-__device__ __forceinline__ ulong as_ulong(uint2 v) { return (((ulong)v.y << 32) | v.x); }
-__device__ __forceinline__ ulong as_ulong(int2 v) { return (((ulong)(uint)v.y << 32) | (uint)v.x); }
+__device__ __forceinline__ ulong as_ulong(uint2 v) { union { uint2 ui2; ulong ul; } u; u.ui2 = v; return u.ul; }
+__device__ __forceinline__ ulong as_ulong(int2 v) { union { int2 i2; ulong ul; } u; u.i2 = v; return u.ul; }
 __device__ __forceinline__ ulong as_ulong(double v) { return (ulong)__double_as_longlong(v); }
 
 // as_long: reinterpret as signed 64-bit
-__device__ __forceinline__ i64 as_long(int2 v) { return (i64)(((ulong)(uint)v.y << 32) | (uint)v.x); }
-__device__ __forceinline__ i64 as_long(uint2 v) { return (i64)(((ulong)v.y << 32) | v.x); }
+__device__ __forceinline__ i64 as_long(int2 v) { union { int2 i2; i64 l; } u; u.i2 = v; return u.l; }
+__device__ __forceinline__ i64 as_long(uint2 v) { union { uint2 ui2; i64 l; } u; u.ui2 = v; return u.l; }
 __device__ __forceinline__ i64 as_long(double v) { return (i64)__double_as_longlong(v); }
 
 // as_float / as_int / as_uint: 32-bit reinterprets
