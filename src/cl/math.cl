@@ -186,14 +186,13 @@ i32 optional_mod(i32 a, const i32 b) {
   return a;
 }
 
-#if 0  // These are not used because there is no asm constraint to indicate a 64-bit constant
 // Optionally subtract c from a if a >= b.
-u64 OVERLOAD optional_sub(u64 a, const u64 b, const u64 c) {
+i64 OVERLOAD optional_sub(i64 a, const i64 b, const i64 c) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
-        " setp.ge.u64 %%p, %0, %1;\n\t"   // a >= b
-        " @%%p sub.u64 %0, %0, %2;}"      // if (a >= b) a = a - c
-        : "+l"(a) : "l"(b), "l"(c));
+        " setp.ge.s64 %%p, %0, %1;\n\t"   // a >= b
+        " @%%p sub.s64 %0, %0, %2;}"      // if (a >= b) a = a - c
+        : "+l"(a) : "l"(b), "l"(c));      // It would be nice if there was an asm constraint to indicate a 64-bit constant
 #else
   if (a >= b) a = a - c;
 #endif
@@ -201,18 +200,17 @@ u64 OVERLOAD optional_sub(u64 a, const u64 b, const u64 c) {
 }
 
 // Optionally subtract c from a if hi32(a) >= b.
-u64 OVERLOAD optional_sub(u64 a, const u32 b, const u64 c) {
+i64 OVERLOAD optional_sub(i64 a, const i32 b, const i64 c) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
-        " setp.ge.u32 %%p, %1, %2;\n\t"   // hi32(a) >= b
-        " @%%p sub.u64 %0, %0, %3;}"      // if (hi32(a) >= b) a = a - c
-        : "+l"(a) : "r"(hi32(a)), "n"(b), "l"(c));
+        " setp.ge.s32 %%p, %1, %2;\n\t"   // hi32(a) >= b
+        " @%%p sub.s64 %0, %0, %3;}"      // if (hi32(a) >= b) a = a - c
+        : "+l"(a) : "r"((i32)hi32(a)), "n"(b), "l"(c));
 #else
-  if (hi32(a) >= b) a = a - c;
+  if ((i32)hi32(a) >= b) a = a - c;
 #endif
   return a;
 }
-#endif
 
 // Multiply and add primitives
 
@@ -918,27 +916,14 @@ Z61 OVERLOAD modM61(Z61 a) { return a; }
 GF61 OVERLOAD modM61(GF61 a) { return a; }
 Z61 OVERLOAD neg(Z61 a, u32 m61_count) { return neg(a); }
 GF61 OVERLOAD neg(GF61 a, u32 m61_count) { return neg(a); }
-Z61 OVERLOAD addq(Z61 a, Z61 b) { return add(a, b); }
-GF61 OVERLOAD addq(GF61 a, GF61 b) { return add(a, b); }
-Z61 OVERLOAD subq(Z61 a, Z61 b, u32 m61_count) { return sub(a, b); }
-GF61 OVERLOAD subq(GF61 a, GF61 b, u32 m61_count) { return sub(a, b); }
-Z61 OVERLOAD subs(Z61 a, Z61 b, u32 m61_count) { return sub(a, b); }
-GF61 OVERLOAD subs(GF61 a, GF61 b, u32 m61_count) { return sub(a, b); }
-void OVERLOAD X2q(GF61 *a, GF61 *b, u32 m61_count) { X2_internal(a, b); }
-void OVERLOAD X2q_mul_t4(GF61 *a, GF61 *b, u32 m61_count) { X2_mul_t4_internal(a, b); }
-void OVERLOAD X2s(GF61 *a, GF61 *b, u32 m61_count) { X2_internal(a, b); }
-void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, u32 m61_count) { X2_conjb_internal(a, b); }
-
-
 
 
 // Philosophy: This Z61/GF61 implementation uses faster, sloppier mod M61 reduction where the end result is in the range 0..M61+epsilon.
 // This implementation also handles subtractions by adding enough M61s to make a value positive.  This allows us to always deal with positive
-// intermediate results.  The downside is that a caller using the sloppy/quick routines must keep track of how large unreduced values can get.
-// An alternative implementation is to have Z61 be an i64 (costs us a precious bit of precision) but is surprisingly slower (at least on TitanV) because
+// intermediate results.  An alternative implementation is to have Z61 be an i64 (costs us a precious bit of precision) and is surprisingly slower (at least on TitanV) because
 //      mod(a - b),             where the mod routinue uses a signed right shift is slower than
 //      mod(a + (M61*2 - b))    where the mod routine uses an unsigned shift right.
-// However, a long string of subtracts (example, fft8 does 3 subtracts before mod M61 might be better off using negative intermediate results.
+// However, a long string of subtracts (example, fft8 does 3 subtracts before mod M61 will be better off using the quick routines and negative intermediate results).
 // The mul routine (and obviously csq and cmul) must use only positive values as __int128 multiply is very slow.
 
 #elif 1   // Faster version that keeps results in the range 0 .. M61+epsilon
@@ -1092,28 +1077,25 @@ GF61 OVERLOAD addsub(GF61 a) { return U2(add(a.x, a.y), sub(a.x, a.y)); }
 GF61 OVERLOAD foo2(GF61 a, GF61 b) { a = addsub(a); b = addsub(b); return addsub(U2(mul(RE(a), RE(b)), mul(IM(a), IM(b)))); }
 GF61 OVERLOAD foo(GF61 a) { return foo2(a, a); }
 
-// The following routines can be used to reduce mod M61 operations.  Caller must track how many M61s need to be added to make positive
-// values for subtractions.  In function names, "q" stands for quick (no modM61), "s" stands for slow (i.e. does modM61).
+// The following routines can be used to reduce mod M61 operations by carefully tracking the range of intermediate results which can be negative.
+// This reduces the number of m61_count*M61 addition operations too.  By tracking ranges of intermediate results, the caller knows how many M61s
+// need to be added to make result positive prior to the final modM61.  In function names, "q" stands for quick (no modM61).
 
-Z61 OVERLOAD addq(Z61 a, Z61 b) { return a + b; }
-GF61 OVERLOAD addq(GF61 a, GF61 b) { return U2(addq(a.x, b.x), addq(a.y, b.y)); }
+GF61 OVERLOAD addq(GF61 a, GF61 b) { return a + b; }
+GF61 OVERLOAD subq(GF61 a, GF61 b) { return a - b; }
+GF61 OVERLOAD addiq(GF61 a, GF61 b) { return U2(a.x - b.y, a.y + b.x); }
+GF61 OVERLOAD subiq(GF61 a, GF61 b) { return U2(a.x + b.y, a.y - b.x); }
 
-Z61 OVERLOAD subq(Z61 a, Z61 b, const u32 m61_count) { return a + neg(b, m61_count); }
-GF61 OVERLOAD subq(GF61 a, GF61 b, const u32 m61_count) { return U2(subq(a.x, b.x, m61_count), subq(a.y, b.y, m61_count)); }
+void OVERLOAD X2q(GF61 *a, GF61 *b) { GF61 t = *a; *a = t + *b; *b = t - *b; }
+void OVERLOAD X2q_mul_t4(GF61 *a, GF61 *b) { GF61 t = *a; *a = t + *b; t.x = t.x - b->x; b->x = b->y - t.y; b->y = t.x; }
+void OVERLOAD X2q_conjb(GF61 *a, GF61 *b) { GF61 t = *a; *a = t + *b; b->x = t.x - b->x; b->y = b->y - t.y; }
 
-Z61 OVERLOAD subs(Z61 a, Z61 b, const u32 m61_count) { return modM61(a + neg(b, m61_count)); }
-GF61 OVERLOAD subs(GF61 a, GF61 b, const u32 m61_count) { return U2(subs(a.x, b.x, m61_count), subs(a.y, b.y, m61_count)); }
+GF61 OVERLOAD mul_t8q(GF61 a, const u32 m61_count) { return shl(U2(m61_count * M61 + (a.y - a.x), m61_count * M61 - (a.x + a.y)), 30); }
 
-GF61 OVERLOAD addiq(GF61 a, GF61 b, const u32 m61_count) { return U2(subq(a.x, b.y, m61_count), addq(a.y, b.x)); }
-GF61 OVERLOAD subiq(GF61 a, GF61 b, const u32 m61_count) { return U2(addq(a.x, b.y), subq(a.y, b.x, m61_count)); }
-
-void OVERLOAD X2q(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; *b = t + neg(*b, m61_count); }
-void OVERLOAD X2q_mul_t4(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t.x = t.x + neg(b->x, m61_count); b->x = b->y + neg(t.y, m61_count); b->y = t.x; }
-void OVERLOAD X2q_mul_t8(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t = *b + neg(t, m61_count); *b = shl(U2(t.x + neg(t.y, m61_count * 2), t.x + t.y), 30); }
-void OVERLOAD X2q_mul_3t8(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = t + *b; t = t + neg(*b, m61_count); *b = mul_3t8(t, m61_count * 2); }
-
-void OVERLOAD X2s(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a; *a = add(t, *b); *b = subs(t, *b, m61_count); }
-void OVERLOAD X2s_conjb(GF61 *a, GF61 *b, const u32 a_m61_count, const u32 b_m61_count) { GF61 t = *a; *a = add(t, *b); b->x = subs(t.x, b->x, b_m61_count); b->y = subs(b->y, t.y, a_m61_count); }
+Z61 OVERLOAD optsubq(Z61 a, const u32 m61_limit, const u32 m61_count) { return optional_sub((i64)a, (i32)(m61_limit << (61 - 32)), (i64)(m61_count * M61)); }
+GF61 OVERLOAD optsubq(GF61 a, const u32 m61_limit, const u32 m61_count) { return U2(optsubq(a.x, m61_limit, m61_count), optsubq(a.y, m61_limit, m61_count)); }
+GF61 OVERLOAD modM61q(GF61 a, const u32 m61_count) { if (m61_count) { a.x += m61_count * M61; a.y += m61_count * M61; } return modM61(a); }
+GF61 OVERLOAD modM61q(GF61 a, const u32 m61_count_x, const u32 m61_count_y) { if (m61_count_x) a.x += m61_count_x * M61; if (m61_count_y) a.y += m61_count_y * M61; return modM61(a); }
 
 #endif
 

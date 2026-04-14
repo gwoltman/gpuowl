@@ -414,7 +414,7 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, bo
 
   // Use chinese remainder theorem to create a 92-bit result.  Loosely copied from Yves Gallot's mersenne2 program.
   u32 n31 = get_Z31(u31);
-  u61 = subq(u61, make_Z61(n31), 2);             // u61 - u31
+  u61 += make_u64(hi32(M61), lo32(M61) - n31);   // u61 - u31
   u61 = add(u61, shl(u61, 31));                  // u61 + (u61 << 31)
 
   // The resulting value will be get_Z61(u61) * M31 + n31 and if larger than ~M31*M61/2 return a negative value by subtracting M31 * M61.
@@ -455,7 +455,7 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
 
   // Use chinese remainder theorem to create a 92-bit result.  Loosely copied from Yves Gallot's mersenne2 program.
   u32 n31 = get_Z31(u31);
-  u61 = subq(u61, make_Z61(n31), 2);                 // u61 - u31
+  u61 += make_u64(hi32(M61), lo32(M61) - n31);       // u61 - u31
   u61 = add(u61, shl(u61, 31));                      // u61 + (u61 << 31)
   u64 n61 = get_Z61(u61);
   // Let's call the 92-bit CRT result n3161.  At this point, n3161 = n61 * M31 + n31.
