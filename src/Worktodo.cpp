@@ -58,7 +58,7 @@ std::optional<Task> parse(const std::string& line) {
       parts.erase(parts.begin());
     }
 
-    string s = (parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && parts[3] == "-1") ? parts[2]
+    string s = (parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && (parts[3] == "-1" || parts[3] == "-1\n")) ? parts[2]
       : (!parts.empty() ? parts[0] : "");
 
     const char *end = s.c_str() + s.size();
