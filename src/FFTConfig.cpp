@@ -208,6 +208,29 @@ FFTConfig::FFTConfig(const string& spec) {
     v.resize(v.size() - 1);
   }
 
+  // Sanity check the spec
+  if (v.size() >= 3) {
+    u32 w = parseInt(v[0]);
+    u32 m = parseInt(v[1]);
+    u32 h = parseInt(v[2]);
+    if (w != 256 && w != 512 && w != 1024 && w != 4096) {
+      log("Width must be 256, 512, 1024, or 4096.\n");
+      throw "Invalid FFT spec";
+    }
+    if (m < 2 || m > 16) {
+      log("Middle must be between 1 and 16.\n");
+      throw "Invalid FFT spec";
+    }
+    if (h != 256 && h != 512 && h != 1024) {
+      log("Height must be 256, 512, 1024.\n");
+      throw "Invalid FFT spec";
+    }
+    if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1))) {
+      log("NTT middle must be a power of two.\n");
+      throw "Invalid FFT spec";
+    }
+  }
+  
   if (v.size() == 1) {
     *this = {FFTShape::multiSpec(spec).front(), LAST_VARIANT, CARRY_AUTO};
   } if (v.size() == 3) {

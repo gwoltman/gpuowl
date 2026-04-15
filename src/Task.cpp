@@ -215,7 +215,7 @@ void Task::execute(GpuCommon shared, Queue *q, u32 instance) {
   assert(exponent);
 
   // Testing exponent 140000001 using FFT 512:15:512 fails with severe round off errors.
-  // I'm guessing this is because bot the exponent and FFT size are divisible by 3.
+  // I'm guessing this is because both the exponent and FFT size are divisible by 3.
   // Here we make sure the exponent is prime.  If not we do not raise an error because it
   // is very common to use command line argument "-prp some-random-exponent" to get a quick
   // timing.  Instead, we output a warning and test a smaller prime exponent.
