@@ -80,7 +80,6 @@ public:
 struct Weights {
   vector<double> weightsConstIF;
   vector<double> weightsIF;
-  vector<u32> bitsCF;
 };
 
 class Gpu {

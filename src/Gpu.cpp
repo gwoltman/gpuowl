@@ -37,6 +37,14 @@
 #define M_PI 3.141592653589793238462643383279502884
 #endif
 
+#ifndef M_LN2l
+#define M_LN2l 0.69314718055994530941723212145818L
+#endif
+
+#ifndef M_LN2
+#define M_LN2 0.69314718055994530941723212145818
+#endif
+
 #define CARRY_LEN 8
 
 namespace {
@@ -51,12 +59,13 @@ double invWeight(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return exp2l(-(long double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
+// MSVC does not truly support long double.  Use expm1 rather than exp2 and subtracting one.
 double weightM1(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return exp2l((long double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
+  return expm1l(M_LN2l * (long double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
 double invWeightM1(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return exp2l(- (long double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
+  return expm1l(M_LN2l * - (long double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
 double boundUnderOne(double x) { return std::min(x, nexttoward(1, 0)); }
@@ -70,16 +79,16 @@ float invWeight32(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
 }
 
 float weightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return exp2((double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
+  return expm1(M_LN2 * (double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
 float invWeightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return exp2(- (double)(extra(N, E, kAt(H, line, col) + rep)) / N) - 1;
+  return expm1(M_LN2 * - (double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
 float boundUnderOne(float x) { return std::min(x, nexttowardf(1, 0)); }
 
-Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
+Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
   u32 N = 2u * W * H;
   u32 groupWidth = W / nW;
 
@@ -94,7 +103,7 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
       // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
       // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
       // buffer, so there is an unfortunate duplication of these weights.
-      if (!AmdGpu) {
+      if (nvidiaGpu) {
         weightsConstIF.push_back(2 * boundUnderOne(iw));
         weightsConstIF.push_back(2 * w);
       }
@@ -114,8 +123,8 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
     vector<float> weightsIF32;
     // Inverse + Forward
     for (u32 thread = 0; thread < groupWidth; ++thread) {
-      auto iw = invWeight32(N, E, H, 0, thread, 0) ;// * 17592186044416.0f;
-      auto w = weight32(N, E, H, 0, thread, 0) ;// * 0.0000002384185791015625f;
+      auto iw = invWeight32(N, E, H, 0, thread, 0) ;
+      auto w = weight32(N, E, H, 0, thread, 0) ;
       // Play with the weight so that optionalDouble and optionalHalve work
       iw = 2.0f * boundUnderOne(iw);
       w = 2.0f * w;
@@ -125,7 +134,7 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool AmdGpu) {
       // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
       // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
       // buffer, so there is an unfortunate duplication of these weights.
-      if (!AmdGpu) {
+      if (nvidiaGpu) {
         weightsConstIF32.push_back(iw);
         weightsConstIF32.push_back(w);
       }
@@ -761,7 +770,7 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   bufTrigM{shared.bufCache->middleTrig(shared.args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
   bufTrigW{shared.bufCache->smallTrig(shared.args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
 
-  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isAmdGpu(q->context->deviceId()))},
+  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(q->context->deviceId()))},
   bufConstWeights{q->context, std::move(weights.weightsConstIF)},
   bufWeights{q->context,      std::move(weights.weightsIF)},
 
