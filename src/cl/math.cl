@@ -187,6 +187,17 @@ i32 optional_mod(i32 a, const i32 b) {
 }
 
 // Optionally subtract c from a if a >= b.
+u64 OVERLOAD optional_sub(u64 a, const u64 b, const u64 c) {
+#if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.ge.u64 %%p, %0, %1;\n\t"   // a >= b
+        " @%%p sub.u64 %0, %0, %2;}"      // if (a >= b) a = a - c
+        : "+l"(a) : "l"(b), "l"(c));      // It would be nice if there was an asm constraint to indicate a 64-bit constant
+#else
+  if (a >= b) a = a - c;
+#endif
+  return a;
+}
 i64 OVERLOAD optional_sub(i64 a, const i64 b, const i64 c) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
@@ -200,6 +211,17 @@ i64 OVERLOAD optional_sub(i64 a, const i64 b, const i64 c) {
 }
 
 // Optionally subtract c from a if hi32(a) >= b.
+u64 OVERLOAD optional_sub(u64 a, const u32 b, const u64 c) {
+#if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.ge.u32 %%p, %1, %2;\n\t"   // hi32(a) >= b
+        " @%%p sub.u64 %0, %0, %3;}"      // if (hi32(a) >= b) a = a - c
+        : "+l"(a) : "r"((u32)hi32(a)), "n"(b), "l"(c));
+#else
+  if ((u32)hi32(a) >= b) a = a - c;
+#endif
+  return a;
+}
 i64 OVERLOAD optional_sub(i64 a, const i32 b, const i64 c) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
@@ -1092,8 +1114,10 @@ void OVERLOAD X2q_conjb(GF61 *a, GF61 *b) { GF61 t = *a; *a = t + *b; b->x = t.x
 
 GF61 OVERLOAD mul_t8q(GF61 a, const u32 m61_count) { return shl(U2(m61_count * M61 + (a.y - a.x), m61_count * M61 - (a.x + a.y)), 30); }
 
-Z61 OVERLOAD optsubq(Z61 a, const u32 m61_limit, const u32 m61_count) { return optional_sub((i64)a, (i32)(m61_limit << (61 - 32)), (i64)(m61_count * M61)); }
-GF61 OVERLOAD optsubq(GF61 a, const u32 m61_limit, const u32 m61_count) { return U2(optsubq(a.x, m61_limit, m61_count), optsubq(a.y, m61_limit, m61_count)); }
+Z61 OVERLOAD optsubqu(Z61 a, const u32 m61_limit, const u32 m61_count) { return optional_sub((u64)a, (u32)(m61_limit << (61 - 32)), (u64)(m61_count * M61)); }
+GF61 OVERLOAD optsubqu(GF61 a, const u32 m61_limit, const u32 m61_count) { return U2(optsubqu(a.x, m61_limit, m61_count), optsubqu(a.y, m61_limit, m61_count)); }
+Z61 OVERLOAD optsubqs(Z61 a, const u32 m61_limit, const u32 m61_count) { return optional_sub((i64)a, (i32)(m61_limit << (61 - 32)), (i64)(m61_count * M61)); }
+GF61 OVERLOAD optsubqs(GF61 a, const u32 m61_limit, const u32 m61_count) { return U2(optsubqs(a.x, m61_limit, m61_count), optsubqs(a.y, m61_limit, m61_count)); }
 GF61 OVERLOAD modM61q(GF61 a, const u32 m61_count) { if (m61_count) { a.x += m61_count * M61; a.y += m61_count * M61; } return modM61(a); }
 GF61 OVERLOAD modM61q(GF61 a, const u32 m61_count_x, const u32 m61_count_y) { if (m61_count_x) a.x += m61_count_x * M61; if (m61_count_y) a.y += m61_count_y * M61; return modM61(a); }
 

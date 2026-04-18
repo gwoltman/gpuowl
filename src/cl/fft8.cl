@@ -111,8 +111,8 @@ void OVERLOAD fft8(GF31 *u) {
 void OVERLOAD fft4CoreSpecial1(GF61 *u) {         // Starts with u[0,1,2,3] in range of 0..2*M61+epsilon.
   X2q(&u[0], &u[2]);                              // X2(u[0], u[2]);  No reductions mod M61.  u[0,2] range is 0..4+, -2-..2+
   X2q_mul_t4(&u[1], &u[3]);                       // X2(u[1], u[3]);  u[3] = mul_t4(u[3]);    u[1,3] range is 0..4+, -2-..2+
-  u[1] = optsubq(u[1], 2, 2);                     // Partially reduce.  If u[1] > 2*M61, sub 2*M61.  u[1] now has range 0..2+
-  u[3] = optsubq(u[3], 0, 2);                     // Partially reduce.  If u[3] > 0*M61, sub 2*M61.  u[3] now has range -2-..0+
+  u[1] = optsubqu(u[1], 2, 2);                    // Partially reduce.  If u[1] > 2*M61, sub 2*M61.  u[1] now has range 0..2+
+  u[3] = optsubqs(u[3], 0, 2);                    // Partially reduce.  If u[3] > 0*M61, sub 2*M61.  u[3] now has range -2-..0+
   X2q(&u[0], &u[1]);                              // X2(u[0], u[1]);  u[0,1] range is 0..6+, -2-..4+
   X2q(&u[2], &u[3]);                              // X2(u[2], u[3]);  u[2,3] range is -4-..2+, -2-..4+
   u[0] = modM61q(u[0], 0);
