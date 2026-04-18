@@ -120,11 +120,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
 #if HAS_ASM
   __asm("s_setprio 3");
@@ -314,11 +315,12 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
 #if HAS_ASM
   __asm("s_setprio 3");
@@ -502,11 +504,12 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
 #if HAS_ASM
   __asm("s_setprio 3");
@@ -713,11 +716,12 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
 #if HAS_ASM
   __asm("s_setprio 3");
@@ -933,11 +937,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -1174,11 +1179,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -1418,11 +1424,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -1661,11 +1668,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -1915,11 +1923,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 H = BIG_HEIGHT;
 #if WMUL == 1
   u32 lowMe = me;
-  u32 line = gr % H;
+  u32 line = gr;
 #else
   u32 lowMe = me % G_W;           // lane-id in one of the WMUL sub-workgroups.
-  u32 line = (gr * WMUL + me / G_W) % H;
+  u32 line = gr * WMUL + me / G_W;
 #endif
+  if (line >= H) line -= H;
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
