@@ -141,10 +141,13 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
-#if AMDGPU
-  T2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
+#if !NVIDIAGPU || CUDA_BACKEND
+  T2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
 #else
-  T2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  T2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), CONST_THREAD_WEIGHTS[line % 64]);
+  weights.x = optionalDouble(weights.x);
+  weights.y = optionalHalve(weights.y);
+  weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
 #endif
 
 #if MUL3
@@ -332,10 +335,13 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
 
   Word2 wu[NW];
-#if AMDGPU
-  F2 weights = fancyMul(THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);
+#if !NVIDIAGPU || CUDA_BACKEND
+  F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
 #else
-  F2 weights = fancyMul(CONST_THREAD_WEIGHTS[lowMe], THREAD_WEIGHTS[G_W + line]);            // On nVidia, don't pollute the constant cache with line weights
+  F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), CONST_THREAD_WEIGHTS[line % 64]);
+  weights.x = optionalDouble(weights.x);
+  weights.y = optionalHalve(weights.y);
+  weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
 #endif
 
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;

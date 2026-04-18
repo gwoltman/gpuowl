@@ -100,13 +100,6 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
     for (u32 thread = 0; thread < groupWidth; ++thread) {
       auto iw = invWeight(N, E, H, 0, thread, 0);
       auto w = weight(N, E, H, 0, thread, 0);
-      // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
-      // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
-      // buffer, so there is an unfortunate duplication of these weights.
-      if (nvidiaGpu) {
-        weightsConstIF.push_back(2 * boundUnderOne(iw));
-        weightsConstIF.push_back(2 * w);
-      }
       weightsIF.push_back(2 * boundUnderOne(iw));
       weightsIF.push_back(2 * w);
     }
@@ -115,6 +108,19 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
     for (u32 gy = 0; gy < H; ++gy) {
       weightsIF.push_back(invWeightM1(N, E, H, gy, 0, 0));
       weightsIF.push_back(weightM1(N, E, H, gy, 0, 0));
+    }
+
+    // nVidia GPUs have a fast constant cache that only works on buffer sizes less than 64KB.  Create two smaller buffers
+    // that can be used to create the large group order buffer with a single multiply.
+    if (nvidiaGpu) {
+      for (u32 gy = 0; gy < 64; ++gy) {
+        weightsConstIF.push_back(invWeightM1(N, E, H, gy, 0, 0));
+        weightsConstIF.push_back(weightM1(N, E, H, gy, 0, 0));
+      }
+      for (u32 gy = 0; gy < H; gy += 64) {
+        weightsConstIF.push_back(invWeightM1(N, E, H, gy, 0, 0));
+        weightsConstIF.push_back(weightM1(N, E, H, gy, 0, 0));
+      }
     }
   }
 
@@ -131,13 +137,6 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
       // Weights are scaled by 2^-24 and 2^48 so that multiplicaton by 1/epsilon does not generate infinty results (width and height variant 2).
       iw = iw * 281474976710656.0f;
       w = w * 0.000000059604644775390625f;
-      // nVidia GPUs have a constant cache that only works on buffer sizes less than 64KB.  Create a smaller buffer
-      // that is a copy of the first part of weightsIF.  There are several kernels that need the combined weightsIF
-      // buffer, so there is an unfortunate duplication of these weights.
-      if (nvidiaGpu) {
-        weightsConstIF32.push_back(iw);
-        weightsConstIF32.push_back(w);
-      }
       weightsIF32.push_back(iw);
       weightsIF32.push_back(w);
     }
@@ -148,11 +147,24 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
       weightsIF32.push_back(weightM132(N, E, H, gy, 0, 0));
     }
 
+    // nVidia GPUs have a fast constant cache that only works on buffer sizes less than 64KB.  Create two smaller buffers
+    // that can be used to create the large group order buffer with a single multiply.
+    if (nvidiaGpu) {
+      for (u32 gy = 0; gy < 64; ++gy) {
+        weightsConstIF32.push_back(invWeightM132(N, E, H, gy, 0, 0));
+        weightsConstIF32.push_back(weightM132(N, E, H, gy, 0, 0));
+      }
+      for (u32 gy = 0; gy < H; gy += 64) {
+        weightsConstIF32.push_back(invWeightM132(N, E, H, gy, 0, 0));
+        weightsConstIF32.push_back(weightM132(N, E, H, gy, 0, 0));
+      }
+    }
+
     // Copy the float vectors to the double vectors
-    weightsConstIF.resize(weightsConstIF32.size() / 2);
-    memcpy((double *) weightsConstIF.data(), weightsConstIF32.data(), weightsConstIF32.size() * sizeof(float));
     weightsIF.resize(weightsIF32.size() / 2);
     memcpy((double *) weightsIF.data(), weightsIF32.data(), weightsIF32.size() * sizeof(float));
+    weightsConstIF.resize(weightsConstIF32.size() / 2);
+    memcpy((double *) weightsConstIF.data(), weightsConstIF32.data(), weightsConstIF32.size() * sizeof(float));
   }
 
   return Weights{weightsConstIF, weightsIF};
