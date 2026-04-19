@@ -415,12 +415,12 @@ i96 weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invWeight, bo
   // Use chinese remainder theorem to create a 92-bit result.  Loosely copied from Yves Gallot's mersenne2 program.
   u32 n31 = get_Z31(u31);
   u61 += make_u64(hi32(M61), lo32(M61) - n31);   // u61 - u31
-  u61 = add(u61, shl(u61, 31));                  // u61 + (u61 << 31)
+  u61 += shl(u61, 31);                           // u61 + (u61 << 31)
 
   // The resulting value will be get_Z61(u61) * M31 + n31 and if larger than ~M31*M61/2 return a negative value by subtracting M31 * M61.
   // We can save a little work by determining if the result will be large using just u61 and returning (get_Z61(u61) - M61) * M31 + n31.
   // This simplifies to get_balanced_Z61(u61) * M31 + n31.
-  i64 n61 = get_balanced_Z61(u61);
+  i64 n61 = get_balanced_Z61(modM61(u61));
 
   // Optionally calculate roundoff error as proximity to M61/2.  28 bits of accuracy should be sufficient.
   u32 roundoff = (u32) abs((i32)hi32(n61));
@@ -452,15 +452,14 @@ i128 weightAndCarryOne(float uF2, Z31 u31, Z61 u61, float F2_invWeight, u32 m31_
   // Apply inverse weights
   u31 = shr(u31, m31_invWeight);
   u61 = shr(u61, m61_invWeight);
-
   // Use chinese remainder theorem to create a 92-bit result.  Loosely copied from Yves Gallot's mersenne2 program.
   u32 n31 = get_Z31(u31);
   u61 += make_u64(hi32(M61), lo32(M61) - n31);       // u61 - u31
-  u61 = add(u61, shl(u61, 31));                      // u61 + (u61 << 31)
-  u64 n61 = get_Z61(u61);
+  u61 += shl(u61, 31);                               // u61 + (u61 << 31)
+  u64 n61 = get_Z61(modM61(u61));
   // Let's call the 92-bit CRT result n3161.  At this point, n3161 = n61 * M31 + n31.
 
-  // The final result mod M31*M61 must be n3161.  Use FP32 data to calculate how many multiples of M31*M61 need to be added to n31n61.
+  // The final result mod M31*M61 must be n3161.  Use FP32 data to calculate how many multiples of M31*M61 need to be added to n3161.
   float n3161f = (float)hi32(n61) * -9223372036854775808.0f;                 // Estimate -n3161 as a float.  -n61 << 31 should be close enough.
   uF2 = fma(uF2, F2_invWeight, n3161f);                                      // This should be close to an integer multiple of M31*M61
   float uF2int = fma(uF2, 2.0194839183061857038255724444152e-28f, RNDVAL);   // Divide by M31*M61 and round to int
