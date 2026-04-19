@@ -675,21 +675,6 @@ Z31 OVERLOAD modM31(i64 a) {                                          // abs(a) 
   u32 ahi = a >> 62;                                                  // Sign extend the top bits
   return modM31(ahi + amid + alo);                                    // This is where caller must assure a 32-bit overflow does not occur
 }
-Z31 OVERLOAD modM31q(u64 a) {                                         // Quick version, a < 2^62
-  u32 alo = a & M31;
-  u32 ahi = a >> 31;
-  return modM31(ahi + alo);
-}
-#if 0                                           // GWBUG - which is faster?
-Z31 OVERLOAD modM31q(i64 a) {                                         // Quick version, abs(a) must be 61 bits
-  u32 alo = a & M31;
-  i32 ahi = a >> 31;                                                  // Sign extend the top bits
-  if (ahi < 0) ahi = ahi + M31;
-  return modM31((u32) ahi + alo);
-}
-#else
-Z31 OVERLOAD modM31q(i64 a) { return modM31(a); }                     // Quick version, abs(a) must be 61 bits
-#endif
 
 Z31 OVERLOAD neg(Z31 a) { return M31 - a; }                           // GWBUG: Examine all callers to see if neg call can be avoided
 GF31 OVERLOAD neg(GF31 a) { return U2(neg(a.x), neg(a.y)); }
@@ -702,7 +687,12 @@ GF31 OVERLOAD sub(GF31 a, GF31 b) { return U2(sub(a.x, b.x), sub(a.y, b.y)); }
 
 Z31 OVERLOAD make_Z31(i32 a) { return (Z31) (a < 0 ? a + M31 : a); }    // Handles signed values of a
 Z31 OVERLOAD make_Z31(u32 a) { return (Z31) (a); }                      // a must be in range of 0 .. M31-1
-Z31 OVERLOAD make_Z31(i64 a) { return modM31q(a); }                     // Handles range -2^61..2^61
+Z31 OVERLOAD make_Z31(i64 a) {                                          // Handles range -2^61..2^61
+  u32 alo = (u32)a & M31;
+  i32 ahi = (i32)((u64)a >> 31);                                        // Unsigned shift might be faster than signed shift
+  ahi = optional_add(ahi, M31);                                         // Make ahi positive
+  return modM31((u32)ahi + alo);
+}
 
 u32 get_Z31(Z31 a) { return a == M31 ? 0 : a; }                         // Get value in range 0 to M31-1
 i32 get_balanced_Z31(Z31 a) { return (a & 0xC0000000) ? (i32) a - M31 : (i32) a; }  // Get balanced value in range -M31/2 to M31/2
