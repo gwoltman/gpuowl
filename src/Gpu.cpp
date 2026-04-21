@@ -905,8 +905,9 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   queue->setSquareKernels(1 + 3 * (fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61));
 
 #ifdef CUDA_BACKEND
-  // Mark trig buffers as L2-persistent on Ampere+ (sm_80+): the 80MB L2 on RTX A5000 can keep
-  // these read-only tables resident across millions of iterations, eliminating repeated DRAM fetches.
+  // Mark trig buffers as L2-persistent on Ampere+ (sm_80+). The RTX A5000 has a 6MB L2 cache;
+  // trig tables are read-only and repeatedly reused, so hinting persistence avoids competing
+  // with FFT data for L2 residency across iterations.
   if (isNvidiaGpu(queue->context->deviceId())) {
     cudaSetL2Persistent(queue->get(), {bufTrigH->get(), bufTrigM->get(), bufTrigW->get()});
   }
