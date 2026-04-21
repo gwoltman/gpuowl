@@ -254,7 +254,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = 0, tail_single_kernel = 1;         // Default tailSquare is double-wide in one kernel
-  in_place = 0;                                         // Default is not in-place
+  in_place = isNvidiaGpu(id) ? 1 : 0;                  // NVIDIA is better off with INPLACE=1 (matches -tune expectation)
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
@@ -292,7 +292,10 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "MODM31",
                               "LOADS","STORES",
                               "NOREG",                  // CUDA - experimental
-                              "WMUL"
+                              "WMUL",
+                              "SHUFL_BYTES_W",
+                              "SHUFL_BYTES_H",
+                              "ENABLE_BARSYNC"
                             });
     if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
@@ -900,6 +903,15 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   }
 
   queue->setSquareKernels(1 + 3 * (fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61));
+
+#ifdef CUDA_BACKEND
+  // Mark trig buffers as L2-persistent on Ampere+ (sm_80+): the 80MB L2 on RTX A5000 can keep
+  // these read-only tables resident across millions of iterations, eliminating repeated DRAM fetches.
+  if (isNvidiaGpu(queue->context->deviceId())) {
+    cudaSetL2Persistent(queue->get(), {bufTrigH->get(), bufTrigM->get(), bufTrigW->get()});
+  }
+#endif
+
   queue->finish();
 }
 

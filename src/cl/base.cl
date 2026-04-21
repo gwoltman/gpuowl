@@ -2,12 +2,15 @@
 
 #pragma once
 
-/* Tunable paramaters for -ctune :
+/* Tunable parameters for -ctune / -use :
 
 IN_WG, OUT_WG: 64, 128, 256. Default: 128.
 IN_SIZEX, OUT_SIZEX: 4, 8, 16, 32. Default: 16.
 UNROLL_W: 0, 1. Default: 0 on AMD, 1 on Nvidia.
 UNROLL_H: 0, 1. Default: 1.
+SHUFL_BYTES_W: 4, 8, 16. Default: 8. LDS shuffle granularity for WIDTH stage; smaller values reduce shared memory and may increase occupancy.
+SHUFL_BYTES_H: 4, 8, 16. Default: 8. LDS shuffle granularity for HEIGHT stage; same tradeoff as SHUFL_BYTES_W.
+ENABLE_BARSYNC: 0, 1. Default: 0. Nvidia only: use bar.sync PTX instruction for sub-wavefront barriers; may be faster on Ampere+.
 */
 
 /* List of code-specific macros. These are set by the C++ host code or derived
@@ -537,7 +540,7 @@ i32 OVERLOAD NCLOAD(i32 *mem) {
 }
 GF31 OVERLOAD NCLOAD(TrigGF31 mem) {
   GF31 retval;
-  __asm("ld.global.lu.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
+  __asm("ld.global.nc.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
   return retval;
 }
 #else

@@ -727,6 +727,26 @@ void Tune::tune() {
       args->flags["FAST_BARRIER"] = to_string(best_fast_barrier);
     }
 
+    // Find best ENABLE_BARSYNC setting (Nvidia only: bar.sync PTX for sub-wavefront barriers, potentially faster on Ampere+)
+    if (NVIDIAGPU) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_enable_barsync = 0;
+      u32 current_enable_barsync = args->value("ENABLE_BARSYNC", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 enable_barsync : {0, 1}) {
+        args->flags["ENABLE_BARSYNC"] = to_string(enable_barsync);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using ENABLE_BARSYNC=%u is %6.1f\n", fft.spec().c_str(), enable_barsync, cost);
+        if (enable_barsync == current_enable_barsync) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_enable_barsync = enable_barsync; }
+      }
+      log("Best ENABLE_BARSYNC is %u.  Default ENABLE_BARSYNC is 0.\n", best_enable_barsync);
+      configsUpdate(current_cost, best_cost, 0.003, "ENABLE_BARSYNC", best_enable_barsync, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["ENABLE_BARSYNC"] = to_string(best_enable_barsync);
+    }
+
     // Find best TAIL_KERNELS setting
     if (1) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
@@ -1035,6 +1055,46 @@ void Tune::tune() {
       log("Best WMUL is %u.  Default WMUL is 2.\n", best_wmul);
       configsUpdate(current_cost, best_cost, 0.003, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["WMUL"] = to_string(best_wmul);
+    }
+
+    // Find best SHUFL_BYTES_W setting (LDS shuffle granularity for WIDTH stage; affects shared memory use and occupancy)
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_shufl_bytes_w = 8;
+      u32 current_shufl_bytes_w = args->value("SHUFL_BYTES_W", 8);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 shufl_bytes_w : {4, 8, 16}) {
+        args->flags["SHUFL_BYTES_W"] = to_string(shufl_bytes_w);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using SHUFL_BYTES_W=%u is %6.1f\n", fft.spec().c_str(), shufl_bytes_w, cost);
+        if (shufl_bytes_w == current_shufl_bytes_w) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_shufl_bytes_w = shufl_bytes_w; }
+      }
+      log("Best SHUFL_BYTES_W is %u.  Default SHUFL_BYTES_W is 8.\n", best_shufl_bytes_w);
+      configsUpdate(current_cost, best_cost, 0.003, "SHUFL_BYTES_W", best_shufl_bytes_w, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["SHUFL_BYTES_W"] = to_string(best_shufl_bytes_w);
+    }
+
+    // Find best SHUFL_BYTES_H setting (LDS shuffle granularity for HEIGHT stage)
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_shufl_bytes_h = 8;
+      u32 current_shufl_bytes_h = args->value("SHUFL_BYTES_H", 8);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 shufl_bytes_h : {4, 8, 16}) {
+        args->flags["SHUFL_BYTES_H"] = to_string(shufl_bytes_h);
+        double cost = Gpu::make(q, exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using SHUFL_BYTES_H=%u is %6.1f\n", fft.spec().c_str(), shufl_bytes_h, cost);
+        if (shufl_bytes_h == current_shufl_bytes_h) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_shufl_bytes_h = shufl_bytes_h; }
+      }
+      log("Best SHUFL_BYTES_H is %u.  Default SHUFL_BYTES_H is 8.\n", best_shufl_bytes_h);
+      configsUpdate(current_cost, best_cost, 0.003, "SHUFL_BYTES_H", best_shufl_bytes_h, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["SHUFL_BYTES_H"] = to_string(best_shufl_bytes_h);
     }
 
     // Find best CUDA compiler options
