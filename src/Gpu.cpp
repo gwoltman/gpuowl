@@ -313,11 +313,15 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (k == "PAD") pad_size = atoi(v.c_str());
   }
 
-  // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W)
+  // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W) to stay within shared memory limits.
+  // Also update config so the clamped value reaches the OpenCL compiler, not just the C++ side.
   {
     u32 shufl_bytes_w = args.value("SHUFL_BYTES_W", 8);
     u32 max_wmul = 32768 / (fft.shape.width * shufl_bytes_w);
-    if (wmul > max_wmul) wmul = max_wmul;
+    if (wmul > max_wmul) {
+      wmul = max_wmul;
+      config["WMUL"] = to_string(wmul);
+    }
   }
 
   string defines = toDefine(config);

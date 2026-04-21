@@ -1102,6 +1102,14 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
   float hitRatio = (float)totalDataBytes / (float)spanBytes;
   if (hitRatio > 1.0f) hitRatio = 1.0f;
 
+  // A very low hit ratio means the buffers are scattered far apart in VRAM. Marking a large
+  // window persistent when most of it is unrelated data evicts more than it saves.
+  if (hitRatio < 0.5f) {
+    log("L2 persist: skipping — buffers too scattered (%zuKB data in %zuKB span, %.1f%% hit ratio)\n",
+        totalDataBytes / 1024, spanBytes / 1024, hitRatio * 100.0f);
+    return;
+  }
+
   CUstreamAttrValue attr;
   memset(&attr, 0, sizeof(attr));
   attr.accessPolicyWindow.base_ptr = (void*)(uintptr_t)minAddr;
