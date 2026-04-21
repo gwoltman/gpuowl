@@ -20,6 +20,7 @@
 #ifdef __linux__
 #include <unistd.h>
 #endif
+#include "log.h"
 
 using namespace std;
 
@@ -1091,8 +1092,8 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
   int maxWindowSize = 0;
   cuDeviceGetAttribute(&maxWindowSize, CU_DEVICE_ATTRIBUTE_MAX_ACCESS_POLICY_WINDOW_SIZE, 0);
   if (maxWindowSize > 0 && spanBytes > (size_t)maxWindowSize) {
-    fprintf(stderr, "L2 persist: span %zuMB exceeds max window %dMB, clamping\n",
-            spanBytes / (1024*1024), maxWindowSize / (1024*1024));
+    log("L2 persist: span %zuKB exceeds max window %dKB, clamping\n",
+        spanBytes / 1024, maxWindowSize / 1024);
     spanBytes = maxWindowSize;
   }
 
@@ -1111,11 +1112,10 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 
   CUresult r = cuStreamSetAttribute(q->stream, CU_STREAM_ATTRIBUTE_ACCESS_POLICY_WINDOW, &attr);
   if (r != CUDA_SUCCESS) {
-    fprintf(stderr, "L2 persist: cuStreamSetAttribute failed (%d)\n", (int)r);
+    log("L2 persist: cuStreamSetAttribute failed (%d)\n", (int)r);
   } else {
-    fprintf(stderr, "L2 persist: window %zuMB (%.1f%% hit ratio), %zuMB actual data, %zu buffers\n",
-            spanBytes / (1024*1024), hitRatio * 100.0f, totalDataBytes / (1024*1024),
-            buffers.size());
+    log("L2 persist: %zuKB trig data marked persistent in L2 (window %zuKB, %.1f%% hit ratio)\n",
+        totalDataBytes / 1024, spanBytes / 1024, hitRatio * 100.0f);
   }
 }
 
