@@ -145,7 +145,7 @@ i32 select32(i32 a, i32 b, i32 c) {
 #endif
 }
 
-// Optionally add a value if first arg is negative.
+// Optionally add a constant value if first arg is negative.
 i32 optional_add(i32 a, const i32 b) {
 #if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
@@ -158,7 +158,7 @@ i32 optional_add(i32 a, const i32 b) {
   return a;
 }
 
-// Optionally subtract a value if first arg is negative.
+// Optionally subtract a constant value if first arg is negative.
 i32 optional_sub(i32 a, const i32 b) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
@@ -171,7 +171,7 @@ i32 optional_sub(i32 a, const i32 b) {
   return a;
 }
 
-// Optionally subtract a value if first arg is greater than value.
+// Optionally subtract a constant value if first arg is greater than value.
 i32 optional_mod(i32 a, const i32 b) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher  // Not faster on 5xxx GPUs (too small a gain to measure??)
   __asm("{.reg .pred %%p;\n\t"
@@ -184,7 +184,33 @@ i32 optional_mod(i32 a, const i32 b) {
   return a;
 }
 
-// Optionally subtract c from a if a >= b.
+// Optionally add a constant value if first arg is negative.
+i64 optional_addM61(i64 a) {
+#if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.lt.s64 %%p, %0, 0;\n\t"                  // a < 0
+        " @%%p add.s64 %0, %0, 2305843009213693951;}"   // if (a < 0) a = a + M61
+        : "+l"(a));
+#else
+  if (a < 0) a = a + 2305843009213693951;
+#endif
+  return a;
+}
+
+// Optionally add a constant value if first arg is negative.
+i64 optional_add(i64 a, const i64 b) {
+#if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
+  __asm("{.reg .pred %%p;\n\t"
+        " setp.lt.s64 %%p, %0, 0;\n\t"    // a < 0
+        " @%%p add.s64 %0, %0, %1;}"      // if (a < 0) a = a + b
+        : "+l"(a) : "l"(b));              // It would be nice if there was an asm constraint to indicate a 64-bit constant
+#else
+  if (a < 0) a = a + b;
+#endif
+  return a;
+}
+
+// Optionally subtract constant c from a if a >= b.
 u64 OVERLOAD optional_sub(u64 a, const u64 b, const u64 c) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
@@ -208,7 +234,7 @@ i64 OVERLOAD optional_sub(i64 a, const i64 b, const i64 c) {
   return a;
 }
 
-// Optionally subtract c from a if hi32(a) >= b.
+// Optionally subtract constant c from a if hi32(a) >= b.
 u64 OVERLOAD optional_sub(u64 a, const u32 b, const u64 c) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
@@ -819,7 +845,7 @@ GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
 #define M61 ((((Z61) 1) << 61) - 1)
 
 Z61 OVERLOAD make_Z61(i32 a) { return (Z61) (a < 0 ? (i64) a + M61 : (i64) a); }  // Handles all values of a
-Z61 OVERLOAD make_Z61(i64 a) { return (Z61) (a < 0 ? a + M61 : a); }              // a must be in range of -M61 .. M61-1
+Z61 OVERLOAD make_Z61(i64 a) { return (Z61) optional_addM61(a); }                 // a must be in range of -M61 .. M61-1
 Z61 OVERLOAD make_Z61(u32 a) { return (Z61) (a); }                                // Handles all values of a
 Z61 OVERLOAD make_Z61(u64 a) { return (Z61) (a); }                                // a must be in range of 0 .. M61-1
 
