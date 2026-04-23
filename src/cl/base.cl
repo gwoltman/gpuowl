@@ -34,6 +34,8 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define STR(x) XSTR(x)
 #define XSTR(x) #x
 
+#pragma clang diagnostic ignored "-Wconstant-logical-operand"
+
 #define OVERLOAD __attribute__((overloadable))
 
 #pragma OPENCL FP_CONTRACT ON

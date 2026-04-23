@@ -17,7 +17,7 @@ KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
   dependentLaunchWait();   // Previous kernel was fftMiddleOut
 
   readCarryFusedLine(in, u, g, me);
-  fft_WIDTH(lds, u, smallTrig, 1, SHUFL_BYTES_W, me);
+  fft_WIDTH(lds, u, smallTrig, 1, me);
   out += WIDTH * g;
   write(G_W, NW, u, out, 0);
 }
@@ -46,7 +46,7 @@ KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
   dependentLaunchWait();   // Previous kernel was fftMiddleOut
 
   readCarryFusedLine(inF2, u, g, me);
-  fft_WIDTH(lds, u, smallTrigF2, 1, SHUFL_BYTES_W, me);
+  fft_WIDTH(lds, u, smallTrigF2, 1, me);
   outF2 += WIDTH * g;
   write(G_W, NW, u, outF2, 0);
 }
@@ -74,7 +74,7 @@ KERNEL(G_W) fftWGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   dependentLaunchWait();   // Previous kernel was fftMiddleOut
 
   readCarryFusedLine(in31, u, g, me);
-  fft_WIDTH(lds, u, smallTrig31, 1, SHUFL_BYTES_W, me);
+  fft_WIDTH(lds, u, smallTrig31, 1, me);
   out31 += WIDTH * g;
   write(G_W, NW, u, out31, 0);
 }
@@ -102,7 +102,7 @@ KERNEL(G_W) fftWGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   dependentLaunchWait();   // Previous kernel was fftMiddleOut
 
   readCarryFusedLine(in61, u, g, me);
-  fft_WIDTH(lds, u, smallTrig61, 1, SHUFL_BYTES_W, me);
+  fft_WIDTH(lds, u, smallTrig61, 1, me);
   out61 += WIDTH * g;
   write(G_W, NW, u, out61, 0);
 }

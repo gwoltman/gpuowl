@@ -1,6 +1,7 @@
 // Copyright (C) Mihai Preda
 
 #include "base.cl"
+#include "math.cl"
 #include "trig.cl"
 #include "fft3.cl"
 #include "fft4.cl"

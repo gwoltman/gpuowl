@@ -32,7 +32,7 @@
 
 #if FFT_FP64 | NTT_GF61
 
-void OVERLOAD reverse(u32 WG, local T2 *lds2, T2 *u, bool bump) {
+void OVERLOAD reverse(local T2 *lds2, T2 *u, bool bump) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me + bump;
 
@@ -81,7 +81,7 @@ void OVERLOAD reverse(u32 WG, local T2 *lds2, T2 *u, bool bump) {
   }
 }
 
-void OVERLOAD reverseLine(u32 WG, local T2 *lds, T2 *u) {
+void OVERLOAD reverseLine(local T2 *lds, T2 *u) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me;
 
@@ -135,76 +135,76 @@ void OVERLOAD reverseLine(u32 WG, local T2 *lds, T2 *u) {
 
 void OVERLOAD reverse2(local T2 *lds2, T2 *u) {
   u32 me = get_local_id(0);
-  u32 lowMe = me % G_H;
+  u32 lowMe = me % WG;
 
   if (SHUFL_BYTES_H >= 8) {
     local T2 *lds = lds2;
-    if (me >= G_H) lds += LDS_BYTES / sizeof(T2);
+    if (me >= WG) lds += LDS_BYTES / sizeof(T2);
     // For NH=8, u[0] to u[3] are left unchanged.  Write to lds:
     //  u[7]rev   u[6]rev   u[5]rev   u[4]rev
     //  v[7]rev   v[6]rev   v[5]rev   v[4]rev
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * G_H - (me >= G_H ? 1 : 0) - lowMe) % (NH/2 * G_H)] = u[NH/2 + i]; }
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i]; }
     // For NH=8, read from lds into u[i]:
     //  u[4] =   u[7]rev   v[7]rev
     //  u[5] =   u[6]rev   v[6]rev
     //  u[6] =   u[5]rev   v[5]rev
     //  u[7] =   u[4]rev   v[4]rev
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i] = lds[i * G_H + lowMe]; }
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i] = lds[i * WG + lowMe]; }
   }
 
   else if (SHUFL_BYTES_H == 4) {
     local T *lds = (local T *) lds2;
-    if (me >= G_H) lds += LDS_BYTES / sizeof(T);
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * G_H - (me >= G_H ? 1 : 0) - lowMe) % (NH/2 * G_H)] = u[NH/2 + i].x; }
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i].x = lds[i * G_H + lowMe]; }
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * G_H - (me >= G_H ? 1 : 0) - lowMe) % (NH/2 * G_H)] = u[NH/2 + i].y; }
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i].y = lds[i * G_H + lowMe]; }
+    if (me >= WG) lds += LDS_BYTES / sizeof(T);
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i].x; }
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i].x = lds[i * WG + lowMe]; }
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i].y; }
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i].y = lds[i * WG + lowMe]; }
   }
 }
 
 // This is used to reverse the second part of a line, and cross the reversed parts between the halves.
 void OVERLOAD revCrossLine(local T2* lds2, T2 *u) {
   u32 me = get_local_id(0);
-  u32 lowMe = me % G_H;
-  u32 revLowMe = G_H - 1 - lowMe;
+  u32 lowMe = me % WG;
+  u32 revLowMe = WG - 1 - lowMe;
 
   if (SHUFL_BYTES_H >= 8) {
     local T2 *ldsOut = lds2;
     local T2 *ldsIn = lds2;
-    if (me < G_H) ldsOut += LDS_BYTES / sizeof(T2);     // Crossing LDS halves
+    if (me < WG) ldsOut += LDS_BYTES / sizeof(T2);     // Crossing LDS halves
     else ldsIn += LDS_BYTES / sizeof(T2);               // Staying within LDS halves (just like shufl)
     bar();   // we need a full bar because we're crossing halves
-    for (u32 i = 0; i < NH/2; ++i) { ldsOut[G_H * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
-    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[G_H * i + lowMe]; }
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[WG * i + lowMe]; }
   }
 
   else if (SHUFL_BYTES_H == 4) {
     local T *ldsOut = (local T *) lds2;
     local T *ldsIn = (local T *) lds2;
-    if (me < G_H) ldsOut += LDS_BYTES / sizeof(T);
+    if (me < WG) ldsOut += LDS_BYTES / sizeof(T);
     else ldsIn += LDS_BYTES / sizeof(T);
     bar();   // we need a full bar because we're crossing halves
-    for (u32 i = 0; i < NH/2; ++i) { ldsOut[G_H * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].x; }
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].x; }
     bar();   // we need a full bar because we just crossed halves
-    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2].x = ldsIn[G_H * i + lowMe]; }
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2].x = ldsIn[WG * i + lowMe]; }
     bar();   // we need a full bar because we're crossing halves
-    for (u32 i = 0; i < NH/2; ++i) { ldsOut[G_H * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].y; }
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].y; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
-    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2].y = ldsIn[G_H * i + lowMe]; }
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2].y = ldsIn[WG * i + lowMe]; }
   }
 }
 
 #if 0    // Unused
 
 // Somewhat similar to reverseLine.
-// The u values are in threads < G_H, the v values to reverse in threads >= G_H.
+// The u values are in threads < WG, the v values to reverse in threads >= WG.
 // Whereas reverseLine leaves u values alone.  This reverseLine moves u values around
 // so that pairSq2 can easily operate on pairs.  This means for NH = 4, web output:
 //      u[0]    u[1]            // Returned in u[0]
@@ -218,31 +218,31 @@ void OVERLOAD reverseLine2(local T2 *lds, T2 *u) {
 // unqualified bar() call here.  Specifically, the u values are stored in the upper half of lds memory (SMALL_HEIGHT T2 values).
 // The v values are stored in the lower half of lds memory (the next SMALL_HEIGHT T2 values).
 
-  if (G_H > WAVEFRONT) bar();
+  if (WG > WAVEFRONT) bar();
 
 // For NH=4, the lds indices (where to write each incoming u[i] which has v[i] in the upper threads) looks like this:
-// 0..GH-1 +0*G_H    GH-1..0 +7*G_H
-// 0..GH-1 +1*G_H    GH-1..0 +6*G_H
-// 0..GH-1 +2*G_H    GH-1..0 +5*G_H
-// 0..GH-1 +3*G_H    GH-1..0 +4*G_H
-// That means saving to lds using index: me < G_H ? me % G_H + i * G_H : 8*G_H-1 - me % G_H - i * G_H
+// 0..GH-1 +0*WG    GH-1..0 +7*WG
+// 0..GH-1 +1*WG    GH-1..0 +6*WG
+// 0..GH-1 +2*WG    GH-1..0 +5*WG
+// 0..GH-1 +3*WG    GH-1..0 +4*WG
+// That means saving to lds using index: me < WG ? me % WG + i * WG : 8*WG-1 - me % WG - i * WG
 
 #if 1
-  local T2 *ldsOut = lds + (me < G_H ? me % G_H : (NH*2)*G_H-1 - me % G_H);
-  i32 ldsOutInc = (me < G_H) ? G_H : -G_H;
+  local T2 *ldsOut = lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  i32 ldsOutInc = (me < WG) ? WG : -WG;
   for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { *ldsOut = u[i]; }
 
   lds += me;
   bar();
-  for (u32 i = 0; i < NH; ++i) { u[i] = lds[i * 2*G_H]; }
+  for (u32 i = 0; i < NH; ++i) { u[i] = lds[i * 2*WG]; }
 #else
-  local T *ldsOut = (local T *) lds + (me < G_H ? me % G_H : (NH*2)*G_H-1 - me % G_H);
-  i32 ldsOutInc = (me < G_H) ? G_H : -G_H;
-  for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { ldsOut[0] = u[i].x; ldsOut[NH*2*G_H] = u[i].y; }
+  local T *ldsOut = (local T *) lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  i32 ldsOutInc = (me < WG) ? WG : -WG;
+  for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { ldsOut[0] = u[i].x; ldsOut[NH*2*WG] = u[i].y; }
 
   local T *ldsIn = (local T *) lds + me;
   bar();
-  for (u32 i = 0; i < NH; ++i) { u[i].x = ldsIn[i * 2*G_H]; u[i].y = ldsIn[NH*2*G_H + i * 2*G_H]; }
+  for (u32 i = 0; i < NH; ++i) { u[i].x = ldsIn[i * 2*WG]; u[i].y = ldsIn[NH*2*WG + i * 2*WG]; }
 #endif
 }
 
@@ -250,37 +250,37 @@ void OVERLOAD reverseLine2(local T2 *lds, T2 *u) {
 void OVERLOAD unreverseLine2(local T2 *lds, T2 *u) {
   u32 me = get_local_id(0);
 
-// NOTE:  It is important that this routine use lds memory in coordination with reverseLine2 and shufl2.  By initially
+// NOTE:  It is important that this routine use lds memory in coordination with reverseLine2 and shufl.  By initially
 // writing to the lds locations that reverseLine2 read from we do not need an initial bar() call here.  Also, by reading
-// from the lds locations that shufl2 will use (u values in the upper half of lds memory, v values in the lower half of
+// from the lds locations that shufl will use (u values in the upper half of lds memory, v values in the lower half of
 // lds memory) we can issue a qualified bar() call before calling FFT_HEIGHT2.
 
 #if 1
   local T2 *ldsOut = lds + me;
-  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*G_H] = u[i]; }
+  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i]; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
-// 0..GH-1 +0*G_H    GH-1..0 +7*G_H
-// 0..GH-1 +1*G_H    GH-1..0 +6*G_H
-// 0..GH-1 +2*G_H    GH-1..0 +5*G_H
-// 0..GH-1 +3*G_H    GH-1..0 +4*G_H
-  lds += (me < G_H) ? me % G_H : (NH*2)*G_H-1 - me % G_H;
-  i32 ldsInc = (me < G_H) ? G_H : -G_H;
+// 0..GH-1 +0*WG    GH-1..0 +7*WG
+// 0..GH-1 +1*WG    GH-1..0 +6*WG
+// 0..GH-1 +2*WG    GH-1..0 +5*WG
+// 0..GH-1 +3*WG    GH-1..0 +4*WG
+  lds += (me < WG) ? me % WG : (NH*2)*WG-1 - me % WG;
+  i32 ldsInc = (me < WG) ? WG : -WG;
   bar();
   for (u32 i = 0; i < NH; ++i, lds += ldsInc) { u[i] = *lds; }
 #else
   local T *ldsOut = (local T *) lds + me;
-  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*G_H] = u[i].x; ldsOut[NH*2*G_H + i * 2*G_H] = u[i].y; }
+  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i].x; ldsOut[NH*2*WG + i * 2*WG] = u[i].y; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
-// 0..GH-1 +0*G_H    GH-1..0 +7*G_H
-// 0..GH-1 +1*G_H    GH-1..0 +6*G_H
-// 0..GH-1 +2*G_H    GH-1..0 +5*G_H
-// 0..GH-1 +3*G_H    GH-1..0 +4*G_H
-  local T *ldsIn = (local T *) lds + ((me < G_H) ? me % G_H : (NH*2)*G_H-1 - me % G_H);
-  i32 ldsInc = (me < G_H) ? G_H : -G_H;
+// 0..GH-1 +0*WG    GH-1..0 +7*WG
+// 0..GH-1 +1*WG    GH-1..0 +6*WG
+// 0..GH-1 +2*WG    GH-1..0 +5*WG
+// 0..GH-1 +3*WG    GH-1..0 +4*WG
+  local T *ldsIn = (local T *) lds + ((me < WG) ? me % WG : (NH*2)*WG-1 - me % WG);
+  i32 ldsInc = (me < WG) ? WG : -WG;
   bar();
-  for (u32 i = 0; i < NH; ++i, ldsIn += ldsInc) { u[i].x = ldsIn[0]; u[i].y = ldsIn[NH*2*G_H]; }
+  for (u32 i = 0; i < NH; ++i, ldsIn += ldsInc) { u[i].x = ldsIn[0]; u[i].y = ldsIn[NH*2*WG]; }
 #endif
 }
 
@@ -295,7 +295,7 @@ void OVERLOAD unreverseLine2(local T2 *lds, T2 *u) {
 
 #if FFT_FP32 | NTT_GF31
 
-void OVERLOAD reverse(u32 WG, local F2 *lds, F2 *u, bool bump) {
+void OVERLOAD reverse(local F2 *lds, F2 *u, bool bump) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me + bump;
 
@@ -315,7 +315,7 @@ void OVERLOAD reverse(u32 WG, local F2 *lds, F2 *u, bool bump) {
   }
 }
 
-void OVERLOAD reverseLine(u32 WG, local F2 *lds, F2 *u) {
+void OVERLOAD reverseLine(local F2 *lds, F2 *u) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me;
 
@@ -348,47 +348,47 @@ void OVERLOAD reverseLine(u32 WG, local F2 *lds, F2 *u) {
 
 void OVERLOAD reverse2(local F2 *lds, F2 *u) {
   u32 me = get_local_id(0);
-  u32 lowMe = me % G_H;
+  u32 lowMe = me % WG;
 
   if (SHUFL_BYTES_H >= 4) {
-    if (me >= G_H) lds += LDS_BYTES / sizeof(F2);
+    if (me >= WG) lds += LDS_BYTES / sizeof(F2);
     // For NH=8, u[0] to u[3] are left unchanged.  Write to lds:
     //  u[7]rev   u[6]rev   u[5]rev   u[4]rev
     //  v[7]rev   v[6]rev   v[5]rev   v[4]rev
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * G_H - (me >= G_H ? 1 : 0) - lowMe) % (NH/2 * G_H)] = u[NH/2 + i]; }
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i]; }
     // For NH=8, read from lds into u[i]:
     //  u[4] =   u[7]rev   v[7]rev
     //  u[5] =   u[6]rev   v[6]rev
     //  u[6] =   u[5]rev   v[5]rev
     //  u[7] =   u[4]rev   v[4]rev
-    bar(G_H);
-    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i] = lds[i * G_H + lowMe]; }
+    bar(WG);
+    for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i] = lds[i * WG + lowMe]; }
   }
 }
 
 // This is used to reverse the second part of a line, and cross the reversed parts between the halves.
 void OVERLOAD revCrossLine(local F2* lds2, F2 *u) {
   u32 me = get_local_id(0);
-  u32 lowMe = me % G_H;
-  u32 revLowMe = G_H - 1 - lowMe;
+  u32 lowMe = me % WG;
+  u32 revLowMe = WG - 1 - lowMe;
 
   if (SHUFL_BYTES_H >= 4) {
     local F2 *ldsOut = lds2;
     local F2 *ldsIn = lds2;
-    if (me < G_H) ldsOut += LDS_BYTES / sizeof(F2);
+    if (me < WG) ldsOut += LDS_BYTES / sizeof(F2);
     else ldsIn += LDS_BYTES / sizeof(F2);
     bar();   // we need a full bar because we're crossing halves
-    for (u32 i = 0; i < NH/2; ++i) { ldsOut[G_H * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
-    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[G_H * i + lowMe]; }
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[WG * i + lowMe]; }
   }
 }
 
 #if 0    // Unused
 
 // Somewhat similar to reverseLine.
-// The u values are in threads < G_H, the v values to reverse in threads >= G_H.
+// The u values are in threads < WG, the v values to reverse in threads >= WG.
 // Whereas reverseLine leaves u values alone.  This reverseLine moves u values around
 // so that pairSq2 can easily operate on pairs.  This means for NH = 4, web output:
 //      u[0]    u[1]            // Returned in u[0]
@@ -398,35 +398,35 @@ void OVERLOAD revCrossLine(local F2* lds2, F2 *u) {
 void OVERLOAD reverseLine2(local F2 *lds, F2 *u) {
   u32 me = get_local_id(0);
 
-// NOTE:  It is important that this routine use lds memory in coordination with shufl2.  Failure to do so would require an
+// NOTE:  It is important that this routine use lds memory in coordination with shufl.  Failure to do so would require an
 // unqualified bar() call here.  Specifically, the u values are stored in the upper half of lds memory (SMALL_HEIGHT F2 values).
 // The v values are stored in the lower half of lds memory (the next SMALL_HEIGHT F2 values).
 
-  if (G_H > WAVEFRONT) bar();
+  if (WG > WAVEFRONT) bar();
 
 // For NH=4, the lds indices (where to write each incoming u[i] which has v[i] in the upper threads) looks like this:
-// 0..GH-1 +0*G_H    GH-1..0 +7*G_H
-// 0..GH-1 +1*G_H    GH-1..0 +6*G_H
-// 0..GH-1 +2*G_H    GH-1..0 +5*G_H
-// 0..GH-1 +3*G_H    GH-1..0 +4*G_H
-// That means saving to lds using index: me < G_H ? me % G_H + i * G_H : 8*G_H-1 - me % G_H - i * G_H
+// 0..GH-1 +0*WG    GH-1..0 +7*WG
+// 0..GH-1 +1*WG    GH-1..0 +6*WG
+// 0..GH-1 +2*WG    GH-1..0 +5*WG
+// 0..GH-1 +3*WG    GH-1..0 +4*WG
+// That means saving to lds using index: me < WG ? me % WG + i * WG : 8*WG-1 - me % WG - i * WG
 
 #if 1
-  local F2 *ldsOut = lds + (me < G_H ? me % G_H : (NH*2)*G_H-1 - me % G_H);
-  i32 ldsOutInc = (me < G_H) ? G_H : -G_H;
+  local F2 *ldsOut = lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  i32 ldsOutInc = (me < WG) ? WG : -WG;
   for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { *ldsOut = u[i]; }
 
   lds += me;
   bar();
-  for (u32 i = 0; i < NH; ++i) { u[i] = lds[i * 2*G_H]; }
+  for (u32 i = 0; i < NH; ++i) { u[i] = lds[i * 2*WG]; }
 #else
-  local F *ldsOut = (local F *) lds + (me < G_H ? me % G_H : (NH*2)*G_H-1 - me % G_H);
-  i32 ldsOutInc = (me < G_H) ? G_H : -G_H;
-  for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { ldsOut[0] = u[i].x; ldsOut[NH*2*G_H] = u[i].y; }
+  local F *ldsOut = (local F *) lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  i32 ldsOutInc = (me < WG) ? WG : -WG;
+  for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { ldsOut[0] = u[i].x; ldsOut[NH*2*WG] = u[i].y; }
 
   local F *ldsIn = (local F *) lds + me;
   bar();
-  for (u32 i = 0; i < NH; ++i) { u[i].x = ldsIn[i * 2*G_H]; u[i].y = ldsIn[NH*2*G_H + i * 2*G_H]; }
+  for (u32 i = 0; i < NH; ++i) { u[i].x = ldsIn[i * 2*WG]; u[i].y = ldsIn[NH*2*WG + i * 2*WG]; }
 #endif
 }
 
@@ -434,37 +434,37 @@ void OVERLOAD reverseLine2(local F2 *lds, F2 *u) {
 void OVERLOAD unreverseLine2(local F2 *lds, F2 *u) {
   u32 me = get_local_id(0);
 
-// NOTE:  It is important that this routine use lds memory in coordination with reverseLine2 and shufl2.  By initially
+// NOTE:  It is important that this routine use lds memory in coordination with reverseLine2 and shufl.  By initially
 // writing to the lds locations that reverseLine2 read from we do not need an initial bar() call here.  Also, by reading
-// from the lds locations that shufl2 will use (u values in the upper half of lds memory, v values in the lower half of
+// from the lds locations that shufl will use (u values in the upper half of lds memory, v values in the lower half of
 // lds memory) we can issue a qualified bar() call before calling FFT_HEIGHT2.
 
 #if 1
   local F2 *ldsOut = lds + me;
-  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*G_H] = u[i]; }
+  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i]; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
-// 0..GH-1 +0*G_H    GH-1..0 +7*G_H
-// 0..GH-1 +1*G_H    GH-1..0 +6*G_H
-// 0..GH-1 +2*G_H    GH-1..0 +5*G_H
-// 0..GH-1 +3*G_H    GH-1..0 +4*G_H
-  lds += (me < G_H) ? me % G_H : (NH*2)*G_H-1 - me % G_H;
-  i32 ldsInc = (me < G_H) ? G_H : -G_H;
+// 0..GH-1 +0*WG    GH-1..0 +7*WG
+// 0..GH-1 +1*WG    GH-1..0 +6*WG
+// 0..GH-1 +2*WG    GH-1..0 +5*WG
+// 0..GH-1 +3*WG    GH-1..0 +4*WG
+  lds += (me < WG) ? me % WG : (NH*2)*WG-1 - me % WG;
+  i32 ldsInc = (me < WG) ? WG : -WG;
   bar();
   for (u32 i = 0; i < NH; ++i, lds += ldsInc) { u[i] = *lds; }
 #else
   local F *ldsOut = (local F *) lds + me;
-  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*G_H] = u[i].x; ldsOut[NH*2*G_H + i * 2*G_H] = u[i].y; }
+  for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i].x; ldsOut[NH*2*WG + i * 2*WG] = u[i].y; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
-// 0..GH-1 +0*G_H    GH-1..0 +7*G_H
-// 0..GH-1 +1*G_H    GH-1..0 +6*G_H
-// 0..GH-1 +2*G_H    GH-1..0 +5*G_H
-// 0..GH-1 +3*G_H    GH-1..0 +4*G_H
-  local F *ldsIn = (local F *) lds + ((me < G_H) ? me % G_H : (NH*2)*G_H-1 - me % G_H);
-  i32 ldsInc = (me < G_H) ? G_H : -G_H;
+// 0..GH-1 +0*WG    GH-1..0 +7*WG
+// 0..GH-1 +1*WG    GH-1..0 +6*WG
+// 0..GH-1 +2*WG    GH-1..0 +5*WG
+// 0..GH-1 +3*WG    GH-1..0 +4*WG
+  local F *ldsIn = (local F *) lds + ((me < WG) ? me % WG : (NH*2)*WG-1 - me % WG);
+  i32 ldsInc = (me < WG) ? WG : -WG;
   bar();
-  for (u32 i = 0; i < NH; ++i, ldsIn += ldsInc) { u[i].x = ldsIn[0]; u[i].y = ldsIn[NH*2*G_H]; }
+  for (u32 i = 0; i < NH; ++i, ldsIn += ldsInc) { u[i].x = ldsIn[0]; u[i].y = ldsIn[NH*2*WG]; }
 #endif
 }
 
@@ -479,12 +479,12 @@ void OVERLOAD unreverseLine2(local F2 *lds, F2 *u) {
 
 #if NTT_GF31
 
-void OVERLOAD reverse(u32 WG, local GF31 *lds, GF31 *u, bool bump) {
-  reverse(WG, (local F2 *) lds, (F2 *) u, bump);
+void OVERLOAD reverse(local GF31 *lds, GF31 *u, bool bump) {
+  reverse((local F2 *) lds, (F2 *) u, bump);
 }
 
-void OVERLOAD reverseLine(u32 WG, local GF31 *lds, GF31 *u) {
-  reverseLine(WG, (local F2 *) lds, (F2 *) u);
+void OVERLOAD reverseLine(local GF31 *lds, GF31 *u) {
+  reverseLine((local F2 *) lds, (F2 *) u);
 }
 
 void OVERLOAD reverse2(local GF31 *lds, GF31 *u) {
@@ -516,12 +516,12 @@ void OVERLOAD unreverseLine2(local GF31 *lds, GF31 *u) {
 
 #if NTT_GF61
 
-void OVERLOAD reverse(u32 WG, local GF61 *lds, GF61 *u, bool bump) {
-  reverse(WG, (local T2 *) lds, (T2 *) u, bump);
+void OVERLOAD reverse(local GF61 *lds, GF61 *u, bool bump) {
+  reverse((local T2 *) lds, (T2 *) u, bump);
 }
 
-void OVERLOAD reverseLine(u32 WG, local GF61 *lds, GF61 *u) {
-  reverseLine(WG, (local T2 *) lds, (T2 *) u);
+void OVERLOAD reverseLine(local GF61 *lds, GF61 *u) {
+  reverseLine((local T2 *) lds, (T2 *) u);
 }
 
 void OVERLOAD reverse2(local GF61 *lds, GF61 *u) {

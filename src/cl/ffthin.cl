@@ -22,7 +22,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
   T2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
 #endif
 
-  fft_HEIGHT(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT(lds, u, smallTrig, w, 1, me);
 
   write(G_H, NH, u, out, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }
@@ -56,7 +56,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, Trig smallTrig) {
   F2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
 #endif
 
-  fft_HEIGHT(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT(lds, u, smallTrigF2, 1, me);
 
   write(G_H, NH, u, outF2, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }
@@ -84,7 +84,7 @@ KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   readTailFusedLine(in31, u, g, me);
 
-  fft_HEIGHT(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT(lds, u, smallTrig31, 1, me);
 
   write(G_H, NH, u, out31, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }
@@ -112,7 +112,7 @@ KERNEL(G_H) fftHinGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   readTailFusedLine(in61, u, g, me);
 
-  fft_HEIGHT(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT(lds, u, smallTrig61, 1, me);
 
   write(G_H, NH, u, out61, SMALL_HEIGHT * transPos(g, MIDDLE, WIDTH));
 }

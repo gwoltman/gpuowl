@@ -137,7 +137,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
@@ -288,7 +288,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP64
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -332,7 +332,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
@@ -478,7 +478,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -521,7 +521,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 
@@ -690,7 +690,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
 
   dependentLaunch();   // Next kernel will be fftMiddleInGF31
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -733,7 +733,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 
@@ -908,7 +908,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
 
   dependentLaunch();   // Next kernel will be fftMiddleInGF61
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 
@@ -956,12 +956,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
   readCarryFusedLine(in, u, line, lowMe);
-  new_fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
   readCarryFusedLine(in31, u31, line, lowMe);
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
@@ -1148,12 +1148,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  new_fft_WIDTH2(lds, u, smallTrig, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
-  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);
 }
 
@@ -1204,12 +1204,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
   readCarryFusedLine(inF2, uF2, line, lowMe);
-  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
   readCarryFusedLine(in31, u31, line, lowMe);
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
@@ -1396,12 +1396,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     if (weight_shift > 31) weight_shift -= 31;
   }
 
-  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
   writeCarryFusedLine(uF2, outF2, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
-  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);
 }
 
@@ -1452,12 +1452,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
   readCarryFusedLine(inF2, uF2, line, lowMe);
-  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
   readCarryFusedLine(in61, u61, line, lowMe);
-  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
@@ -1644,12 +1644,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     if (weight_shift > 61) weight_shift -= 61;
   }
 
-  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
   writeCarryFusedLine(uF2, outF2, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
-  new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds61, u61, smallTrig61, WMUL, lowMe);
   writeCarryFusedLine(u61, out61, line, lowMe);
 }
 
@@ -1699,12 +1699,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
   readCarryFusedLine(in31, u31, line, lowMe);
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
   readCarryFusedLine(in61, u61, line, lowMe);
-  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 
@@ -1896,12 +1896,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
-  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInGF31
 
-  new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds61, u61, smallTrig61, WMUL, lowMe);
   writeCarryFusedLine(u61, out61, line, lowMe);
 }
 
@@ -1957,15 +1957,15 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
   readCarryFusedLine(inF2, uF2, line, lowMe);
-  new_fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
 
   readCarryFusedLine(in31, u31, line, lowMe);
-  new_fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
   readCarryFusedLine(in61, u61, line, lowMe);
-  new_fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
@@ -2176,15 +2176,15 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
   }
 
-  new_fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
   writeCarryFusedLine(uF2, outF2, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
-  new_fft_WIDTH2(lds31, u31, smallTrig31, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
   writeCarryFusedLine(u31, out31, line, lowMe);
 
-  new_fft_WIDTH2(lds61, u61, smallTrig61, WMUL, SHUFL_BYTES_W, lowMe);
+  fft_WIDTH2(lds61, u61, smallTrig61, WMUL, lowMe);
   writeCarryFusedLine(u61, out61, line, lowMe);
 }
 

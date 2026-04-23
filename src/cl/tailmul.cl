@@ -78,41 +78,41 @@ KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #if MUL_LOW
   read(G_H, NH, p, a, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, a, memline2 * SMALL_HEIGHT);
-  fft_HEIGHT(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrig, w, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
+  fft_HEIGHT1(lds, v, smallTrig, w, 1, me);
 #else
   readTailFusedLine(a, p, line1, me);
   readTailFusedLine(a, q, line2, me);
-  fft_HEIGHT(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrig, w, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, p, smallTrig, w, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, q, smallTrig, w, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
+  fft_HEIGHT1(lds, v, smallTrig, w, 1, me);
+  fft_HEIGHT1(lds, p, smallTrig, w, 1, me);
+  fft_HEIGHT1(lds, q, smallTrig, w, 1, me);
 #endif
 
   T2 trig = slowTrig_N(line1 + me * H, ND / NH);
 
   if (line1 == 0) {
-    reverse(G_H, lds, u + NH/2, true);
-    reverse(G_H, lds, p + NH/2, true);
+    reverse(lds, u + NH/2, true);
+    reverse(lds, p + NH/2, true);
     pairMul(NH/2, u,  u + NH/2, p, p + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     T2 trig2 = cmulFancy(trig, TAILT);
-    reverse(G_H, lds, v + NH/2, false);
-    reverse(G_H, lds, q + NH/2, false);
+    reverse(lds, v + NH/2, false);
+    reverse(lds, q + NH/2, false);
     pairMul(NH/2, v,  v + NH/2, q, q + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   } else {
-    reverseLine(G_H, lds, v);
-    reverseLine(G_H, lds, q);
+    reverseLine(lds, v);
+    reverseLine(lds, q);
     pairMul(NH, u, v, p, q, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
 
-  fft_HEIGHT(lds, v, smallTrig, w, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrig, w, 1, me);
+  fft_HEIGHT2(lds, u, smallTrig, w, 1, me);
   writeTailFusedLine(v, out, memline2, me);
   writeTailFusedLine(u, out, memline1, me);
 }
@@ -190,41 +190,41 @@ KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #if MUL_LOW
   read(G_H, NH, p, aF2, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, aF2, memline2 * SMALL_HEIGHT);
-  fft_HEIGHT(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrigF2, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
+  fft_HEIGHT1(lds, v, smallTrigF2, 1, me);
 #else
   readTailFusedLine(aF2, p, line1, me);
   readTailFusedLine(aF2, q, line2, me);
-  fft_HEIGHT(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrigF2, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, p, smallTrigF2, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, q, smallTrigF2, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
+  fft_HEIGHT1(lds, v, smallTrigF2, 1, me);
+  fft_HEIGHT1(lds, p, smallTrigF2, 1, me);
+  fft_HEIGHT1(lds, q, smallTrigF2, 1, me);
 #endif
 
   F2 trig = slowTrig_N(line1 + me * H, ND / NH);
 
   if (line1 == 0) {
-    reverse(G_H, lds, u + NH/2, true);
-    reverse(G_H, lds, p + NH/2, true);
+    reverse(lds, u + NH/2, true);
+    reverse(lds, p + NH/2, true);
     pairMul(NH/2, u,  u + NH/2, p, p + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     F2 trig2 = cmulFancy(trig, TAILT);
-    reverse(G_H, lds, v + NH/2, false);
-    reverse(G_H, lds, q + NH/2, false);
+    reverse(lds, v + NH/2, false);
+    reverse(lds, q + NH/2, false);
     pairMul(NH/2, v,  v + NH/2, q, q + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   } else {
-    reverseLine(G_H, lds, v);
-    reverseLine(G_H, lds, q);
+    reverseLine(lds, v);
+    reverseLine(lds, q);
     pairMul(NH, u, v, p, q, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
 
-  fft_HEIGHT(lds, v, smallTrigF2, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrigF2, 1, me);
+  fft_HEIGHT2(lds, u, smallTrigF2, 1, me);
   writeTailFusedLine(v, outF2, memline2, me);
   writeTailFusedLine(u, outF2, memline1, me);
 }
@@ -302,15 +302,15 @@ KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #if MUL_LOW
   read(G_H, NH, p, a31, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, a31, memline2 * SMALL_HEIGHT);
-  fft_HEIGHT(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrig31, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrig31, 1, me);
+  fft_HEIGHT1(lds, v, smallTrig31, 1, me);
 #else
   readTailFusedLine(a31, p, line1, me);
   readTailFusedLine(a31, q, line2, me);
-  fft_HEIGHT(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrig31, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, p, smallTrig31, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, q, smallTrig31, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrig31, 1, me);
+  fft_HEIGHT1(lds, v, smallTrig31, 1, me);
+  fft_HEIGHT1(lds, p, smallTrig31, 1, me);
+  fft_HEIGHT1(lds, q, smallTrig31, 1, me);
 #endif
 
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
@@ -333,27 +333,27 @@ KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #endif
 
   if (line1 == 0) {
-    reverse(G_H, lds, u + NH/2, true);
-    reverse(G_H, lds, p + NH/2, true);
+    reverse(lds, u + NH/2, true);
+    reverse(lds, p + NH/2, true);
     pairMul(NH/2, u,  u + NH/2, p, p + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     GF31 trig2 = cmul(trig, TAILTGF31);
-    reverse(G_H, lds, v + NH/2, false);
-    reverse(G_H, lds, q + NH/2, false);
+    reverse(lds, v + NH/2, false);
+    reverse(lds, q + NH/2, false);
     pairMul(NH/2, v,  v + NH/2, q, q + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   } else {
-    reverseLine(G_H, lds, v);
-    reverseLine(G_H, lds, q);
+    reverseLine(lds, v);
+    reverseLine(lds, q);
     pairMul(NH, u, v, p, q, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF31 which must dependentLaunchWait before reading data
 
-  fft_HEIGHT(lds, v, smallTrig31, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrig31, 1, me);
+  fft_HEIGHT2(lds, u, smallTrig31, 1, me);
   writeTailFusedLine(v, out31, memline2, me);
   writeTailFusedLine(u, out31, memline1, me);
 }
@@ -431,15 +431,15 @@ KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #if MUL_LOW
   read(G_H, NH, p, a61, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, a61, memline2 * SMALL_HEIGHT);
-  fft_HEIGHT(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrig61, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrig61, 1, me);
+  fft_HEIGHT1(lds, v, smallTrig61, 1, me);
 #else
   readTailFusedLine(a61, p, line1, me);
   readTailFusedLine(a61, q, line2, me);
-  fft_HEIGHT(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, v, smallTrig61, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, p, smallTrig61, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, q, smallTrig61, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrig61, 1, me);
+  fft_HEIGHT1(lds, v, smallTrig61, 1, me);
+  fft_HEIGHT1(lds, p, smallTrig61, 1, me);
+  fft_HEIGHT1(lds, q, smallTrig61, 1, me);
 #endif
 
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
@@ -462,27 +462,27 @@ KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #endif
 
   if (line1 == 0) {
-    reverse(G_H, lds, u + NH/2, true);
-    reverse(G_H, lds, p + NH/2, true);
+    reverse(lds, u + NH/2, true);
+    reverse(lds, p + NH/2, true);
     pairMul(NH/2, u,  u + NH/2, p, p + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     GF61 trig2 = cmul(trig, TAILTGF61);
-    reverse(G_H, lds, v + NH/2, false);
-    reverse(G_H, lds, q + NH/2, false);
+    reverse(lds, v + NH/2, false);
+    reverse(lds, q + NH/2, false);
     pairMul(NH/2, v,  v + NH/2, q, q + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   } else {
-    reverseLine(G_H, lds, v);
-    reverseLine(G_H, lds, q);
+    reverseLine(lds, v);
+    reverseLine(lds, q);
     pairMul(NH, u, v, p, q, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF61 which must dependentLaunchWait before reading data
 
-  fft_HEIGHT(lds, v, smallTrig61, 1, SHUFL_BYTES_H, me);
-  fft_HEIGHT(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrig61, 1, me);
+  fft_HEIGHT2(lds, u, smallTrig61, 1, me);
   writeTailFusedLine(v, out61, memline2, me);
   writeTailFusedLine(u, out61, memline1, me);
 }

@@ -81,12 +81,12 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   T2 trig = slowTrig_N(line + me * H, ND / NH);
 
-  new_fft_HEIGHT1(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
-  reverse(G_H, lds, u + NH/2, !which);
+  fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
+  reverse(lds, u + NH/2, !which);
   pairSq(NH/2, u,   u + NH/2, trig, !which);
-  reverse(G_H, lds, u + NH/2, !which);
+  reverse(lds, u + NH/2, !which);
 
-  new_fft_HEIGHT1(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
   writeTailFusedLine(u, out, transPos(line, MIDDLE, WIDTH), me);
 }
 
@@ -125,8 +125,8 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrig + zerohack, w, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT1(lds + zerohack, v, smallTrig + zerohack, w, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds + zerohack, u, smallTrig + zerohack, w, 1, me);
+  fft_HEIGHT1(lds + zerohack, v, smallTrig + zerohack, w, 1, me);
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
 #if TAIL_TRIGS == 2
@@ -154,29 +154,29 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_KERNEL
   if (line1 == 0) {
     // Line 0 is special: it pairs with itself, offseted by 1.
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
     pairSq(NH/2, u,   u + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     // Line H/2 also pairs with itself (but without offset).
     T2 trig2 = cmulFancy(trig, TAILT);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
     pairSq(NH/2, v,   v + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   }
   else {
 #else
   if (1) {
 #endif
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
     pairSq(NH, u, v, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, v, smallTrig, w, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT2(lds, u, smallTrig, w, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrig, w, 1, me);
+  fft_HEIGHT2(lds, u, smallTrig, w, 1, me);
 
   writeTailFusedLine(v, out, memline2, me);
   writeTailFusedLine(u, out, memline1, me);
@@ -242,7 +242,7 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrig + zerohack, w, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT1(lds + zerohack, u, smallTrig + zerohack, w, 2, lowMe);
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
 #if TAIL_TRIGS == 2
@@ -285,7 +285,7 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, u, smallTrig, w, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT2(lds, u, smallTrig, w, 2, lowMe);
 
   // Write lines u and v
   writeTailFusedLine(u, out, transPos(line, MIDDLE, WIDTH), lowMe);
@@ -365,12 +365,12 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   F2 trig = slowTrig_N(line + me * H, ND / NH);
 
-  new_fft_HEIGHT1(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
-  reverse(G_H, lds, u + NH/2, !which);
+  fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
+  reverse(lds, u + NH/2, !which);
   pairSq(NH/2, u,   u + NH/2, trig, !which);
-  reverse(G_H, lds, u + NH/2, !which);
+  reverse(lds, u + NH/2, !which);
 
-  new_fft_HEIGHT1(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
   writeTailFusedLine(u, outF2, transPos(line, MIDDLE, WIDTH), me);
 }
 
@@ -405,8 +405,8 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   readTailFusedLine(inF2, v, line2, me);
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrigF2 + zerohack, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT1(lds + zerohack, v, smallTrigF2 + zerohack, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds + zerohack, u, smallTrigF2 + zerohack, 1, me);
+  fft_HEIGHT1(lds + zerohack, v, smallTrigF2 + zerohack, 1, me);
 
   // Compute trig values from scratch.  Good on GPUs with high FP throughput.
 #if TAIL_TRIGS32 == 2
@@ -434,29 +434,29 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_KERNEL
   if (line1 == 0) {
     // Line 0 is special: it pairs with itself, offseted by 1.
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
     pairSq(NH/2, u,   u + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     // Line H/2 also pairs with itself (but without offset).
     F2 trig2 = cmulFancy(trig, TAILT);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
     pairSq(NH/2, v,   v + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   }
   else {
 #else
   if (1) {
 #endif
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
     pairSq(NH, u, v, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, v, smallTrigF2, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT2(lds, u, smallTrigF2, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrigF2, 1, me);
+  fft_HEIGHT2(lds, u, smallTrigF2, 1, me);
 
   writeTailFusedLine(v, outF2, memline2, me);
   writeTailFusedLine(u, outF2, memline1, me);
@@ -518,7 +518,7 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
   readTailFusedLine(inF2, u, line, lowMe);
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrigF2 + zerohack, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT1(lds + zerohack, u, smallTrigF2 + zerohack, 2, lowMe);
 
   // Compute trig values from scratch.  Good on GPUs with high FP throughput.
 #if TAIL_TRIGS32 == 2
@@ -561,7 +561,7 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, u, smallTrigF2, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT2(lds, u, smallTrigF2, 2, lowMe);
 
   // Write lines u and v
   writeTailFusedLine(u, outF2, transPos(line, MIDDLE, WIDTH), lowMe);
@@ -662,12 +662,12 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 #endif
 
-  new_fft_HEIGHT1(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
-  reverse(G_H, lds, u + NH/2, !which);
+  fft_HEIGHT1(lds, u, smallTrig31, 1, me);
+  reverse(lds, u + NH/2, !which);
   pairSq(NH/2, u,   u + NH/2, trig, !which);
-  reverse(G_H, lds, u + NH/2, !which);
+  reverse(lds, u + NH/2, !which);
 
-  new_fft_HEIGHT2(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, u, smallTrig31, 1, me);
   writeTailFusedLine(u, out31, transPos(line, MIDDLE, WIDTH), me);
 }
 
@@ -702,8 +702,8 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   readTailFusedLine(in31, v, line2, me);
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrig31 + zerohack, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT1(lds + zerohack, v, smallTrig31 + zerohack, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds + zerohack, u, smallTrig31 + zerohack, 1, me);
+  fft_HEIGHT1(lds + zerohack, v, smallTrig31 + zerohack, 1, me);
 
   // Do a little bit of memory access and a little bit of math.
 #if TAIL_TRIGS31 >= 1
@@ -727,29 +727,29 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_KERNEL
   if (line1 == 0) {
     // Line 0 is special: it pairs with itself, offseted by 1.
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
     pairSq(NH/2, u,   u + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     // Line H/2 also pairs with itself (but without offset).
     GF31 trig2 = cmul(trig, TAILTGF31);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
     pairSq(NH/2, v,   v + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   }
   else {
 #else
   if (1) {
 #endif
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
     pairSq(NH, u, v, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF31 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, v, smallTrig31, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT2(lds, u, smallTrig31, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrig31, 1, me);
+  fft_HEIGHT2(lds, u, smallTrig31, 1, me);
 
   writeTailFusedLine(v, out31, memline2, me);
   writeTailFusedLine(u, out31, memline1, me);
@@ -810,7 +810,7 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   readTailFusedLine(in31, u, line, lowMe);
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrig31 + zerohack, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT1(lds + zerohack, u, smallTrig31 + zerohack, 2, lowMe);
 
   // Do a little bit of memory access and a little bit of math.  Good on a Radeon VII.
 #if TAIL_TRIGS31 >= 1
@@ -849,7 +849,7 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF31 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, u, smallTrig31, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT2(lds, u, smallTrig31, 2, lowMe);
 
   // Write lines u and v
   writeTailFusedLine(u, out31, transPos(line, MIDDLE, WIDTH), lowMe);
@@ -967,12 +967,12 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 #endif
 
-  new_fft_HEIGHT1(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
-  reverse(G_H, lds, u + NH/2, !which);
+  fft_HEIGHT1(lds, u, smallTrig61, 1, me);
+  reverse(lds, u + NH/2, !which);
   pairSq(NH/2, u,   u + NH/2, trig, !which);
-  reverse(G_H, lds, u + NH/2, !which);
+  reverse(lds, u + NH/2, !which);
 
-  new_fft_HEIGHT2(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, u, smallTrig61, 1, me);
   writeTailFusedLine(u, out61, transPos(line, MIDDLE, WIDTH), me);
 }
 
@@ -1007,8 +1007,8 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   readTailFusedLine(in61, v, line2, me);
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrig61 + zerohack, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT1(lds + zerohack, v, smallTrig61 + zerohack, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT1(lds + zerohack, u, smallTrig61 + zerohack, 1, me);
+  fft_HEIGHT1(lds + zerohack, v, smallTrig61 + zerohack, 1, me);
 
   // Do a little bit of memory access and a little bit of math.
 #if TAIL_TRIGS61 >= 1
@@ -1032,29 +1032,29 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if SINGLE_KERNEL
   if (line1 == 0) {
     // Line 0 is special: it pairs with itself, offseted by 1.
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
     pairSq(NH/2, u,   u + NH/2, trig, true);
-    reverse(G_H, lds, u + NH/2, true);
+    reverse(lds, u + NH/2, true);
 
     // Line H/2 also pairs with itself (but without offset).
     GF61 trig2 = cmul(trig, TAILTGF61);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
     pairSq(NH/2, v,   v + NH/2, trig2, false);
-    reverse(G_H, lds, v + NH/2, false);
+    reverse(lds, v + NH/2, false);
   }
   else {
 #else
   if (1) {
 #endif
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
     pairSq(NH, u, v, trig, false);
-    reverseLine(G_H, lds, v);
+    reverseLine(lds, v);
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF61 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, v, smallTrig61, 1, SHUFL_BYTES_H, me);
-  new_fft_HEIGHT2(lds, u, smallTrig61, 1, SHUFL_BYTES_H, me);
+  fft_HEIGHT2(lds, v, smallTrig61, 1, me);
+  fft_HEIGHT2(lds, u, smallTrig61, 1, me);
 
   writeTailFusedLine(v, out61, memline2, me);
   writeTailFusedLine(u, out61, memline1, me);
@@ -1115,7 +1115,7 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   readTailFusedLine(in61, u, line, lowMe);
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
-  new_fft_HEIGHT1(lds + zerohack, u, smallTrig61 + zerohack, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT1(lds + zerohack, u, smallTrig61 + zerohack, 2, lowMe);
 
   // Do a little bit of memory access and a little bit of math.  Good on a Radeon VII.
 #if TAIL_TRIGS61 >= 1
@@ -1154,7 +1154,7 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF61 which must dependentLaunchWait before reading data
 
-  new_fft_HEIGHT2(lds, u, smallTrig61, 2, SHUFL_BYTES_H, lowMe);
+  fft_HEIGHT2(lds, u, smallTrig61, 2, lowMe);
 
   // Write lines u and v
   writeTailFusedLine(u, out61, transPos(line, MIDDLE, WIDTH), lowMe);
