@@ -1,11 +1,7 @@
 // Copyright (C) Mihai Preda
 
 #include "base.cl"
-#include "math.cl"
 #include "fftheight.cl"
-
-// LDS bytes used by shufl for each line processed in fft_HEIGHT
-#define LDS_BYTES  (SMALL_HEIGHT * SHUFL_BYTES_H)
 
 #if FFT_FP64
 

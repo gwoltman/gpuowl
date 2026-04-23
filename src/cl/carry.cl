@@ -1,5 +1,8 @@
 // Copyright (C) Mihai Preda
 
+#include "base.cl"
+#include "math.cl"
+#include "trig.cl"
 #include "carryutil.cl"
 #include "weight.cl"
 

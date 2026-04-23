@@ -1,8 +1,16 @@
 // Copyright (C) Mihai Preda
 
-#include "base.cl"
+// #defines that allow fft_height and fft_width share common code in fftbase.cl
+#define VARIANT       FFT_VARIANT_H
+#define LDSPAD        LDSPAD_H
+#define LDSSWIZ       LDSSWIZ_H
+#define SHUFL_BYTES   SHUFL_BYTES_H
+#define WGSZ          G_H                           // Change this to WG!!!
+#define RADIX         NH
+
+#include "math.cl"
+#include "trig.cl"
 #include "fftbase.cl"
-#include "middle.cl"
 
 #if SMALL_HEIGHT != 256 && SMALL_HEIGHT != 512 && SMALL_HEIGHT != 1024 && SMALL_HEIGHT != 4096
 #error SMALL_HEIGHT must be one of: 256, 512, 1024, 4096
@@ -71,7 +79,7 @@ void OVERLOAD new_fft_HEIGHT(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, c
 
   // This line mimics shufl -- partition lds
   local T2* partitioned_lds = lds;
-  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * SMALL_HEIGHT * sb / sizeof(T2);
+  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T2);
 
 // Custom code for various SMALL_HEIGHT values
 
@@ -208,7 +216,7 @@ void OVERLOAD new_fft_HEIGHT(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, con
 
   // This line mimics shufl -- partition lds
   local F2* partitioned_lds = lds;
-  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * SMALL_HEIGHT * sb / sizeof(F2);
+  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F2);
 
 // Custom code for various SMALL_HEIGHT values
 

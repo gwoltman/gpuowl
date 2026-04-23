@@ -1,5 +1,7 @@
 // Copyright (C) Mihai Preda
 
+#include "base.cl"
+#include "math.cl"
 #include "carryutil.cl"
 
 KERNEL(G_W) carryB(P(Word2) io, CP(CarryABM) carryIn) {

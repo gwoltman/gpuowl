@@ -2,44 +2,310 @@
 
 #include "fft4.cl"
 #include "fft8.cl"
-#include "trig.cl"
-// #include "math.cl"
 
+// Calculate the LDS bytes used by shufl
+#if LDSPAD && SHUFL_BYTES == 16 && RADIX == 8
+#define LDS_BYTES     ((WGSZ * RADIX * SHUFL_BYTES) * 72 / 64)
+#elif LDSPAD && SHUFL_BYTES == 16 && RADIX == 4
+#define LDS_BYTES     ((WGSZ * RADIX * SHUFL_BYTES) * 20 / 16)
+#elif LDSPAD && SHUFL_BYTES == 8 && RADIX == 8
+#define LDS_BYTES     ((WGSZ * RADIX * SHUFL_BYTES) * 72 / 64)
+#elif LDSPAD && SHUFL_BYTES == 8 && RADIX == 4
+#define LDS_BYTES     ((WGSZ * RADIX * SHUFL_BYTES) * 20 / 16)
+#else
+#define LDS_BYTES     (WGSZ * RADIX * SHUFL_BYTES)
+#endif
 
 #if FFT_FP64 | NTT_GF61
 
-// Shufl two or more fft_WIDTHs or FFT_HEIGHTs operating on 64-bit values.  Each WG uses WG * sb bytes of LDS memory.
+// Shufl two or more fft_WIDTHs or FFT_HEIGHTs operating on 64-bit values using LDS_BYTES of LDS memory.
 // Care is taken that each simultaneous workgroup does not interfere with the LDS memory of other simultaneous workgroups --
 // even when operating on differernt sized data elements as can happen in an M31+M61 NTT.
 // WG = workgroup size of a single fft_WIDTH or fft_HEIGHT
 // n = sizeof array u (nW or nH).  n * WG = WIDTH or HEIGHT
-// sb = The number of bytes to write to LDS memory at a time.  SHUFL_BYTES_W or SHUFL_BYTES_H
 // numWG = number of fft_WIDTHs or fft_HEIGHTs being processed simultaneously
 // lowMe = me % WG
 // NOTE: shufl routines perform a bar(WG) at the start but not at the end.  After calling shufl, a bar(WG) is required
 // before next LDS memory usage.  All routines that use LDS memory MUST OBEY THIS PROTOCOL of bar() before LDS use and
 // only bar(WG) required before next use.  ALSO NOTE: the first shufl call does not need to do bar(WG).  A relatively
-// minor optimization would be to spedial case the first shufl call.
-void OVERLOAD shufl64(u32 WG, local T2 *lds2, T2 *u, u32 n, u32 f, u32 numWG, const u32 sb, u32 lowMe) {
+// minor optimization would be to special case the first shufl call.
+void OVERLOAD shufl64(u32 WG, local T2 *lds2, T2 *u, u32 n, u32 f, u32 numWG, u32 lowMe) {
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
 
-  if (sb == 16) {
-    local T2* lds = ((local T2*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * n * WG * sb / sizeof(T2);
+  int force_default = 0;
+#if NOWG2                       // For timing tests only.  Option to not turn off LDS bank conflict code when numWG > 1.  I've not found a GPU where this is beneficial.
+  if (numWG > 1) force_default = 1;
+#endif
+#if NOLDS2                      // For timing tests only.  Option to not turn off LDS bank for second shufl calls.  I've not found a GPU where this is beneficial.
+  if (f != 1) force_default = 1;
+#endif
 
+  // If SHUFL_BYTES is 16 we can write the complete T2 value to LDS memory with one instruction.
+  if (SHUFL_BYTES == 16) {
+    local T2* lds = ((local T2*) lds2);
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T2);
+
+#if LDSPAD
+    // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 1, 65...   lds[64..127] = +8
+    // Pad after every 8th value to eliminate bank conflicts.
+    if (!force_default && f == 1 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[lowMe * 9 + i] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) * 9 / 8]; }
+      return;
+    }
+
+    // Special case second n == 8 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
+    // No padding of LDS blocks is needed to eliminate bank conflicts.  The first 8 threads written to LDS (multiples of 64) and
+    // the first 8 threads read from LDS (multiples of 64) are already in separate LDS banks.
+    // We can however save a bar() by writing to same locations that previous shufl wrote to.
+    if (!force_default && f == 8 && n == 8) {
+      for (u32 i = 0; i < n; ++i) { lds[(i * WG + lowMe) * 9 / 8] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[((lowMe & ~7) + i) * 9 + (lowMe & 7)]; }
+      return;
+    }
+
+    // Special case first n == 4 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 1, 65...   lds[64..127] = +16
+    // Pad after every 8th value to eliminate bank conflicts.
+    if (!force_default && f == 1 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) * 9 / 8] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) * 9 / 8]; }
+      return;
+    }
+
+    // Special case second n == 4 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 16, 80...   lds[64..127] = +4
+    // Pad 4 values after every 16th value to eliminate bank conflicts.
+    if (!force_default && f == 4 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[lowMe / 4 * 20 + i * 4 + (lowMe & 3)] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u32 idx = i * WG + lowMe; u[i] = lds[idx + idx / 16 * 4]; }
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 1, 65...   lds[64..127] = +8
+    // Swizzle LDS blocks to eliminate bank conflicts.  Swizzle on the first 8 threads written to LDS (multiples of 1) and the first 8 threads read from LDS (multiples of 64).
+    if (!force_default && f == 1 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 8 + i) ^ (lowMe & 7)] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ ((lowMe / 8) & 7)]; }
+      return;
+    }
+
+    // Special case second n == 8 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
+    // No swizzle of LDS blocks is needed to eliminate bank conflicts.  The first 8 threads written to LDS (multiples of 64) and
+    // the first 8 threads read from LDS (multiples of 64) are already in separate LDS banks.
+    // We can however save a bar() by writing to same locations that previous shufl wrote to.
+    if (!force_default && f == 8 && n == 8) {
+      for (u32 i = 0; i < n; ++i) { lds[i * WG + lowMe] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[lowMe / 8 * 64 + i * 8 + (lowMe & 7)]; }
+      return;
+    }
+
+    // Special case first n == 4 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 1, 65...   lds[64..127] = +16
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 8 threads written to LDS (4 multiples of 1 and 2 multiples of 4) and the first 8 threads read from LDS (4 multiples of 64 and 2 multiples of 1).
+    if (!force_default && f == 1 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 7)] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 7)]; }
+      return;
+    }
+
+    // Special case second n == 4 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 16, 80...   lds[64..127] = +4
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 8 threads written to LDS (4 multiples of 64 and 2 multiples of 1) and the first 8 threads read from LDS (4 multiples of 64 and 2 multiples of 4).
+    if (!force_default && f == 4 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 4)] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 4)]; }
+      return;
+    }
+#endif
+
+    // Otherwise, execute the original shufl code
     bar(WG);
     for (u32 i = 0; i < n; ++i) { lds[i * f + (lowMe & ~mask) * n + (lowMe & mask)] = u[i]; }
     bar(WG);
     for (u32 i = 0; i < n; ++i) { u[i] = lds[i * WG + lowMe]; }
   }
 
-  else if (sb == 8) {
-    // Accessing lds memory as doubles is faster than T2 accesses on Radeon VII (halving LDS memory requirements)
+  // If SHUFL_BYTES is 8 we split the T2 values into two T values.  These are written to LDS memory with two instructions.
+  else if (SHUFL_BYTES == 8) {
     local T* lds = ((local T*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * n * WG * sb / sizeof(T);
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T);
 
+#if LDSPAD
+    // Special case first n == 8 code to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 1, 65...   lds[64..127] = +8
+    // Pad after every 16th value to eliminate bank conflicts.
+    if (!force_default && f == 1 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 8 + i) * 17 / 16] = u[i].x; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) * 17 / 16]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 8 + i) * 17 / 16] = u[i].y; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) * 17 / 16]; }
+      return;
+    }
+
+    // Special case second n == 8 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
+    // Pad 8 values after every 64 values to eliminate bank conflicts.
+    if (!force_default && f == 8 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[lowMe / 8 * 72 + i * 8 + (lowMe & 7)] = u[i].x; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i].x = lds[i * 72 + lowMe]; }
+      else          for (u32 i = 0; i < n; ++i) { u32 idx = (i * WG + lowMe); u[i].x = lds[idx + idx / 64 * 8]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[lowMe / 8 * 72 + i * 8 + (lowMe & 7)] = u[i].y; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i].y = lds[i * 72 + lowMe]; }
+      else          for (u32 i = 0; i < n; ++i) { u32 idx = (i * WG + lowMe); u[i].y = lds[idx + idx / 64 * 8]; }
+      return;
+    }
+
+    // Special case first n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 1, 65...   lds[64..127] = +16
+    // Pad after every 16th value to eliminate bank conflicts.
+    if (!force_default && f == 1 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) * 17 / 16] = u[i].x; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) * 17 / 16]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) * 17 / 16] = u[i].y; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) * 17 / 16]; }
+      return;
+    }
+
+    // Special case second n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 16, 80...   lds[64..127] = +4
+    // Pad 4 values after every 16th value to eliminate bank conflicts.
+    if (!force_default && f == 4 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 4 * 20 + i * 4 + (lowMe & 3))] = u[i].x; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u32 idx = i * WG + lowMe; u[i].x = lds[idx + idx / 16 * 4]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 4 * 20 + i * 4 + (lowMe & 3))] = u[i].y; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u32 idx = i * WG + lowMe; u[i].y = lds[idx + idx / 16 * 4]; }
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // Special case first n == 8 code to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 1, 65...   lds[64..127] = +8
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (8 multiples of 1 and 2 multiples of 8) and the first 16 threads read from LDS (8 multiples of 64 and 2 multiples of 1).
+    if (!force_default && f == 1 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 8 + i) ^ (lowMe & 15)] = u[i].x; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) ^ (((i & 1) * 8) + ((lowMe / 8) & 7))]; }
+      else          for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) ^ (((lowMe / 8) & 15))]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 8 + i) ^ (lowMe & 15)] = u[i].y; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) ^ (((i & 1) * 8) + ((lowMe / 8) & 7))]; }
+      else          for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) ^ (((lowMe / 8) & 15))]; }
+      return;
+    }
+
+    // Special case second n == 8 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (8 multiples of 64 and 2 multiples of 1) and the first 16 threads read from LDS (8 multiples of 64 and 2 multiples of 8).
+    if (!force_default && f == 8 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].x; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) ^ ((i & 1) * 8)]; }
+      else          for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) ^ ((lowMe / 8) & 8)]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].y; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) ^ ((i & 1) * 8)]; }
+      else          for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) ^ ((lowMe / 8) & 8)]; }
+      return;
+    }
+
+    // Special case first n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 1, 65...   lds[64..127] = +16
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (4 multiples of 1 and 4 multiples of 4) and the first 16 threads read from LDS (4 multiples of 64 and 4 multiples of 1).
+    if (!force_default && f == 1 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = u[i].x; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = u[i].y; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; }
+      return;
+    }
+
+    // Special case second n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 16, 80...   lds[64..127] = +4
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (4 multiples of 64 and 4 multiples of 1) and the first 16 threads read from LDS (4 multiples of 64 and 4 multiples of 16).
+    if (!force_default && f == 4 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = u[i].x; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].x = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = u[i].y; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i].y = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; }
+      return;
+    }
+#endif
+
+    // Execute the original shufl code
     bar(WG);
     for (u32 i = 0; i < n; ++i) { lds[i * f + (lowMe & ~mask) * n + (lowMe & mask)] = u[i].x; }
     bar(WG);
@@ -50,12 +316,14 @@ void OVERLOAD shufl64(u32 WG, local T2 *lds2, T2 *u, u32 n, u32 f, u32 numWG, co
     for (u32 i = 0; i < n; ++i) { u[i].y = lds[i * WG + lowMe]; }
   }
 
-  else if (sb == 4) {
+  // If SHUFL_BYTES is 4 we split the T2 values into 4 int values.  These are written to LDS memory using four instructions.
+  // NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS!!
+  else if (SHUFL_BYTES == 4) {
     // Lower LDS requirements may let the optimizer use fewer VGPRs and increase occupancy for WIDTHs >= 1024.
     // Alas, the increased occupancy does not offset extra code needed for shufl_int (the assembly
     // code generated is not pretty).  This might not be true for nVidia or future ROCm optimizers.
     local int* lds = (local int*) lds2;
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * n * WG * sb / sizeof(int);
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(int);
 
     bar(WG);
     for (u32 i = 0; i < n; ++i) { lds[i * f + (lowMe & ~mask) * n + (lowMe & mask)] = as_int4(u[i]).x; }
@@ -82,27 +350,146 @@ void OVERLOAD shufl64(u32 WG, local T2 *lds2, T2 *u, u32 n, u32 f, u32 numWG, co
 #if FFT_FP32 | NTT_GF31
 
 // Shufl two or more fft_WIDTHs or FFT_HEIGHTs using two 4-byte floats.
-void OVERLOAD shufl32(u32 WG, local F2 *lds2, F2 *u, u32 n, u32 f, u32 numWG, const u32 sb, u32 lowMe) {
+void OVERLOAD shufl32(u32 WG, local F2 *lds2, F2 *u, u32 n, u32 f, u32 numWG, u32 lowMe) {
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
 
-  //GW - would a 16 byte implementation be useful?
+  //GW - would a 16 byte implementation be useful?  Less LDS conflict work?
 
-  if (sb >= 8) {
+  int force_default = 0;
+#if NOWG2
+  if (numWG > 1) force_default = 1;
+#endif
+#if NOLDS2
+  if (f != 1) force_default = 1;
+#endif
+
+  // If SHUFL_BYTES is 8 or more we can write the complete F2 value to LDS memory with one instruction.
+  if (SHUFL_BYTES >= 8) {
     local F2* lds = ((local F2*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * n * WG * sb / sizeof(F2);
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F2);
 
+#if LDSPAD
+    // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 1, 65...   lds[64..127] = +8
+    // Pad after every 16th value to eliminate bank conflicts.
+    if (!force_default && f == 1 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 8 + i) * 17 / 16] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) * 17 / 16]; }
+      return;
+    }
+
+    // Special case second n == 8 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
+    // Pad 8 values after every 64 values to eliminate bank conflicts.
+    if (!force_default && f == 8 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[lowMe / 8 * 72 + i * 8 + (lowMe & 7)] = u[i]; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i] = lds[i * 72 + lowMe]; }
+      else          for (u32 i = 0; i < n; ++i) { u32 idx = (i * WG + lowMe); u[i] = lds[idx + idx / 64 * 8]; }
+      return;
+    }
+
+    // Special case first n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 1, 65...   lds[64..127] = +16
+    // Pad after every 16th value to eliminate bank conflicts.
+    if (!force_default && f == 1 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) * 17 / 16] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) * 17 / 16]; }
+      return;
+    }
+
+    // Special case second n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 16, 80 ...   lds[64..127] = +4
+    // Pad 4 values after every 16th value to eliminate bank conflicts.
+    if (!force_default && f == 4 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[lowMe / 4 * 20 + i * 4 + (lowMe & 3)] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u32 idx = i * WG + lowMe; u[i] = lds[idx + idx / 16 * 4]; }
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 1, 65...   lds[64..127] = +8
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (8 multiples of 1 and 2 multiples of 8) and the first 26 threads read from LDS (multiples of 64 and two multiples of 1).
+    if (!force_default && f == 1 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 8 + i) ^ (lowMe & 15)] = u[i]; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ (((i & 1) * 8) + ((lowMe / 8) & 7))]; }
+      else          for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ (((lowMe / 8) & 15))]; }
+      return;
+    }
+
+    // Special case second n == 8 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (8 multiples of 64 and 2 multiples of 1) and the first 16 threads read from LDS (8 multiples of 64 and two multiples of 8).
+    if (!force_default && f == 8 && n == 8) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i]; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ ((i & 1) * 8)]; }
+      else          for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ ((lowMe / 8) & 8)]; }
+      return;
+    }
+
+    // Special case first n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 1, 65...   lds[64..127] = +16
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (4 multiples of 1 and 4 multiples of 4) and the first 16 threads read from LDS (4 multiples of 64 and 4 multiples of 1).
+    if (!force_default && f == 1 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; }
+      return;
+    }
+
+    // Special case second n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 192, 16, 80 ...   lds[64..127] = +4
+    // Swizzle LDS blocks to eliminate bank conflicts.
+    // Swizzle on the first 16 threads written to LDS (4 multiples of 64 and 4 multiples of 1) and the first 16 threads read from LDS (4 multiples of 64 and 4 multiples of 16).
+    if (!force_default && f == 4 && n == 4) {
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = u[i]; }
+      bar(WG);
+      for (u32 i = 0; i < n; ++i) { u[i] = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; }
+      return;
+    }
+#endif
+
+    // Execute the original shufl code
     bar(WG);
     for (u32 i = 0; i < n; ++i) { lds[i * f + (lowMe & ~mask) * n + (lowMe & mask)] = u[i]; }
     bar(WG);
     for (u32 i = 0; i < n; ++i) { u[i] = lds[i * WG + lowMe]; }
   }
 
-  else if (sb == 4) {
+  // If SHUFL_BYTES is 4 we split the F2 values into 2 int values.  These are written to LDS memory using two instructions.
+  // NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS!!
+  else if (SHUFL_BYTES == 4) {
     // Accessing lds memory as ints might be faster than F2 accesses (halving LDS memory requirements)
     local F* lds = ((local F*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * n * WG * sb / sizeof(F);
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F);
 
     bar(WG);
     for (u32 i = 0; i < n; ++i) { lds[i * f + (lowMe & ~mask) * n + (lowMe & mask)] = u[i].x; }
@@ -220,7 +607,7 @@ T2 bcast(T2 src, u32 span) {
 #endif
 
 void OVERLOAD shufl(u32 WG, local T2 *lds, T2 *u, u32 n, u32 f, u32 numWG, const u32 sb, u32 lowMe) {
-  shufl64(WG, lds, u, n, f, numWG, sb, lowMe);
+  shufl64(WG, lds, u, n, f, numWG, lowMe);
 }
 
 void OVERLOAD tabMul(u32 WG, Trig trig, T2 *u, u32 n, u32 f, u32 me) {
@@ -530,7 +917,7 @@ void OVERLOAD chainMul4(F2 *u, F2 w) {
 
 void OVERLOAD chainMul8(F2 *u, F2 w, u32 tailSquareBcast) {
   u[1] = cmulFancy(u[1], w);
-						  //GWBUG - see FP64 version for many possible optimizations
+                                                  //GWBUG - see FP64 version for many possible optimizations
   F2 w2 = csqTrigFancy(w);
   u[2] = cmulFancy(u[2], w2);
 
@@ -553,7 +940,7 @@ void OVERLOAD chainMul(u32 len, F2 *u, F2 w, u32 tailSquareBcast) {
 }
 
 void OVERLOAD shufl(u32 WG, local F2 *lds, F2 *u, u32 n, u32 f, u32 numWG, const u32 sb, u32 lowMe) {
-  shufl32(WG, lds, u, n, f, numWG, sb, lowMe);
+  shufl32(WG, lds, u, n, f, numWG, lowMe);
 }
 
 void OVERLOAD tabMul(u32 WG, TrigFP32 trig, F2 *u, u32 n, u32 f, u32 me) {
@@ -858,7 +1245,7 @@ void OVERLOAD chainMul(u32 len, GF31 *u, GF31 w) {
 }
 
 void OVERLOAD shufl(u32 WG, local GF31 *lds, GF31 *u, u32 n, u32 f, u32 numWG, const u32 sb, u32 lowMe) {
-  shufl32(WG, (local F2 *) lds, (local F2 *) u, n, f, numWG, sb, lowMe);
+  shufl32(WG, (local F2 *) lds, (local F2 *) u, n, f, numWG, lowMe);
 }
 
 void OVERLOAD tabMul(u32 WG, TrigGF31 trig, GF31 *u, u32 n, u32 f, u32 me) {
@@ -896,7 +1283,7 @@ void OVERLOAD chainMul4(GF61 *u, GF61 w) {
   GF61 base = csq(w);
   u[2] = cmul(u[2], base);
 
-  base = cmul(base, w);			//GWBUG - see FP64 version for possible optimization
+  base = cmul(base, w);                 //GWBUG - see FP64 version for possible optimization
   u[3] = cmul(u[3], base);
 }
 
@@ -906,7 +1293,7 @@ void OVERLOAD chainMul8(GF61 *u, GF61 w, u32 tailSquareBcast) {
   GF61 w2 = csq(w);
   u[2] = cmul(u[2], w2);
 
-  GF61 base = cmul(w2, w);		//GWBUG - see FP64 version for many possible optimizations
+  GF61 base = cmul(w2, w);              //GWBUG - see FP64 version for many possible optimizations
   for (int i = 3; i < 8; ++i) {
     u[i] = cmul(u[i], base);
     base = cmul(base, w);
@@ -921,7 +1308,7 @@ void OVERLOAD chainMul(u32 len, GF61 *u, GF61 w, u32 tailSquareBcast) {
 }
 
 void OVERLOAD shufl(u32 WG, local GF61 *lds, GF61 *u, u32 n, u32 f, u32 numWG, const u32 sb, u32 lowMe) {
-  shufl64(WG, (local T2 *) lds, (T2 *) u, n, f, numWG, sb, lowMe);
+  shufl64(WG, (local T2 *) lds, (T2 *) u, n, f, numWG, lowMe);
 }
 
 void OVERLOAD tabMul(u32 WG, TrigGF61 trig, GF61 *u, u32 n, u32 f, u32 me) {

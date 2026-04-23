@@ -1,5 +1,6 @@
 // Copyright (C) Mihai Preda
 
+#include "math.cl"
 #include "trig.cl"
 
 #if MIDDLE == 3

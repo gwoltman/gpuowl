@@ -2,8 +2,6 @@
 
 #pragma once
 
-#include "math.cl"
-
 #if FFT_FP64
 
 T2 reducedCosSin(int k, double cosBase) {

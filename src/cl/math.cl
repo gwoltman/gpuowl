@@ -2,8 +2,6 @@
 
 #pragma once
 
-#include "base.cl"
-
 // Access parts of a 64-bit value
 
 u32 OVERLOAD lo32(u64 x) { return (u32)x; }

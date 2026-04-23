@@ -1,8 +1,5 @@
 // Copyright (C) Mihai Preda
 
-#include "base.cl"
-#include "math.cl"
-
 #if CARRY64
 typedef i64 CFcarry;
 #else

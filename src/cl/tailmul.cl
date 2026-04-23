@@ -1,12 +1,9 @@
 // Copyright (C) Mihai Preda and George Woltman
 
 #include "base.cl"
-#include "tailutil.cl"
-#include "trig.cl"
 #include "fftheight.cl"
-
-// LDS bytes used by shufl for each line processed in fft_HEIGHT
-#define LDS_BYTES  (SMALL_HEIGHT * SHUFL_BYTES_H)
+#include "tailutil.cl"
+#include "middle.cl"
 
 #if FFT_FP64
 

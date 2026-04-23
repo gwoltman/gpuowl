@@ -145,6 +145,15 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define SHUFL_BYTES_H 8
 #endif
 
+// Shufl can pad (or swizzle) to avoid LDS bank conflicts.  See fftbase.cl.  You would think this option would be good (or bad)
+// for both fft_width and fft_height, but the rocm optimizer is super-finicky.  Default to using LDS padding.
+#if !defined(LDSPAD_W)
+#define LDSPAD_W 1
+#endif
+#if !defined(LDSPAD_H)
+#define LDSPAD_H 1
+#endif
+
 #if !defined(TABMUL_CHAIN)
 #define TABMUL_CHAIN 0
 #endif

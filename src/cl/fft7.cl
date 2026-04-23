@@ -2,8 +2,6 @@
 
 #pragma once
 
-#include "base.cl"
-
 #if FFT_FP64
 
 #define A(i) u[(base + i * step) % M]

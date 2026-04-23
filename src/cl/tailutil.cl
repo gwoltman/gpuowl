@@ -1,7 +1,5 @@
 // Copyright (C) Mihai Preda
 
-#include "math.cl"
-
 // TAIL_TRIGS setting:
 //      2 = No memory accesses, trig values computed from scratch.  Good for excellent DP GPUs such as Titan V or Radeon VII Pro.
 //      1 = Limited memory accesses and some DP computation.  Tuned for Radeon VII a GPU with good DP performance.
@@ -141,7 +139,7 @@ void OVERLOAD reverse2(local T2 *lds2, T2 *u) {
 
   if (SHUFL_BYTES_H >= 8) {
     local T2 *lds = lds2;
-    if (me >= G_H) lds += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(T2);
+    if (me >= G_H) lds += LDS_BYTES / sizeof(T2);
     // For NH=8, u[0] to u[3] are left unchanged.  Write to lds:
     //  u[7]rev   u[6]rev   u[5]rev   u[4]rev
     //  v[7]rev   v[6]rev   v[5]rev   v[4]rev
@@ -158,7 +156,7 @@ void OVERLOAD reverse2(local T2 *lds2, T2 *u) {
 
   else if (SHUFL_BYTES_H == 4) {
     local T *lds = (local T *) lds2;
-    if (me >= G_H) lds += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(T);
+    if (me >= G_H) lds += LDS_BYTES / sizeof(T);
     bar(G_H);
     for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * G_H - (me >= G_H ? 1 : 0) - lowMe) % (NH/2 * G_H)] = u[NH/2 + i].x; }
     bar(G_H);
@@ -179,8 +177,8 @@ void OVERLOAD revCrossLine(local T2* lds2, T2 *u) {
   if (SHUFL_BYTES_H >= 8) {
     local T2 *ldsOut = lds2;
     local T2 *ldsIn = lds2;
-    if (me < G_H) ldsOut += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(T2);     // Crossing LDS halves
-    else ldsIn += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(T2);               // Staying within LDS halves (just like shufl)
+    if (me < G_H) ldsOut += LDS_BYTES / sizeof(T2);     // Crossing LDS halves
+    else ldsIn += LDS_BYTES / sizeof(T2);               // Staying within LDS halves (just like shufl)
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[G_H * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
@@ -190,8 +188,8 @@ void OVERLOAD revCrossLine(local T2* lds2, T2 *u) {
   else if (SHUFL_BYTES_H == 4) {
     local T *ldsOut = (local T *) lds2;
     local T *ldsIn = (local T *) lds2;
-    if (me < G_H) ldsOut += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(T);
-    else ldsIn += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(T);
+    if (me < G_H) ldsOut += LDS_BYTES / sizeof(T);
+    else ldsIn += LDS_BYTES / sizeof(T);
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[G_H * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].x; }
     bar();   // we need a full bar because we just crossed halves
@@ -353,7 +351,7 @@ void OVERLOAD reverse2(local F2 *lds, F2 *u) {
   u32 lowMe = me % G_H;
 
   if (SHUFL_BYTES_H >= 4) {
-    if (me >= G_H) lds += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(F2);
+    if (me >= G_H) lds += LDS_BYTES / sizeof(F2);
     // For NH=8, u[0] to u[3] are left unchanged.  Write to lds:
     //  u[7]rev   u[6]rev   u[5]rev   u[4]rev
     //  v[7]rev   v[6]rev   v[5]rev   v[4]rev
@@ -378,8 +376,8 @@ void OVERLOAD revCrossLine(local F2* lds2, F2 *u) {
   if (SHUFL_BYTES_H >= 4) {
     local F2 *ldsOut = lds2;
     local F2 *ldsIn = lds2;
-    if (me < G_H) ldsOut += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(F2);
-    else ldsIn += SMALL_HEIGHT * SHUFL_BYTES_H / sizeof(F2);
+    if (me < G_H) ldsOut += LDS_BYTES / sizeof(F2);
+    else ldsIn += LDS_BYTES / sizeof(F2);
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[G_H * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.

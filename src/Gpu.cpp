@@ -550,15 +550,15 @@ string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
   case CARRYFUSED:         // Register usage depends on NW, the FFT/NTT type, and perhaps the long carry setting
     switch (fft.shape.fft_type) {
     case FFT64:
-      regs = nW == 8 ? 72 : 64;
+      regs = nW == 8 ? 80 : 64;
       use_override = "REGCF64";
       break;
     case FFT3161:
-      regs = nW == 8 ? 96 : 56;
+      regs = nW == 8 ? 96 : 64;
       use_override = "REGCF3161";
       break;
     case FFT3261:
-      regs = nW == 8 ? 96 : 56;
+      regs = nW == 8 ? 96 : 64;
       use_override = "REGCF3261";
       break;
     case FFT61:
@@ -566,7 +566,7 @@ string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
       use_override = "REGCF61";
       break;
     case FFT323161:
-      regs = nW == 8 ? 128 : 72;
+      regs = nW == 8 ? 128 : 80;
       use_override = "REGCF323161";
       break;
     case FFT3231:
@@ -622,7 +622,7 @@ string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
     break;
   case TAIL:               // Register usage depends on NH and the FP32/FP64 (assumes double-wide kernel)
     if (fft.FFT_FP64) {
-      regs = nH == 8 ? 80 : 64;
+      regs = nH == 8 ? 88 : 64;
       use_override = "REGTS64";
     } else {
       regs = nH == 8 ? 64 : 48;
@@ -630,7 +630,7 @@ string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
     }
     break;
   case TAIL31:             // Register usage depends on NH (assumes double-wide kernel)
-    regs = nH == 8 ? 56 : 48;
+    regs = nH == 8 ? 64 : 48;
     use_override = "REGTS31";
     break;
   case TAIL61:             // Register usage depends on NH (assumes double-wide kernel)

@@ -1,5 +1,15 @@
 // Copyright (C) Mihai Preda
 
+// #defines that allow fft_height and fft_width share common code in fftbase.cl
+#define VARIANT       FFT_VARIANT_W
+#define LDSPAD        LDSPAD_W
+#define LDSSWIZ       LDSSWIZ_W
+#define SHUFL_BYTES   SHUFL_BYTES_W
+#define WGSZ          G_W                           // Change this to WG!!!
+#define RADIX         NW
+
+#include "math.cl"
+#include "trig.cl"
 #include "fftbase.cl"
 
 #if WIDTH != 256 && WIDTH != 512 && WIDTH != 1024 && WIDTH != 4096 && WIDTH != 625
@@ -78,7 +88,7 @@ void OVERLOAD new_fft_WIDTH(local T2 *lds, T2 *u, Trig trig, u32 numWG, const u3
 
   // This line mimics shufl -- partition lds
   local T2* partitioned_lds = lds;
-  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * WIDTH * sb / sizeof(T2);
+  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T2);
 
 // Custom code for various WIDTH values
 
@@ -249,7 +259,7 @@ void OVERLOAD new_fft_WIDTH(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, cons
 
   // This line mimics shufl -- partition lds
   local F2* partitioned_lds = lds;
-  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * WIDTH * sb / sizeof(F2);
+  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F2);
 
 // Custom code for various WIDTH values
 

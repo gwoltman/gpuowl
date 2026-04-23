@@ -1,8 +1,9 @@
 // Copyright (C) Mihai Preda
 
+#include "base.cl"
+#include "fftwidth.cl"
 #include "carryutil.cl"
 #include "weight.cl"
-#include "fftwidth.cl"
 #include "middle.cl"
 
 void spin() {
@@ -16,10 +17,7 @@ void spin() {
 #endif
 }
 
-// LDS bytes used by shufl for each line processed in fft_WIDTH
-#define LDS_BYTES  (WIDTH * SHUFL_BYTES_W)
-
-// Increasing WMUL to 2 will reduce carryShuttle activity.  This led to a 1% speedup on Titan V.  Testing on other GPUs is needed.
+// Increasing WMUL to 2 reduces carryShuttle activity.  This led to a 1% speedup on Titan V.  Testing on other GPUs is needed.
 #ifndef WMUL
 #define WMUL 2
 #endif
