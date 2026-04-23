@@ -2,6 +2,7 @@
 
 #include "base.cl"
 #include "fftheight.cl"
+#include "middle.cl"
 
 #if FFT_FP64
 
