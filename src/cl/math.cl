@@ -683,7 +683,7 @@ Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }                    
 Z31 OVERLOAD modM31(Z31 a) { i32 alt = a + 0x80000001; return select32(a, a, alt); }  // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
 Z31 OVERLOAD modM31(i32 a) { i32 alt = a - 0x80000001; return select32(a, a, alt); }  // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
 #else
-Z31 OVERLOAD modM31(Z31 a) { return optional_add(a, 0x80000001); }                    // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+Z31 OVERLOAD modM31(Z31 a) { return optional_add((i32)a, 0x80000001); }               // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
 Z31 OVERLOAD modM31(i32 a) { return optional_sub(a, 0x80000001); }                    // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
 #endif
 
