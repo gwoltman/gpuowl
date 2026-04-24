@@ -146,7 +146,7 @@ i32 select32(i32 a, i32 b, i32 c) {
 }
 
 // Optionally add a constant value if first arg is negative.
-i32 optional_add(i32 a, const i32 b) {
+i32 OVERLOAD optional_add(i32 a, const i32 b) {
 #if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
@@ -159,7 +159,7 @@ i32 optional_add(i32 a, const i32 b) {
 }
 
 // Optionally subtract a constant value if first arg is negative.
-i32 optional_sub(i32 a, const i32 b) {
+i32 OVERLOAD optional_sub(i32 a, const i32 b) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s32 %%p, %0, 0;\n\t"    // a < 0
@@ -172,7 +172,7 @@ i32 optional_sub(i32 a, const i32 b) {
 }
 
 // Optionally subtract a constant value if first arg is greater than value.
-i32 optional_mod(i32 a, const i32 b) {
+i32 OVERLOAD optional_mod(i32 a, const i32 b) {
 #if HAS_PTX >= 100        // setp/sub instruction requires sm_10 support or higher  // Not faster on 5xxx GPUs (too small a gain to measure??)
   __asm("{.reg .pred %%p;\n\t"
         " setp.ge.s32 %%p, %0, %1;\n\t"   // a > b
@@ -185,7 +185,7 @@ i32 optional_mod(i32 a, const i32 b) {
 }
 
 // Optionally add a constant value if first arg is negative.
-i64 optional_addM61(i64 a) {
+i64 OVERLOAD optional_addM61(i64 a) {
 #if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s64 %%p, %0, 0;\n\t"                  // a < 0
@@ -198,7 +198,7 @@ i64 optional_addM61(i64 a) {
 }
 
 // Optionally add a constant value if first arg is negative.
-i64 optional_add(i64 a, const i64 b) {
+i64 OVERLOAD optional_add(i64 a, const i64 b) {
 #if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
   __asm("{.reg .pred %%p;\n\t"
         " setp.lt.s64 %%p, %0, 0;\n\t"    // a < 0
