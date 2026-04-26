@@ -671,12 +671,13 @@ string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
     use_override = "REGMO61";
     break;
   }
+  // Get the optional override register count
   int override_regs = args.value(use_override, 0);
-  // Allow command line to set CUDA launch_bounds rather than explicit maximum register count
-  if (override_regs && args.value("REGLB", 0)) return string("-DCUDA_MIN_BLOCKS=") + to_string(override_regs) + " ";
-  // Return the maximum register count
+  // If a specified override is small, use the count as a CUDA launch_bounds rather than a maximum register count
+  if (override_regs && (override_regs > 0 && override_regs <= 16)) return string("-DCUDA_MIN_BLOCKS=") + to_string(override_regs) + " ";
+  // If specified, override the default maximum register count
   if (override_regs) regs = override_regs;
-  // Sometimes the results using default launch_bounds without setting an explicit maxrrregcount can't be beat
+  // Sometimes the results using CUDA compiler's default launch_bounds without setting an explicit launch bounds or maxrrregcount can't be beat
   if (regs == -1) return string("");
   // Format an explicit register count setting
   return string("--maxrregcount=") + to_string(regs) + " ";
