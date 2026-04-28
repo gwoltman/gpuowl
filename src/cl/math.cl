@@ -737,7 +737,7 @@ GF31 OVERLOAD neg(GF31 a) { return U2(neg(a.x), neg(a.y)); }
 Z31 OVERLOAD add(Z31 a, Z31 b) { return modM31(a + b); }
 GF31 OVERLOAD add(GF31 a, GF31 b) { return U2(add(a.x, b.x), add(a.y, b.y)); }
 
-Z31 OVERLOAD sub(Z31 a, Z31 b) { i32 t = a - b; return (t & M31) + (t >> 31); }
+Z31 OVERLOAD sub(Z31 a, Z31 b) { return modM31((i32)(a - b)); }
 GF31 OVERLOAD sub(GF31 a, GF31 b) { return U2(sub(a.x, b.x), sub(a.y, b.y)); }
 
 Z31 OVERLOAD make_Z31(i32 a) { return (Z31) (a < 0 ? a + M31 : a); }    // Handles signed values of a

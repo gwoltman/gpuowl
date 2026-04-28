@@ -310,11 +310,12 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (k == "PAD") pad_size = atoi(v.c_str());
   }
 
-  // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W)
+  // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W).  If using the 32KB maximum, LDS padding must be disabled.
   {
     u32 shufl_bytes_w = args.value("SHUFL_BYTES_W", 8);
     u32 max_wmul = 32768 / (fft.shape.width * shufl_bytes_w);
-    if (wmul > max_wmul) wmul = max_wmul;
+    if (wmul > max_wmul) { wmul = max_wmul; config["WMUL"] = to_string(wmul); }
+    if (fft.shape.width * shufl_bytes_w * wmul >= 32768) { config["LDSPAD_W"] = to_string(0); }
   }
 
   string defines = toDefine(config);
