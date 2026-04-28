@@ -95,7 +95,7 @@ KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
 
   const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = word_index * combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   weight_shift = weight_shift % 31;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -152,7 +152,7 @@ KERNEL(G_W) fftP(P(GF61) out, CP(Word2) in, TrigGF61 smallTrig) {
 
   const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  combo_counter = word_index * combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   weight_shift = weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -215,7 +215,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
 
   const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = word_index * combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   weight_shift = weight_shift % 31;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -285,7 +285,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = word_index * combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   weight_shift = weight_shift % 31;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -355,7 +355,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  combo_counter = word_index * combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   weight_shift = weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -429,11 +429,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
 
   const u64 m31_combo_step = ((u64) m31_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 m31_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m31_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  m31_combo_counter = word_index * m31_combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  m31_combo_counter = mul3264(word_index, m31_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   m31_weight_shift = m31_weight_shift % 31;
   const u64 m61_combo_step = ((u64) m61_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 m61_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m61_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  m61_combo_counter = word_index * m61_combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  m61_combo_counter = mul3264(word_index, m61_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   m61_weight_shift = m61_weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -518,11 +518,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   const u64 m31_combo_step = ((u64) m31_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 m31_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m31_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  m31_combo_counter = word_index * m31_combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  m31_combo_counter = mul3264(word_index, m31_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   m31_weight_shift = m31_weight_shift % 31;
   const u64 m61_combo_step = ((u64) m61_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   const u64 m61_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m61_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  m61_combo_counter = word_index * m61_combo_step + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  m61_combo_counter = mul3264(word_index, m61_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
   m61_weight_shift = m61_weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {

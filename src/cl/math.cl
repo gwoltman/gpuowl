@@ -112,9 +112,8 @@ i128 OVERLOAD sub(i128 a, i64 b) { i128 val; val.x = a.x - (__int128)b; return v
 u128 OVERLOAD make_u128(u64 hi, u64 lo) { u128 val; val.x = ((unsigned __int128)hi << 64) | lo; return val; }
 u64 u128_lo64(u128 val) { return val.x; }
 u64 u128_hi64(u128 val) { return val.x >> 64; }
-u128 mul64(u64 a, u64 b) { u128 val; val.x = (unsigned __int128)a * (unsigned __int128)b; return val; }
 u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.x = a.x + b.x; return val; }
-#else           // UNTESTED!  The mul64 macro causes clang to hang!
+#else           // UNTESTED!
 typedef struct { i64 hi64; u64 lo64; } i128;
 typedef struct { u64 hi64; u64 lo64; } u128;
 i128 OVERLOAD make_i128(i64 hi, u64 lo) { i128 val; val.hi64 = hi; val.lo64 = lo; return val; }
@@ -130,7 +129,6 @@ i128 OVERLOAD sub(i128 a, i64 b) { i128 val; val.lo64 = a.lo64 - (u64)b; val.hi6
 u128 OVERLOAD make_u128(u64 hi, u64 lo) { u128 val; val.hi64 = hi; val.lo64 = lo; return val; }
 u64 u128_lo64(u128 val) { return val.lo64; }
 u64 u128_hi64(u128 val) { return val.hi64; }
-u128 mul64(u64 a, u64 b) { u128 val; val.lo64 = a * b; val.hi64 = mul_hi(a, b); return val; }
 u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.lo64 = a.lo64 + b.lo64; val.hi64 = a.hi64 + b.hi64 + (val.lo64 < a.lo64); return val; }
 #endif
 
@@ -260,6 +258,12 @@ i64 OVERLOAD optional_sub(i64 a, const i32 b, const i64 c) {
 
 // Multiply and add primitives
 
+u64 OVERLOAD mul3264(u32 a, u64 b) {            // Work around nVidia generating a slow mul.lo.s64 instruction for a * b
+  u32 blo = lo32(b);
+  u32 bhi = hi32(b);
+  return make_u64(mul_hi(a, blo) + a * bhi, a * blo);
+}
+
 u64 OVERLOAD mad32(u32 a, u32 b, u32 c) {
 #if HAS_PTX >= 200        // mad instruction requires sm_20 support or higher           // Same speed on TitanV, any gain may be too small to measure
   u32 reslo, reshi;
@@ -279,6 +283,33 @@ u64 OVERLOAD mad32(u32 a, u32 b, u64 c) {
   return as_ulong((uint2)(reslo, reshi));
 #else
   return (u64)a * (u64)b + c;
+#endif
+}
+
+u128 OVERLOAD mul64(u64 a, u64 b) {
+#if HAS_PTX >= 100                              // mul instruction requires sm_10 support or higher
+  u64 reslo, reshi;
+  __asm("mul.lo.u64    %0, %2, %3;\n\t"
+        "mul.hi.u64    %1, %2, %3;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b));
+  return make_u128(reshi, reslo);
+#elif ENABLE_ALT_MUL64 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher.  This is slower than the above.
+  uint2 a2 = as_uint2(a);
+  uint2 b2 = as_uint2(b);
+  uint2 rlo2, rhi2;
+  __asm("mul.lo.u32     %0, %4, %6;\n\t"
+	"mul.hi.u32     %1, %4, %6;\n\t"
+        "mul.lo.u32     %2, %5, %7;\n\t"
+	"mad.lo.cc.u32  %1, %5, %6, %1;\n\t"
+        "madc.hi.cc.u32 %2, %5, %6, %2;\n\t"
+        "madc.hi.u32    %3, %5, %7, 0;\n\t"
+	"mad.lo.cc.u32  %1, %4, %7, %1;\n\t"
+        "madc.hi.cc.u32 %2, %4, %7, %2;\n\t"
+        "addc.u32       %3, %3, 0;"
+        : "=r"(rlo2.x), "=r"(rlo2.y), "=r"(rhi2.x), "=r"(rhi2.y)
+        : "r"(a2.x), "r"(a2.y), "r"(b2.x), "r"(b2.y));
+  return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
+#else    // May cause clang to hang!
+  return make_u128(mul_hi(a, b), a * b);       // This generates a mul.lo.s64 PTX instruction which is much slower!
 #endif
 }
 
