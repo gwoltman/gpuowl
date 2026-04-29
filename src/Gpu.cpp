@@ -314,8 +314,15 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   {
     u32 shufl_bytes_w = args.value("SHUFL_BYTES_W", 8);
     u32 max_wmul = 32768 / (fft.shape.width * shufl_bytes_w);
-    if (wmul > max_wmul) { wmul = max_wmul; config["WMUL"] = to_string(wmul); }
-    if (fft.shape.width * shufl_bytes_w * wmul >= 32768) { config["LDSPAD_W"] = to_string(0); }
+    if (wmul > max_wmul) {
+      wmul = max_wmul;
+      config["WMUL"] = to_string(wmul);
+      log("Local shared memory limit of 32KB exceeded.  Changing to WMUL=%d\n", wmul);
+    }
+    if (fft.shape.width * shufl_bytes_w * wmul >= 32768) {
+      log("Local shared memory limit of 32KB exceeded.  Changing to LDSPAD_W=0\n");
+      config["LDSPAD_W"] = to_string(0);
+    }
   }
 
   string defines = toDefine(config);
