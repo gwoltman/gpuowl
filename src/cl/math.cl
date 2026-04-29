@@ -258,7 +258,7 @@ i64 OVERLOAD optional_sub(i64 a, const i32 b, const i64 c) {
 
 // Multiply and add primitives
 
-u64 OVERLOAD mul3264(u32 a, u64 b) {            // Work around nVidia generating a slow mul.lo.s64 instruction for a * b
+u64 OVERLOAD mul3264(u32 a, u64 b) {            // 3 32-bit multiplies (instead of 4 for a u64 * u64 multiply)
   u32 blo = lo32(b);
   u32 bhi = hi32(b);
   return make_u64(mul_hi(a, blo) + a * bhi, a * blo);
@@ -286,8 +286,11 @@ u64 OVERLOAD mad32(u32 a, u32 b, u64 c) {
 #endif
 }
 
+// Multiply to u64s creating a u128.  This inline mysteriously speeds up PRPLL by 2%.  Verified on RTX 3xxx through RTX 5xxx GPUs, both CUDA 12 and CUDA 13.
+// The generated PTX code is nearly identical with DISABLE_MUL64.  It must somehow trigger different/weird PTXAS optimization decisions.
+// Future CUDA releases may make this inline unnecessary.
 u128 OVERLOAD mul64(u64 a, u64 b) {
-#if HAS_PTX >= 100                              // mul instruction requires sm_10 support or higher
+#if !DISABLE_MUL64 && HAS_PTX >= 100            // mul instruction requires sm_10 support or higher
   u64 reslo, reshi;
   __asm("mul.lo.u64    %0, %2, %3;\n\t"
         "mul.hi.u64    %1, %2, %3;" : "=l"(reslo), "=l"(reshi) : "l"(a), "l"(b));
@@ -309,7 +312,7 @@ u128 OVERLOAD mul64(u64 a, u64 b) {
         : "r"(a2.x), "r"(a2.y), "r"(b2.x), "r"(b2.y));
   return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
 #else    // May cause clang to hang!
-  return make_u128(mul_hi(a, b), a * b);       // This generates a mul.lo.s64 PTX instruction which is much slower!
+  return make_u128(mul_hi(a, b), a * b);
 #endif
 }
 
