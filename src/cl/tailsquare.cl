@@ -584,17 +584,18 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 void OVERLOAD onePairSq(GF31* pa, GF31* pb, GF31 t_squared, const u32 t_squared_type) {
   GF31 a = *pa, b = *pb;
-  GF31 c, d;
+  GF31 b2t2, c, d;
 
   X2conjb(a, b);
-  if (t_squared_type == 0)                           // mul t_squared by 1
-    c = csq_sub(a, cmul(csq(b), t_squared));         // a^2 - (b^2 * t_squared)
-  if (t_squared_type == 1)                           // mul t_squared by i
-    c = csq_subi(a, cmul(csq(b), t_squared));        // a^2 - i*(b^2 * t_squared)
-  if (t_squared_type == 2)                           // mul t_squared by -1
-    c = csq_add(a, cmul(csq(b), t_squared));         // a^2 - -1*(b^2 * t_squared)
-  if (t_squared_type == 3)                           // mul t_squared by -i
-    c = csq_addi(a, cmul(csq(b), t_squared));        // a^2 - -i*(b^2 * t_squared)
+  b2t2 = cmul(csq(b), t_squared);     // b2t2 = b^2 * t_squared
+  if (t_squared_type == 0)            // mul t_squared by 1
+    c = csq_sub(a, b2t2);             // a^2 - (b^2 * t_squared)
+  if (t_squared_type == 1)            // mul t_squared by i
+    c = csq_subi(a, b2t2);            // a^2 - i*(b^2 * t_squared)
+  if (t_squared_type == 2)            // mul t_squared by -1
+    c = csq_add(a, b2t2);             // a^2 - -1*(b^2 * t_squared)
+  if (t_squared_type == 3)            // mul t_squared by -i
+    c = csq_addi(a, b2t2);            // a^2 - -i*(b^2 * t_squared)
   d = mul2(cmul(a, b));
   X2_conjb(c, d);
   *pa = SWAP_XY(c), *pb = SWAP_XY(d);
@@ -884,7 +885,7 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_
   b2 = csq(b, 4, 3);                            // b2 = b^2, b2 range is 0..1+
 
   ab = addq(a, b);				// Compute 2ab as (a + b)^2 - a^2 - b^2.  ab range is 1-..5+
-  addin = neg(addq(a2, b2), 4);                 // add this into the csq of a+b, addin in range 0..4
+  addin = neg(addq(a2, b2), 4);                 // add this into the csq of a+b, addin range is 0..4
   d = csqa(ab, addin, 6);                       // d = 2ab, range is 0..1+
 
   b2t2 = cmul(b2, t_squared);                   // b2t2 = b^2 * t_squared, b2t2 range is 0..1+
