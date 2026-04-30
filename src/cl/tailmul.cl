@@ -372,11 +372,13 @@ void OVERLOAD onePairMul(GF61* pa, GF61* pb, GF61* pc, GF61* pd, GF61 t_squared)
 
   X2conjb(a, b);
   X2conjb(c, d);
-  GF61 e = subq(cmul(a, c), cmul(cmul(b, d), t_squared));    // Range is -1-..1+
-  GF61 f = addq(cmul(b, c), cmul(a, d));                     // Range is 0..2+
-  X2q_conjb(&e, &f);                                         // e range is -1..3+,  f.x range is -3-..1+, f.y range is -1-..3+
-  e = modM61q(e, 2);
-  f = modM61q(f, 4, 2);
+  GF61 ac = cmul(a, c);
+  GF61 bd = cmul(b, d);
+  GF61 e = subq(ac, cmul(bd, t_squared));                    // Range is -1-..1+
+  GF61 f = subq(subq(cmul(add(a, b), add(c, d)), ac), bd);   // Compute bc + ad.  Range is -2-..1+
+  X2q_conjb(&e, &f);                                         // e range is -3..2+,  f.x range is -2-..3+, f.y range is -3-..2+
+  e = modM61q(e, 4);
+  f = modM61q(f, 3, 4);
   *pa = SWAP_XY(e), *pb = SWAP_XY(f);
 }
 
