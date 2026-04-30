@@ -339,6 +339,8 @@ private:
   void doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors);
   enum WHICH_KERNEL {CARRYFUSED=0, MIDIN=1, MIDIN31=2, MIDIN61=3, TAIL=4, TAIL31=5, TAIL61=6, MIDOUT=7, MIDOUT31=8, MIDOUT61=9};
   string numCudaRegisters(enum WHICH_KERNEL which_kernel);
+  enum WHICH_KERNEL_TYPE {KFP=0, K31=1, K61=2, KALL=3};
+  string kernelDefines(enum WHICH_KERNEL_TYPE which_kernel);
 };
 
 // Compute the size of an FFT/NTT data buffer depending on the FFT/NTT float/prime.  Size is returned in units of sizeof(double).

@@ -875,8 +875,8 @@ void OVERLOAD writeMiddleOutLine (P(T2) out, T2 *u, u32 y, u32 x)
 //#define SIZEM32   (MIDDLE * SIZEB + (1 - (MIDDLE & 1)) * 16)   // Pad 128 bytes if MIDDLE is even
 // Place middle rows after all width rows
 #define SIZEBLK32   (SMALL_HEIGHT + 0)                         // No pad needed when swizzling
-#define SIZEW32   (16 * SIZEBLK + 16)                          // Pad 128 bytes
-#define SIZEM32   (WIDTH / 16 * SIZEW + 16)                    // Pad 128 bytes
+#define SIZEW32   (16 * SIZEBLK32 + 16)                        // Pad 128 bytes
+#define SIZEM32   (WIDTH / 16 * SIZEW32 + 16)                  // Pad 128 bytes
 #define SWIZ32(a,m) ((m) ^ (a))                                // Swizzle 16 rows (remove "^ (a)" to turn swizzling off)
 #else                                                          // AMD friendly padding
 // Place middle rows after first 16 rows
@@ -885,8 +885,8 @@ void OVERLOAD writeMiddleOutLine (P(T2) out, T2 *u, u32 y, u32 x)
 //#define SIZEW32   (MIDDLE * SIZEM + (1 - (MIDDLE & 1)) * 16)   // Pad 128 bytes if MIDDLE is even
 // Place middle rows after all width rows
 #define SIZEBLK32 (SMALL_HEIGHT + 0)                           // No pad needed when swizzling
-#define SIZEW32   (16 * SIZEBLK + 16)                          // Pad 128 bytes
-#define SIZEM32   (WIDTH / 16 * SIZEW + 0)                     // Pad 0 bytes
+#define SIZEW32   (16 * SIZEBLK32 + 16)                        // Pad 128 bytes
+#define SIZEM32   (WIDTH / 16 * SIZEW32 + 0)                   // Pad 0 bytes
 #define SWIZ32(a,m) ((m) ^ (a))                                // Swizzle 16 rows (remove "^ (a)" to turn swizzling off)
 #endif
 
