@@ -140,24 +140,31 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
     if (height > width) {
       bpw = FFTShape{t, h, m, w}.bpw;
     } else {
-      // Make up some defaults
-
-      //double d = 0.275 * (log2(size()) - log2(256 * 13 * 1024 * 2));
-      //bpw = {18.1-d, 18.2-d, 18.2-d, 18.3-d};
-      //log("BPW info for %s not found, defaults={%.2f, %.2f, %.2f, %.2f}\n", s.c_str(), bpw[0], bpw[1], bpw[2], bpw[3]);
-
       // Manipulate the shape into something that was likely pre-computed
+      u32 orig_w = w;
+      u32 orig_m = m;
+      u32 orig_h = h;
       while (m < 9) { m *= 2; w /= 2; }
       while (w >= 4*h) { w /= 2; h *= 2; }
       while (w < h || w < 256 || w == 2048) { w *= 2; h /= 2; }
       while (h < 256) { h *= 2; m /= 2; }
       if (m == 1) m = 2;
-      bpw = FFTShape{t, w, m, h}.bpw;
-      for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] -= 0.05f;   // Assume this fft spec is worse than measured fft specs
-      if (this->isFavoredShape()) {  // Don't output this warning message for non-favored shapes (we expect the BPW info to be missing)
-        printf("BPW info for %s not found, defaults={", s.c_str());
-        for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) printf("%s%.2f", j ? ", " : "", (double) bpw[j]);
-        printf("}\n");
+
+      // Make up some defaults (should only happen for experimental FFT types (t >= 52)
+      if (w == orig_w && m == orig_m && h == orig_h) {
+        bpw = {18.1f, 18.1f, 18.1f, 18.1f, 18.1f, 18.1f};
+        log("ERROR: BPW info for %s not found, using default of 18.1.\n", s.c_str());
+      }
+
+      // Try the modified shape
+      else {
+        bpw = FFTShape{t, w, m, h}.bpw;
+        for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] -= 0.05f;   // Assume this fft spec is worse than measured fft specs
+        if (this->isFavoredShape()) {  // Don't output this warning message for non-favored shapes (we expect the BPW info to be missing)
+          printf("BPW info for %s not found, defaults={", s.c_str());
+          for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) printf("%s%.2f", j ? ", " : "", (double) bpw[j]);
+          printf("}\n");
+        }
       }
     }
   }
