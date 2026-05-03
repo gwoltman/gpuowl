@@ -918,30 +918,31 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_
   }
 #else
   X2conjb(a, b);                                // X2(a, conjugate(b))
-  a2 = csqq(a, 2);                              // a2 = a^2, a2.x range is 0..2+, a2.y range is 0..3+
+  a2 = csqq(a, 2);                              // a2 = a^2, a2.x range is 0..7+, a2.y range is 0..2+
+  a2.x = modM61(a2.x);                          // a2.x range is 0..1+, a2.y range is 0..2+
   b2t2 = cmul(csq(b), t_squared);               // b2t2 = b^2 * t_squared, b2t2 range is 0..1+
   d = cmul(a, b); d = d + d;                    // d = 2ab, d range is 0..2+
   if (t_squared_type == 0) {                    // mul t_squared by 1
     c = subq(a2, b2t2);                         // c.x range is -1..2+, c.y range is -1-..3+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is -1-..4+, c.y range is -1-..5+, d.x range is -3-.>
+    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is -1-..4+, c.y range is -1-..5+, d.x range is -3-..2+, d.y range is -3-..3+
     c = modM61q(c, 2);
     d = modM61q(d, 4);
   }
   if (t_squared_type == 1) {                    // mul t_squared by i
     c = subiq(a2, b2t2);                        // c.x range is 0..3+, c.y range is -1-..3+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is 0..5+, c.y range is -1..5+, d.x range is -2-..3+>
+    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is 0..5+, c.y range is -1..5+, d.x range is -2-..3+, d.y range is -3-..3+
     c = modM61q(c, 0, 2);
     d = modM61q(d, 4);
   }
   if (t_squared_type == 2) {                    // mul t_squared by -1
     c = addq(a2, b2t2);                         // c.x range is 0..3+, c.y range is 0..4+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is 0..5+, c.y range is 0..6+, d.x range is -2-..3+,>
+    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is 0..5+, c.y range is 0..6+, d.x range is -2-..3+, d.y range is -4-..2+
     c = modM61q(c, 0);
     d = modM61q(d, 3, 5);
   }
   if (t_squared_type == 3) {                    // mul t_squared by -i
     c = addiq(a2, b2t2);                        // c.x range is -1-..2+, c.y range is 0..4+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is -1-..4+, c.y range is 0..6+, d.x range is -3-..2>
+    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is -1-..4+, c.y range is 0..6+, d.x range is -3-..2+, d.y range is -4-..2+
     c = modM61q(c, 2, 0);
     d = modM61q(d, 4, 5);
   }

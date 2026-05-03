@@ -921,8 +921,8 @@ ulong2 wideMul(u64 ab, u64 cd) {
 
 // Returns a * b not modded by M61.  Max value of result depends on the m61_counts of the inputs.
 // Let n = (a_m61_count - 1) * (b_m61_count - 1).  This is the maximum value in the highest 6 bits of a * b.
-// If n <= 4 result will be at most (n+1)*M61+epsilon.
-// If n > 4 result will be at most 2*M61+epsilon.
+// If n <= 6 result will be at most (n+1)*M61+epsilon.
+// If n > 6 result will be at most 2*M61+epsilon.
 Z61 OVERLOAD weakMul(Z61 a, Z61 b, const u32 a_m61_count, const u32 b_m61_count) {
   ulong2 ab = wideMul(a, b);
   u64 lo = ab.x, hi = ab.y;
