@@ -68,10 +68,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(F2) in, u32 posROE, P(CarryABM) carryOut, Big
   float roundMax = 0;
   float carryMax = 0;
 
-  // Calculate the most significant 32-bits of FRAC_BPW * the index of the FFT word.  Also add FRAC_BPW_HI to test first biglit flag.
+  // Calculate the most significant 32-bits of FRAC_BPW * the index of the FFT word.
   u32 line = gy * CARRY_LEN;
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
-  u32 frac_bits = fracBits(word_index);
 
   F base = fancyMul(THREAD_WEIGHTS[me].x, iweightStep(gx));
   u32 me_frac_bits = fracBits(me * H * 2);
@@ -79,15 +78,18 @@ KERNEL(G_W) carry(P(Word2) out, CP(F2) in, u32 posROE, P(CarryABM) carryOut, Big
   u32 base_frac_bits = me_frac_bits + step_frac_bits;
   base = optionalDouble(base, base_frac_bits > step_frac_bits);
 
+  u32 frac_bits = fracBits(word_index);
+
   for (i32 i = 0; i < CARRY_LEN; ++i) {
     u32 p = G_W * gx + WIDTH * (line + i) + me;
-    u32 line_frac_bits = fracBits((line + i) * 2);
-    u32 w1_frac_bits = base_frac_bits + line_frac_bits;
-    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), w1_frac_bits > line_frac_bits);
-    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), w1_frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
-    bool biglit0 = frac_bits + (2*i) * FRAC_BPW_HI <= FRAC_BPW_HI;
-    bool biglit1 = frac_bits + (2*i) * FRAC_BPW_HI >= -FRAC_BPW_HI;   // Same as frac_bits + (2*i) * FRAC_BPW_HI + FRAC_BPW_HI <= FRAC_BPW_HI;
+    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
+    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+    frac_bits += FRAC_BPW_HI;
+    bool biglit0 = frac_bits <= FRAC_BPW_HI;
+    bool biglit1 = frac_bits >= -FRAC_BPW_HI;   // Same as frac_bits <= FRAC_BPW_HI;
     out[p] = weightAndCarryPair(SWAP_XY(in[p]), U2(w1, w2), carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
+    // Generate frac_bits for next pair
+    frac_bits += FRAC_BPW_HI;
   }
   carryOut[G_W * g + me] = carry;
 
@@ -379,10 +381,8 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     u32 p = G_W * gx + WIDTH * (line + i) + me;
 
     // Generate the FP32 and second GF31 weight shift
-    u32 line_frac_bits = fracBits((line + i) * 2);
-    u32 w1_frac_bits = base_frac_bits + line_frac_bits;
-    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), w1_frac_bits > line_frac_bits);
-    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), w1_frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
+    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -464,10 +464,8 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     u32 p = G_W * gx + WIDTH * (line + i) + me;
 
     // Generate the FP32 and second GF61 weight shift
-    u32 line_frac_bits = fracBits((line + i) * 2);
-    u32 w1_frac_bits = base_frac_bits + line_frac_bits;
-    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), w1_frac_bits > line_frac_bits);
-    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), w1_frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
+    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 61) weight_shift -= 61;
@@ -650,10 +648,8 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     u32 p = G_W * gx + WIDTH * (CARRY_LEN * gy + i) + me;
 
     // Generate the FP32 and second GF31 and GF61 weight shift
-    u32 line_frac_bits = fracBits((line + i) * 2);
-    u32 w1_frac_bits = base_frac_bits + line_frac_bits;
-    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), w1_frac_bits > line_frac_bits);
-    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), w1_frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+    F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
+    F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
     m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);

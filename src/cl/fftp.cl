@@ -48,18 +48,23 @@ KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_
 
   in += g * WIDTH;
 
+  u32 word_index = (me * BIG_HEIGHT + g) * 2;
+
   u32 me_frac_bits = fracBits(me * BIG_HEIGHT * 2);
   u32 line_frac_bits = fracBits(g * 2);
   u32 base_frac_bits = me_frac_bits + line_frac_bits;
   F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y), base_frac_bits > line_frac_bits);
 
+  u32 frac_bits = fracBits(word_index);
+  const u32 frac_bits_bigstep = fracBits(G_W * BIG_HEIGHT * 2);
+
   for (u32 i = 0; i < NW; ++i) {
-    u32 step_frac_bits = weightStepFracBits(i);
-    u32 w1_frac_bits = base_frac_bits + step_frac_bits;
-    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), base_frac_bits > step_frac_bits);
-    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), w1_frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 p = G_W * i + me;
     u[i] = U2(in[p].x * w1, in[p].y * w2);
+    // Generate frac_bits for next pair
+    frac_bits += frac_bits_bigstep;
   }
 
   fft_WIDTH(lds, u, smallTrig, 1, me);
