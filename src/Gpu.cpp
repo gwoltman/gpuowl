@@ -86,8 +86,6 @@ float invWeightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return expm1(M_LN2 * - (double)(extra(N, E, kAt(H, line, col) + rep)) / N);
 }
 
-float boundUnderOne(float x) { return std::min(x, nexttowardf(1, 0)); }
-
 Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
   u32 N = 2u * W * H;
   u32 groupWidth = W / nW;
@@ -131,9 +129,6 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
     for (u32 thread = 0; thread < groupWidth; ++thread) {
       auto iw = invWeight32(N, E, H, 0, thread, 0) ;
       auto w = weight32(N, E, H, 0, thread, 0) ;
-      // Play with the weight so that optionalDouble and optionalHalve work
-      iw = 2.0f * boundUnderOne(iw);
-      w = 2.0f * w;
       // Weights are scaled by 2^-24 and 2^48 so that multiplicaton by 1/epsilon does not generate infinty results (width and height variant 2).
       iw = iw * 281474976710656.0f;
       w = w * 0.000000059604644775390625f;
@@ -2131,7 +2126,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
         }
 
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
-          
+
         if (k >= kEndEnd) {
           fs::path proofFile = saveProof(args, proofSet);
           return {isPrime, finalRes64, nErrors, proofFile.string(), toHex(res2048)};
@@ -2150,9 +2145,9 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
         lastFailedRes64 = res;
         if (!doStop) { goto reload; }
       }
-        
+
       logTimeKernels();
-        
+
       if (doStop) {
         queue->finish();
         throw "stop requested";

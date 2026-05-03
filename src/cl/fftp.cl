@@ -48,11 +48,16 @@ KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_
 
   in += g * WIDTH;
 
-  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y));
+  u32 me_frac_bits = fracBits(me * BIG_HEIGHT * 2);
+  u32 line_frac_bits = fracBits(g * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y), base_frac_bits > line_frac_bits);
 
   for (u32 i = 0; i < NW; ++i) {
-    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP));
+    u32 step_frac_bits = weightStepFracBits(i);
+    u32 w1_frac_bits = base_frac_bits + step_frac_bits;
+    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), base_frac_bits > step_frac_bits);
+    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), w1_frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 p = G_W * i + me;
     u[i] = U2(in[p].x * w1, in[p].y * w2);
   }
@@ -93,9 +98,9 @@ KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
 #define weight_shift        combo.a[1]
 #define combo_counter       combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -150,9 +155,9 @@ KERNEL(G_W) fftP(P(GF61) out, CP(Word2) in, TrigGF61 smallTrig) {
 #define weight_shift	combo.a[1]
 #define combo_counter	combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -213,9 +218,9 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
 #define weight_shift        combo.a[1]
 #define combo_counter       combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -266,9 +271,12 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   in += g * WIDTH;
 
-  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y));
-
   u32 word_index = (me * BIG_HEIGHT + g) * 2;
+
+  u32 me_frac_bits = fracBits(me * BIG_HEIGHT * 2);
+  u32 line_frac_bits = fracBits(g * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y), base_frac_bits > line_frac_bits);
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 31.
@@ -283,16 +291,16 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 #define weight_shift        combo.a[1]
 #define combo_counter       combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
     // Generate the FP32 weights and the second GF31 weight shift
-    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP));
+    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -336,9 +344,12 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   in += g * WIDTH;
 
-  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y));
-
   u32 word_index = (me * BIG_HEIGHT + g) * 2;
+
+  u32 me_frac_bits = fracBits(me * BIG_HEIGHT * 2);
+  u32 line_frac_bits = fracBits(g * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y), base_frac_bits > line_frac_bits);
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 61.
@@ -353,16 +364,16 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 #define weight_shift        combo.a[1]
 #define combo_counter       combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
     // Generate the FP32 weights and the second GF61 weight shift
-    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP));
+    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 61) weight_shift -= 61;
@@ -427,13 +438,13 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
 #define m61_weight_shift    m61_combo.a[1]
 #define m61_combo_counter   m61_combo.b
 
-  const u64 m31_combo_step = ((u64) m31_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m31_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m31_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  m31_combo_counter = mul3264(word_index, m31_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m31_combo_step = make_u64(m31_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m31_combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m31_weight_shift = m31_weight_shift % 31;
-  const u64 m61_combo_step = ((u64) m61_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m61_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m61_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  m61_combo_counter = mul3264(word_index, m61_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m61_combo_step = make_u64(m61_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m61_combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m61_weight_shift = m61_weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {
@@ -493,9 +504,12 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   in += g * WIDTH;
 
-  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y));
-
   u32 word_index = (me * BIG_HEIGHT + g) * 2;
+
+  u32 me_frac_bits = fracBits(me * BIG_HEIGHT * 2);
+  u32 line_frac_bits = fracBits(g * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y), base_frac_bits > line_frac_bits);
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Weights can be applied with shifts because 2 is the 60th root GF61.
@@ -516,20 +530,20 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 #define m61_weight_shift    m61_combo.a[1]
 #define m61_combo_counter   m61_combo.b
 
-  const u64 m31_combo_step = ((u64) m31_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m31_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m31_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  m31_combo_counter = mul3264(word_index, m31_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m31_combo_step = make_u64(m31_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m31_combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m31_weight_shift = m31_weight_shift % 31;
-  const u64 m61_combo_step = ((u64) m61_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m61_combo_bigstep = ((G_W * BIG_HEIGHT * 2 - 1) * m61_combo_step + (((u64) (G_W * BIG_HEIGHT * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  m61_combo_counter = mul3264(word_index, m61_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m61_combo_step = make_u64(m61_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m61_combo_bigstep = (comboFracBits(G_W * BIG_HEIGHT * 2 - 1) + make_u64((G_W * BIG_HEIGHT * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m61_weight_shift = m61_weight_shift % 61;
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
     // Generate the FP32 weights and the second GF31 and GF61 weight shift
-    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP));
+    F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
     m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);

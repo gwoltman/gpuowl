@@ -162,8 +162,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 
   // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
   u32 word_index = (lowMe * H + line) * 2;
-  u32 frac_bits = mul3264(word_index, FRAC_BPW_HI) + mad_hi (word_index, FRAC_BPW_LO, FRAC_BPW_HI);
-  const u32 frac_bits_bigstep = ((G_W * H * 2) * FRAC_BPW_HI + (u32)(((u64)(G_W * H * 2) * FRAC_BPW_LO) >> 32));
+  u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
+  const u32 frac_bits_bigstep = fracBits(G_W * H * 2);
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
@@ -335,13 +335,24 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
+  u32 me_frac_bits = fracBits(lowMe * H * 2);
 #if !NVIDIAGPU || CUDA_BACKEND
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
+  u32 line_frac_bits = fracBits(line * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > line_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > line_frac_bits);
 #else
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), CONST_THREAD_WEIGHTS[line % 64]);
-  weights.x = optionalDouble(weights.x);
-  weights.y = optionalHalve(weights.y);
+  u32 partialLine_frac_bits = fracBits((line % 64) * 2);
+  u32 base_frac_bits = me_frac_bits + partialLine_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
+  partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
+  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
 
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;
@@ -352,16 +363,15 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 
   // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
   u32 word_index = (lowMe * H + line) * 2;
-  u32 frac_bits = mul3264(word_index, FRAC_BPW_HI) + mad_hi (word_index, FRAC_BPW_LO, FRAC_BPW_HI);
-  const u32 frac_bits_bigstep = ((G_W * H * 2) * FRAC_BPW_HI + (u32)(((u64)(G_W * H * 2) * FRAC_BPW_LO) >> 32));
+  u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
+  const u32 frac_bits_bigstep = fracBits(G_W * H * 2);
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = optionalDouble(weights.x);
-  
+  F invBase = weights.x;
   for (u32 i = 0; i < NW; ++i) {
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
-    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
+    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 
     // Generate big-word/little-word flags
     bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
@@ -410,14 +420,6 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 #if HAS_ASM
   __asm("s_setprio 0");
 #endif
-
-  // Calculate inverse weights
-  F base = optionalHalve(weights.y);
-  for (u32 i = 0; i < NW; ++i) {
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
-    u[i] = U2(weight1, weight2);
-  }
 
   // Shuffle carries up
   shufl_carries_up(lds, carry, me, lowMe);
@@ -470,10 +472,14 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   }
 
   // Apply each 32 or 64 bit carry to the 2 words
+  F base = weights.y;
   for (i32 i = 0; i < NW; ++i) {
+    // Calculate inverse weights
+    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     bool biglit0 = frac_bits + i * frac_bits_bigstep <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);
+    u[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
   }
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
@@ -547,9 +553,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
 #define weight_shift    combo.a[1]
 #define combo_counter   combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * H * 2 - 1) * combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
 
@@ -764,9 +770,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
 #define weight_shift    combo.a[1]
 #define combo_counter   combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * H * 2 - 1) * combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 61;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
 
@@ -994,9 +1000,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #define weight_shift    combo.a[1]
 #define combo_counter   combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * H * 2 - 1) * combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
 
@@ -1212,13 +1218,24 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
+  u32 me_frac_bits = fracBits(lowMe * H * 2);
 #if !NVIDIAGPU || CUDA_BACKEND
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
+  u32 line_frac_bits = fracBits(line * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > line_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > line_frac_bits);
 #else
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), CONST_THREAD_WEIGHTS[line % 64]);
-  weights.x = optionalDouble(weights.x);
-  weights.y = optionalHalve(weights.y);
+  u32 partialLine_frac_bits = fracBits((line % 64) * 2);
+  u32 base_frac_bits = me_frac_bits + partialLine_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
+  partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
+  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
 
   P(i32) carryShuttlePtr = (P(i32)) carryShuttle;
@@ -1242,9 +1259,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #define weight_shift    combo.a[1]
 #define combo_counter   combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * H * 2 - 1) * combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
 
@@ -1257,11 +1274,11 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = optionalDouble(weights.x);
+  F invBase = weights.x;
   for (u32 i = 0; i < NW; ++i) {
     // Generate the FP32 weights and second GF31 weight shift
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
-    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
+    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -1320,14 +1337,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 0");
 #endif
 
-  // Calculate inverse weights
-  F base = optionalHalve(weights.y);
-  for (u32 i = 0; i < NW; ++i) {
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
-    uF2[i] = U2(weight1, weight2);
-  }
-
   // Shuffle carries up
   shufl_carries_up(ldsF2, carry, me, lowMe);
 
@@ -1379,7 +1388,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
+  F base = weights.y;
   for (i32 i = 0; i < NW; ++i) {
+    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -1388,7 +1400,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    uF2[i] = U2(uF2[i].x * wu[i].x, uF2[i].y * wu[i].y);
+    uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
     u31[i] = U2(shl(make_Z31(wu[i].x), weight_shift0), shl(make_Z31(wu[i].y), weight_shift1));
 
     // Generate weight shifts and frac_bits for next pair
@@ -1460,13 +1472,24 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
+  u32 me_frac_bits = fracBits(lowMe * H * 2);
 #if !NVIDIAGPU || CUDA_BACKEND
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
+  u32 line_frac_bits = fracBits(line * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > line_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > line_frac_bits);
 #else
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), CONST_THREAD_WEIGHTS[line % 64]);
-  weights.x = optionalDouble(weights.x);
-  weights.y = optionalHalve(weights.y);
+  u32 partialLine_frac_bits = fracBits((line % 64) * 2);
+  u32 base_frac_bits = me_frac_bits + partialLine_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
+  partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
+  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
 
   P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
@@ -1490,9 +1513,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #define weight_shift    combo.a[1]
 #define combo_counter   combo.b
 
-  const u64 combo_step = ((u64) bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 combo_bigstep = ((G_W * H * 2 - 1) * combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  combo_counter = mul3264(word_index, combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 61;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
 
@@ -1505,11 +1528,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = optionalDouble(weights.x);
+  F invBase = weights.x;
   for (u32 i = 0; i < NW; ++i) {
     // Generate the FP32 weights and second GF61 weight shift
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
-    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
+    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 61) weight_shift -= 61;
@@ -1568,14 +1592,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 0");
 #endif
 
-  // Calculate inverse weights
-  F base = optionalHalve(weights.y);
-  for (u32 i = 0; i < NW; ++i) {
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
-    uF2[i] = U2(weight1, weight2);
-  }
-
   // Shuffle carries up
   shufl_carries_up(lds61, carry, me, lowMe);
 
@@ -1627,7 +1643,11 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
+  F base = weights.y;
   for (i32 i = 0; i < NW; ++i) {
+    // Calculate inverse weights
+    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -1636,7 +1656,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    uF2[i] = U2(uF2[i].x * wu[i].x, uF2[i].y * wu[i].y);
+    uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
     u61[i] = U2(shl(make_Z61(wu[i].x), weight_shift0), shl(make_Z61(wu[i].y), weight_shift1));
 
     // Generate weight shifts and frac_bits for next pair
@@ -1734,14 +1754,14 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #define m61_weight_shift    m61_combo.a[1]
 #define m61_combo_counter   m61_combo.b
 
-  const u64 m31_combo_step = ((u64) m31_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m31_combo_bigstep = ((G_W * H * 2 - 1) * m31_combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  m31_combo_counter = mul3264(word_index, m31_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m31_combo_step = make_u64(m31_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m31_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m31_weight_shift = m31_weight_shift % 31;
   u64 m31_starting_combo_counter = m31_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
-  const u64 m61_combo_step = ((u64) m61_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m61_combo_bigstep = ((G_W * H * 2 - 1) * m61_combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  m61_combo_counter = mul3264(word_index, m61_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m61_combo_step = make_u64(m61_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m61_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m61_weight_shift = m61_weight_shift % 61;
   u64 m61_starting_combo_counter = m61_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
 
@@ -1968,13 +1988,24 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
+  u32 me_frac_bits = fracBits(lowMe * H * 2);
 #if !NVIDIAGPU || CUDA_BACKEND
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
+  u32 line_frac_bits = fracBits(line * 2);
+  u32 base_frac_bits = me_frac_bits + line_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > line_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > line_frac_bits);
 #else
   F2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), CONST_THREAD_WEIGHTS[line % 64]);
-  weights.x = optionalDouble(weights.x);
-  weights.y = optionalHalve(weights.y);
+  u32 partialLine_frac_bits = fracBits((line % 64) * 2);
+  u32 base_frac_bits = me_frac_bits + partialLine_frac_bits;
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
+  partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
+  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
+  weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
 
   P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
@@ -2003,14 +2034,14 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #define m61_weight_shift    m61_combo.a[1]
 #define m61_combo_counter   m61_combo.b
 
-  const u64 m31_combo_step = ((u64) m31_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m31_combo_bigstep = ((G_W * H * 2 - 1) * m31_combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (31ULL << 32);
-  m31_combo_counter = mul3264(word_index, m31_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m31_combo_step = make_u64(m31_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m31_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m31_weight_shift = m31_weight_shift % 31;
   u64 m31_starting_combo_counter = m31_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
-  const u64 m61_combo_step = ((u64) m61_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  const u64 m61_combo_bigstep = ((G_W * H * 2 - 1) * m61_combo_step + (((u64) (G_W * H * 2 - 1) * FRAC_BPW_LO) >> 32)) % (61ULL << 32);
-  m61_combo_counter = mul3264(word_index, m61_combo_step) + mul_hi(word_index, FRAC_BPW_LO) + 0xFFFFFFFFULL;
+  const u64 m61_combo_step = make_u64(m61_bigword_weight_shift_minus1, FRAC_BPW_HI);
+  const u64 m61_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m61_weight_shift = m61_weight_shift % 61;
   u64 m61_starting_combo_counter = m61_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
 
@@ -2023,11 +2054,11 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = optionalDouble(weights.x);
+  F invBase = weights.x;
   for (u32 i = 0; i < NW; ++i) {
     // Generate the FP32 weights and second GF31 and GF61 weight shift
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
-    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
+    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
     m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
@@ -2093,14 +2124,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   __asm("s_setprio 0");
 #endif
 
-  // Calculate inverse weights
-  F base = optionalHalve(weights.y);
-  for (u32 i = 0; i < NW; ++i) {
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
-    uF2[i] = U2(weight1, weight2);
-  }
-
   // Shuffle carries up
   shufl_carries_up(lds61, carry, me, lowMe);
 
@@ -2152,7 +2175,11 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
+  F base = weights.y;
   for (i32 i = 0; i < NW; ++i) {
+    // Calculate inverse weights
+    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
@@ -2165,7 +2192,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    uF2[i] = U2(uF2[i].x * wu[i].x, uF2[i].y * wu[i].y);
+    uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
     u31[i] = U2(shl(make_Z31(wu[i].x), m31_weight_shift0), shl(make_Z31(wu[i].y), m31_weight_shift1));
     u61[i] = U2(shl(make_Z61(wu[i].x), m61_weight_shift0), shl(make_Z61(wu[i].y), m61_weight_shift1));
 

@@ -206,6 +206,7 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define BIG_HEIGHT (SMALL_HEIGHT * MIDDLE)
 #define ND (WIDTH * BIG_HEIGHT)
 #define NWORDS (ND * 2u)
+#define NWORDS_IS_POWER_OF_TWO  !(NWORDS & (NWORDS - 1))
 
 #if (NW != 4 && NW != 8) || (NH != 4 && NH != 8)
 #error NW and NH must be passed in, expected value 4 or 8.
