@@ -350,7 +350,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
   partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
-  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  base_frac_bits = base_frac_bits + partialLine_frac_bits;
   weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
@@ -1233,7 +1233,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
   partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
-  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  base_frac_bits = base_frac_bits + partialLine_frac_bits;
   weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
@@ -1487,7 +1487,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
   partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
-  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  base_frac_bits = base_frac_bits + partialLine_frac_bits;
   weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
@@ -2003,7 +2003,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
   partialLine_frac_bits = fracBits(((line / 64) * 64) * 2);
-  base_frac_bits = base_frac_bits + partialLine_frac_bits
+  base_frac_bits = base_frac_bits + partialLine_frac_bits;
   weights.x = optionalDouble(weights.x, base_frac_bits > partialLine_frac_bits);
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
