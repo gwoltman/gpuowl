@@ -110,11 +110,8 @@ KERNEL(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, Trig trig) {
 
   fft_MIDDLE(u);
 
-  // FFT results come out multiplied by the FFT length (NWORDS).  Also, for performance reasons
-  // weights and invweights are doubled meaning we need to divide by another 2^2 and 2^2.
-  // Finally, roundoff errors are sometimes improved if we use the next lower double precision
-  // number.  This may be due to roundoff errors introduced by applying inexact TWO_TO_N_8TH weights.
-  double factor = 1.0 / (4 * 4 * NWORDS);
+  // FFT results come out multiplied by the FFT length (NWORDS * 2).
+  const float factor = 1.0f / (NWORDS * 2);
 
   middleMul2(u, y, x, factor, trigF2);
 
@@ -351,11 +348,8 @@ KERNEL(256) fftMiddleOut(P(T2) out, P(T2) in, Trig trig) {
 
   fft_MIDDLE(u);
 
-  // FFT results come out multiplied by the FFT length (NWORDS).  Also, for performance reasons
-  // weights and invweights are doubled meaning we need to divide by another 2^2 and 2^2.
-  // Finally, roundoff errors are sometimes improved if we use the next lower double precision
-  // number.  This may be due to roundoff errors introduced by applying inexact TWO_TO_N_8TH weights.
-  double factor = 1.0 / (4 * 4 * NWORDS);
+  // FFT results come out multiplied by the FFT length (NWORDS * 2).
+  const float factor = 1.0f / (NWORDS * 2);
 
   middleMul2(u, y, x, factor, trigF2);
 

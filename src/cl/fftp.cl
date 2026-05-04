@@ -55,9 +55,9 @@ KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_
   u32 base_frac_bits = me_frac_bits + line_frac_bits;
   F base = optionalHalve(fancyMul(THREAD_WEIGHTS[me].y, THREAD_WEIGHTS[G_W + g].y), base_frac_bits > line_frac_bits);
 
-  u32 frac_bits = fracBits(word_index);
   const u32 frac_bits_bigstep = fracBits(G_W * BIG_HEIGHT * 2);
 
+  u32 frac_bits = base_frac_bits;
   for (u32 i = 0; i < NW; ++i) {
     F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
@@ -313,6 +313,7 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
     // Convert and weight input
     uF2[i] = U2(in[p].x * w1, in[p].y * w2);
     u31[i] = U2(shl(make_Z31(in[p].x), weight_shift0), shl(make_Z31(in[p].y), weight_shift1));      // Form a GF31 from each pair of input words
+
     // Generate weight shifts and frac_bits for next pair
     combo_counter += combo_bigstep;
     if (weight_shift > 31) weight_shift -= 31;

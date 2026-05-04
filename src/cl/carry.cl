@@ -80,13 +80,17 @@ KERNEL(G_W) carry(P(Word2) out, CP(F2) in, u32 posROE, P(CarryABM) carryOut, Big
 
   u32 frac_bits = fracBits(word_index);
 
+  // Base_frac_bits and frac_bits are inexact values.  We only want to trigger an optional double when it is clear to do so.
+  // Fudge base_frac_bits to make it harder to trigger a double when the two inexact values are equal.
+  base_frac_bits++;
+
   for (i32 i = 0; i < CARRY_LEN; ++i) {
     u32 p = G_W * gx + WIDTH * (line + i) + me;
     F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
     F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     frac_bits += FRAC_BPW_HI;
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
-    bool biglit1 = frac_bits >= -FRAC_BPW_HI;   // Same as frac_bits <= FRAC_BPW_HI;
+    bool biglit1 = frac_bits >= -FRAC_BPW_HI;   // Same as frac_bits + FRAC_BPW_HI <= FRAC_BPW_HI;
     out[p] = weightAndCarryPair(SWAP_XY(in[p]), U2(w1, w2), carry, biglit0, biglit1, &carry, &roundMax, &carryMax);
     // Generate frac_bits for next pair
     frac_bits += FRAC_BPW_HI;
