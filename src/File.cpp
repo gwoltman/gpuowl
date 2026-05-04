@@ -18,9 +18,11 @@ File::File(const std::filesystem::path& path, const string& mode, bool throwOnEr
 
   if (mode == "ab") {
     assert(f);
-#if HAS_SETLINEBUF
-    setlinebuf(f);
-#endif
+//#if HAS_SETLINEBUF
+//    setlinebuf(f);
+//#endif
+    // tdulcet's suggested portable replacement for the lines above
+    setvbuf(f, nullptr, _IOLBF, 0);
   }
 }
 
