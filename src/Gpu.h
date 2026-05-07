@@ -270,7 +270,7 @@ private:
   void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3 = false);
   void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, bool mul3 = false);
 
-  fs::path saveProof(const Args& args, const ProofSet& proofSet);
+  fs::path saveProof(const Args& args, ProofSet& proofSet);
   std::pair<RoeInfo, RoeInfo> readROE();
   RoeInfo readCarryStats();
 

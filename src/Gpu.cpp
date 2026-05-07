@@ -1705,21 +1705,27 @@ void Gpu::doDiv9(u64 E, Words& words) {
   doDiv3(E, words);
 }
 
-fs::path Gpu::saveProof(const Args& args, const ProofSet& proofSet) {
-  for (int retry = 0; retry < 2; ++retry) {
-    auto [proof, hashes] = proofSet.computeProof(this);
-    fs::path tmpFile = proof.file(args.proofToVerifyDir);
-    proof.save(tmpFile);
+fs::path Gpu::saveProof(const Args& args, ProofSet& proofSet) {
+  bool problem_proof = false;
+  for ( ; ; ) {
+    for (int retry = 0; retry == 0 || (retry == 1 && !problem_proof); ++retry) {
+      auto [proof, hashes] = proofSet.computeProof(this);
+      fs::path tmpFile = proof.file(args.proofToVerifyDir);
+      proof.save(tmpFile);
             
-    fs::path proofFile = proof.file(args.proofResultDir);
+      fs::path proofFile = proof.file(args.proofResultDir);
 
-    bool ok = Proof::load(tmpFile).verify(this, hashes);
-    log("Proof '%s' verification %s\n", tmpFile.string().c_str(), ok ? "OK" : "FAILED");
-    if (ok) {
-      fancyRename(tmpFile, proofFile);
-      log("Proof '%s' generated\n", proofFile.string().c_str());
-      return proofFile;
+      bool ok = Proof::load(tmpFile).verify(this, hashes);
+      log("Proof '%s' verification %s\n", tmpFile.string().c_str(), ok ? "OK" : "FAILED");
+      if (ok) {
+        fancyRename(tmpFile, proofFile);
+        log("Proof '%s' generated\n", proofFile.string().c_str());
+        return proofFile;
+      }
     }
+    problem_proof = true;
+    proofSet.reducePower();
+    if (proofSet.power < 4) break;
   }
   throw "bad proof generation";
 }

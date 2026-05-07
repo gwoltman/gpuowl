@@ -55,7 +55,7 @@ public:
 class ProofSet {
 public:
   const u64 E;
-  const u32 power;
+  u32 power;
   
 private:  
   vector<u64> points;  
@@ -86,5 +86,6 @@ public:
   void save(u64 k, const Words& words) const { return save(E, power, k, words); }
   Words load(u64 k) const { return load(E, power, k); }
 
+  void reducePower(void) { power--; }
   std::pair<Proof, vector<u64>> computeProof(Gpu *gpu) const;
 };
