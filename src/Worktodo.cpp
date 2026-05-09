@@ -109,14 +109,16 @@ static std::optional<Task> bestTask(const fs::path& fileName, bool smallest) {
 string workName(i32 instance) { return "worktodo-" + to_string(instance) + ".txt"; }
 
 optional<Task> getWork(Args& args, i32 instance) {
-  fs::path localWork = workName(instance);
+  string filename = workName(instance);           // Used for printf statements.  Using fd::path is problematic because it 8-bit char in Linux and 16-bit char in Windows.
+  fs::path localWork = filename;
 
   // Try to get a task from the local worktodo-<N> file.
   if (optional<Task> task = bestTask(localWork, args.smallest)) { return task; }
 
-  if (args.masterDir.empty()) { log("No work to do found.  Add work to %s.\n", localWork.c_str()); return {}; }
+  if (args.masterDir.empty()) { log("No work to do found.  Add work to %s.\n", filename.c_str()); return {}; }
 
-  fs::path worktodo = args.masterDir / "worktodo.txt";
+  filename = args.masterDir / "worktodo.txt";
+  fs::path worktodo = filename;
 
   /*
     We need to aquire a task from the global worktodo.txt, and "atomically"
@@ -156,7 +158,7 @@ optional<Task> getWork(Args& args, i32 instance) {
     if (!found) { return {}; }
   }
 
-  log("Could not extract a task from '%s'\n", worktodo.string().c_str());
+  log("Could not extract a task from '%s'\n", filename.c_str());
   // must be tough luck to be preempted twice while mutating the global worktodo
   assert(false);
   return {};
