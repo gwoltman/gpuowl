@@ -117,8 +117,8 @@ optional<Task> getWork(Args& args, i32 instance) {
 
   if (args.masterDir.empty()) { log("No work to do found.  Add work to %s.\n", filename.c_str()); return {}; }
 
-  filename = args.masterDir / "worktodo.txt";
-  fs::path worktodo = filename;
+  filename = "worktodo.txt";
+  fs::path worktodo = args.masterDir / filename;
 
   /*
     We need to aquire a task from the global worktodo.txt, and "atomically"
