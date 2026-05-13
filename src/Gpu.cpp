@@ -2235,7 +2235,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
 
     float secsPerIt = iterationTimer.reset(k);
     queue->setSquareTime((int) (secsPerIt * 1'000'000));
-    log("%9" PRIu64 " %016" PRIx64 " %4.0f\n", k, res64, secsPerIt * 1'000'000);
+    log("%9" PRIu64 " %016" PRIx64 " %4.0f ETA %s\n", k, res64, secsPerIt * 1'000'000, getETA(k, kEnd, secsPerIt).c_str());
 
     if (k >= kEnd) { return {isAllZero, res64}; }
 
