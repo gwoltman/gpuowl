@@ -522,6 +522,17 @@ string toHex(const vector<u32>& v) {
   return s;
 }
 
+string formatSecsPerIter(float secsPerIter) {
+  char buf[64];
+  float usecsPerIter = secsPerIter * 1.0e6f;    // Convert to micro-seconds
+  if (usecsPerIter > 1000.0f) {
+    snprintf(buf, sizeof(buf), "%4.0f", usecsPerIter);
+  } else {
+    snprintf(buf, sizeof(buf), "%6.1f", usecsPerIter);
+  }
+  return string(buf);  
+}
+
 } // namespace
 
 // --------
@@ -1315,7 +1326,7 @@ Words Gpu::expExp2(const Words& A, u32 n) {
     queue->finish();
     if (k % logStep == 0) {
       float secsPerIt = timer.reset(k);
-      log("%u / %u, %.0f us/it\n", k, n, secsPerIt * 1'000'000);
+      log("%u / %u, %s us/it\n", k, n, formatSecsPerIter(secsPerIt).c_str());
     }
   }
   return readData();
@@ -1556,9 +1567,9 @@ string RoeInfo::toString() const {
 static string makeLogStr(const string& status, u64 k, u64 res, float secsPerIt, u64 nIters) {
   char buf[256];
   
-  snprintf(buf, sizeof(buf), "%2s %9" PRIu64 " %016" PRIx64 " %4.0f ETA %s; ",
+  snprintf(buf, sizeof(buf), "%2s %9" PRIu64 " %016" PRIx64 " %s ETA %s; ",
            status.c_str(), k, res, /* k / float(nIters) * 100, */
-           secsPerIt * 1'000'000, getETA(k, nIters, secsPerIt).c_str());
+           formatSecsPerIter(secsPerIt).c_str(), getETA(k, nIters, secsPerIt).c_str());
   return buf;
 }
 
@@ -2109,7 +2120,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
                                     elapsedBefore + elapsedTimer.at()});
       });
 
-      log("   %9" PRIu64 " %016" PRIx64 " %4.0f\n", k, res, /*k / float(kEndEnd) * 100*,*/ secsPerIt * 1'000'000);
+      log("   %9" PRIu64 " %016" PRIx64 " %s\n", k, res, formatSecsPerIter(secsPerIt).c_str());
       RoeInfo carryStats = readCarryStats();
       if (carryStats.N) {
         u32 m = ldexp(carryStats.max, 32);
@@ -2235,7 +2246,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
 
     float secsPerIt = iterationTimer.reset(k);
     queue->setSquareTime((int) (secsPerIt * 1'000'000));
-    log("%9" PRIu64 " %016" PRIx64 " %4.0f ETA %s\n", k, res64, secsPerIt * 1'000'000, getETA(k, kEnd, secsPerIt).c_str());
+    log("%9" PRIu64 " %016" PRIx64 " %s ETA %s\n", k, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
 
     if (k >= kEnd) { return {isAllZero, res64}; }
 
@@ -2295,7 +2306,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
     float secsPerIt = iterationTimer.reset(k);
     queue->setSquareTime((int) (secsPerIt * 1'000'000));
-    log("%7u / %7u %016" PRIx64 " %4.0f ETA %s\n", k, kEnd, res64, secsPerIt * 1'000'000, getETA(k, kEnd, secsPerIt).c_str());
+    log("%7u / %7u %016" PRIx64 " %s ETA %s\n", k, kEnd, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
 
     if (k >= kEnd) {
       fs::remove (fname);
