@@ -1123,6 +1123,7 @@ static bool isAllZero(vector<T> v) { return std::all_of(v.begin(), v.end(), [](T
 // Read from GPU, verifying the transfer with a sum, and retry on failure.
 vector<Word> Gpu::readChecked(Buffer<Word>& buf) {
   for (int nRetry = 0; nRetry < 3; ++nRetry) {
+    bufSumOut.zero();
     sum64(bufSumOut, u32(buf.size * sizeof(Word)), buf);
 
     vector<u64> expectedVect(1);

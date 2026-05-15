@@ -35,9 +35,10 @@ private:
     , tInfo{tInfo}
   {}
 
-  void fill(T value, u32 len) {
-    assert(len <= size);
-    queue->fillBuf(get(), value, (len ? len : size) * sizeof(T), tInfo);
+  void fill(T value, u32 sizeOrFull = 0) {
+    assert(sizeOrFull <= size);
+    auto fillSize = sizeOrFull ? sizeOrFull : size;
+    queue->fillBuf(get(), value, fillSize * sizeof(T), tInfo);
   }
 
 public:
@@ -84,8 +85,8 @@ public:
 
   void write(const vector<T>& vect) { queue->write(get(), vect, tInfo); }
 
-  void zero(size_t len = 0) {
-    fill(0, len);
+  void zero(size_t sizeOrFull = 0) {
+    fill(0, sizeOrFull);
   }
 
   void set(T value) {
