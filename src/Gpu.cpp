@@ -537,8 +537,8 @@ string formatSecsPerIter(float secsPerIter) {
 
 // --------
 
-unique_ptr<Gpu> Gpu::make(Queue* q, u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize) {
-  return make_unique<Gpu>(q, shared, fftConfig, E, extraConf, logFftSize);
+unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize) {
+  return make_unique<Gpu>(shared, fftConfig, E, extraConf, logFftSize);
 }
 
 Gpu::~Gpu() {
@@ -733,8 +733,8 @@ string Gpu::kernelDefines(enum WHICH_KERNEL_TYPE which_kernel) {
 #define ROE_SIZE 100000
 #define CARRY_SIZE 100000
 
-Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
-  queue(q),
+Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
+  shared(s),
   background{shared.background},
   args{*shared.args},
   E(E),
@@ -747,9 +747,10 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   nW(fft.shape.nW()),
   nH(fft.shape.nH()),
   useLongCarry{args.carry == CARRY_64},
-  compiler{args, queue->context, clDefines(args, queue->context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
+  queue{*shared.context, args.profile},
+  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
 
-#define K(name, ...) name(#name, &compiler, profile.make(#name), queue, __VA_ARGS__)
+#define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
   K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), (kernelDefines(KFP) + numCudaRegisters(MIDIN)).c_str()),
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP).c_str()),
@@ -827,11 +828,11 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
   bufTrigM{shared.bufCache->middleTrig(shared.args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
   bufTrigW{shared.bufCache->smallTrig(shared.args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
 
-  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(q->context->deviceId()))},
-  bufConstWeights{q->context, std::move(weights.weightsConstIF)},
-  bufWeights{q->context,      std::move(weights.weightsIF)},
+  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(shared.context->deviceId()))},
+  bufConstWeights{shared.context, std::move(weights.weightsConstIF)},
+  bufWeights{shared.context,      std::move(weights.weightsIF)},
 
-#define BUF(name, ...) name{profile.make(#name), queue, __VA_ARGS__}
+#define BUF(name, ...) name{profile.make(#name), &queue, __VA_ARGS__}
 
   // GPU Buffers containing integer data.  Since this buffer is type i64, if fft.WordSize < 8 then we need less memory allocated.
   BUF(bufData, N * fft.WordSize / sizeof(Word)),
@@ -944,8 +945,8 @@ Gpu::Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>&
     selftestTrig();
   }
 
-  queue->setSquareKernels(1 + 3 * (fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61));
-  queue->finish();
+  queue.setSquareKernels(1 + 3 * (fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61));
+  queue.finish();
 }
 
 
@@ -1039,7 +1040,7 @@ void Gpu::carryFusedLL(Buffer<double>& out, Buffer<double>& in) {
 void Gpu::measureTransferSpeed() {
   u32 SIZE_MB = 16;
   vector<double> data(SIZE_MB * 1024 * 1024, 1);
-  Buffer<double> buf{profile.make("DMA"), queue, SIZE};
+  Buffer<double> buf{profile.make("DMA"), &queue, SIZE};
 
   Timer t;
   for (int i = 0; i < 4; ++i) {
@@ -1049,11 +1050,11 @@ void Gpu::measureTransferSpeed() {
 
   for (int i = 0; i < 4; ++i) {
     buf.read(data);
-    // queue->finish();
+    // queue.finish();
     log("buffer READ : %f GB/s\n", double(SIZE / 1024 / 1024) * sizeof(double) / (1024 * t.reset()));
   }
 
-  queue->finish();
+  queue.finish();
 }
 #endif
 
@@ -1063,7 +1064,7 @@ u32 Gpu::updateCarryPos(u32 bit) {
 
 vector<Buffer<Word>> Gpu::makeBufVector(u32 size) {
   vector<Buffer<Word>> r;
-  for (u32 i = 0; i < size; ++i) { r.emplace_back(timeBufVect, queue, N); }
+  for (u32 i = 0; i < size; ++i) { r.emplace_back(timeBufVect, &queue, N); }
   return r;
 }
 
@@ -1323,7 +1324,7 @@ Words Gpu::expExp2(const Words& A, u32 n) {
     u32 its = std::min(blockSize, n - k);
     squareLoop(bufData, 0, its);
     k += its;
-    queue->finish();
+    queue.finish();
     if (k % logStep == 0) {
       float secsPerIt = timer.reset(k);
       log("%u / %u, %s us/it\n", k, n, formatSecsPerIter(secsPerIt).c_str());
@@ -1661,7 +1662,7 @@ void Gpu::selftestTrig() {
   log("TRIG norm: up %d, down %d\n", oneUp, oneDown);
 #endif
 
-  if (isAmdGpu(queue->context->deviceId())) {
+  if (isAmdGpu(shared.context->deviceId())) {
     vector<string> WHATS {"V_NOP", "V_ADD_I32", "V_FMA_F32", "V_ADD_F64", "V_FMA_F64", "V_MUL_F64", "V_MAD_U64_U32"};
     for (int w = 0; w < int(WHATS.size()); ++w) {
       const int what = w;
@@ -1957,11 +1958,11 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
     leadIn = leadOut;
     ++k;
   }
-  queue->finish();
+  queue.finish();
   if (Signal::stopRequested()) { throw "stop requested"; }
 
   Timer t;
-  queue->setSquareTime(0);     // Busy wait on nVidia to get the most accurate timings while tuning
+  queue.setSquareTime(0);     // Busy wait on nVidia to get the most accurate timings while tuning
   while (true) {
     while (k % blockSize < blockSize-1) {
       square(bufData, bufData, leadIn, leadOut);
@@ -1978,7 +1979,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
     leadIn = LEAD_MIDDLE;
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
-  queue->finish();
+  queue.finish();
   double secsPerIt = t.reset() / (iters - warmup);
 
   if (Signal::stopRequested()) { throw "stop requested"; }
@@ -2104,7 +2105,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
     u64 res = dataResidue();
     float secsPerIt = iterationTimer.reset(k);
-    queue->setSquareTime((int) (secsPerIt * 1'000'000));
+    queue.setSquareTime((int) (secsPerIt * 1'000'000));
 
     vector<Word> rawCheck = readChecked(bufCheck);
     if (rawCheck.empty()) {
@@ -2166,7 +2167,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
       logTimeKernels();
 
       if (doStop) {
-        queue->finish();
+        queue.finish();
         throw "stop requested";
       }
 
@@ -2245,7 +2246,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
     }
 
     float secsPerIt = iterationTimer.reset(k);
-    queue->setSquareTime((int) (secsPerIt * 1'000'000));
+    queue.setSquareTime((int) (secsPerIt * 1'000'000));
     log("%9" PRIu64 " %016" PRIx64 " %s ETA %s\n", k, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
 
     if (k >= kEnd) { return {isAllZero, res64}; }
@@ -2305,7 +2306,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
     u64 res64 = (u64(data[1]) << 32) | data[0];
 
     float secsPerIt = iterationTimer.reset(k);
-    queue->setSquareTime((int) (secsPerIt * 1'000'000));
+    queue.setSquareTime((int) (secsPerIt * 1'000'000));
     log("%7u / %7u %016" PRIx64 " %s ETA %s\n", k, kEnd, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
 
     if (k >= kEnd) {

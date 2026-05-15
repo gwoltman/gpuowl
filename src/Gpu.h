@@ -83,7 +83,7 @@ struct Weights {
 };
 
 class Gpu {
-  Queue* queue;
+  GpuCommon shared;
   Background* background;
 
 public:
@@ -106,6 +106,7 @@ private:
 
   Profile profile{};
 
+  Queue queue;
   KernelCompiler compiler;
 
   /* Kernels for FFT_FP64 or FFT_FP32 */
@@ -287,9 +288,8 @@ private:
   void selftestTrig();
 
 public:
-  Gpu(Queue* q, GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize);
-  static unique_ptr<Gpu> make(Queue* q, u64 E, GpuCommon shared, FFTConfig fft,
-                              const vector<KeyVal>& extraConf = {}, bool logFftSize = true);
+  Gpu(GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize);
+  static unique_ptr<Gpu> make(u64 E, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& extraConf = {}, bool logFftSize = true);
 
   ~Gpu();
 

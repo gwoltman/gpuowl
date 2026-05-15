@@ -20,7 +20,7 @@
 #include <thread>
 // #include <format> from GCC-13 onwards
 
-void gpuWorker(GpuCommon shared, Queue *q, i32 instance) {
+void gpuWorker(GpuCommon shared, i32 instance) {
   // LogContext context{(instance ? shared.args->tailDir() : ""s) + to_string(instance) + ' '};
   // log("Starting worker %d\n", instance);
   if (instance > 0) {
@@ -29,7 +29,7 @@ void gpuWorker(GpuCommon shared, Queue *q, i32 instance) {
   }
 
   try {
-    while (auto task = Worktodo::getTask(*shared.args, instance)) { task->execute(shared, q, instance); }
+    while (auto task = Worktodo::getTask(*shared.args, instance)) { task->execute(shared, instance); }
   } catch (const char *mes) {
     log("Exception \"%s\"\n", mes);
   } catch (const string& mes) {
@@ -97,14 +97,14 @@ int main(int argc, char **argv) {
     Signal signal;
     Background background;
     GpuCommon shared;
+    shared.context = &context;
     shared.args = &args;
     TrigBufCache bufCache{&context};
     shared.bufCache = &bufCache;
     shared.background = &background;
 
     if (args.doCtune || args.doTune || args.doZtune || args.carryTune) {
-      Queue q(context, args.profile);
-      Tune tune{&q, shared};
+      Tune tune{shared};
 
       if (args.doCtune) {
         tune.ctune();
@@ -117,13 +117,11 @@ int main(int argc, char **argv) {
       }
     } else {
       {
-        vector<Queue> queues;
-        for (int i = 0; i < int(args.workers); ++i) { queues.emplace_back(context, args.profile); }
         vector<jthread> threads;
         for (int i = 1; i < int(args.workers); ++i) {
-          threads.emplace_back(gpuWorker, shared, &queues[i], i);
+          threads.emplace_back(gpuWorker, shared, i);
         }
-        gpuWorker(shared, &queues[0], 0);
+        gpuWorker(shared, 0);
       }
 
       // log("No more work. Add work to worktodo.txt , see -h for details.\n");

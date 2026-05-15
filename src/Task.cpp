@@ -209,7 +209,7 @@ void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array 
   File::append(resultsFile, s + '\n');
 }
 
-void Task::execute(GpuCommon shared, Queue *q, u32 instance) {
+void Task::execute(GpuCommon shared, u32 instance) {
   if (kind == VERIFY) { exponent = proof::getInfo(verifyPath).exp; }
 
   assert(exponent);
@@ -232,7 +232,7 @@ void Task::execute(GpuCommon shared, Queue *q, u32 instance) {
 
   FFTConfig fft = FFTConfig::bestFit(*shared.args, exponent, shared.args->fftSpec);
 
-  auto gpu = Gpu::make(q, exponent, shared, fft);
+  auto gpu = Gpu::make(exponent, shared, fft);
 
   if (kind == VERIFY) {
     Proof proof{Proof::load(verifyPath)};
