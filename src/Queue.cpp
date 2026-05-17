@@ -17,9 +17,10 @@ void Events::synced() {
   assert(empty());
 }
 
-Queue::Queue(const Context& context, bool profile) :
+Queue::Queue(const Context& context, bool profile, bool auxQueue) :
   QueueHolder{makeQueue(context.deviceId(), context.get(), profile)},
   hasEvents{profile},
+  isAuxQueue(auxQueue),
   context{&context},
   markerEvent{},
   markerQueued(false),
@@ -55,6 +56,7 @@ void Queue::print() {
 
 void Queue::add(EventHolder&& e, TimeInfo* ti) {
   if (hasEvents) { events.emplace_back(std::move(e), ti); }
+  if (isAuxQueue) return;
   queueCount++;
   if (queueCount == MAX_QUEUE_COUNT) queueMarkerEvent();
 }
@@ -77,6 +79,7 @@ void Queue::run(cl_kernel kernel, size_t groupSize, size_t workSize, TimeInfo* t
 }
 
 void Queue::finish() {
+  assert (!isAuxQueue);
   waitForMarkerEvent();
   ::finish(get());
   events.synced();
@@ -84,6 +87,7 @@ void Queue::finish() {
 }
 
 void Queue::queueMarkerEvent() {
+  assert (!isAuxQueue);
   waitForMarkerEvent();
   if (queueCount) {
     // AMD GPUs have no trouble waiting for a finish without a CPU busy wait.  So, instead of markers and events, simply run finish every now and then.
@@ -100,6 +104,7 @@ void Queue::queueMarkerEvent() {
 }
 
 void Queue::waitForMarkerEvent() {
+  assert (!isAuxQueue);
   if (!markerQueued) return;
   // By default, nVidia finish causes a CPU busy wait.  Instead, sleep for a while.  Since we know how many items are enqueued after the marker we can make an
   // educated guess of how long to sleep to keep CPU overhead low.
@@ -111,6 +116,7 @@ void Queue::waitForMarkerEvent() {
 }
 
 void Queue::setSquareTime(int time) {
+  assert (!isAuxQueue);
   if (firstSetTime) {                 // Ignore first setSquareTime call.  First measured times are wrong because of startup costs
     firstSetTime = false;
     return;

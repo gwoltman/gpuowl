@@ -345,7 +345,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   defines += toDefine("FFT_VARIANT", fft.variant);
   defines += toDefine("MAXBPW", (u32)(fft.maxBpw() * 100.0f));
 
-  if (fft.FFT_FP64 | fft.FFT_FP32) {
+  if (fft.FFT_FP64 || fft.FFT_FP32) {
     defines += toDefine("WEIGHT_STEP", weightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
     defines += toDefine("IWEIGHT_STEP", invWeightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
     if (fft.FFT_FP64) defines += toDefine("TAILT", root1Fancy(fft.shape.height * 2, 1));
@@ -748,6 +748,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   nH(fft.shape.nH()),
   useLongCarry{args.carry == CARRY_64},
   queue{*shared.context, args.profile},
+  auxQueues{},    
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
@@ -945,10 +946,127 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     selftestTrig();
   }
 
-  queue.setSquareKernels(1 + 3 * (fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61));
+  // If MULTI_Q option is set there are fewer kernels executed in the main queue, but there are some additional syncEvents and waits.
+  // That's a total of 4 kernels (carryFused, MidIn/Out, TailSquare) plus 1 syncEvent plus 1 or more syncWaits.
+  // If MULTI_Q option is not set there is carryFused + MidIn/Out and TailSquare for each NTT modulus.
+  // NOTE: We dont take into account the optional tailSquareZero kernel.  We theoretically should.
+  if (args.value("MULTI_Q", 0))
+    queue.setSquareKernels(5 + ((fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61) - 1));
+  else
+    queue.setSquareKernels(1 + 3 * (fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61));
   queue.finish();
 }
 
+// Optionallly split some of the MiddleIn/Tail/MiddleOut kernels off od executing on the main queue to run on an auxiliary queue.
+// This will increase GPU occupancy but will negatively impact L2 cache coherency.
+// If the L2 cache is large enough so that all FFT data fits in the cache, this ought to be a win.
+// If the L2 cache is small enough such that L2 cache hits are very low anyway, this might be a win.
+
+void Gpu::splitQueue(void) {
+
+  // If MULTI_Q -use not set, return
+  if (!args.value("MULTI_Q", 0)) return;
+
+  // Create aux queues.  For now, we only have one auxiliary queue.  We could do more.
+  if (auxQueues.size() == 0) {
+    auxQueues.push_back(Queue{*shared.context, args.profile, true});
+  }
+
+  // Queue a sync event in the main queue.  Have all auxiliary queues wait on the event.
+  EventHolder event = queue.createSyncEvent();
+  for (size_t i = 0; i < auxQueues.size(); ++i) {
+    auxQueues[i].waitForSyncEvent(&event);
+  }
+
+  // Assign kernels to running on the main queue or an auxiliary queue
+
+  int which_queue = -1;
+
+  // For no particularly good reason, put a kernel that operates on 64-bit vaules in the main queue.
+  if (fft.NTT_GF61) {
+    if (which_queue != -1) {
+      kfftWGF61.setQueue(&auxQueues[which_queue]);
+      kfftMidInGF61.setQueue(&auxQueues[which_queue]);
+      kfftMidOutGF61.setQueue(&auxQueues[which_queue]);
+      ktailSquareZeroGF61.setQueue(&auxQueues[which_queue]);
+      ktailSquareGF61.setQueue(&auxQueues[which_queue]);
+      ktailMulGF61.setQueue(&auxQueues[which_queue]);
+      ktailMulLowGF61.setQueue(&auxQueues[which_queue]);
+    }
+    which_queue++;
+  }
+
+  if (fft.FFT_FP64 || fft.FFT_FP32) {
+    if (which_queue != -1) {
+      kfftW.setQueue(&auxQueues[which_queue]);
+      kfftMidIn.setQueue(&auxQueues[which_queue]);
+      kfftMidOut.setQueue(&auxQueues[which_queue]);
+      ktailSquareZero.setQueue(&auxQueues[which_queue]);
+      ktailSquare.setQueue(&auxQueues[which_queue]);
+      ktailMul.setQueue(&auxQueues[which_queue]);
+      ktailMulLow.setQueue(&auxQueues[which_queue]);
+    }
+    // For no particularly good reason, put kernels that operate on 32-bit value in the same queue unless there are no kernels operating on 64-bit values
+    if (fft.FFT_FP64 || (fft.FFT_FP32 && which_queue == -1)) {
+      which_queue++;
+    }
+  }
+
+  if (fft.NTT_GF31) {
+    if (which_queue != -1) {
+      kfftWGF31.setQueue(&auxQueues[which_queue]);
+      kfftMidInGF31.setQueue(&auxQueues[which_queue]);
+      kfftMidOutGF31.setQueue(&auxQueues[which_queue]);
+      ktailSquareZeroGF31.setQueue(&auxQueues[which_queue]);
+      ktailSquareGF31.setQueue(&auxQueues[which_queue]);
+      ktailMulGF31.setQueue(&auxQueues[which_queue]);
+      ktailMulLowGF31.setQueue(&auxQueues[which_queue]);
+    }
+    //which_queue++;
+  }
+}
+
+void Gpu::mergeQueue(void) {
+
+  // If MULTI_Q -use not set, return
+  if (!args.value("MULTI_Q", 0)) return;
+
+  // Queue a sync event in each auxiliary queue(s).  Wait on the event(s) in the main queue.
+  for (size_t i = 0; i < auxQueues.size(); ++i) {
+    EventHolder event = auxQueues[i].createSyncEvent();
+    queue.waitForSyncEvent(&event);
+  }
+
+  // Return kernels to running on the main queue
+  // NOTE: I believe there is no need to switch queues back and forth between the main and auxiliary queues.  No one currently uses the cache_group == 0 option.
+  if (fft.NTT_GF61) {
+    kfftWGF61.setQueue(&queue);
+    kfftMidInGF61.setQueue(&queue);
+    kfftMidOutGF61.setQueue(&queue);
+    ktailSquareZeroGF61.setQueue(&queue);
+    ktailSquareGF61.setQueue(&queue);
+    ktailMulGF61.setQueue(&queue);
+    ktailMulLowGF61.setQueue(&queue);
+  }
+  if (fft.FFT_FP64 || fft.FFT_FP32) {
+    kfftW.setQueue(&queue);
+    kfftMidIn.setQueue(&queue);
+    kfftMidOut.setQueue(&queue);
+    ktailSquareZero.setQueue(&queue);
+    ktailSquare.setQueue(&queue);
+    ktailMul.setQueue(&queue);
+    ktailMulLow.setQueue(&queue);
+  }
+  if (fft.NTT_GF31) {
+    kfftWGF31.setQueue(&queue);
+    kfftMidInGF31.setQueue(&queue);
+    kfftMidOutGF31.setQueue(&queue);
+    ktailSquareZeroGF31.setQueue(&queue);
+    ktailSquareGF31.setQueue(&queue);
+    ktailMulGF31.setQueue(&queue);
+    ktailMulLowGF31.setQueue(&queue);
+  }
+}
 
 // Call the appropriate kernels to support hybrid FFTs and NTTs
 
@@ -1162,21 +1280,25 @@ vector<u32> Gpu::readData() { return readAndCompress(bufData); }
 void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, Buffer<double>& tmp2, bool mul3) {
   if (!in_place) {
     fftP(tmp2, ioA);
+    splitQueue();
     for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
       fftMidIn(tmp1, tmp2, cache_group);
       tailMul(tmp2, inB, tmp1, cache_group);
       fftMidOut(tmp1, tmp2, cache_group);
       fftW(tmp2, tmp1, cache_group);
     }
+    mergeQueue();
   }
   else {
     fftP(tmp1, ioA);
+    splitQueue();
     for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
       fftMidIn(tmp1, tmp1, cache_group);
       tailMul(tmp1, inB, tmp1, cache_group);
       fftMidOut(tmp1, tmp1, cache_group);
       fftW(tmp2, tmp1, cache_group);
     }
+    mergeQueue();
   }
 
   // Register the current ROE pos as multiplication (vs. a squaring)
@@ -1371,6 +1493,7 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
     while (!testBit(exp, p)) { --p; }
 
     for (--p; ; --p) {
+      splitQueue();
       for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
         if (!in_place) {
           if (!midInAlreadyDone) fftMidIn(buf2, buf3, cache_group);
@@ -1382,10 +1505,12 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
           fftMidOut(buf2, buf2, cache_group);
         }
       }
+      mergeQueue();
       midInAlreadyDone = 0;
 
       if (testBit(exp, p)) {
         doCarry(buf3, buf2, bufInOut);
+        splitQueue();
         for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
           if (!in_place) {
             fftMidIn(buf2, buf3, cache_group);
@@ -1397,6 +1522,7 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Bu
             fftMidOut(buf2, buf2, cache_group);
           }
         }
+        mergeQueue();
       }
 
       if (!p) { break; }
@@ -1447,12 +1573,14 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   // If leadOut is LEAD_WIDTH, then will buf2 contain the output of carryFused -- to be used as input to the next squaring.
   if (!in_place) {
     if (leadIn == LEAD_NONE) fftP(buf2, in);
+    splitQueue();
     for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
       if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf2, cache_group);
       tailSquare(buf2, buf1, cache_group);
       fftMidOut(buf1, buf2, cache_group);
       if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
     }
+    mergeQueue();
   }
 
   // In place FFTs use buf1.
@@ -1462,12 +1590,14 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   // If leadOut is LEAD_WIDTH, then buf1 will contain the output of carryFused -- to be used as input to the next squaring.
   else {
     if (leadIn == LEAD_NONE) fftP(buf1, in);
+    splitQueue();
     for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
       if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf1, cache_group);
       tailSquare(buf1, buf1, cache_group);
       fftMidOut(buf1, buf1, cache_group);
       if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
     }
+    mergeQueue();
   }
 
   // If leadOut is not allowed then we cannot use the faster carryFused kernel

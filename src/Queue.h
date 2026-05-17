@@ -23,6 +23,7 @@ public:
 class Queue : public QueueHolder {
   Events events;
   bool hasEvents;
+  bool isAuxQueue;
 
   void writeTE(cl_mem buf, u64 size, const void* data, TimeInfo *tInfo);
   void fillBufTE(cl_mem buf, u32 patSize, const void* pattern, u64 size, TimeInfo* tInfo);
@@ -33,7 +34,7 @@ class Queue : public QueueHolder {
 public:
   const Context* context;
 
-  Queue(const Context& context, bool profile);
+  Queue(const Context& context, bool profile, bool auxQueue = false);
 
   static int registerThread();
   static int tid();
@@ -49,6 +50,9 @@ public:
   void readAsync(cl_mem buf, u32 size, void* out, TimeInfo* tInfo);
   void copyBuf(cl_mem src, cl_mem dst, u32 size, TimeInfo* tInfo);
   void finish();
+
+  EventHolder createSyncEvent(void) { return enqueueMarker(get()); }                     // Enqueue a synchronization event.  Used to sync work among multiple queues.
+  void waitForSyncEvent(EventHolder* e) { enqueueMarkerWithWaits(get(), {e->get()}); }   // Wait for a synchronization event to complete.
 
   void setSquareTime(int);          // Update the time to do one squaring (in microseconds)
   void setSquareKernels(int n) { squareKernels = n; firstSetTime = true; }

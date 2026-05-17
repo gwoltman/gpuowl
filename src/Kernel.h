@@ -42,7 +42,10 @@ public:
 
   void startLoad(KernelCompiler* compiler);
   void finishLoad();
-  
+
+  // Change which queue is used to run a kernel
+  void setQueue(Queue *q) { queue = q; }
+
   template<typename... Args> void setFixedArgs(int pos, const Args &...tail) { setArgs(pos, tail...); }
   
   template<typename... Args> void operator()(const Args &...args) {

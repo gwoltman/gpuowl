@@ -111,6 +111,7 @@ EventHolder copyBuf(cl_queue queue, vector<cl_event>&& waits, const cl_mem src, 
 EventHolder fillBuf(cl_queue q, vector<cl_event>&& waits, cl_mem buf, const void *pat, size_t patSize, size_t size, bool genEvent);
 
 EventHolder enqueueMarker(cl_queue q);
+EventHolder enqueueMarkerWithWaits(cl_queue q, vector<cl_event>&& waits);
 
 void waitForEvents(vector<cl_event>&& waits);
 

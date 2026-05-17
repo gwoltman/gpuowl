@@ -107,6 +107,7 @@ private:
   Profile profile{};
 
   Queue queue;
+  vector<Queue> auxQueues;
   KernelCompiler compiler;
 
   /* Kernels for FFT_FP64 or FFT_FP32 */
@@ -218,7 +219,9 @@ private:
   TimeInfo* timeBufVect;
   ZAvg zAvg;
 
-  int NUM_CACHE_GROUPS = 3;
+  const int NUM_CACHE_GROUPS = 3;
+  void splitQueue(void);
+  void mergeQueue(void);
 
   void fftP(Buffer<double>& out, Buffer<double>& in) { fftP(out, reinterpret_cast<Buffer<Word>&>(in)); }
   void fftP(Buffer<double>& out, Buffer<Word>& in);

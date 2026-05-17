@@ -543,7 +543,7 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
       // Also write to file since WSL2+CUDA swallows stderr
       if (dumpPrefix) {
         FILE* regLog = fopen("kernel_regs.log", "a");
-	if (regLog) { fprintf(regLog, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads); fclose(regLog); }
+        if (regLog) { fprintf(regLog, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads); fclose(regLog); }
       }
     }
   }
@@ -804,8 +804,12 @@ int clEnqueueFillBuffer(cl_command_queue q, cl_mem buf, const void* pattern,
   return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
 }
 
-int clEnqueueMarkerWithWaitList(cl_command_queue q, unsigned nWaits,
-                                 const cl_event* waits, cl_event* event) {
+int clEnqueueMarkerWithWaitList(cl_command_queue q, unsigned nWaits, const cl_event* waits, cl_event* event) {
+  if (nWaits) {
+    for (unsigned int i = 0; i < nWaits; ++i) {
+      cuStreamWaitEvent(q->stream, waits[i]->end, 0);
+    }
+  }
   if (event) {
     auto* ev = new _cl_event;
     cuEventCreate(&ev->end, CU_EVENT_DEFAULT);
