@@ -22,7 +22,7 @@ File::File(const std::filesystem::path& path, const string& mode, bool throwOnEr
 //    setlinebuf(f);
 //#endif
     // tdulcet's suggested portable replacement for the lines above
-    setvbuf(f, nullptr, _IOLBF, 0);
+    setvbuf(f, nullptr, _IONBF, 0);
   }
 }
 
