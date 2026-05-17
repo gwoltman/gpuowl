@@ -1189,6 +1189,11 @@ void OVERLOAD tabMul(TrigFP32 trig, F2 *u, u32 f, u32 me) {
 // New fft WIDTH and HEIGHT macros to support radix-4 FFTs with more FMA instructions
 //************************************************************************************
 
+// Some OpenCL compilers are having trouble with fma on floats.  Specifically, line "X2_via_FMA(u[3], preloads[7], u[7]);  u[7] = mul_3t8_delayed(u[7]);".
+// Since we're not enabling FP32 variant 2 by default, don't include these "more FMA" routines.
+
+#if ENABLE_FP32_VARIANT_2
+
 // Partial complex-multiply that delays the mul-by-cosine so it can be part of an FMA.
 // We're trying to calculate u * U2(cosine,sine).
 // real = (u.x - u.y*sine_over_cosine) * cosine
@@ -1421,6 +1426,8 @@ void finish_tabMul8_fft8(TrigFP32 trig, F *preloads, F2 *u, u32 f, u32 numWG, u3
   SWAP(u[1], u[4]);
   SWAP(u[3], u[6]);
 }
+
+#endif
 
 // Variant 2 code uses more FMA instructions than the original fft version.
 // The tabMul after fft8 only does a partial complex multiply, saving a mul-by-cosine for the next fft8 using FMA instructions.
