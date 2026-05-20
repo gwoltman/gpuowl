@@ -855,7 +855,10 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 #undef BUF
 
   statsBits{u32(args.value("STATS", 0))},
-  timeBufVect{profile.make("proofBufVect")}
+  timeBufVect{profile.make("proofBufVect")},
+
+  recorded_kernels{},
+  recorded_kernel_args{}
 {    
 
   float bitsPerWord = E / float(N);
@@ -985,26 +988,28 @@ void Gpu::splitQueue(void) {
   // For no particularly good reason, put a kernel that operates on 64-bit vaules in the main queue.
   if (fft.NTT_GF61) {
     if (which_queue != -1) {
-      kfftWGF61.setQueue(&auxQueues[which_queue]);
       kfftMidInGF61.setQueue(&auxQueues[which_queue]);
-      kfftMidOutGF61.setQueue(&auxQueues[which_queue]);
+      kfftHinGF61.setQueue(&auxQueues[which_queue]);
       ktailSquareZeroGF61.setQueue(&auxQueues[which_queue]);
       ktailSquareGF61.setQueue(&auxQueues[which_queue]);
       ktailMulGF61.setQueue(&auxQueues[which_queue]);
       ktailMulLowGF61.setQueue(&auxQueues[which_queue]);
+      kfftMidOutGF61.setQueue(&auxQueues[which_queue]);
+      kfftWGF61.setQueue(&auxQueues[which_queue]);
     }
     which_queue++;
   }
 
   if (fft.FFT_FP64 || fft.FFT_FP32) {
     if (which_queue != -1) {
-      kfftW.setQueue(&auxQueues[which_queue]);
       kfftMidIn.setQueue(&auxQueues[which_queue]);
-      kfftMidOut.setQueue(&auxQueues[which_queue]);
+      kfftHin.setQueue(&auxQueues[which_queue]);
       ktailSquareZero.setQueue(&auxQueues[which_queue]);
       ktailSquare.setQueue(&auxQueues[which_queue]);
       ktailMul.setQueue(&auxQueues[which_queue]);
       ktailMulLow.setQueue(&auxQueues[which_queue]);
+      kfftMidOut.setQueue(&auxQueues[which_queue]);
+      kfftW.setQueue(&auxQueues[which_queue]);
     }
     // For no particularly good reason, put kernels that operate on 32-bit value in the same queue unless there are no kernels operating on 64-bit values
     if (fft.FFT_FP64 || (fft.FFT_FP32 && which_queue == -1)) {
@@ -1014,13 +1019,14 @@ void Gpu::splitQueue(void) {
 
   if (fft.NTT_GF31) {
     if (which_queue != -1) {
-      kfftWGF31.setQueue(&auxQueues[which_queue]);
       kfftMidInGF31.setQueue(&auxQueues[which_queue]);
-      kfftMidOutGF31.setQueue(&auxQueues[which_queue]);
+      kfftHinGF31.setQueue(&auxQueues[which_queue]);
       ktailSquareZeroGF31.setQueue(&auxQueues[which_queue]);
       ktailSquareGF31.setQueue(&auxQueues[which_queue]);
       ktailMulGF31.setQueue(&auxQueues[which_queue]);
       ktailMulLowGF31.setQueue(&auxQueues[which_queue]);
+      kfftMidOutGF31.setQueue(&auxQueues[which_queue]);
+      kfftWGF31.setQueue(&auxQueues[which_queue]);
     }
     //which_queue++;
   }
@@ -1040,85 +1046,194 @@ void Gpu::mergeQueue(void) {
   // Return kernels to running on the main queue
   // NOTE: I believe there is no need to switch queues back and forth between the main and auxiliary queues.  No one currently uses the cache_group == 0 option.
   if (fft.NTT_GF61) {
-    kfftWGF61.setQueue(&queue);
     kfftMidInGF61.setQueue(&queue);
-    kfftMidOutGF61.setQueue(&queue);
+    kfftHinGF61.setQueue(&queue);
     ktailSquareZeroGF61.setQueue(&queue);
     ktailSquareGF61.setQueue(&queue);
     ktailMulGF61.setQueue(&queue);
     ktailMulLowGF61.setQueue(&queue);
+    kfftMidOutGF61.setQueue(&queue);
+    kfftWGF61.setQueue(&queue);
   }
   if (fft.FFT_FP64 || fft.FFT_FP32) {
-    kfftW.setQueue(&queue);
     kfftMidIn.setQueue(&queue);
-    kfftMidOut.setQueue(&queue);
+    kfftHin.setQueue(&queue);
     ktailSquareZero.setQueue(&queue);
     ktailSquare.setQueue(&queue);
     ktailMul.setQueue(&queue);
     ktailMulLow.setQueue(&queue);
+    kfftMidOut.setQueue(&queue);
+    kfftW.setQueue(&queue);
   }
   if (fft.NTT_GF31) {
-    kfftWGF31.setQueue(&queue);
     kfftMidInGF31.setQueue(&queue);
-    kfftMidOutGF31.setQueue(&queue);
+    kfftHinGF31.setQueue(&queue);
     ktailSquareZeroGF31.setQueue(&queue);
     ktailSquareGF31.setQueue(&queue);
     ktailMulGF31.setQueue(&queue);
     ktailMulLowGF31.setQueue(&queue);
+    kfftMidOutGF31.setQueue(&queue);
+    kfftWGF31.setQueue(&queue);
   }
+}
+
+// Replay the recorded bottom half kernels in a cache friendly order.  We support several
+// options here using multiple openCl command queues.
+void Gpu::replay(void) {
+
+  // If using multiple command queues, handle that now.
+  splitQueue();
+
+  // For better L2 cache locality, operate on all the FP data, then operate on all the GF31 data, then GF61.
+  for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+
+    // Check for irrelevant cache gouup
+    if (cache_group == 1 && !(fft.FFT_FP64 || fft.FFT_FP32)) continue;
+    if (cache_group == 2 && !fft.NTT_GF31) continue;
+    if (cache_group == 3 && !fft.NTT_GF61) continue;
+
+    // Iterate over the recorded kernels
+    int arg = 0;
+    for (auto kern : recorded_kernels) {
+
+      // Call the appropriate kernel
+      if (kern == KMIDIN) {
+        Buffer<double> *buf = recorded_kernel_args[arg++];
+        // If not in place, the input is from the scratch buffer
+        Buffer<double> *in = in_place ? buf : &buf3;
+        Buffer<double> *out = buf;
+        if (cache_group == 1) kfftMidIn(*out, *in);
+        if (cache_group == 2) kfftMidInGF31(*out, *in);
+        if (cache_group == 3) kfftMidInGF61(*out, *in);
+      }
+
+      if (kern == KFFTHIN) {
+        Buffer<double> *out = recorded_kernel_args[arg++];
+        Buffer<double> *in = recorded_kernel_args[arg++];
+        if (cache_group == 1) kfftHin(*out, *in);
+        if (cache_group == 2) kfftHinGF31(*out, *in);
+        if (cache_group == 3) kfftHinGF61(*out, *in);
+      }
+
+      if (kern == KTAILSQUARE) {
+        Buffer<double> *buf = recorded_kernel_args[arg++];
+        // If not in place, the output is to the scratch buffer
+        Buffer<double> *in = buf;
+        Buffer<double> *out = in_place ? buf : &buf3;
+        if (!tail_single_kernel) {
+          if (cache_group == 1) ktailSquareZero(*out, *in);
+          if (cache_group == 2) ktailSquareZeroGF31(*out, *in);
+          if (cache_group == 3) ktailSquareZeroGF61(*out, *in);
+        }
+        if (cache_group == 1) ktailSquare(*out, *in);
+        if (cache_group == 2) ktailSquareGF31(*out, *in);
+        if (cache_group == 3) ktailSquareGF61(*out, *in);
+      }
+
+      if (kern == KTAILMUL) {
+        Buffer<double> *buf = recorded_kernel_args[arg++];
+        Buffer<double> *in2 = recorded_kernel_args[arg++];
+        // If not in place, the output is to the scratch buffer
+        Buffer<double> *in1 = buf;
+        Buffer<double> *out = in_place ? buf : &buf3;
+        if (cache_group == 1) ktailMul(*out, *in1, *in2);
+        if (cache_group == 2) ktailMulGF31(*out, *in1, *in2);
+        if (cache_group == 3) ktailMulGF61(*out, *in1, *in2);
+      }
+
+      if (kern == KTAILMULLOW) {
+        Buffer<double> *buf = recorded_kernel_args[arg++];
+        Buffer<double> *in2 = recorded_kernel_args[arg++];
+        // If not in place, the output is to the scratch buffer
+        Buffer<double> *in1 = buf;
+        Buffer<double> *out = in_place ? buf : &buf3;
+        if (cache_group == 1) ktailMulLow(*out, *in1, *in2);
+        if (cache_group == 2) ktailMulLowGF31(*out, *in1, *in2);
+        if (cache_group == 3) ktailMulLowGF61(*out, *in1, *in2);
+      }
+
+      if (kern == KMIDOUT) {
+        Buffer<double> *buf = recorded_kernel_args[arg++];
+        // If not in place, the input is from the scratch buffer
+        Buffer<double> *in = in_place ? buf : &buf3;
+        Buffer<double> *out = buf;
+        if (cache_group == 1) kfftMidOut(*out, *in);
+        if (cache_group == 2) kfftMidOutGF31(*out, *in);
+        if (cache_group == 3) kfftMidOutGF61(*out, *in);
+      }
+
+      if (kern == KFFTW) {
+        Buffer<double> *out = recorded_kernel_args[arg++];
+        Buffer<double> *in = recorded_kernel_args[arg++];
+        if (cache_group == 1) kfftW(*out, *in);
+        if (cache_group == 2) kfftWGF31(*out, *in);
+        if (cache_group == 3) kfftWGF61(*out, *in);
+      }
+    }
+  }
+
+  // Empty the recorded kernels queue
+  recorded_kernels.clear();
+  recorded_kernel_args.clear();
+
+  // If using multiple command queues, go back to a single command queue
+  mergeQueue();
 }
 
 // Call the appropriate kernels to support hybrid FFTs and NTTs
 
-void Gpu::fftP(Buffer<double>& out, Buffer<Word>& in) {
-  kfftP(out, in);
+void Gpu::fftP(Buffer<double>& buf, Buffer<Word>& in) {
+  // If not in place, instead write the output to the scratch buffer
+  Buffer<double> *out = in_place ? &buf : &buf3;
+  kfftP(*out, in);
 }
 
-void Gpu::fftW(Buffer<double>& out, Buffer<double>& in, int cache_group) {
-  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) kfftW(out, in);
-  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) kfftWGF31(out, in);
-  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) kfftWGF61(out, in);
-}
-
-void Gpu::fftMidIn(Buffer<double>& out, Buffer<double>& in, int cache_group) {
-  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) kfftMidIn(out, in);
-  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) kfftMidInGF31(out, in);
-  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) kfftMidInGF61(out, in);
-}
-
-void Gpu::fftMidOut(Buffer<double>& out, Buffer<double>& in, int cache_group) {
-  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) kfftMidOut(out, in);
-  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) kfftMidOutGF31(out, in);
-  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) kfftMidOutGF61(out, in);
+void Gpu::fftMidIn(Buffer<double>& buf) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KMIDIN);
+  recorded_kernel_args.push_back(&buf);
 }
 
 void Gpu::fftHin(Buffer<double>& out, Buffer<double>& in) {
-  if (fft.FFT_FP64 || fft.FFT_FP32) kfftHin(out, in);
-  if (fft.NTT_GF31) kfftHinGF31(out, in);
-  if (fft.NTT_GF61) kfftHinGF61(out, in);
+  // Record this call for later playback
+  recorded_kernels.push_back(KFFTHIN);
+  recorded_kernel_args.push_back(&out);
+  recorded_kernel_args.push_back(&in);
 }
 
-void Gpu::tailSquare(Buffer<double>& out, Buffer<double>& in, int cache_group) {
-  if (!tail_single_kernel) {
-    if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailSquareZero(out, in);
-    if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailSquareZeroGF31(out, in);
-    if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailSquareZeroGF61(out, in);
-  }
-  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailSquare(out, in);
-  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailSquareGF31(out, in);
-  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailSquareGF61(out, in);
+void Gpu::tailSquare(Buffer<double>& buf) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KTAILSQUARE);
+  recorded_kernel_args.push_back(&buf);
 }
 
-void Gpu::tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group) {
-  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailMul(out, in1, in2);
-  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailMulGF31(out, in1, in2);
-  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailMulGF61(out, in1, in2);
+void Gpu::tailMul(Buffer<double>& buf, Buffer<double>& in2) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KTAILMUL);
+  recorded_kernel_args.push_back(&buf);
+  recorded_kernel_args.push_back(&in2);
 }
 
-void Gpu::tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group) {
-  if ((cache_group == 0 || cache_group == 1) && (fft.FFT_FP64 || fft.FFT_FP32)) ktailMulLow(out, in1, in2);
-  if ((cache_group == 0 || cache_group == 2) && fft.NTT_GF31) ktailMulLowGF31(out, in1, in2);
-  if ((cache_group == 0 || cache_group == 3) && fft.NTT_GF61) ktailMulLowGF61(out, in1, in2);
+void Gpu::tailMulLow(Buffer<double>& buf, Buffer<double>& in2) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KTAILMULLOW);
+  recorded_kernel_args.push_back(&buf);
+  recorded_kernel_args.push_back(&in2);
+}
+
+void Gpu::fftMidOut(Buffer<double>& buf) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KMIDOUT);
+  recorded_kernel_args.push_back(&buf);
+}
+
+void Gpu::fftW(Buffer<double>& out, Buffer<double>& in) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KFFTW);
+  recorded_kernel_args.push_back(&out);
+  recorded_kernel_args.push_back(&in);
+  // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
+  replay();
 }
 
 void Gpu::carryA(Buffer<Word>& out, Buffer<double>& in) {
@@ -1137,20 +1252,35 @@ void Gpu::carryLL(Buffer<Word>& out, Buffer<double>& in) {
   kCarryLL(out, in, updateCarryPos(1 << 2));
 }
 
-void Gpu::carryFused(Buffer<double>& out, Buffer<double>& in) {
+void Gpu::carryFused(Buffer<double>& buf) {
+  // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
+  replay();
   assert(roePos <= ROE_SIZE);
-  roePos < wantROE ? kCarryFusedROE(out, in, roePos++)
-                   : kCarryFused(out, in, updateCarryPos(1 << 0));
+  // Like fftP, if not in place write the output to the scratch buffer
+  Buffer<double> *in = &buf;
+  Buffer<double> *out = in_place ? &buf : &buf3;
+  roePos < wantROE ? kCarryFusedROE(*out, *in, roePos++)
+                   : kCarryFused(*out, *in, updateCarryPos(1 << 0));
 }
 
-void Gpu::carryFusedMul(Buffer<double>& out, Buffer<double>& in) {
+void Gpu::carryFusedMul(Buffer<double>& buf) {
+  // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
+  replay();
   assert(roePos <= ROE_SIZE);
-  roePos < wantROE ? kCarryFusedMulROE(out, in, roePos++)
-                   : kCarryFusedMul(out, in, updateCarryPos(1 << 1));
+  // Like fftP, if not in place write the output to the scratch buffer
+  Buffer<double> *in = &buf;
+  Buffer<double> *out = in_place ? &buf : &buf3;
+  roePos < wantROE ? kCarryFusedMulROE(*out, *in, roePos++)
+                   : kCarryFusedMul(*out, *in, updateCarryPos(1 << 1));
 }
 
-void Gpu::carryFusedLL(Buffer<double>& out, Buffer<double>& in) {
-  kCarryFusedLL(out, in, updateCarryPos(1 << 0));
+void Gpu::carryFusedLL(Buffer<double>& buf) {
+  // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
+  replay();
+  // Like fftP, if not in place write the output to the scratch buffer
+  Buffer<double> *in = &buf;
+  Buffer<double> *out = in_place ? &buf : &buf3;
+  kCarryFusedLL(*out, *in, updateCarryPos(1 << 0));
 }
 
 
@@ -1276,58 +1406,32 @@ Words Gpu::readAndCompress(Buffer<Word>& buf)  { return compactBits(readChecked(
 vector<u32> Gpu::readCheck() { return readAndCompress(bufCheck); }
 vector<u32> Gpu::readData() { return readAndCompress(bufData); }
 
-// out := inA * inB; inB is preserved
-void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, Buffer<double>& tmp2, bool mul3) {
-  if (!in_place) {
-    fftP(tmp2, ioA);
-    splitQueue();
-    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-      fftMidIn(tmp1, tmp2, cache_group);
-      tailMul(tmp2, inB, tmp1, cache_group);
-      fftMidOut(tmp1, tmp2, cache_group);
-      fftW(tmp2, tmp1, cache_group);
-    }
-    mergeQueue();
-  }
-  else {
-    fftP(tmp1, ioA);
-    splitQueue();
-    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-      fftMidIn(tmp1, tmp1, cache_group);
-      tailMul(tmp1, inB, tmp1, cache_group);
-      fftMidOut(tmp1, tmp1, cache_group);
-      fftW(tmp2, tmp1, cache_group);
-    }
-    mergeQueue();
-  }
+// ioA := ioA * inB; inB must be the output of fftMidIn; inB is preserved
+void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, bool mul3) {
+  fftP(tmp1, ioA);
+  fftMidIn(tmp1);
+  tailMul(tmp1, inB);
+  fftMidOut(tmp1);
+  fftW(buf3, tmp1);
 
   // Register the current ROE pos as multiplication (vs. a squaring)
   if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos); }
 
-  if (mul3) { carryM(ioA, tmp2); } else { carryA(ioA, tmp2); }
+  if (mul3) { carryM(ioA, buf3); } else { carryA(ioA, buf3); }
   carryB(ioA);
 }
 
-void Gpu::mul(Buffer<Word>& io, Buffer<double>& buf1) {
-  // We know that mul() stores double output in buf1; so we're going to use buf2 & buf3 for temps.
-  mul(io, buf1, buf2, buf3, false);
-}
-
-// out := inA * inB;
+// ioA := ioA * inB; inB will end up in buf1 in the LEAD_MIDDLE state
 void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3) {
   modMul(ioA, inB, LEAD_NONE, mul3);
 };
 
-// out := inA * inB; inB will end up in buf1 in the LEAD_MIDDLE state
+// ioA := ioA * inB; inB will end up in buf1 in the LEAD_MIDDLE state
 void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, bool mul3) {
-  if (!in_place) {
-    if (leadInB == LEAD_NONE) fftP(buf2, inB);
-    if (leadInB != LEAD_MIDDLE) fftMidIn(buf1, buf2);
-  } else {
-    if (leadInB == LEAD_NONE) fftP(buf1, inB);
-    if (leadInB != LEAD_MIDDLE) fftMidIn(buf1, buf1);
-  }
-  mul(ioA, buf1, buf2, buf3, mul3);
+  if (leadInB == LEAD_NONE) fftP(buf1, inB);
+  if (leadInB != LEAD_MIDDLE) fftMidIn(buf1);
+  replay();  // Work around an odd bug.  The above executed fftP writing to buf3 if !in_place and queued fftMidIn.  If we don't replay now, mul will call fftP again overwriting buf3.
+  mul(ioA, buf1, buf2, mul3);
 };
 
 void Gpu::writeState(u64 k, const vector<u32>& check, u32 blockSize) {
@@ -1458,7 +1562,7 @@ Words Gpu::expExp2(const Words& A, u32 n) {
 
 // A:= A^h * B
 void Gpu::expMul(Buffer<Word>& A, u64 h, Buffer<Word>& B) {
-  exponentiate(A, h, buf1, buf2, buf3);
+  exponentiate(A, h);
   modMul(A, B);
 }
 
@@ -1475,139 +1579,80 @@ Words Gpu::expMul(const Words& A, u64 h, const Words& B, bool doSquareB) {
 static bool testBit(u64 x, int bit) { return x & (u64(1) << bit); }
 
 // See "left-to-right binary exponentiation" on wikipedia
-void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Buffer<double>& buf2, Buffer<double>& buf3) {
+void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp) {
   if (exp == 0) {
     bufInOut.set(1);
   } else if (exp > 1) {
-    if (!in_place) {
-      fftP(buf3, bufInOut);
-      fftMidIn(buf2, buf3);
-    } else {
-      fftP(buf2, bufInOut);
-      fftMidIn(buf2, buf2);
-    }
-    fftHin(buf1, buf2); // save "base" to buf1
+    fftP(buf1, bufInOut);
+    fftMidIn(buf1);
+    fftHin(buf2, buf1); // save fully FFTed "base" to buf2
     bool midInAlreadyDone = 1;
 
     int p = 63;
     while (!testBit(exp, p)) { --p; }
 
     for (--p; ; --p) {
-      splitQueue();
-      for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-        if (!in_place) {
-          if (!midInAlreadyDone) fftMidIn(buf2, buf3, cache_group);
-          tailSquare(buf3, buf2, cache_group);
-          fftMidOut(buf2, buf3, cache_group);
-        } else {
-          if (!midInAlreadyDone) fftMidIn(buf2, buf2, cache_group);
-          tailSquare(buf2, buf2, cache_group);
-          fftMidOut(buf2, buf2, cache_group);
-        }
-      }
-      mergeQueue();
+      if (!midInAlreadyDone) fftMidIn(buf1);
+      tailSquare(buf1);
+      fftMidOut(buf1);
       midInAlreadyDone = 0;
 
       if (testBit(exp, p)) {
-        doCarry(buf3, buf2, bufInOut);
-        splitQueue();
-        for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-          if (!in_place) {
-            fftMidIn(buf2, buf3, cache_group);
-            tailMulLow(buf3, buf2, buf1, cache_group);
-            fftMidOut(buf2, buf3, cache_group);
-          } else {
-            fftMidIn(buf2, buf2, cache_group);
-            tailMulLow(buf2, buf2, buf1, cache_group);
-            fftMidOut(buf2, buf2, cache_group);
-          }
-        }
-        mergeQueue();
+        doCarry(buf1, bufInOut);
+        fftMidIn(buf1);
+        tailMulLow(buf1, buf2);
+        fftMidOut(buf1);
       }
 
       if (!p) { break; }
 
-      doCarry(buf3, buf2, bufInOut);
+      doCarry(buf1, bufInOut);
     }
 
-    fftW(buf3, buf2);
+    fftW(buf3, buf1);
     carryA(bufInOut, buf3);
     carryB(bufInOut);
   }
 }
 
 // does either carryFused() or the expanded version depending on useLongCarry
-void Gpu::doCarry(Buffer<double>& out, Buffer<double>& in, Buffer<Word>& tmp) {
-  if (!in_place) {
-    if (useLongCarry) {
-      fftW(out, in);
-      carryA(tmp, out);
-      carryB(tmp);
-      fftP(out, tmp);
-    } else {
-      carryFused(out, in);
-    }
+void Gpu::doCarry(Buffer<double>& in, Buffer<Word>& wordBuf) {
+  if (useLongCarry) {
+    fftW(buf3, in);
+    carryA(wordBuf, buf3);
+    carryB(wordBuf);
+    fftP(in, wordBuf);
   } else {
-    if (useLongCarry) {
-      fftW(out, in);
-      carryA(tmp, out);
-      carryB(tmp);
-      fftP(in, tmp);
-    } else {
-      carryFused(in, in);
-    }
+    carryFused(in);
   }
 }
 
-// Use buf1 and buf2 to do a single squaring.
+// Use buf1 (and buf23 if not in place) to do a single squaring.
 void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut, bool doMul3, bool doLL) {
   // leadOut = LEAD_MIDDLE is not supported (slower than LEAD_WIDTH)
   assert(leadOut != LEAD_MIDDLE);
   // LL does not do Mul3
   assert(!(doMul3 && doLL));
 
-  // Not in place FFTs use buf1 and buf2 in a "ping pong" fashion.
+  // In place FFTs use buf1.  Not in place FFTs also use buf3.
   // If leadIn is LEAD_NONE, in contains the input data, squaring starts at fftP
-  // If leadIn is LEAD_WIDTH, buf2 contains the input data, squaring starts at fftMidIn
+  // If leadIn is LEAD_WIDTH, buf1 (or buf3 if not in place) contains the input data, squaring starts at fftMidIn
   // If leadIn is LEAD_MIDDLE, buf1 contains the input data, squaring starts at tailSquare
-  // If leadOut is LEAD_WIDTH, then will buf2 contain the output of carryFused -- to be used as input to the next squaring.
-  if (!in_place) {
-    if (leadIn == LEAD_NONE) fftP(buf2, in);
-    splitQueue();
-    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-      if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf2, cache_group);
-      tailSquare(buf2, buf1, cache_group);
-      fftMidOut(buf1, buf2, cache_group);
-      if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
-    }
-    mergeQueue();
-  }
-
-  // In place FFTs use buf1.
-  // If leadIn is LEAD_NONE, in contains the input data, squaring starts at fftP
-  // If leadIn is LEAD_WIDTH, buf1 contains the input data, squaring starts at fftMidIn
-  // If leadIn is LEAD_MIDDLE, buf1 contains the input data, squaring starts at tailSquare
-  // If leadOut is LEAD_WIDTH, then buf1 will contain the output of carryFused -- to be used as input to the next squaring.
-  else {
-    if (leadIn == LEAD_NONE) fftP(buf1, in);
-    splitQueue();
-    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
-      if (leadIn != LEAD_MIDDLE) fftMidIn(buf1, buf1, cache_group);
-      tailSquare(buf1, buf1, cache_group);
-      fftMidOut(buf1, buf1, cache_group);
-      if (leadOut == LEAD_NONE) fftW(buf2, buf1, cache_group);
-    }
-    mergeQueue();
-  }
+  // If leadOut is LEAD_WIDTH, then buf1 (or buf3 if not in place) will contain the output of carryFused -- to be used as input to the next squaring.
+  if (leadIn == LEAD_NONE) fftP(buf1, in);
+  if (leadIn != LEAD_MIDDLE) fftMidIn(buf1);
+  tailSquare(buf1);
+  fftMidOut(buf1);
 
   // If leadOut is not allowed then we cannot use the faster carryFused kernel
   if (leadOut == LEAD_NONE) {
+    fftW(buf3, buf1);
     if (!doLL && !doMul3) {
-      carryA(out, buf2);
+      carryA(out, buf3);
     } else if (doLL) {
-      carryLL(out, buf2);
+      carryLL(out, buf3);
     } else {
-      carryM(out, buf2);
+      carryM(out, buf3);
     }
     carryB(out);
   }
@@ -1617,9 +1662,9 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
     assert(!useLongCarry);
     assert(!doMul3);
     if (doLL) {
-      carryFusedLL(in_place ? buf1 : buf2, buf1);
+      carryFusedLL(buf1);
     } else {
-      carryFused(in_place ? buf1 : buf2, buf1);
+      carryFused(buf1);
     }
   }
 }

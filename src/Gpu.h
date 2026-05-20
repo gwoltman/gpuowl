@@ -219,26 +219,31 @@ private:
   TimeInfo* timeBufVect;
   ZAvg zAvg;
 
+  enum BOTTOM_HALF_KERNELS {KMIDIN, KFFTHIN, KTAILSQUARE, KTAILMUL, KTAILMULLOW, KMIDOUT, KFFTW};
+  vector<enum BOTTOM_HALF_KERNELS> recorded_kernels;
+  vector<Buffer<double> *> recorded_kernel_args;
+
   const int NUM_CACHE_GROUPS = 3;
   void splitQueue(void);
   void mergeQueue(void);
+  void replay(void);
 
   void fftP(Buffer<double>& out, Buffer<double>& in) { fftP(out, reinterpret_cast<Buffer<Word>&>(in)); }
   void fftP(Buffer<double>& out, Buffer<Word>& in);
-  void fftMidIn(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
-  void fftMidOut(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
+  void fftMidIn(Buffer<double>& buf);
+  void fftMidOut(Buffer<double>& buf);
   void fftHin(Buffer<double>& out, Buffer<double>& in);
-  void tailSquare(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
-  void tailMul(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group = 0);
-  void tailMulLow(Buffer<double>& out, Buffer<double>& in1, Buffer<double>& in2, int cache_group = 0);
-  void fftW(Buffer<double>& out, Buffer<double>& in, int cache_group = 0);
+  void tailSquare(Buffer<double>& buf);
+  void tailMul(Buffer<double>& buf, Buffer<double>& in2);
+  void tailMulLow(Buffer<double>& buf, Buffer<double>& in2);
+  void fftW(Buffer<double>& out, Buffer<double>& in);
   void carryA(Buffer<double>& out, Buffer<double>& in) { carryA(reinterpret_cast<Buffer<Word>&>(out), in); }
   void carryA(Buffer<Word>& out, Buffer<double>& in);
   void carryM(Buffer<Word>& out, Buffer<double>& in);
   void carryLL(Buffer<Word>& out, Buffer<double>& in);
-  void carryFused(Buffer<double>& out, Buffer<double>& in);
-  void carryFusedMul(Buffer<double>& out, Buffer<double>& in);
-  void carryFusedLL(Buffer<double>& out, Buffer<double>& in);
+  void carryFused(Buffer<double>& buf);
+  void carryFusedMul(Buffer<double>& buf);
+  void carryFusedLL(Buffer<double>& buf);
 
   vector<Word> readWords(Buffer<Word> &buf);
   void writeWords(Buffer<Word>& buf, vector<Word> &words);
@@ -261,15 +266,14 @@ private:
   
   vector<u32> writeBase(const vector<u32> &v);
   
-  void exponentiate(Buffer<Word>& bufInOut, u64 exp, Buffer<double>& buf1, Buffer<double>& buf2, Buffer<double>& buf3);
+  void exponentiate(Buffer<Word>& bufInOut, u64 exp);
 
   void writeState(u64 k, const vector<u32>& check, u32 blockSize);
 
   // does either carrryFused() or the expanded version depending on useLongCarry
-  void doCarry(Buffer<double>& out, Buffer<double>& in, Buffer<Word>& tmp);
+  void doCarry(Buffer<double>& in, Buffer<Word>& wordBuf);
 
-  void mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, Buffer<double>& tmp2, bool mul3 = false);
-  void mul(Buffer<Word>& io, Buffer<double>& inB);
+  void mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, bool mul3 = false);
 
   void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3 = false);
   void modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, bool mul3 = false);

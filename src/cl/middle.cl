@@ -680,11 +680,11 @@ void OVERLOAD readCarryFusedLine(CP(GF61) in, GF61 *u, u32 line, u32 me) {
 // Goals:
 // 1) In-place transpose.  Rather than "ping-pong"ing buffers, an in-place transpose uses half as much memory.  This may allow
 //    the entire FFT/NTT data set to reside in the L2 cache on upper end consumer GPUs (circa 2025) which can have 64MB or larger L2 caches.
-// 2) We want to have distribute the carryFused and/or tailSquare memory in the L2 cache with minimal cache line collisions.  The hope is to (one day) do
+// 2) We want to distribute the carryFused and/or tailSquare memory in the L2 cache with minimal cache line collisions.  The hope is to (one day) do
 //    fftMiddleOut/carryFused/fftMiddleIn or fftMiddleIn/tailSquare/fftMiddleOut in L2 cache-sized chunks to minimize the slowest memory accesses.
 //    The cost of extra kernel launches may negate any L2 cache benefits.
 // 3) We use swizzling and/or modest padding to reduce carryFused L2 cache line collisions.  Several different memory layouts and padding were tried
-//    on nVidia Titan V and AMD Radeon VII to find the fastest in-place layout and padding scheme.  Hopefully, these will schemes will work well
+//    on nVidia Titan V and AMD Radeon VII to find the fastest in-place layout and padding scheme.  Hopefully, these schemes will work well
 //    on later generation GPUs with different L2 cache dimensions (size and "number-of-ways").
 // 4) Apparently cache line collisions in the L1 cache also adversely affect timings.  The L1 cache may have a different cache line size and number-of-ways
 //    which makes padding tuning a bit difficult.  This is especially true on AMD which has a very strange channel & banks partitioning of memory accesses.
