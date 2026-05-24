@@ -94,7 +94,7 @@ bool test(u32 bits, u32 pos) { return (bits >> pos) & 1; }
 
 #if FFT_FP64
 // Rounding constant: 3 * 2^51, See https://stackoverflow.com/questions/17035464
-#define RNDVAL (3.0 * (1l << 51))
+#define RNDVAL (3.0 * (1ull << 51))
 
 // Convert a double to long efficiently.  Double must be in RNDVAL+integer format.
 i64 RNDVALdoubleToLong(double d) {
