@@ -178,6 +178,14 @@ bool isNvidiaGpu(cl_device_id id) {
   return pcieId == 0x10DE;
 }
 
+u32 getNvidiaComputeCapability(cl_device_id id) {
+  u32 major = 0;
+  u32 minor = 0;
+  GET_INFO(id, CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV, major);
+  GET_INFO(id, CL_DEVICE_COMPUTE_CAPABILITY_MINOR_NV, minor);
+  return major * 100 + minor;
+}
+
 /*
 static string getFreq(cl_device_id device) {
   unsigned computeUnits, frequency;

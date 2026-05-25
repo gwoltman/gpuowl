@@ -207,6 +207,10 @@ using cl_queue = cl_command_queue;
 #define CL_KERNEL_ATTRIBUTES     0x1195
 #define CL_KERNEL_COMPILE_WORK_GROUP_SIZE 0x11B1
 
+// nVidia
+#define CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV     0x4000
+#define CL_DEVICE_COMPUTE_CAPABILITY_MINOR_NV     0x4001
+
 // AMD-specific (unused but must exist for compilation)
 #define CL_DEVICE_PCIE_ID_AMD           0x4034
 #define CL_DEVICE_TOPOLOGY_AMD          0x4037

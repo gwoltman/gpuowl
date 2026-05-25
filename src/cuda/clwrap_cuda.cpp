@@ -969,6 +969,20 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
     if (value && size >= sizeof(freeKB)) memcpy(value, &freeKB, sizeof(freeKB));
     break;
   }
+  case CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV: {
+    int major = 0;
+    cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev->dev);
+    if (sizeRet) *sizeRet = sizeof(major);
+    if (value && size >= sizeof(major)) memcpy(value, &major, sizeof(major));
+    break;
+  }
+  case CL_DEVICE_COMPUTE_CAPABILITY_MINOR_NV: {
+    int minor = 0;
+    cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev->dev);
+    if (sizeRet) *sizeRet = sizeof(minor);
+    if (value && size >= sizeof(minor)) memcpy(value, &minor, sizeof(minor));
+    break;
+  }
   default:
     return CL_INVALID_VALUE;
   }

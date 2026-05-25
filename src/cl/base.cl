@@ -75,7 +75,7 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define HAS_PTX 0
 #elif NVIDIAGPU
 #define HAS_ASM 0
-#define HAS_PTX 1200        // Assume CUDA 12.00 support until we can figure out how to automatically determine this at runtime
+#define HAS_PTX CC     // C code computed the nVidia GPU's compute capability
 #else
 #define HAS_ASM 0
 #define HAS_PTX 0
