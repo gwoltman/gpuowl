@@ -16,9 +16,9 @@ KERNEL(32) readResidue(P(Word2) out, CP(Word2) in) {
 #endif
 
 #if SUM64
-KERNEL(64) sum64(global ulong* out, u32 sizeBytes, global ulong* in) {
+KERNEL(64) sum64(global ulong* out, u32 count, CP(Word) in) {
   ulong sum = 0;
-  for (i32 p = get_global_id(0); p < sizeBytes / sizeof(u64); p += get_global_size(0)) {
+  for (i32 p = get_global_id(0); p < count; p += get_global_size(0)) {
     sum += in[p];
   }
   u32 prev = atomic_add((global u32*)out, (u32) sum);

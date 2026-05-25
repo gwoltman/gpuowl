@@ -1373,22 +1373,15 @@ static bool isAllZero(vector<T> v) { return std::all_of(v.begin(), v.end(), [](T
 vector<Word> Gpu::readChecked(Buffer<Word>& buf) {
   for (int nRetry = 0; nRetry < 3; ++nRetry) {
     bufSumOut.zero();
-    sum64(bufSumOut, u32(buf.size * sizeof(Word)), buf);
-
+    sum64(bufSumOut, N, buf);
     vector<u64> expectedVect(1);
-
     bufSumOut.readAsync(expectedVect);
+
     vector<Word> data = readOut(buf);
+    u64 hostSum = 0;
+    for (auto it = data.begin(), end = data.end(); it < end; ++it) hostSum += u64(*it);
 
     u64 gpuSum = expectedVect[0];
-    u64 hostSum = 0;
-
-    int even = 1;
-    for (auto it = data.begin(), end = data.end(); it < end; ++it, even = !even) {
-      if (fft.WordSize == 4) hostSum += even ? u64(u32(*it)) : (u64(*it) << 32);
-      if (fft.WordSize == 8) hostSum += u64(*it);
-    }
-
     if (hostSum == gpuSum) {
       // A buffer containing all-zero is exceptional, so mark that through the empty vector.
       if (gpuSum == 0 && isAllZero(data)) {
