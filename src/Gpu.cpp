@@ -306,13 +306,16 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   }
 
   // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W).  If using the 32KB maximum, LDS padding must be disabled.
+  // Furthermore, I've seen the CUDA compiler refuse to create a kernel with 1024 threads.  Thus, we limit WMUL to 2 for a 1K width and to 1 for a 4K width.
   {
     u32 shufl_bytes_w = args.value("SHUFL_BYTES_W", 8);
     u32 max_wmul = 32768 / (fft.shape.width * shufl_bytes_w);
+    if (max_wmul > 2 && fft.shape.width >= 1024) max_wmul = 2;
+    if (max_wmul > 1 && fft.shape.width >= 4096) max_wmul = 1;
     if (wmul > max_wmul) {
       wmul = max_wmul;
       config["WMUL"] = to_string(wmul);
-      log("Local shared memory limit of 32KB exceeded.  Changing to WMUL=%d\n", wmul);
+      log("WMUL setting too large for this FFT width.  Changing to WMUL=%d\n", wmul);
     }
     if (fft.shape.width * shufl_bytes_w * wmul >= 32768) {
       log("Local shared memory limit of 32KB exceeded.  Changing to LDSPAD_W=0\n");
