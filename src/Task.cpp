@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <cassert>
+#include <utility>
 
 namespace {
 
@@ -63,9 +64,9 @@ struct OsInfo {
 };
 
 [[maybe_unused]] OsInfo getOsInfoMinimum() {
-  int plat = platform();
-  string os = plat == LINUX_64 || plat == LINUX_32 ? "Linux" : plat == 4 ? "Windows" : plat == MACOSX_64 ? "MacOS" : "";
-  return {os, "", ""};
+  int const plat = platform();
+  string const os = plat == LINUX_64 || plat == LINUX_32 ? "Linux" : plat == 4 ? "Windows" : plat == MACOSX_64 ? "MacOS" : "";
+  return {.os=os, .release="", .arch=""};
 }
 
 #if __has_include(<sys/utsname.h>)
@@ -75,7 +76,7 @@ struct OsInfo {
 OsInfo getOsInfo() {
   utsname buf{};
   uname(&buf);
-  return OsInfo{buf.sysname, buf.release, buf.machine};
+  return OsInfo{.os=buf.sysname, .release=buf.release, .arch=buf.machine};
 }
 
 #else
@@ -124,7 +125,7 @@ vector<string> commonFields(u64 E, const char *worktype, const string &status) {
 
 vector<string> tailFields(const std::string &AID, const Args &args) {
   assert(*VERSION); // version string isn't empty
-  OsInfo os = getOsInfo();
+  OsInfo const os = getOsInfo();
   return {json("program", vector<string>{
                  json("name", "prpll"),
                  json("version", (VERSION[0] == 'v') ? VERSION + 1 : VERSION), // skip leading "v" from version
@@ -144,11 +145,11 @@ vector<string> tailFields(const std::string &AID, const Args &args) {
 
 void writeResult(u32 instance, u64 E, const char *workType, const string &status, const std::string &AID, const Args &args,
                  const vector<string>& extras) {
-  fs::path resultsFile = "results-" + to_string(instance) + ".txt";
+  fs::path const resultsFile = "results-" + to_string(instance) + ".txt";
   vector<string> fields = commonFields(E, workType, status);
   fields += extras;
   fields += tailFields(AID, args);
-  string s = json(std::move(fields));
+  string const s = json(fields);
   log("%s\n", s.c_str());
   File::append(resultsFile, s + '\n');
 }
@@ -166,7 +167,7 @@ void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool is
 
   // "proof":{"version":1, "power":6, "hashsize":64, "md5":"0123456789ABCDEF"}, 
   if (!proofPath.empty()) {
-    ProofInfo info = proof::getInfo(proofPath);
+    ProofInfo const info = proof::getInfo(proofPath);
     if (info.power > 0) {
       fields.push_back(json("proof", vector<string>{
                               json("version", 1),
@@ -181,7 +182,7 @@ void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool is
 }
 
 void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isPrime, u64 res64) const {
-  vector<string> fields{json("res64", hex(res64)),
+  vector<string> const fields{json("res64", hex(res64)),
                         json("fft-type", ffttype(fft)),
                         json("fft-length", fft.size()),
                         json("shift-count", 0),
@@ -192,7 +193,7 @@ void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isP
 }
 
 void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings) const {
-  string hexhash = hex(hash[3]) + hex(hash[2]) + hex(hash[1]) + hex(hash[0]);
+  string const hexhash = hex(hash[3]) + hex(hash[2]) + hex(hash[1]) + hex(hash[0]);
   vector<string> fields{json("worktype", "Cert"),
                         json("exponent", exponent),
                         json("sha3-hash", hexhash.c_str()),
@@ -203,9 +204,9 @@ void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array 
                         json("error-code", "00000000"), // I don't know the meaning of this
   };
   fields += tailFields(AID, args);
-  string s = json(std::move(fields));
+  string const s = json(fields);
   log("%s\n", s.c_str());
-  fs::path resultsFile = "results-" + to_string(instance) + ".txt";
+  fs::path const resultsFile = "results-" + to_string(instance) + ".txt";
   File::append(resultsFile, s + '\n');
 }
 
@@ -220,24 +221,24 @@ void Task::execute(GpuCommon shared, u32 instance) {
   // is very common to use command line argument "-prp some-random-exponent" to get a quick
   // timing.  Instead, we output a warning and test a smaller prime exponent.
   {
-    Primes primes;
+    Primes const primes;
     if (!primes.isPrime(exponent)) {
-      u64 new_exponent = primes.prevPrime(exponent);
+      u64 const new_exponent = primes.prevPrime(exponent);
       log("Warning: Exponent %" PRIu64 " is not prime.  Using exponent %" PRIu64 " instead.\n", exponent, new_exponent);
       exponent = new_exponent;
     }
   }
 
-  LogContext pushContext(std::to_string(exponent));
+  LogContext const pushContext(std::to_string(exponent));
 
-  FFTConfig fft = FFTConfig::bestFit(*shared.args, exponent, shared.args->fftSpec);
+  FFTConfig const fft = FFTConfig::bestFit(*shared.args, exponent, shared.args->fftSpec);
 
   auto gpu = Gpu::make(exponent, shared, fft);
 
   if (kind == VERIFY) {
-    Proof proof{Proof::load(verifyPath)};
+    Proof const proof{Proof::load(verifyPath)};
     assert(proof.E == exponent);
-    bool ok = proof.verify(gpu.get());
+    bool const ok = proof.verify(gpu.get());
     log("proof '%s' %s\n", verifyPath.c_str(), ok ? "verified" : "failed");
 
   } else if (kind == PRP || kind == LL) {

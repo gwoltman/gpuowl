@@ -18,9 +18,10 @@
 
 #include <filesystem>
 #include <thread>
+#include <utility>
 // #include <format> from GCC-13 onwards
 
-void gpuWorker(GpuCommon shared, i32 instance) {
+static void gpuWorker(GpuCommon shared, i32 instance) {
   // LogContext context{(instance ? shared.args->tailDir() : ""s) + to_string(instance) + ' '};
   // log("Starting worker %d\n", instance);
   if (instance > 0) {
@@ -50,7 +51,7 @@ int main(int argc, char **argv) {
   _set_printf_count_output(1);    // I'm not sure what this does (it's from CrazeTheDragon)
 #endif
 
-#if defined(__MSYS__)
+#ifdef __MSYS__
   // I was unable to get putenv to link in MSYS2
 #elif defined(__MINGW32__) || defined(__MINGW64__)
   putenv("ROC_SIGNAL_POOL_SIZE=32");
@@ -61,10 +62,10 @@ int main(int argc, char **argv) {
   setenv("ROC_SIGNAL_POOL_SIZE", "32", 0);
 #endif
 
-  int exitCode = 0;
+  int const exitCode = 0;
 
   try {
-    string mainLine = Args::mergeArgs(argc, argv);
+    string const mainLine = Args::mergeArgs(argc, argv);
     {
       Args args{true};
       args.parse(mainLine);
@@ -94,7 +95,7 @@ int main(int argc, char **argv) {
     if (args.maxAlloc) { AllocTrac::setMaxAlloc(args.maxAlloc); }
 
     Context context(getDevice(args.device));
-    Signal signal;
+    Signal const signal;
     Background background;
     GpuCommon shared;
     shared.context = &context;
@@ -118,7 +119,7 @@ int main(int argc, char **argv) {
     } else {
       {
         vector<jthread> threads;
-        for (int i = 1; i < int(args.workers); ++i) {
+        for (int i = 1; std::cmp_less(i, args.workers); ++i) {
           threads.emplace_back(gpuWorker, shared, i);
         }
         gpuWorker(shared, 0);

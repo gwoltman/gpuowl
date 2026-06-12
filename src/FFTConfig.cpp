@@ -23,7 +23,7 @@ struct FftBpw {
   array<float, NUM_BPW_ENTRIES> bpw;
 };
 
-map<string, array<float, NUM_BPW_ENTRIES>> BPW {
+static map<string, array<float, NUM_BPW_ENTRIES>> BPW {
 #include "fftbpw.h"
 };
 
@@ -32,8 +32,8 @@ namespace {
 u32 parseInt(const string& s) {
   // if (s.empty()) { return 1; }
   assert(!s.empty());
-  char c = s.back();
-  u32 multiple = c == 'k' || c == 'K' ? 1024 : c == 'm' || c == 'M' ? 1024 * 1024 : 1;
+  char const c = s.back();
+  u32 const multiple = c == 'k' || c == 'K' ? 1024 : c == 'm' || c == 'M' ? 1024 * 1024 : 1;
   return u32(strtod(s.c_str(), nullptr) * multiple);
 }
 
@@ -59,18 +59,18 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
     }
     assert(parts.size() <= 3);
     if (parts.size() == 3) {
-      u32 width = parseInt(parts[0]);
-      u32 middle = parseInt(parts[1]);
-      u32 height = parseInt(parts[2]);
-      ret.push_back({fft_type, width, middle, height});
+      u32 const width = parseInt(parts[0]);
+      u32 const middle = parseInt(parts[1]);
+      u32 const height = parseInt(parts[2]);
+      ret.emplace_back(fft_type, width, middle, height);
       continue;
     }
     assert(parts.size() == 1);
 
     parts = split(spec, '-');
-    assert(parts.size() >= 1 && parts.size() <= 2);
-    u32 sizeFrom = parseInt(parts[0]);
-    u32 sizeTo = parts.size() == 2 ? parseInt(parts[1]) : sizeFrom;
+    assert(!parts.empty() && parts.size() <= 2);
+    u32 const sizeFrom = parseInt(parts[0]);
+    u32 const sizeTo = parts.size() == 2 ? parseInt(parts[1]) : sizeFrom;
     auto shapes = allShapes(sizeFrom, sizeTo);
     if (shapes.empty()) {
       log("Could not find a FFT config for '%s'\n", spec.c_str());
@@ -83,21 +83,21 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
 
 vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
   vector<FFTShape> configs;
-  for (enum FFT_TYPES type : {FFT64, FFT3161, FFT3261, FFT61, FFT323161}) {
-    for (u32 width : {256, 512, 1024, 4096}) {
-      for (u32 height : {256, 512, 1024}) {
+  for (enum FFT_TYPES const type : {FFT64, FFT3161, FFT3261, FFT61, FFT323161}) {
+    for (u32 const width : {256, 512, 1024, 4096}) {
+      for (u32 const height : {256, 512, 1024}) {
         if (width == 256 && height == 1024) { continue; } // Skip because we prefer width >= height
-        for (u32 middle : {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
+        for (u32 const middle : {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
           if (type != FFT64 && (middle & (middle - 1))) continue;   // Reject non-power-of-two NTTs
-          u32 sz = width * height * middle * 2;
+          u32 const sz = width * height * middle * 2;
           if (sizeFrom <= sz && sz <= sizeTo) {
-            configs.push_back({type, width, middle, height});
+            configs.emplace_back(type, width, middle, height);
           }
         }
       }
     }
   }
-  std::sort(configs.begin(), configs.end(),
+  std::ranges::sort(configs,
             [](const FFTShape &a, const FFTShape &b) {
               if (a.size() != b.size()) { return (a.size() < b.size()); }
               if (a.width != b.width) {
@@ -133,7 +133,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
   // Un-initialized shape, don't set BPW
   if (w == 1 && m == 1 && h == 1) { return; }
 
-  string s = spec();
+  string const s = spec();
   if (auto it = BPW.find(s); it != BPW.end()) {
     bpw = it->second;
   } else {
@@ -141,9 +141,9 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
       bpw = FFTShape{t, h, m, w}.bpw;
     } else {
       // Manipulate the shape into something that was likely pre-computed
-      u32 orig_w = w;
-      u32 orig_m = m;
-      u32 orig_h = h;
+      u32 const orig_w = w;
+      u32 const orig_m = m;
+      u32 const orig_h = h;
       while (m < 9) { m *= 2; w /= 2; }
       while (w >= 4*h) { w /= 2; h *= 2; }
       while (w < h || w < 256 || w == 2048) { w *= 2; h /= 2; }
@@ -217,9 +217,9 @@ FFTConfig::FFTConfig(const string& spec) {
 
   // Sanity check the spec
   if (v.size() >= 3) {
-    u32 w = parseInt(v[0]);
-    u32 m = parseInt(v[1]);
-    u32 h = parseInt(v[2]);
+    u32 const w = parseInt(v[0]);
+    u32 const m = parseInt(v[1]);
+    u32 const h = parseInt(v[2]);
     if (w != 256 && w != 512 && w != 1024 && w != 4096) {
       log("Width must be 256, 512, 1024, or 4096.\n");
       throw "Invalid FFT spec";
@@ -245,7 +245,7 @@ FFTConfig::FFTConfig(const string& spec) {
   } else if (v.size() == 4) {
     *this = {FFTShape{fft_type, v[0], v[1], v[2]}, parseInt(v[3]), CARRY_AUTO};
   } else if (v.size() == 5) {
-    int c = parseInt(v[4]);
+    int const c = parseInt(v[4]);
     assert(c == 0 || c == 1);
     *this = {FFTShape{fft_type, v[0], v[1], v[2]}, parseInt(v[3]), c == 0 ? CARRY_32 : CARRY_64};
   } else {
@@ -262,20 +262,20 @@ FFTConfig::FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry) :
   assert(variant_M(variant) < N_VARIANT_M);
   assert(variant_H(variant) < N_VARIANT_H);
 
-  if      (shape.fft_type == FFT64)     FFT_FP64 = 1, FFT_FP32 = 0, NTT_GF31 = 0, NTT_GF61 = 0, WordSize = 4;
-  else if (shape.fft_type == FFT3161)   FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 1, WordSize = 8;
-  else if (shape.fft_type == FFT3261)   FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 0, NTT_GF61 = 1, WordSize = 8;
-  else if (shape.fft_type == FFT61)     FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 0, NTT_GF61 = 1, WordSize = 4;
-  else if (shape.fft_type == FFT323161) FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 1, NTT_GF61 = 1, WordSize = 8;
-  else if (shape.fft_type == FFT3231)   FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 4;
-  else if (shape.fft_type == FFT6431)   FFT_FP64 = 1, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 8;
-  else if (shape.fft_type == FFT31)     FFT_FP64 = 0, FFT_FP32 = 0, NTT_GF31 = 1, NTT_GF61 = 0, WordSize = 4;
-  else if (shape.fft_type == FFT32)     FFT_FP64 = 0, FFT_FP32 = 1, NTT_GF31 = 0, NTT_GF61 = 0, WordSize = 4;
+  if      (shape.fft_type == FFT64)     FFT_FP64 = true, FFT_FP32 = false, NTT_GF31 = false, NTT_GF61 = false, WordSize = 4;
+  else if (shape.fft_type == FFT3161)   FFT_FP64 = false, FFT_FP32 = false, NTT_GF31 = true, NTT_GF61 = true, WordSize = 8;
+  else if (shape.fft_type == FFT3261)   FFT_FP64 = false, FFT_FP32 = true, NTT_GF31 = false, NTT_GF61 = true, WordSize = 8;
+  else if (shape.fft_type == FFT61)     FFT_FP64 = false, FFT_FP32 = false, NTT_GF31 = false, NTT_GF61 = true, WordSize = 4;
+  else if (shape.fft_type == FFT323161) FFT_FP64 = false, FFT_FP32 = true, NTT_GF31 = true, NTT_GF61 = true, WordSize = 8;
+  else if (shape.fft_type == FFT3231)   FFT_FP64 = false, FFT_FP32 = true, NTT_GF31 = true, NTT_GF61 = false, WordSize = 4;
+  else if (shape.fft_type == FFT6431)   FFT_FP64 = true, FFT_FP32 = false, NTT_GF31 = true, NTT_GF61 = false, WordSize = 8;
+  else if (shape.fft_type == FFT31)     FFT_FP64 = false, FFT_FP32 = false, NTT_GF31 = true, NTT_GF61 = false, WordSize = 4;
+  else if (shape.fft_type == FFT32)     FFT_FP64 = false, FFT_FP32 = true, NTT_GF31 = false, NTT_GF61 = false, WordSize = 4;
   else throw "FFT type";
 }
 
 string FFTConfig::spec() const {
-  string s = shape.spec() + ":" + to_string(variant_W(variant)) + to_string(variant_M(variant)) + to_string(variant_H(variant));
+  string const s = shape.spec() + ":" + to_string(variant_W(variant)) + to_string(variant_M(variant)) + to_string(variant_H(variant));
   return carry == CARRY_AUTO ? s : (s + (carry == CARRY_32 ? ":0" : ":1"));
 }
 
@@ -289,8 +289,8 @@ float FFTConfig::maxBpw() const {
   }
   // Interpolate for the maximum bpw.  This might could be improved upon.  However, I doubt people will use these variants often.
   else {
-    float b1 = shape.bpw[variant_M(variant) * 3 + variant_W(variant)];
-    float b2 = shape.bpw[variant_M(variant) * 3 + variant_H(variant)];
+    float const b1 = shape.bpw[variant_M(variant) * 3 + variant_W(variant)];
+    float const b2 = shape.bpw[variant_M(variant) * 3 + variant_H(variant)];
     b = (b1 + b2) / 2.0f;
   }
   // Only some FFTs support both 32 and 64 bit carries.
@@ -308,7 +308,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
   }
 
   // No FFT-spec given, so choose from tune.txt the fastest FFT that can handle E
-  vector<TuneEntry> tunes = TuneEntry::readTuneFile(args);
+  vector<TuneEntry> const tunes = TuneEntry::readTuneFile(args);
   for (const TuneEntry& e : tunes) {
     // The first acceptable is the best as they're sorted by cost
     if (E <= e.fft.maxExp() * args.fftOverdrive) { return e.fft; }
@@ -318,7 +318,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
 
   // Take the first FFT that can handle E
   for (const FFTShape& shape : FFTShape::allShapes()) {
-    for (u32 v : {101, 202}) {
+    for (u32 const v : {101, 202}) {
       if (FFTConfig fft{shape, v, CARRY_AUTO}; fft.maxExp() * args.fftOverdrive >= E) { return fft; }
     }
   }
@@ -329,8 +329,8 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
 
 
 string numberK(u64 n) {
-  u32 K = 1024;
-  u32 M = K * K;
+  u32 const K = 1024;
+  u32 const M = K * K;
 
   if (n % M == 0) { return to_string(n / M) + 'M'; }
 
@@ -338,10 +338,10 @@ string numberK(u64 n) {
   if (n >= M && (n * u64(100)) % M == 0) {
     snprintf(buf, sizeof(buf), "%.2f", float(n) / M);
     return string(buf) + 'M';
-  } else if (n >= K) {
+  } if (n >= K) {
     snprintf(buf, sizeof(buf), "%g", float(n) / K);
     return string(buf) + 'K';
-  } else {
+  } 
     return to_string(n);
-  }
+ 
 }

@@ -28,7 +28,7 @@ private:
   TimeInfo *tInfo;
 
   Buffer(cl_context context, TimeInfo *tInfo, Queue* queue, size_t size, unsigned flags, const T* ptr = nullptr)
-    : ptr{size == 0 ? NULL : makeBuf_(context, flags, size * sizeof(T), ptr)}
+    : ptr{size == 0 ? nullptr : makeBuf_(context, flags, size * sizeof(T), ptr)}
     , size{size}
     , allocTrac(size * sizeof(T))
     , queue{queue}
@@ -50,15 +50,15 @@ public:
   Buffer(TimeInfo *tInfo, Queue* queue, size_t size)
     : Buffer(queue->context->get(), tInfo, queue, size, CL_MEM_READ_WRITE /*| CL_MEM_HOST_NO_ACCESS*/) {}
 
-  Buffer(Buffer&& rhs) = default;
+  Buffer(Buffer&& rhs)  noexcept = default;
 
-  Buffer& operator=(Buffer&& rhs) {
+  Buffer& operator=(Buffer&& rhs)  noexcept {
     assert(size == rhs.size);
     std::swap(ptr, rhs.ptr);
     return *this;
   }
 
-  cl_mem get() const { return ptr.get(); }
+  [[nodiscard]] cl_mem get() const { return ptr.get(); }
 
   void read(T* out, size_t readSize) const {
     assert(readSize && readSize <= size);
@@ -69,7 +69,7 @@ public:
   void read(vector<T>& v) const { read(v.data(), v.size()); }
 
   // sync read
-  vector<T> read(size_t sizeOrFull = 0) const {
+  [[nodiscard]] vector<T> read(size_t sizeOrFull = 0) const {
     auto readSize = sizeOrFull ? sizeOrFull : size;
     vector<T> ret(readSize);
     read(ret);

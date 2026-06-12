@@ -20,11 +20,11 @@
 
 // cl_device_id wraps CUdevice (int)
 struct _cl_device_id { CUdevice dev; };
-typedef _cl_device_id* cl_device_id;
+using cl_device_id = _cl_device_id*;
 
 // cl_context wraps CUcontext
 struct _cl_context { CUcontext ctx; CUdevice dev; };
-typedef _cl_context* cl_context;
+using cl_context = _cl_context*;
 
 // cl_command_queue wraps CUstream
 struct _cl_command_queue {
@@ -32,35 +32,35 @@ struct _cl_command_queue {
   cl_context context;
   bool profiling;
 };
-typedef _cl_command_queue* cl_command_queue;
+using cl_command_queue = _cl_command_queue*;
 
 // cl_mem wraps CUdeviceptr + size
 struct _cl_mem {
   CUdeviceptr ptr;
   size_t size;
 };
-typedef _cl_mem* cl_mem;
+using cl_mem = _cl_mem*;
 
 // cl_program: dual-purpose — stores either source string or compiled PTX/module
 struct _cl_program {
   std::string source;     // OpenCL source (before NVRTC compilation)
   std::string preprocessedSource; // CUDA source after preprocessOpenCL (for parsing __launch_bounds__)
   std::string ptx;        // Compiled PTX (after NVRTC compilation)
-  CUmodule module;        // Loaded module (after cuModuleLoadData)
-  bool compiled;
-  bool moduleLoaded;
+  CUmodule module{};        // Loaded module (after cuModuleLoadData)
+  bool compiled{false};
+  bool moduleLoaded{false};
 
-  _cl_program() : module{}, compiled{false}, moduleLoaded{false} {}
+  _cl_program()  {}
 };
-typedef _cl_program* cl_program;
+using cl_program = _cl_program*;
 
 // cl_kernel wraps CUfunction + accumulated arguments
 struct _cl_kernel {
-  CUfunction func;
+  CUfunction func{};
   std::string name;
-  CUmodule parentModule;  // Keep reference so module isn't unloaded
-  int numArgs;
-  int reqWorkGroupSize;   // From __launch_bounds__(N) in source, matches OpenCL reqd_work_group_size
+  CUmodule parentModule{};  // Keep reference so module isn't unloaded
+  int numArgs{0};
+  int reqWorkGroupSize{0};   // From __launch_bounds__(N) in source, matches OpenCL reqd_work_group_size
 
   // Argument accumulator for setArg/launch pattern
   static constexpr int MAX_ARGS = 32;
@@ -69,7 +69,7 @@ struct _cl_kernel {
   size_t argSizes[MAX_ARGS];
   size_t argOffsets[MAX_ARGS];
 
-  _cl_kernel() : func{}, parentModule{}, numArgs{0}, reqWorkGroupSize{0} {
+  _cl_kernel()  {
     memset(argData, 0, sizeof(argData));
     memset(argSizes, 0, sizeof(argSizes));
     memset(argOffsets, 0, sizeof(argOffsets));
@@ -82,7 +82,7 @@ struct _cl_kernel {
     // Fixed 8-byte slots per arg position. CUDA kernel args are pointers (8 bytes)
     // or small scalars (4 bytes). Using fixed slots avoids data corruption when
     // args are set out of order (e.g., setFixedArgs(2,3) then operator()(0,1)).
-    size_t offset = pos * 8;
+    size_t const offset = pos * 8;
     argOffsets[pos] = offset;
     argSizes[pos] = size;
     if (offset + size <= MAX_ARG_BYTES && value) {
@@ -97,42 +97,42 @@ struct _cl_kernel {
     }
   }
 };
-typedef _cl_kernel* cl_kernel;
+using cl_kernel = _cl_kernel*;
 
 // cl_event wraps CUevent pair (start + end for profiling)
 struct _cl_event {
-  CUevent start;
-  CUevent end;
-  bool hasTimings;
-  u32 commandType;
+  CUevent start{};
+  CUevent end{};
+  bool hasTimings{false};
+  u32 commandType{0};
 
-  _cl_event() : start{}, end{}, hasTimings{false}, commandType{0} {}
+  _cl_event()  {}
   ~_cl_event() {
     if (start) cuEventDestroy(start);
     if (end) cuEventDestroy(end);
   }
 };
-typedef _cl_event* cl_event;
+using cl_event = _cl_event*;
 
 // Unused types — just need to exist for compilation
-typedef struct _cl_platform_id* cl_platform_id;
-typedef struct _cl_sampler*     cl_sampler;
+using cl_platform_id = struct _cl_platform_id*;
+using cl_sampler = struct _cl_sampler*;
 
-typedef unsigned cl_bool;
-typedef unsigned cl_program_build_info;
-typedef unsigned cl_program_info;
-typedef unsigned cl_device_info;
-typedef unsigned cl_kernel_info;
-typedef unsigned cl_kernel_arg_info;
-typedef unsigned cl_kernel_work_group_info;
-typedef unsigned cl_profiling_info;
-typedef unsigned cl_event_info;
-typedef unsigned cl_command_queue_info;
+using cl_bool = unsigned;
+using cl_program_build_info = unsigned;
+using cl_program_info = unsigned;
+using cl_device_info = unsigned;
+using cl_kernel_info = unsigned;
+using cl_kernel_arg_info = unsigned;
+using cl_kernel_work_group_info = unsigned;
+using cl_profiling_info = unsigned;
+using cl_event_info = unsigned;
+using cl_command_queue_info = unsigned;
 
-typedef u64 cl_mem_flags;
-typedef u64 cl_svm_mem_flags;
-typedef u64 cl_device_type;
-typedef u64 cl_queue_properties;
+using cl_mem_flags = u64;
+using cl_svm_mem_flags = u64;
+using cl_device_type = u64;
+using cl_queue_properties = u64;
 
 using cl_queue = cl_command_queue;
 
@@ -217,10 +217,10 @@ using cl_queue = cl_command_queue;
 #define CL_DEVICE_BOARD_NAME_AMD        0x4038
 #define CL_DEVICE_GLOBAL_FREE_MEMORY_AMD 0x4039
 
-typedef union {
+using cl_device_topology_amd = union {
   struct { u32 type; u32 data[5]; } raw;
   struct { u32 type; char unused[17]; char bus; char device; char function; } pcie;
-} cl_device_topology_amd;
+};
 
 // Error codes
 #define CL_DEVICE_NOT_FOUND             -1

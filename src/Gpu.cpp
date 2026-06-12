@@ -18,16 +18,16 @@
 #include "Sha3Hash.h"
 
 #include <algorithm>
-#include <bitset>
 #include <limits>
 #include <iomanip>
 #include <array>
 #include <cinttypes>
 #include <cstring>
-#include <cinttypes>
 
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <ranges>
+#include <utility>
 
 #ifndef M_PIl
 #define M_PIl 3.141592653589793238462643383279502884L
@@ -45,7 +45,9 @@
 #define M_LN2 0.69314718055994530941723212145818
 #endif
 
-#define CARRY_LEN 8
+enum {
+CARRY_LEN = 8
+};
 
 namespace {
 
@@ -87,8 +89,8 @@ float invWeightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
 }
 
 Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
-  u32 N = 2u * W * H;
-  u32 groupWidth = W / nW;
+  u32 const N = 2u * W * H;
+  u32 const groupWidth = W / nW;
 
   vector<double> weightsConstIF;
   vector<double> weightsIF;
@@ -162,7 +164,7 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
     memcpy((double *) weightsConstIF.data(), weightsConstIF32.data(), weightsConstIF32.size() * sizeof(float));
   }
 
-  return Weights{weightsConstIF, weightsIF};
+  return Weights{.weightsConstIF=weightsConstIF, .weightsIF=weightsIF};
 }
 
 string toLiteral(i32 value) { return to_string(value); }
@@ -217,7 +219,7 @@ string toLiteral(const string& s) { return s; }
 [[maybe_unused]] string toLiteral(ulong2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 
 template<typename T>
-string toDefine(const string& k, T v) { return " -D"s + k + '=' + toLiteral(v); }
+string toDefine(const string& k, const T& v) { return " -D"s + k + '=' + toLiteral(v); }
 
 template<typename T>
 string toDefine(const T& vect) {
@@ -248,14 +250,14 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   }
 
   // Default value for -use options that must also be parsed in C++ code
-  tail_single_wide = 0, tail_single_kernel = 1;         // Default tailSquare is double-wide in one kernel
+  tail_single_wide = false, tail_single_kernel = true;         // Default tailSquare is double-wide in one kernel
   in_place = 0;                                         // Default is not in-place
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
   // Validate -use options
   for (const auto& [k, v] : config) {
-    bool isValid = isInList(k, {
+    bool const isValid = isInList(k, {
                               "FAST_BARRIER",
                               "STATS",
                               "IN_SIZEX",
@@ -295,10 +297,10 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 
     // Some -use options are needed in both OpenCL code and C++ initialization code
     if (k == "TAIL_KERNELS") {
-      if (atoi(v.c_str()) == 0) tail_single_wide = 1, tail_single_kernel = 1;
-      if (atoi(v.c_str()) == 1) tail_single_wide = 1, tail_single_kernel = 0;
-      if (atoi(v.c_str()) == 2) tail_single_wide = 0, tail_single_kernel = 1;
-      if (atoi(v.c_str()) == 3) tail_single_wide = 0, tail_single_kernel = 0;
+      if (atoi(v.c_str()) == 0) tail_single_wide = true, tail_single_kernel = true;
+      if (atoi(v.c_str()) == 1) tail_single_wide = true, tail_single_kernel = false;
+      if (atoi(v.c_str()) == 2) tail_single_wide = false, tail_single_kernel = true;
+      if (atoi(v.c_str()) == 3) tail_single_wide = false, tail_single_kernel = false;
     }
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
@@ -308,7 +310,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W).  If using the 32KB maximum, LDS padding must be disabled.
   // Furthermore, I've seen the CUDA compiler refuse to create a kernel with 1024 threads.  Thus, we limit WMUL to 2 for a 1K width and to 1 for a 4K width.
   {
-    u32 shufl_bytes_w = args.value("SHUFL_BYTES_W", 8);
+    u32 const shufl_bytes_w = args.value("SHUFL_BYTES_W", 8);
     u32 max_wmul = 32768 / (fft.shape.width * shufl_bytes_w);
     if (max_wmul > 2 && fft.shape.width >= 1024) max_wmul = 2;
     if (max_wmul > 1 && fft.shape.width >= 4096) max_wmul = 1;
@@ -345,7 +347,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     defines += toDefine("CARRY64", 1);
   }
 
-  u32 N = fft.shape.size();
+  u32 const N = fft.shape.size();
   defines += toDefine("FFT_VARIANT", fft.variant);
   defines += toDefine("MAXBPW", (u32)(fft.maxBpw() * 100.0f));
 
@@ -355,7 +357,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (fft.FFT_FP64) defines += toDefine("TAILT", root1Fancy(fft.shape.height * 2, 1));
     else defines += toDefine("TAILT", root1FancyFP32(fft.shape.height * 2, 1));
 
-    TrigCoefs coefs = trigCoefs(fft.shape.size() / 4);
+    TrigCoefs const coefs = trigCoefs(fft.shape.size() / 4);
     defines += toDefine("TRIG_SCALE", int(coefs.scale));
     defines += toDefine("TRIG_SIN",  coefs.sinCoefs);
     defines += toDefine("TRIG_COS",  coefs.cosCoefs);
@@ -431,8 +433,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   }
 
   // Calculate fractional bits-per-word = (E % N) / N * 2^64
-  u32 bpw_hi = (u64(E % N) << 32) / N;
-  u32 bpw_lo = (((u64(E % N) << 32) % N) << 32) / N;
+  u32 const bpw_hi = (u64(E % N) << 32) / N;
+  u32 const bpw_lo = (((u64(E % N) << 32) % N) << 32) / N;
   u64 bpw = (u64(bpw_hi) << 32) + bpw_lo;
   bpw--; // bpw must not be an exact value -- it must be less than exact value to get last biglit value right
   defines += toDefine("FRAC_BPW_HI", (u32) (bpw >> 32));
@@ -465,16 +467,16 @@ RoeInfo roeStat(const vector<float>& roe) {
   double maxRoe = 0;
 
   for (auto xf : roe) {
-    double x = xf;
+    double const x = xf;
     assert(x >= 0);
     maxRoe = max(x, maxRoe);
     sumRoe  += x;
     sum2Roe += x * x;
   }
-  u32 n = roe.size();
+  u32 const n = roe.size();
 
-  double sdRoe = sqrt(n * sum2Roe - sumRoe * sumRoe) / n;
-  double meanRoe = sumRoe / n;
+  double const sdRoe = sqrt(n * sum2Roe - sumRoe * sumRoe) / n;
+  double const meanRoe = sumRoe / n;
 
   return {n, maxRoe, meanRoe, sdRoe};
 }
@@ -487,9 +489,9 @@ public:
   explicit IterationTimer(u64 kStart) : kStart(kStart) { }
 
   float reset(u64 k) {
-    float secs = timer.reset();
+    float const secs = timer.reset();
 
-    u64 its = max(u64(1), k - kStart);
+    u64 const its = max(u64(1), k - kStart);
     kStart = k;
     return secs / its;
   }
@@ -508,7 +510,7 @@ u32 baseCheckStep(u32 blockSize) {
 }
 
 u32 checkStepForErrors(u32 blockSize, u32 nErrors) {
-  u32 step = baseCheckStep(blockSize);
+  u32 const step = baseCheckStep(blockSize);
   return nErrors ? step / 2 : step;
 }
 
@@ -528,7 +530,7 @@ string toHex(const vector<u32>& v) {
 
 string formatSecsPerIter(float secsPerIter) {
   char buf[64];
-  float usecsPerIter = secsPerIter * 1.0e6f;    // Convert to micro-seconds
+  float const usecsPerIter = secsPerIter * 1.0e6f;    // Convert to micro-seconds
   if (usecsPerIter > 1000.0f) {
     snprintf(buf, sizeof(buf), "%4.0f", usecsPerIter);
   } else {
@@ -686,7 +688,7 @@ string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
     break;
   }
   // Get the optional override register count
-  int override_regs = args.value(use_override, 0);
+  int const override_regs = args.value(use_override, 0);
   // If a specified override is small, use the count as a CUDA launch_bounds rather than a maximum register count
   if (override_regs && (override_regs > 0 && override_regs <= 16)) return string("-DCUDA_MIN_BLOCKS=") + to_string(override_regs) + " ";
   // If specified, override the default maximum register count
@@ -734,8 +736,10 @@ string Gpu::kernelDefines(enum WHICH_KERNEL_TYPE which_kernel) {
   return defines + " ";
 }
 
-#define ROE_SIZE 100000
-#define CARRY_SIZE 100000
+enum {
+ROE_SIZE = 100000,
+CARRY_SIZE = 100000
+};
 
 Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
   shared(s),
@@ -752,63 +756,63 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   nH(fft.shape.nH()),
   useLongCarry{args.carry == CARRY_64},
   queue{*shared.context, args.profile},
-  auxQueues{},    
+      
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
-  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), (kernelDefines(KFP) + numCudaRegisters(MIDIN)).c_str()),
-  K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP).c_str()),
-  K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2, kernelDefines(KFP).c_str()),
+  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numCudaRegisters(MIDIN)),
+  K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP)),
+  K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2, kernelDefines(KFP)),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, (kernelDefines(KFP) + numCudaRegisters(TAIL)).c_str()),    // Single-wide tailSquare with one kernel
-  K(ktailMul,              "tailmul.cl", "tailMul", hN / nH / 2, kernelDefines(KFP).c_str()),
-  K(ktailMulLow,           "tailmul.cl", "tailMul", hN / nH / 2, (kernelDefines(KFP) + "-DMUL_LOW=1").c_str()),
-  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), (kernelDefines(KFP) + numCudaRegisters(MIDOUT)).c_str()),
-  K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP).c_str()),
+                                               hN / nH / 2, kernelDefines(KFP) + numCudaRegisters(TAIL)),    // Single-wide tailSquare with one kernel
+  K(ktailMul,              "tailmul.cl", "tailMul", hN / nH / 2, kernelDefines(KFP)),
+  K(ktailMulLow,           "tailmul.cl", "tailMul", hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),
+  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numCudaRegisters(MIDOUT)),
+  K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
-  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), (kernelDefines(K31) + numCudaRegisters(MIDIN31)).c_str()),
-  K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH, kernelDefines(K31).c_str()),
-  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2, kernelDefines(K31).c_str()),
+  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), kernelDefines(K31) + numCudaRegisters(MIDIN31)),
+  K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH, kernelDefines(K31)),
+  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
   K(ktailSquareGF31,       "tailsquare.cl", "tailSquareGF31",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, (kernelDefines(K31) + numCudaRegisters(TAIL31)).c_str()),  // Single-wide tailSquare with one kernel
-  K(ktailMulGF31,          "tailmul.cl", "tailMulGF31", hN / nH / 2, kernelDefines(K31).c_str()),
-  K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31", hN / nH / 2, (kernelDefines(K31) + "-DMUL_LOW=1").c_str()),
-  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), (kernelDefines(K31) + numCudaRegisters(MIDOUT31)).c_str()),
-  K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31).c_str()),
+                                               hN / nH / 2, kernelDefines(K31) + numCudaRegisters(TAIL31)),  // Single-wide tailSquare with one kernel
+  K(ktailMulGF31,          "tailmul.cl", "tailMulGF31", hN / nH / 2, kernelDefines(K31)),
+  K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31", hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),
+  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numCudaRegisters(MIDOUT31)),
+  K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
-  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), (kernelDefines(K61) + numCudaRegisters(MIDIN61)).c_str()),
-  K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH, kernelDefines(K61).c_str()),
-  K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2, kernelDefines(K61).c_str()),
+  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), kernelDefines(K61) + numCudaRegisters(MIDIN61)),
+  K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH, kernelDefines(K61)),
+  K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
   K(ktailSquareGF61,       "tailsquare.cl", "tailSquareGF61",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, (kernelDefines(K61) + numCudaRegisters(TAIL61)).c_str()),  // Single-wide tailSquare with one kernel
-  K(ktailMulGF61,          "tailmul.cl", "tailMulGF61", hN / nH / 2, kernelDefines(K61).c_str()),
-  K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61", hN / nH / 2, (kernelDefines(K61) + "-DMUL_LOW=1").c_str()),
-  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), (kernelDefines(K61) + numCudaRegisters(MIDOUT61)).c_str()),
-  K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW, kernelDefines(K61).c_str()),
+                                               hN / nH / 2, kernelDefines(K61) + numCudaRegisters(TAIL61)),  // Single-wide tailSquare with one kernel
+  K(ktailMulGF61,          "tailmul.cl", "tailMulGF61", hN / nH / 2, kernelDefines(K61)),
+  K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61", hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),
+  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numCudaRegisters(MIDOUT61)),
+  K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW, kernelDefines(K61)),
 
-  K(kfftP,                 "fftp.cl", "fftP", hN / nW, kernelDefines(KALL).c_str()),
-  K(kCarryA,               "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL).c_str()),
-  K(kCarryAROE,            "carry.cl", "carry", hN / CARRY_LEN, (kernelDefines(KALL) + "-DROE=1").c_str()),
-  K(kCarryM,               "carry.cl", "carry", hN / CARRY_LEN, (kernelDefines(KALL) + "-DMUL3=1").c_str()),
-  K(kCarryMROE,            "carry.cl", "carry", hN / CARRY_LEN, (kernelDefines(KALL) + "-DMUL3=1 -DROE=1").c_str()),
-  K(kCarryLL,              "carry.cl", "carry", hN / CARRY_LEN, (kernelDefines(KALL) + "-DLL=1").c_str()),
-  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (kernelDefines(KALL) + numCudaRegisters(CARRYFUSED)).c_str()),
-  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DROE=1").c_str()),
-  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1").c_str()),
-  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1 -DROE=1").c_str()),
-  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, (kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DLL=1").c_str()),
+  K(kfftP,                 "fftp.cl", "fftP", hN / nW, kernelDefines(KALL)),
+  K(kCarryA,               "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL)),
+  K(kCarryAROE,            "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DROE=1"),
+  K(kCarryM,               "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DMUL3=1"),
+  K(kCarryMROE,            "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DMUL3=1 -DROE=1"),
+  K(kCarryLL,              "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DLL=1"),
+  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED)),
+  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DROE=1"),
+  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1"),
+  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1 -DROE=1"),
+  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DLL=1"),
 
-  K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN, kernelDefines(KALL).c_str()),
+  K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN, kernelDefines(KALL)),
 
   // 64
   K(transpIn,  "transpose.cl", "transposeIn",  hN / 64),
@@ -859,13 +863,11 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 #undef BUF
 
   statsBits{u32(args.value("STATS", 0))},
-  timeBufVect{profile.make("proofBufVect")},
-
-  recorded_kernels{},
-  recorded_kernel_args{}
+  timeBufVect{profile.make("proofBufVect")}
+  
 {    
 
-  float bitsPerWord = E / float(N);
+  float const bitsPerWord = E / float(N);
   if (logFftSize) {
     log("FFT: %s %s (%.2f bpw)\n", numberK(N).c_str(), fft.spec().c_str(), bitsPerWord);
 
@@ -969,20 +971,20 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 // If the L2 cache is large enough so that all FFT data fits in the cache, this ought to be a win.
 // If the L2 cache is small enough such that L2 cache hits are very low anyway, this might be a win.
 
-void Gpu::splitQueue(void) {
+void Gpu::splitQueue() {
 
   // If MULTI_Q -use not set, return
   if (!args.value("MULTI_Q", 0)) return;
 
   // Create aux queues.  For now, we only have one auxiliary queue.  We could do more.
-  if (auxQueues.size() == 0) {
-    auxQueues.push_back(Queue{*shared.context, args.profile, true});
+  if (auxQueues.empty()) {
+    auxQueues.emplace_back(*shared.context, args.profile, true);
   }
 
   // Queue a sync event in the main queue.  Have all auxiliary queues wait on the event.
   EventHolder event = queue.createSyncEvent();
-  for (size_t i = 0; i < auxQueues.size(); ++i) {
-    auxQueues[i].waitForSyncEvent(&event);
+  for (auto & auxQueue : auxQueues) {
+    auxQueue.waitForSyncEvent(&event);
   }
 
   // Assign kernels to running on the main queue or an auxiliary queue
@@ -1036,14 +1038,14 @@ void Gpu::splitQueue(void) {
   }
 }
 
-void Gpu::mergeQueue(void) {
+void Gpu::mergeQueue() {
 
   // If MULTI_Q -use not set, return
   if (!args.value("MULTI_Q", 0)) return;
 
   // Queue a sync event in each auxiliary queue(s).  Wait on the event(s) in the main queue.
-  for (size_t i = 0; i < auxQueues.size(); ++i) {
-    EventHolder event = auxQueues[i].createSyncEvent();
+  for (auto & auxQueue : auxQueues) {
+    EventHolder event = auxQueue.createSyncEvent();
     queue.waitForSyncEvent(&event);
   }
 
@@ -1083,7 +1085,7 @@ void Gpu::mergeQueue(void) {
 
 // Replay the recorded bottom half kernels in a cache friendly order.  We support several
 // options here using multiple openCl command queues.
-void Gpu::replay(void) {
+void Gpu::replay() {
 
   // If using multiple command queues, handle that now.
   splitQueue();
@@ -1102,28 +1104,28 @@ void Gpu::replay(void) {
 
       // Call the appropriate kernel
       if (kern == KMIDIN) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
+        Buffer<double>  const*buf = recorded_kernel_args[arg++];
         // If not in place, the input is from the scratch buffer
-        Buffer<double> *in = in_place ? buf : &buf3;
-        Buffer<double> *out = buf;
+        Buffer<double>  const*in = in_place ? buf : &buf3;
+        Buffer<double>  const*out = buf;
         if (cache_group == 1) kfftMidIn(*out, *in);
         if (cache_group == 2) kfftMidInGF31(*out, *in);
         if (cache_group == 3) kfftMidInGF61(*out, *in);
       }
 
       if (kern == KFFTHIN) {
-        Buffer<double> *out = recorded_kernel_args[arg++];
-        Buffer<double> *in = recorded_kernel_args[arg++];
+        Buffer<double>  const*out = recorded_kernel_args[arg++];
+        Buffer<double>  const*in = recorded_kernel_args[arg++];
         if (cache_group == 1) kfftHin(*out, *in);
         if (cache_group == 2) kfftHinGF31(*out, *in);
         if (cache_group == 3) kfftHinGF61(*out, *in);
       }
 
       if (kern == KTAILSQUARE) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
+        Buffer<double>  const*buf = recorded_kernel_args[arg++];
         // If not in place, the output is to the scratch buffer
-        Buffer<double> *in = buf;
-        Buffer<double> *out = in_place ? buf : &buf3;
+        Buffer<double>  const*in = buf;
+        Buffer<double>  const*out = in_place ? buf : &buf3;
         if (!tail_single_kernel) {
           if (cache_group == 1) ktailSquareZero(*out, *in);
           if (cache_group == 2) ktailSquareZeroGF31(*out, *in);
@@ -1135,40 +1137,40 @@ void Gpu::replay(void) {
       }
 
       if (kern == KTAILMUL) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
-        Buffer<double> *in2 = recorded_kernel_args[arg++];
+        Buffer<double>  const*buf = recorded_kernel_args[arg++];
+        Buffer<double>  const*in2 = recorded_kernel_args[arg++];
         // If not in place, the output is to the scratch buffer
-        Buffer<double> *in1 = buf;
-        Buffer<double> *out = in_place ? buf : &buf3;
+        Buffer<double>  const*in1 = buf;
+        Buffer<double>  const*out = in_place ? buf : &buf3;
         if (cache_group == 1) ktailMul(*out, *in1, *in2);
         if (cache_group == 2) ktailMulGF31(*out, *in1, *in2);
         if (cache_group == 3) ktailMulGF61(*out, *in1, *in2);
       }
 
       if (kern == KTAILMULLOW) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
-        Buffer<double> *in2 = recorded_kernel_args[arg++];
+        Buffer<double>  const*buf = recorded_kernel_args[arg++];
+        Buffer<double>  const*in2 = recorded_kernel_args[arg++];
         // If not in place, the output is to the scratch buffer
-        Buffer<double> *in1 = buf;
-        Buffer<double> *out = in_place ? buf : &buf3;
+        Buffer<double>  const*in1 = buf;
+        Buffer<double>  const*out = in_place ? buf : &buf3;
         if (cache_group == 1) ktailMulLow(*out, *in1, *in2);
         if (cache_group == 2) ktailMulLowGF31(*out, *in1, *in2);
         if (cache_group == 3) ktailMulLowGF61(*out, *in1, *in2);
       }
 
       if (kern == KMIDOUT) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
+        Buffer<double>  const*buf = recorded_kernel_args[arg++];
         // If not in place, the input is from the scratch buffer
-        Buffer<double> *in = in_place ? buf : &buf3;
-        Buffer<double> *out = buf;
+        Buffer<double>  const*in = in_place ? buf : &buf3;
+        Buffer<double>  const*out = buf;
         if (cache_group == 1) kfftMidOut(*out, *in);
         if (cache_group == 2) kfftMidOutGF31(*out, *in);
         if (cache_group == 3) kfftMidOutGF61(*out, *in);
       }
 
       if (kern == KFFTW) {
-        Buffer<double> *out = recorded_kernel_args[arg++];
-        Buffer<double> *in = recorded_kernel_args[arg++];
+        Buffer<double>  const*out = recorded_kernel_args[arg++];
+        Buffer<double>  const*in = recorded_kernel_args[arg++];
         if (cache_group == 1) kfftW(*out, *in);
         if (cache_group == 2) kfftWGF31(*out, *in);
         if (cache_group == 3) kfftWGF61(*out, *in);
@@ -1188,7 +1190,7 @@ void Gpu::replay(void) {
 
 void Gpu::fftP(Buffer<double>& buf, Buffer<Word>& in) {
   // If not in place, instead write the output to the scratch buffer
-  Buffer<double> *out = in_place ? &buf : &buf3;
+  Buffer<double>  const*out = in_place ? &buf : &buf3;
   kfftP(*out, in);
 }
 
@@ -1261,8 +1263,8 @@ void Gpu::carryFused(Buffer<double>& buf) {
   replay();
   assert(roePos <= ROE_SIZE);
   // Like fftP, if not in place write the output to the scratch buffer
-  Buffer<double> *in = &buf;
-  Buffer<double> *out = in_place ? &buf : &buf3;
+  Buffer<double>  const*in = &buf;
+  Buffer<double>  const*out = in_place ? &buf : &buf3;
   roePos < wantROE ? kCarryFusedROE(*out, *in, roePos++)
                    : kCarryFused(*out, *in, updateCarryPos(1 << 0));
 }
@@ -1272,8 +1274,8 @@ void Gpu::carryFusedMul(Buffer<double>& buf) {
   replay();
   assert(roePos <= ROE_SIZE);
   // Like fftP, if not in place write the output to the scratch buffer
-  Buffer<double> *in = &buf;
-  Buffer<double> *out = in_place ? &buf : &buf3;
+  Buffer<double>  const*in = &buf;
+  Buffer<double>  const*out = in_place ? &buf : &buf3;
   roePos < wantROE ? kCarryFusedMulROE(*out, *in, roePos++)
                    : kCarryFusedMul(*out, *in, updateCarryPos(1 << 1));
 }
@@ -1282,8 +1284,8 @@ void Gpu::carryFusedLL(Buffer<double>& buf) {
   // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
   replay();
   // Like fftP, if not in place write the output to the scratch buffer
-  Buffer<double> *in = &buf;
-  Buffer<double> *out = in_place ? &buf : &buf3;
+  Buffer<double>  const*in = &buf;
+  Buffer<double>  const*out = in_place ? &buf : &buf3;
   kCarryFusedLL(*out, *in, updateCarryPos(1 << 0));
 }
 
@@ -1316,29 +1318,30 @@ u32 Gpu::updateCarryPos(u32 bit) {
 
 vector<Buffer<Word>> Gpu::makeBufVector(u32 size) {
   vector<Buffer<Word>> r;
-  for (u32 i = 0; i < size; ++i) { r.emplace_back(timeBufVect, &queue, N); }
+  r.reserve(size);
+for (u32 i = 0; i < size; ++i) { r.emplace_back(timeBufVect, &queue, N); }
   return r;
 }
 
 pair<RoeInfo, RoeInfo> Gpu::readROE() {
   assert(roePos <= ROE_SIZE);
   if (roePos) {
-    vector<float> roe = bufROE.read(roePos);
+    vector<float> const roe = bufROE.read(roePos);
     assert(roe.size() == roePos);
     bufROE.zero(roePos);
     roePos = 0;
     auto [squareRoe, mulRoe] = split(roe, mulRoePos);
     mulRoePos.clear();
     return {roeStat(squareRoe), roeStat(mulRoe)};
-  } else {
+  } 
     return {};
-  }
+ 
 }
 
 RoeInfo Gpu::readCarryStats() {
   assert(carryPos <= CARRY_SIZE);
   if (carryPos == 0) { return {}; }
-  vector<float> carry = bufStatsCarry.read(carryPos);
+  vector<float> const carry = bufStatsCarry.read(carryPos);
   assert(carry.size() == carryPos);
   bufStatsCarry.zero(carryPos);
   carryPos = 0;
@@ -1384,7 +1387,7 @@ vector<Word> Gpu::readChecked(Buffer<Word>& buf) {
     u64 hostSum = 0;
     for (auto it = data.begin(), end = data.end(); it < end; ++it) hostSum += u64(*it);
 
-    u64 gpuSum = expectedVect[0];
+    u64 const gpuSum = expectedVect[0];
     if (hostSum == gpuSum) {
       // A buffer containing all-zero is exceptional, so mark that through the empty vector.
       if (gpuSum == 0 && isAllZero(data)) {
@@ -1479,10 +1482,10 @@ void Gpu::logTimeKernels() {
 
   string s = "Profile:\n";
   for (const TimeInfo* p : prof) {
-    u32 n = p->n;
+    u32 const n = p->n;
     assert(n);
-    double f = 1e-3 / n;
-    double percent = 100.0 / total * p->times[2];
+    double const f = 1e-3 / n;
+    double const percent = 100.0 / total * p->times[2];
     if (!args.verbose && percent < 0.2) { break; }
     snprintf(buf, sizeof(buf),
              args.verbose ? "%s %5.2f%% %-11s : %6.0f us/call x %5d calls  (%.3f %.0f)\n"
@@ -1512,7 +1515,7 @@ vector<Word> Gpu::readWords(Buffer<Word> &buf) {
 
 void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
   // GPU is expecting either 4-byte or 8-byte integers.  C++ code is using 8-byte integers.  Handle the "no conversion" case.
-  if (fft.WordSize == 8) buf.write(std::move(words));
+  if (fft.WordSize == 8) buf.write(words);
   // Convert 64-bit C++ Words into 32-bit GPU Words
   else {
     vector<Word> GPUdata;
@@ -1521,7 +1524,7 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
     for (u32 i = 0; i < words.size(); i += 2) {
       GPUdata[i/2] = ((i64) words[i+1] << 32) | (u32) words[i];
     }
-    buf.write(std::move(GPUdata));
+    buf.write(GPUdata);
   }
 }
 
@@ -1538,19 +1541,19 @@ void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
 }
 
 Words Gpu::expExp2(const Words& A, u32 n) {
-  u32 logStep   = 10000;
-  u32 blockSize = 100;
+  u32 const logStep   = 10000;
+  u32 const blockSize = 100;
   
-  writeIn(bufData, std::move(A));
+  writeIn(bufData, A);
   IterationTimer timer{0};
   u32 k = 0;
   while (k < n) {
-    u32 its = std::min(blockSize, n - k);
+    u32 const its = std::min(blockSize, n - k);
     squareLoop(bufData, 0, its);
     k += its;
     queue.finish();
     if (k % logStep == 0) {
-      float secsPerIt = timer.reset(k);
+      float const secsPerIt = timer.reset(k);
       log("%u / %u, %s us/it\n", k, n, formatSecsPerIter(secsPerIt).c_str());
     }
   }
@@ -1583,7 +1586,7 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp) {
     fftP(buf1, bufInOut);
     fftMidIn(buf1);
     fftHin(buf2, buf1); // save fully FFTed "base" to buf2
-    bool midInAlreadyDone = 1;
+    bool midInAlreadyDone = true;
 
     int p = 63;
     while (!testBit(exp, p)) { --p; }
@@ -1592,7 +1595,7 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp) {
       if (!midInAlreadyDone) fftMidIn(buf1);
       tailSquare(buf1);
       fftMidOut(buf1);
-      midInAlreadyDone = 0;
+      midInAlreadyDone = false;
 
       if (testBit(exp, p)) {
         doCarry(buf1, bufInOut);
@@ -1670,7 +1673,7 @@ u32 Gpu::squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool 
   assert(from < to);
   enum LEAD_TYPE leadIn = LEAD_NONE;
   for (u64 k = from; k < to; ++k) {
-    enum LEAD_TYPE leadOut = useLongCarry || (k == to - 1) ? LEAD_NONE : LEAD_WIDTH;
+    enum LEAD_TYPE const leadOut = useLongCarry || (k == to - 1) ? LEAD_NONE : LEAD_WIDTH;
     square(out, (k==from) ? in : out, leadIn, leadOut, doTailMul3 && (k == to - 1));
     leadIn = leadOut;
   }
@@ -1691,18 +1694,18 @@ u64 Gpu::bufResidue(Buffer<Word> &buf) {
 
   int carry = 0;
   for (int i = 0; i < 32; ++i) {
-    u32 len = bitlen(N, E, N - 32 + i);
-    i64 w = (i64) words[i] + carry;
+    u32 const len = bitlen(N, E, N - 32 + i);
+    i64 const w = (i64) words[i] + carry;
     carry = (int) (w >> len);
   }
 
   u64 res = 0;
   int hasBits = 0;
   for (int k = 0; k < 32 && hasBits < 64; ++k) {
-    u32 len = bitlen(N, E, k);
-    i64 tmp = (i64) words[32 + k] + carry;
+    u32 const len = bitlen(N, E, k);
+    i64 const tmp = (i64) words[32 + k] + carry;
     carry = (int) (tmp >> len);
-    u64 w = tmp - ((i64) carry << len);
+    u64 const w = tmp - ((i64) carry << len);
     assert(w < (1ULL << len));
     res += w << hasBits;
     hasBits += len;
@@ -1711,10 +1714,10 @@ u64 Gpu::bufResidue(Buffer<Word> &buf) {
 }
 
 static string formatETA(u32 secs) {
-  u32 etaMins = (secs + 30) / 60;
-  int days  = etaMins / (24 * 60);
-  int hours = etaMins / 60 % 24;
-  int mins  = etaMins % 60;
+  u32 const etaMins = (secs + 30) / 60;
+  int const days  = etaMins / (24 * 60);
+  int const hours = etaMins / 60 % 24;
+  int const mins  = etaMins % 60;
   char buf[64];
   if (days) {
     snprintf(buf, sizeof(buf), "%dd %02d:%02d", days, hours, mins);
@@ -1725,7 +1728,7 @@ static string formatETA(u32 secs) {
 }
 
 static string getETA(u32 step, u32 total, float secsPerStep) {
-  u32 etaSecs = max(0u, u32((total - step) * secsPerStep));
+  u32 const etaSecs = max(0u, u32((total - step) * secsPerStep));
   return formatETA(etaSecs);
 }
 
@@ -1749,7 +1752,7 @@ static string makeLogStr(const string& status, u64 k, u64 res, float secsPerIt, 
 
 void Gpu::doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors) {
   auto [roeSq, roeMul] = readROE();
-  double z = roeSq.z();
+  double const z = roeSq.z();
   zAvg.update(z, roeSq.N);
   if (roeSq.max > 0.005)
     log("%sZ=%.0f (avg %.1f), ROEmax=%.3f, ROEavg=%.3f. %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
@@ -1765,10 +1768,10 @@ void Gpu::doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u3
   // Unless ROE log is not explicitly requested, measure only a few iterations to minimize overhead
   wantROE = args.logROE ? ROE_SIZE : 400;
 
-  RoeInfo carryStats = readCarryStats();
+  RoeInfo const carryStats = readCarryStats();
   if (carryStats.N > 2) {
-    u32 m = ldexp(carryStats.max, 32);
-    double z = carryStats.z();
+    u32 const m = ldexp(carryStats.max, 32);
+    double const z = carryStats.z();
     log("Carry: %x Z(%u)=%.1f\n", m, carryStats.N, z);
   }
 }
@@ -1779,20 +1782,20 @@ bool Gpu::equals9(const Words& a) {
   return true;
 }
 
-int ulps(double a, double b) {
+static int ulps(double a, double b) {
   if (a == 0 && b == 0) { return 0; }
 
-  u64 aa = as<u64>(a);
-  u64 bb = as<u64>(b);
-  bool sameSign = (aa >> 63) == (bb >> 63);
-  int delta = sameSign ? bb - aa : bb + aa;
+  u64 const aa = as<u64>(a);
+  u64 const bb = as<u64>(b);
+  bool const sameSign = (aa >> 63) == (bb >> 63);
+  int const delta = sameSign ? bb - aa : bb + aa;
   return delta;
 }
 
 [[maybe_unused]] static double trigNorm(double c, double s) {
-  double c2 = c * c;
-  double err = fma(c, c, -c2);
-  double norm = c2 + fma(s, s, err);
+  double const c2 = c * c;
+  double const err = fma(c, c, -c2);
+  double const norm = c2 + fma(s, s, err);
   return norm;
 }
 
@@ -1837,22 +1840,22 @@ void Gpu::selftestTrig() {
 
   if (isAmdGpu(shared.context->deviceId())) {
     vector<string> WHATS {"V_NOP", "V_ADD_I32", "V_FMA_F32", "V_ADD_F64", "V_FMA_F64", "V_MUL_F64", "V_MAD_U64_U32"};
-    for (int w = 0; w < int(WHATS.size()); ++w) {
+    for (int w = 0; std::cmp_less(w, WHATS.size()); ++w) {
       const int what = w;
       testTime(what, bufCarry);
-      vector<i64> times = bufCarry.read(4096 * 2);
-      [[maybe_unused]] i64 prev = 0;
+      vector<i64> const times = bufCarry.read(4096 * 2);
+      [[maybe_unused]] i64 const prev = 0;
       u64 min = -1;
       u64 sum = 0;
-      for (int i = 0; i < int(times.size()); ++i) {
-        i64 x = times[i];
+      for (long const x : times) {
+        
 #if 0
         if (x != prev) {
           log("%4d : %ld\n", i, x);
           prev = x;
         }
 #endif
-        if (x > 0 && u64(x) < min) { min = x; }
+        if (x > 0 && std::cmp_less(x, min)) { min = x; }
         if (x > 0) { sum += x; }
       }
       log("%-15s : %.2f cycles latency; time min: %d; avg %.0f\n",
@@ -1864,22 +1867,22 @@ void Gpu::selftestTrig() {
 static u32 mod3(const std::vector<u32> &words) {
   u32 r = 0;
   // uses the fact that 2**32 % 3 == 1.
-  for (u32 w : words) { r += w % 3; }
+  for (u32 const w : words) { r += w % 3; }
   return r % 3;
 }
 
 static void doDiv3(u64 E, Words& words) {
   u32 r = (3 - mod3(words)) % 3;
   assert(r < 3);
-  int topBits = E % 32;
+  int const topBits = E % 32;
   assert(topBits > 0 && topBits < 32);
   {
-    u64 w = (u64(r) << topBits) + words.back();
+    u64 const w = (u64(r) << topBits) + words.back();
     words.back() = w / 3;
     r = w % 3;
   }
   for (auto it = words.rbegin() + 1, end = words.rend(); it != end; ++it) {
-    u64 w = (u64(r) << 32) + *it;
+    u64 const w = (u64(r) << 32) + *it;
     *it = w / 3;
     r = w % 3;
   }
@@ -1895,12 +1898,12 @@ fs::path Gpu::saveProof(const Args& args, ProofSet& proofSet) {
   for ( ; ; ) {
     for (int retry = 0; retry == 0 || (retry == 1 && !problem_proof); ++retry) {
       auto [proof, hashes] = proofSet.computeProof(this);
-      fs::path tmpFile = proof.file(args.proofToVerifyDir);
+      fs::path const tmpFile = proof.file(args.proofToVerifyDir);
       proof.save(tmpFile);
             
       fs::path proofFile = proof.file(args.proofResultDir);
 
-      bool ok = Proof::load(tmpFile).verify(this, hashes);
+      bool const ok = Proof::load(tmpFile).verify(this, hashes);
       log("Proof '%s' verification %s\n", tmpFile.string().c_str(), ok ? "OK" : "FAILED");
       if (ok) {
         fancyRename(tmpFile, proofFile);
@@ -1923,7 +1926,7 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
 
     PRPState state = saver.load();
     writeState(state.k, state.check, state.blockSize);
-    u64 res = dataResidue();
+    u64 const res = dataResidue();
 
     if (res == state.res64) {
       log("OK %9" PRIu64 " on-load: blockSize %d, %016" PRIx64 "\n", state.k, state.blockSize, res);
@@ -1940,7 +1943,7 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
 }
 
 u32 Gpu::getProofPower(u64 k) {
-  u32 power = ProofSet::effectivePower(E, args.getProofPow(E), k);
+  u32 const power = ProofSet::effectivePower(E, args.getProofPow(E), k);
 
   if (power != args.getProofPow(E)) {
     log("Proof using power %u (vs %u)\n", power, args.getProofPow(E));
@@ -1964,10 +1967,10 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
   assert(iters % blockSize == 0);
 
   u32 k = 0;
-  PRPState state{E, 0, blockSize, 3, makeWords(E, 1), 0};
+  PRPState const state{.exponent=E, .k=0, .blockSize=blockSize, .res64=3, .check=makeWords(E, 1), .nErrors=0};
   writeState(state.k, state.check, state.blockSize);
   {
-    u64 res = dataResidue();
+    u64 const res = dataResidue();
     if (res != state.res64) {
       log("residue expected %016" PRIx64 " found %016" PRIx64 "\n", state.res64, res);
     }
@@ -1978,7 +1981,7 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
   modMul(bufCheck, bufData, leadIn);
   leadIn = LEAD_MIDDLE;
 
-  enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+  enum LEAD_TYPE const leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
   square(bufData, bufData, leadIn, leadOut);
   leadIn = leadOut;
   ++k;
@@ -2010,27 +2013,23 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
 
-  [[maybe_unused]] u64 res = dataResidue();
+  [[maybe_unused]] u64 const res = dataResidue();
   if (Signal::stopRequested()) { throw "stop requested"; }
 
-  bool ok = doCheck(blockSize);
+  bool const ok = doCheck(blockSize);
   auto stats = readCarryStats();
 
   // log("%s %016" PRIx64 " %s\n", ok ? "OK" : "EE", res, roe.toString(statsBits).c_str());
   return {ok, stats};
 }
 
-tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
+tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool  /*quick*/) {
   u32 blockSize{}, iters{}, warmup{};
 
-  if (true) {
+  {
     blockSize = 200;
     iters = 2000;
     warmup = 50;
-  } else {
-    blockSize = 500;
-    iters = 10'000;
-    warmup = 100;
   }
 
   assert(iters % blockSize == 0);
@@ -2038,10 +2037,10 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
   wantROE = ROE_SIZE; // should be large enough to capture fully this measureROE()
 
   u32 k = 0;
-  PRPState state{E, 0, blockSize, 3, makeWords(E, 1), 0};
+  PRPState const state{.exponent=E, .k=0, .blockSize=blockSize, .res64=3, .check=makeWords(E, 1), .nErrors=0};
   writeState(state.k, state.check, state.blockSize);
   {
-    u64 res = dataResidue();
+    u64 const res = dataResidue();
     if (res != state.res64) {
       log("residue expected %016" PRIx64 " found %016" PRIx64 "\n", state.res64, res);
     }
@@ -2052,7 +2051,7 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
   modMul(bufCheck, bufData, leadIn);
   leadIn = LEAD_MIDDLE;
 
-  enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+  enum LEAD_TYPE const leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
   square(bufData, bufData, leadIn, leadOut);
   leadIn = leadOut;
   ++k;
@@ -2084,10 +2083,10 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool quick) {
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
 
-  [[maybe_unused]] u64 res = dataResidue();
+  [[maybe_unused]] u64 const res = dataResidue();
   if (Signal::stopRequested()) { throw "stop requested"; }
 
-  bool ok = doCheck(blockSize);
+  bool const ok = doCheck(blockSize);
   auto roes = readROE();
 
   wantROE = 0;
@@ -2113,7 +2112,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   assert(iters % blockSize == 0);
 
   u32 k = 0;
-  PRPState state{E, 0, blockSize, 3, makeWords(E, 1), 0};
+  PRPState const state{.exponent=E, .k=0, .blockSize=blockSize, .res64=3, .check=makeWords(E, 1), .nErrors=0};
   writeState(state.k, state.check, state.blockSize);
   assert(dataResidue() == state.res64);
 
@@ -2121,7 +2120,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   modMul(bufCheck, bufData, leadIn);
   leadIn = LEAD_MIDDLE;
 
-  enum LEAD_TYPE leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+  enum LEAD_TYPE const leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
   square(bufData, bufData, leadIn, leadOut);
   leadIn = leadOut;
   ++k;
@@ -2157,8 +2156,8 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
 
   if (Signal::stopRequested()) { throw "stop requested"; }
 
-  u64 res = dataResidue();
-  bool ok = doCheck(blockSize);
+  u64 const res = dataResidue();
+  bool const ok = doCheck(blockSize);
   if (!ok) {
     log("Error %016" PRIx64 "\n", res);
     secsPerIt = 0.1; // a large value to mark the error
@@ -2175,7 +2174,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
   u32 nErrors = 0;
   int nSeqErrors = 0;
   u64 lastFailedRes64 = 0;
-  u32 logStep = args.logStep;
+  u32 const logStep = args.logStep;
 
  reload:
   elapsedTimer.reset();
@@ -2184,7 +2183,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
   double elapsedBefore = 0;
 
   {
-    PRPState state = loadPRP(*getSaver());
+    PRPState const state = loadPRP(*getSaver());
     nErrors = std::max(nErrors, state.nErrors);
     blockSize = state.blockSize;
     k = state.k;
@@ -2193,10 +2192,10 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
   assert(blockSize > 0 && logStep % blockSize == 0);
 
-  u32 checkStep = checkStepForErrors(blockSize, nErrors);
+  u32 const checkStep = checkStepForErrors(blockSize, nErrors);
   assert(checkStep % logStep == 0);
 
-  u32 power = getProofPower(k);
+  u32 const power = getProofPower(k);
   
   ProofSet proofSet{E, power};
 
@@ -2213,7 +2212,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
   assert(k < kEnd);
 
   // We continue beyound kEnd: to the next multiple of blockSize, to do a check there
-  u64 kEndEnd = roundUp(kEnd, blockSize);
+  u64 const kEndEnd = roundUp(kEnd, blockSize);
 
   bool skipNextCheckUpdate = false;
 
@@ -2242,10 +2241,10 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
     ++k; // !! early inc
 
-    bool doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
-    bool doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k - startK == 2 * blockSize);
-    bool doLog = k % logStep == 0;
-    enum LEAD_TYPE leadOut = doCheck || doLog || k == persistK || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+    bool const doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
+    bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k - startK == 2 * blockSize);
+    bool const doLog = k % logStep == 0;
+    enum LEAD_TYPE const leadOut = doCheck || doLog || k == persistK || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     if (doStop) { log("Stopping, please wait..\n"); }
 
@@ -2253,7 +2252,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
     leadIn = leadOut;
 
     if (k == persistK) {
-      vector<Word> rawData = readChecked(bufData);
+      vector<Word> const rawData = readChecked(bufData);
       if (rawData.empty()) {
         log("Data error ZERO\n");
         ++nErrors;
@@ -2276,8 +2275,8 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
     if (!doCheck && !doLog) continue;
 
-    u64 res = dataResidue();
-    float secsPerIt = iterationTimer.reset(k);
+    u64 const res = dataResidue();
+    float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
 
     vector<Word> rawCheck = readChecked(bufCheck);
@@ -2290,20 +2289,20 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
     if (!doCheck) {
       (*background)([=, this] {
-        getSaver()->saveUnverified({E, k, blockSize, res, compactBits(rawCheck, E), nErrors,
-                                    elapsedBefore + elapsedTimer.at()});
+        getSaver()->saveUnverified({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors,
+                                    .elapsed=elapsedBefore + elapsedTimer.at()});
       });
 
       log("   %9" PRIu64 " %016" PRIx64 " %s\n", k, res, formatSecsPerIter(secsPerIt).c_str());
-      RoeInfo carryStats = readCarryStats();
+      RoeInfo const carryStats = readCarryStats();
       if (carryStats.N) {
-        u32 m = ldexp(carryStats.max, 32);
-        double z = carryStats.z();
+        u32 const m = ldexp(carryStats.max, 32);
+        double const z = carryStats.z();
         log("Carry: %x Z(%u)=%.1f\n", m, carryStats.N, z);
       }
     } else {
-      bool ok = this->doCheck(blockSize);
-      [[maybe_unused]] float secsCheck = iterationTimer.reset(k);
+      bool const ok = this->doCheck(blockSize);
+      [[maybe_unused]] float const secsCheck = iterationTimer.reset(k);
 
       if (ok) {
         nSeqErrors = 0;
@@ -2312,15 +2311,15 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
 
         if (k < kEnd) {
           (*background)([=, this, rawCheck = std::move(rawCheck)] {
-            getSaver()->save({E, k, blockSize, res, compactBits(rawCheck, E), nErrors, elapsedBefore + elapsedTimer.at()});
+            getSaver()->save({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
           });
         }
 
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
 
         if (k >= kEndEnd) {
-          fs::path proofFile = saveProof(args, proofSet);
-          return {isPrime, finalRes64, nErrors, proofFile.string(), toHex(res2048)};
+          fs::path const proofFile = saveProof(args, proofSet);
+          return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048)};
         }        
       } else {
         ++nErrors;
@@ -2367,9 +2366,9 @@ LLResult Gpu::isPrimeLL(const Task& task) {
 
     elapsedBefore = state.elapsed;
     startK = state.k;
-    u64 expectedRes = (u64(state.data[1]) << 32) | state.data[0];
-    writeIn(bufData, std::move(state.data));
-    u64 res = dataResidue();
+    u64 const expectedRes = (u64(state.data[1]) << 32) | state.data[0];
+    writeIn(bufData, state.data);
+    u64 const res = dataResidue();
     if (res != expectedRes) { throw "Invalid savefile (res64)"; }
     assert(res == expectedRes);
     log("LL loaded @ %" PRIu64 " : %016" PRIx64 "\n", startK, res);
@@ -2378,7 +2377,7 @@ LLResult Gpu::isPrimeLL(const Task& task) {
   IterationTimer iterationTimer{startK};
 
   u64 k = startK;
-  u64 kEnd = E - 2;
+  u64 const kEnd = E - 2;
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
   while (true) {
@@ -2390,8 +2389,8 @@ LLResult Gpu::isPrimeLL(const Task& task) {
       log("Stopping, please wait..\n");
     }
 
-    bool doLog = (k % args.logStep == 0) || doStop;
-    enum LEAD_TYPE leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+    bool const doLog = (k % args.logStep == 0) || doStop;
+    enum LEAD_TYPE const leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     squareLL(bufData, leadIn, leadOut);
     leadIn = leadOut;
@@ -2400,29 +2399,29 @@ LLResult Gpu::isPrimeLL(const Task& task) {
 
     u64 res64 = 0;
     auto data = readData();
-    bool isAllZero = data.empty();
+    bool const isAllZero = data.empty();
 
     if (isAllZero) {
       if (k < kEnd) {
         log("Error: early ZERO @ %" PRIu64 "\n", k);
         if (doStop) {
           throw "stop requested";
-        } else {
+        } 
           goto reload;
-        }
+       
       }
       res64 = 0;
     } else {
       assert(data.size() >= 2);
       res64 = (u64(data[1]) << 32) | data[0];
-      saver.save({E, k, std::move(data), elapsedBefore + elapsedTimer.at()});
+      saver.save({.exponent=E, .k=k, .data=std::move(data), .elapsed=elapsedBefore + elapsedTimer.at()});
     }
 
-    float secsPerIt = iterationTimer.reset(k);
+    float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
     log("%9" PRIu64 " %016" PRIx64 " %s ETA %s\n", k, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
 
-    if (k >= kEnd) { return {isAllZero, res64}; }
+    if (k >= kEnd) { return {.isPrime=isAllZero, .res64=res64}; }
 
     if (doStop) { throw "stop requested"; }
   }
@@ -2440,21 +2439,21 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
   { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
     File fi = File::openReadThrow(fname);
-    u32 nBytes = u32((E - 1) / 8 + 1);
-    Words B = fi.readBytesLE(nBytes);
-    writeIn(bufData, std::move(B));
+    u32 const nBytes = u32((E - 1) / 8 + 1);
+    Words const B = fi.readBytesLE(nBytes);
+    writeIn(bufData, B);
   }
 
   Timer elapsedTimer;
 
   elapsedTimer.reset();
 
-  u32 startK = 0;
+  u32 const startK = 0;
 
   IterationTimer iterationTimer{startK};
 
   u32 k = 0;
-  u32 kEnd = task.squarings;
+  u32 const kEnd = task.squarings;
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
   while (true) {
@@ -2466,8 +2465,8 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
       log("Stopping, please wait..\n");
     }
 
-    bool doLog = (k % 100'000 == 0) || doStop;
-    enum LEAD_TYPE leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+    bool const doLog = (k % 100'000 == 0) || doStop;
+    enum LEAD_TYPE const leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     squareCERT(bufData, leadIn, leadOut);
     leadIn = leadOut;
@@ -2476,9 +2475,9 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
     Words data = readData();
     assert(data.size() >= 2);
-    u64 res64 = (u64(data[1]) << 32) | data[0];
+    u64 const res64 = (u64(data[1]) << 32) | data[0];
 
-    float secsPerIt = iterationTimer.reset(k);
+    float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
     log("%7u / %7u %016" PRIx64 " %s ETA %s\n", k, kEnd, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
 

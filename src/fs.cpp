@@ -4,6 +4,7 @@
 #include "File.h"
 
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -53,14 +54,14 @@ void fancyRename(const fs::path& src, const fs::path& dst) {
 u64 fileSize(const fs::path& path) {
   error_code dummy;
   auto size = fs::file_size(path, dummy);
-  if (size == decltype(size)(-1)) { size = 0; }
+  if (std::cmp_equal(size, -1)) { size = 0; }
   return size;
 }
 
 bool deleteLine(const fs::path& path, const string& targetLine, u64 initialSize) {
   if (!initialSize) { initialSize = fileSize(path); }
 
-  fs::path tmp = path + ("-"s + toString(this_thread::get_id()));
+  fs::path const tmp = path + ("-"s + toString(this_thread::get_id()));
 
   if (!copyWithout(targetLine, path, tmp) || !sizeMatches(path, initialSize)) { return false; }
 

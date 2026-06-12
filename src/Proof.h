@@ -47,7 +47,7 @@ public:
 
   void save(const fs::path& proofResultDir) const;
 
-  fs::path file(const fs::path& proofDir) const;
+  [[nodiscard]] fs::path file(const fs::path& proofDir) const;
   
   bool verify(Gpu *gpu, const vector<u64>& hashes = {}) const;
 };
@@ -64,7 +64,7 @@ private:
 
   static bool canDo(u64 E, u32 power, u64 currentK);
 
-  mutable decltype(points)::const_iterator cacheIt{};
+  mutable decltype(points)::const_iterator cacheIt;
 
   bool fileExists(u64 k) const;
 
@@ -86,6 +86,6 @@ public:
   void save(u64 k, const Words& words) const { return save(E, power, k, words); }
   Words load(u64 k) const { return load(E, power, k); }
 
-  void reducePower(void) { power--; }
+  void reducePower() { power--; }
   std::pair<Proof, vector<u64>> computeProof(Gpu *gpu) const;
 };

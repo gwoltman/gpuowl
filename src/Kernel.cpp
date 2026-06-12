@@ -3,7 +3,6 @@
 #include "Kernel.h"
 #include "KernelCompiler.h"
 
-#include <stdexcept>
 
 Kernel::Kernel(string_view name, KernelCompiler* compiler, TimeInfo* timeInfo, Queue* queue,
        string_view fileName, string_view nameInFile,

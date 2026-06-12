@@ -3,6 +3,7 @@
 #include "File.h"
 #include <filesystem>
 #include <system_error>
+#include <utility>
 
 using namespace std;
 
@@ -40,7 +41,7 @@ i64 File::size(const fs::path &name) {
   return filesystem::file_size(name, dummy);
 }
 
-File& File::operator=(File&& other) {
+File& File::operator=(File&& other)  noexcept {
   assert(this != &other);
   this->~File();
   new (this) File(std::move(other));

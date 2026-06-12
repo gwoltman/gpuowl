@@ -27,7 +27,7 @@ class Kernel {
   size_t workSize;
   u32 groupSize = 0;
   
-  KernelHolder kernel{};
+  KernelHolder kernel;
   std::future<KernelHolder> pendingKernel;
   cl_device_id deviceId;
   std::vector<std::pair<u32, cl_mem>> pendingArgs;
@@ -67,7 +67,7 @@ private:
     if (kernel) {
       ::setArg(kernel.get(), pos, arg, name);
     } else {
-      pendingArgs.push_back({pos, arg});
+      pendingArgs.emplace_back(pos, arg);
     }
   }
 

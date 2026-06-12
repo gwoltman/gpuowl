@@ -6,6 +6,7 @@
 #include "Gpu.h"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 #include <string>
 #include <cassert>
@@ -37,7 +38,7 @@ string fileHash(const fs::path& filePath) {
 }
 
 ProofInfo getInfo(const fs::path& proofFile) {
-  string hash = proof::fileHash(proofFile);
+  string const hash = proof::fileHash(proofFile);
   File fi = File::openReadThrow(proofFile);
   u64 E = 0;
   u32 power = 0;
@@ -46,7 +47,7 @@ ProofInfo getInfo(const fs::path& proofFile) {
     log("Proof file '%s' has invalid header\n", proofFile.string().c_str());
     throw "Invalid proof header";
   }
-  return {power, E, hash};
+  return {.power=power, .exp=E, .md5=hash};
 }
 
 }
@@ -54,14 +55,14 @@ ProofInfo getInfo(const fs::path& proofFile) {
 // ---- Proof ----
 
 fs::path Proof::file(const fs::path& proofDir) const {
-  string strE = to_string(E);
-  u32 power = middles.size();
+  string const strE = to_string(E);
+  u32 const power = middles.size();
   return proofDir / (strE + '-' + to_string(power) + ".proof");  
 }
 
 void Proof::save(const fs::path& proofFile) const {
-  File fo = File::openWrite(proofFile);
-  u32 power = middles.size();
+  File const fo = File::openWrite(proofFile);
+  u32 const power = middles.size();
   fo.printf(HEADER_v2, power, E, '\n');
   fo.write(B.data(), (E-1)/8+1);
   for (const Words& w : middles) { fo.write(w.data(), (E-1)/8+1); }
@@ -76,21 +77,22 @@ Proof Proof::load(const fs::path& path) {
     log("Proof file '%s' has invalid header\n", path.string().c_str());
     throw "Invalid proof header";
   }
-  u32 nBytes = (E - 1) / 8 + 1;
-  Words B = fi.readBytesLE(nBytes);
+  u32 const nBytes = (E - 1) / 8 + 1;
+  Words const B = fi.readBytesLE(nBytes);
   vector<Words> middles;
-  for (u32 i = 0; i < power; ++i) { middles.push_back(fi.readBytesLE(nBytes)); }
-  return {E, B, middles};
+  middles.reserve(power);
+for (u32 i = 0; i < power; ++i) { middles.push_back(fi.readBytesLE(nBytes)); }
+  return {.E=E, .B=B, .middles=middles};
 }
 
 bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
   // log("B         %016" PRIx64 "\n", res64(B));
   // for (u32 i = 0; i < middles.size(); ++i) { log("Middle[%u] %016" PRIx64 "\n", i, res64(middles[i])); }
 
-  u32 power = middles.size();
+  u32 const power = middles.size();
   assert(power > 0);
 
-  bool isPrime = (B == makeWords(E, 9));
+  bool const isPrime = (B == makeWords(E, 9));
 
   Words A{makeWords(E, 3)};
   Words B{this->B};
@@ -101,14 +103,14 @@ bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
   for (u32 i = 0; i < power; ++i, span = (span + 1) / 2) {
     const Words& M = middles[i];
     hash = proof::hashWords(E, hash, M);
-    u64 h = hash[0];
+    u64 const h = hash[0];
     
     if (hashes.size() > i && h != hashes.at(i)) {
       log("proof [%u] : hash expected %016" PRIx64 " != %016" PRIx64 "\n", i, hashes[i], h);
       return false;
     }
 
-    bool doSquareB = span % 2;
+    bool const doSquareB = span % 2;
     B = gpu->expMul(M, h, B, doSquareB);
     A = gpu->expMul(A, h, M, false);
 
@@ -118,7 +120,7 @@ bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
   log("proof verification: doing %" PRIu64 " iterations\n", span);
   A = gpu->expExp2(A, span);
 
-  bool ok = (A == B);
+  bool const ok = (A == B);
   if (ok) {
     log("proof: %" PRIu64 " proved %s\n", E, isPrime ? "probable prime" : "composite");
   } else {
@@ -156,7 +158,7 @@ ProofSet::ProofSet(u64 E, u32 power)
   assert(points.front() == 0);
 
   points.front() = E;
-  std::sort(points.begin(), points.end());
+  std::ranges::sort(points);
 
   assert(points.size() == (1u << power));
   assert(points.back() == E);
@@ -164,7 +166,7 @@ ProofSet::ProofSet(u64 E, u32 power)
   points.push_back(u32(-1)); // guard element
   cacheIt = points.begin();
 
-  for ([[maybe_unused]] u64 p : points) {
+  for ([[maybe_unused]] u64 const p : points) {
     assert(p > E || isInPoints(E, power, p));
   }
 }
@@ -198,7 +200,7 @@ u32 ProofSet::bestPower(u64 E) {
 
   assert(E > 0);
   // log2(x)/2 is log4(x)
-  int power = 10 + floor(log2(E / 60e6) / 2);
+  int const power = 10 + floor(log2(E / 60e6) / 2);
   assert(power >= 2);
   return power;
 }
@@ -224,7 +226,7 @@ bool ProofSet::fileExists(u64 k) const {
 }
 
 bool ProofSet::isValidTo(u64 limitK) const {
-  auto it = upper_bound(points.begin(), points.end(), limitK);
+  auto it = std::ranges::upper_bound(points, limitK);
 
   if (it == points.begin()) {
     return true;
@@ -246,7 +248,7 @@ bool ProofSet::isValidTo(u64 limitK) const {
 
 u64 ProofSet::next(u64 k) const {
   if (*cacheIt <= k || (cacheIt > points.begin() && *prev(cacheIt) > k)) {
-    cacheIt = upper_bound(points.begin(), points.end(), k);
+    cacheIt = std::ranges::upper_bound(points, k);
   }
   return *cacheIt;
 }
@@ -267,7 +269,7 @@ Words ProofSet::load(u64 E, u32 power, u64 k) {
 
 std::pair<Proof, vector<u64>> ProofSet::computeProof(Gpu *gpu) const {
   Words B = load(E);
-  Words A = makeWords(E, 3);
+  Words const A = makeWords(E, 3);
 
   vector<Words> middles;
   vector<u64> hashes;
@@ -279,19 +281,19 @@ std::pair<Proof, vector<u64>> ProofSet::computeProof(Gpu *gpu) const {
   for (u32 p = 0; p < power; ++p) {
     auto bufIt = bufVect.begin();
     assert(p == hashes.size());
-    u32 s = (1u << (power - p - 1));
+    u32 const s = (1u << (power - p - 1));
     for (u32 i = 0; i < (1u << p); ++i) {
-      Words w = load(points[s * (i * 2 + 1) - 1]);
+      Words const w = load(points[s * (i * 2 + 1) - 1]);
       gpu->writeIn(*bufIt++, w);
       for (u32 k = 0; i & (1u << k); ++k) {
         assert(k <= p - 1);
         --bufIt;
-        u64 h = hashes[p - 1 - k];
+        u64 const h = hashes[p - 1 - k];
         gpu->expMul(*(bufIt - 1), h, *bufIt);
       }
     }
     assert(bufIt == bufVect.begin() + 1);
-    Words w = gpu->readAndCompress(bufVect.front());
+    Words const w = gpu->readAndCompress(bufVect.front());
     if (w.empty()) { throw "Read ZERO during proof generation"; }
     middles.push_back(w);
     hash = proof::hashWords(E, hash, middles.back());
@@ -299,5 +301,5 @@ std::pair<Proof, vector<u64>> ProofSet::computeProof(Gpu *gpu) const {
 
     log("proof [%u] : M %016" PRIx64 ", h %016" PRIx64 "\n", p, res64(middles.back()), hashes.back());
   }
-  return {Proof{E, std::move(B), std::move(middles)}, hashes};
+  return {Proof{.E=E, .B=std::move(B), .middles=std::move(middles)}, hashes};
 }
