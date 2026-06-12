@@ -2,18 +2,15 @@
 
 #include "state.h"
 #include "shared.h"
-#include "log.h"
-#include "timeutil.h"
 
 #include <cassert>
-#include <cmath>
 
 static i64 lowBits(i64 u, int bits) { return (u << (64 - bits)) >> (64 - bits); }
 
 std::vector<u32> compactBits(const vector<Word> &dataVect, u64 E) {
   if (dataVect.empty()) { return {}; } // Indicating all zero
 
-  u32 N = dataVect.size();
+  u32 const N = dataVect.size();
   const Word *data = dataVect.data();
 
   std::vector<u32> out;
@@ -29,14 +26,14 @@ std::vector<u32> compactBits(const vector<Word> &dataVect, u64 E) {
     assert(nBits > 0);
 
     //   Be careful adding in the carry -- it could overflow a 32-bit word.  Convert value into desired unsigned range.
-    i64 tmp = (i64) data[p] + carry;
+    i64 const tmp = (i64) data[p] + carry;
     carry = (int) (tmp >> nBits);
     u64 w = (u64) (tmp - ((i64) carry << nBits));
     assert(w < (1ULL << nBits));
 
     assert(haveBits < 32);
     while (nBits) {
-      int needBits = 32 - haveBits;
+      int const needBits = 32 - haveBits;
       outWord |= w << haveBits;
       if (nBits >= needBits) {
         w >>= needBits;
@@ -56,7 +53,7 @@ std::vector<u32> compactBits(const vector<Word> &dataVect, u64 E) {
   out.push_back(outWord);
 
   for (int p = 0; carry; ++p) {
-    i64 v = i64(out[p]) + carry;
+    i64 const v = i64(out[p]) + carry;
     out[p] = v & 0xffffffff;
     carry = v >> 32;
   }
@@ -66,10 +63,10 @@ std::vector<u32> compactBits(const vector<Word> &dataVect, u64 E) {
 }
 
 struct BitBucket {
-  u128 bits;
-  u32 size;
+  u128 bits{0};
+  u32 size{0};
 
-  BitBucket() : bits(0), size(0) {}
+  BitBucket()  = default;
 
   void put32(u32 b) {
     assert(size <= 96);
@@ -79,7 +76,7 @@ struct BitBucket {
   
   i64 popSigned(u32 n) {
     assert(size >= n);
-    i64 b = lowBits((i64) bits, n);
+    i64 const b = lowBits((i64) bits, n);
     size -= n;
     bits >>= n;
     bits += (b < 0); // carry fixup.
@@ -97,7 +94,7 @@ vector<Word> expandBits(const vector<u32> &compactBits, u32 N, u64 E) {
   auto it = compactBits.cbegin();
   [[maybe_unused]] auto itEnd = compactBits.cend();
   for (u32 p = 0; p < N; ++p) {
-    u32 len = bitlen(N, E, p);
+    u32 const len = bitlen(N, E, p);
     while (bucket.size < len) {
       assert(it != itEnd);
       bucket.put32(*it++);

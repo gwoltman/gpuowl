@@ -16,7 +16,7 @@
 #include <algorithm>
 
 // This is a copy of the args.verbose flag.  It allows the CUDA wrapper to access the flag.
-bool prpll_verbose = 0;
+bool prpll_verbose = false;
 
 int Args::value(const string& key, int valNotFound) const {
   auto it = flags.find(key);
@@ -52,7 +52,7 @@ vector<KeyVal> Args::splitArgLine(const string& inputLine) {
         ret.push_back({prev, {}});
         prev = s;
       } else {
-        ret.push_back({prev, s});
+        ret.emplace_back(prev, s);
         prev.clear();
       }
     }
@@ -67,14 +67,14 @@ vector<KeyVal> Args::splitArgLine(const string& inputLine) {
 // Splits a string of the form "Foo=bar,C,D=1" into key=value pairs, with value defaulting to "1".
 vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
   vector<KeyVal> ret;
-  std::replace(ss.begin(), ss.end(), ',', ' ');
+  std::ranges::replace(ss, ',', ' ');
   std::istringstream iss{ss};
-  vector<string> uses{std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{}};
+  vector<string> const uses{std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{}};
   for (const string &s : uses) {
     auto pos = s.find('=');
-    string key = (pos == string::npos) ? s : s.substr(0, pos);
-    string val = (pos == string::npos) ? "1"s : s.substr(pos+1);
-    ret.push_back({key, val});
+    string const key = (pos == string::npos) ? s : s.substr(0, pos);
+    string const val = (pos == string::npos) ? "1"s : s.substr(pos+1);
+    ret.emplace_back(key, val);
   }
   return ret;
 }
@@ -96,7 +96,7 @@ u32 Args::getProofPow(u64 exponent) const {
 
 string Args::tailDir() const { return fs::path{dir}.filename().string(); }
 
-bool Args::hasFlag(const string& key) const { return flags.find(key) != flags.end(); }
+bool Args::hasFlag(const string& key) const { return flags.contains(key); }
 
 void Args::printHelp() {
   printf(R"(
@@ -223,7 +223,7 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
   }
   for (unsigned i = 0; i < deviceIds.size(); ++i) {
     cl_device_id id = deviceIds[i];
-    string bdf = getBdfFromDevice(id);
+    string const bdf = getBdfFromDevice(id);
     printf("%2u  : %7s | %16s | %-24s | %s | %s\n",
            i,
            bdf.c_str(),
@@ -242,7 +242,7 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
   u32 activeSize = 0;
   float maxBpw = 0;
   string variants;
-  for (enum FFT_TYPES type : {FFT64, FFT3161, FFT3261, FFT61}) {
+  for (enum FFT_TYPES const type : {FFT64, FFT3161, FFT3261, FFT61}) {
     for (auto c : configs) {
       if (c.fft_type != type) continue;
       if (c.size() != activeSize) {
@@ -273,8 +273,8 @@ void Args::parse(const string& line) {
     char fftBuf[32];
     char configBuf[256];
     sscanf(line.c_str(), "! %31s %255s", fftBuf, configBuf);
-    string fft = fftBuf;
-    string config = configBuf;
+    string const fft = fftBuf;
+    string const config = configBuf;
     perFftConfig[fft] = splitUses(config);
     return;
   }
@@ -288,10 +288,10 @@ void Args::parse(const string& line) {
     if (key == "-h" || key == "--help") {
       printHelp();
       throw "help";
-    } else if (key == "-version") {
+    } if (key == "-version") {
       // log("PRPLL %s\n", VERSION);
       throw "version";
-    } else if (key == "-info") {
+    } if (key == "-info") {
       if (s.empty()) {
         log("-info expects an FFT spec, e.g. -info 1K:13:256\n");
         throw "-info <fft>";
@@ -300,12 +300,12 @@ void Args::parse(const string& line) {
       for (const FFTShape& shape : FFTShape::multiSpec(s)) {
         for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
           if (variant != LAST_VARIANT && shape.fft_type != FFT64) continue;
-          FFTConfig fft{shape, variant, CARRY_AUTO};
+          FFTConfig const fft{shape, variant, CARRY_AUTO};
           log("%12s | %.2f | %5.1f\n", fft.spec().c_str(), fft.maxBpw(), fft.maxExp() / 1'000'000.0);
         }
       }
       throw "info";
-    } else if (key == "-od") {
+    } if (key == "-od") {
       double od = stod(s);
       fftOverdrive = 1 + od / 1000;
     } else if (key == "-roe") {

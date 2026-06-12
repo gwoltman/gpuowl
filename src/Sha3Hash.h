@@ -18,7 +18,7 @@ public:
   void update(const void* data, u32 size) { SHA3Update(&context, reinterpret_cast<const unsigned char*>(data), size); }
   
   array<u64, 4> finish() && {
-    u64 *p = reinterpret_cast<u64 *>(SHA3Final(&context));
+    u64  const*p = reinterpret_cast<u64 *>(SHA3Final(&context));
     return {p[0], p[1], p[2], p[3]};
   }
 };

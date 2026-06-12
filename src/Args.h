@@ -26,13 +26,13 @@ public:
 
   void parse(const string& line);
   void setDefaults();
-  bool uses(const std::string& key) const { return flags.find(key) != flags.end(); }
-  int value(const std::string& key, int valNotFound = -1) const;
+  [[nodiscard]] bool uses(const std::string& key) const { return flags.contains(key); }
+  [[nodiscard]] int value(const std::string& key, int valNotFound = -1) const;
   void readConfig(const fs::path& path);
-  u32 getProofPow(u64 exponent) const;
-  string tailDir() const;
+  [[nodiscard]] u32 getProofPow(u64 exponent) const;
+  [[nodiscard]] string tailDir() const;
 
-  bool hasFlag(const string& key) const;
+  [[nodiscard]] bool hasFlag(const string& key) const;
 
   bool silent;
   string user;

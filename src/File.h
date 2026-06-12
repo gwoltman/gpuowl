@@ -12,6 +12,7 @@
 #include <unistd.h>
 #endif
 #include <filesystem>
+#include <utility>
 #include <vector>
 #include <string>
 #include <optional>
@@ -20,7 +21,7 @@
 #include <io.h>
 #endif
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <fcntl.h>
 #endif
 
@@ -67,7 +68,7 @@ class File {
 
   void datasync() {
     fflush(f);
-#if defined(_MSC_VER)
+#ifdef _MSC_VER
 // We'd really like to use FlushFileBuffers(h), but we do not have easy access to the Windows file handle.
 // We might could get that by getting the pathname and opening the file with native Windows routines.
 #elif defined(_WIN32) || defined(__WIN32__)
@@ -99,13 +100,13 @@ public:
   
   static void append(const fs::path& name, std::string_view text) { File::openAppend(name).write(text); }
 
-  File() : f{}, readOnly{true} {}
+  File() :  readOnly{true} {}
 
-  File(FILE* f, const string& name) : f{f}, readOnly{false}, name{name} {}
+  File(FILE* f, string  name) : f{f}, readOnly{false}, name{std::move(name)} {}
   
-  File(File&& other) : f{other.f}, readOnly{other.readOnly}, name{other.name} { other.f = nullptr; }
+  File(File&& other)  noexcept : f{other.f}, readOnly{other.readOnly}, name{other.name} { other.f = nullptr; }
   
-  File& operator=(File&& other);
+  File& operator=(File&& other) noexcept ;
 
   File(const File& other) = delete;
   File& operator=(const File& other) = delete;
@@ -146,7 +147,7 @@ public:
   }
   
   void seek(long offset, int whence = SEEK_SET) {
-    int ret = fseek(this->get(), offset, whence);
+    int const ret = fseek(this->get(), offset, whence);
     if (ret) { throw ReadError{name}; }
       // throw(std::ios_base::failure(("fseek: "s + to_string(ret)).c_str()));
   }
@@ -156,7 +157,7 @@ public:
   int printf(const char *fmt, ...) const FORMAT_PRINTF(2, 3) {
     va_list va;
     va_start(va, fmt);
-    int ret = vfprintf(f, fmt, va);
+    int const ret = vfprintf(f, fmt, va);
     va_end(va);
 
 #if !HAS_LINEBUF
@@ -169,7 +170,7 @@ public:
   int scanf(const char *fmt, ...) FORMAT_SCANF(2, 3) {
     va_list va;
     va_start(va, fmt);
-    int ret = vfscanf(f, fmt, va);
+    int const ret = vfscanf(f, fmt, va);
     va_end(va);
     return ret;
   }
@@ -179,10 +180,10 @@ public:
   void write(string_view s) { write(s.data(), u32(s.size())); }
 
   operator bool() const { return f != nullptr; }
-  FILE* get() const { return f; }
+  [[nodiscard]] FILE* get() const { return f; }
 
-  long ftell() const {
-    long pos = ::ftell(this->get());
+  [[nodiscard]] long ftell() const {
+    long const pos = ::ftell(this->get());
     assert(pos >= 0);
     return pos;
   }
@@ -193,8 +194,8 @@ public:
   }
   
   long size() {
-    long savePos = ftell();
-    long retSize = seekEnd();
+    long const savePos = ftell();
+    long const retSize = seekEnd();
     seek(savePos);
     return retSize;
   }
@@ -205,7 +206,7 @@ public:
   std::string readLine() {
     char buf[1024];
     buf[0] = 0;
-    bool ok = fgets(buf, sizeof(buf), this->get());
+    bool const ok = fgets(buf, sizeof(buf), this->get());
     if (!ok) { return ""; }  // EOF or error
     string line = buf;
     if (line.empty() || line.back() != '\n') {
@@ -222,7 +223,7 @@ public:
   }
 
   template<typename T>
-  std::vector<T> read(u32 nWords) const {
+  [[nodiscard]] [[nodiscard]] std::vector<T> read(u32 nWords) const {
     vector<T> ret;
     ret.resize(nWords);
     read(ret.data(), nWords * sizeof(T));
@@ -230,8 +231,8 @@ public:
   }
 
   template<typename T>
-  std::vector<T> readChecked(u32 nWords) const {
-    u32 expectedCRC = read<u32>(1)[0];
+  [[nodiscard]] std::vector<T> readChecked(u32 nWords) const {
+    u32 const expectedCRC = read<u32>(1)[0];
     return readWithCRC<T>(nWords, expectedCRC);
   }
 
@@ -242,7 +243,7 @@ public:
   }
 
   template<typename T>
-  std::vector<T> readWithCRC(u32 nWords, u32 crc) const {
+  [[nodiscard]] std::vector<T> readWithCRC(u32 nWords, u32 crc) const {
     auto data = read<T>(nWords);
     if (crc != crc32(data)) {
       log("File '%s' : CRC: expected %u, actual %u\n", name.c_str(), crc, crc32(data));
@@ -253,7 +254,7 @@ public:
 
   std::vector<u32> readBytesLE(u32 nBytes) {
     assert(nBytes > 0);
-    u32 nWords = (nBytes - 1) / 4 + 1;
+    u32 const nWords = (nBytes - 1) / 4 + 1;
     vector<u32> data(nWords);
     read(data.data(), nBytes);
     return data;
@@ -262,7 +263,7 @@ public:
   u32 readUpTo(void* data, u32 nUpToBytes) { return u32(fread(data, 1, nUpToBytes, this->get())); }
 
   string readAll() {
-    u32 sz = u32(size());
+    u32 const sz = u32(size());
     return {read<char>(sz).data(), sz};
   }
 };

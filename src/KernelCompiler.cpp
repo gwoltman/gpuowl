@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cinttypes>
 #include <future>
+#include <utility>
 
 using namespace std;
 
@@ -34,7 +35,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   deviceId{context->deviceId()}
 {
 
-  string hw = getDriverVersion(deviceId) + ':' + getDeviceName(deviceId);
+  string const hw = getDriverVersion(deviceId) + ':' + getDeviceName(deviceId);
   if (args.verbose) { log("OpenCL: %s, args %s\n", hw.c_str(), baseArgs.c_str()); }
 
   SHA3 hasher;
@@ -44,10 +45,10 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   auto& clNames = getClFileNames();
   auto& clFiles = getClFiles();
   assert(clNames.size() == clFiles.size());
-  int n = clNames.size();
+  int const n = clNames.size();
   for (int i = 0; i < n; ++i) {
     auto &src = clFiles[i];
-    files.push_back({clNames[i], src});
+    files.emplace_back(clNames[i], src);
     clSources.push_back(loadSource(context->get(), src));
 
     hasher.update(clNames[i]);
@@ -75,7 +76,7 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
                              clSources.size()-1, (const cl_program*) (clSources.data()+1), getClFileNames().data()+1,
                              nullptr, nullptr);
 #endif
-  if (string mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }
+  if (string const mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }
   if (err != CL_SUCCESS) {
     log("Compiling '%s' error %s (args %s)\n", fileName.c_str(), errMes(err).c_str(), args.c_str());
     return {};
@@ -83,7 +84,7 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
   
   Program p2{clLinkProgram(context, 1, &deviceId, linkArgs.c_str(),
                            1, (cl_program *) &p1, nullptr, nullptr, &err)};
-  if (string mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }
+  if (string const mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }
   if (err != CL_SUCCESS) {
     log("Linking '%s' error %s (args %s)\n", fileName.c_str(), errMes(err).c_str(), linkArgs.c_str());
   }
@@ -97,14 +98,14 @@ static string to_hex(u64 d) {
 }
 
 KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kernelName, const string& args) const {
-  Timer timer;
+  Timer const timer;
   bool fromCache = true;
 
   Program program;
   string cacheFile;
 
   if (useCache) {
-    string f = kernelName + '-' + to_hex(SHA3::hash(contextHash, fileName, kernelName, args)[0]);
+    string const f = kernelName + '-' + to_hex(SHA3::hash(contextHash, fileName, kernelName, args)[0]);
     cacheFile = cacheDir + '/' + f;
     program = loadBinary(context, deviceId, cacheFile);
   }

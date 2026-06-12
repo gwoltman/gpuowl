@@ -36,7 +36,7 @@ std::optional<Task> parse(const std::string& line) {
   bool isCERT = false;
 
   if (topParts.size() == 2) {
-    string kind = topParts.front();
+    const string& kind = topParts.front();
     if (kind == "PRP" || kind == "PRPDC") {
       isPRP = true;
     } else if (kind == "Test" || kind == "DoubleCheck") {
@@ -58,14 +58,14 @@ std::optional<Task> parse(const std::string& line) {
       parts.erase(parts.begin());
     }
 
-    string s = (parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && (parts[3] == "-1" || parts[3] == "-1\n")) ? parts[2]
+    string const s = (parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && (parts[3] == "-1" || parts[3] == "-1\n")) ? parts[2]
       : (!parts.empty() ? parts[0] : "");
 
     const char *end = s.c_str() + s.size();
     u64 exp{};
     auto [ptr, _] = from_chars(s.c_str(), end, exp, 10);
     if (ptr != end) { exp = 0; }
-    if (exp > 1000) { return {{isPRP ? Task::PRP : Task::LL, u32(exp), AID, line, 0}}; }
+    if (exp > 1000) { return {{.kind=isPRP ? Task::PRP : Task::LL, .exponent=u32(exp), .AID=AID, .line=line, .squarings=0}}; }
   }
   if (isCERT) {
     vector<string> parts = split(topParts.back(), ',');
@@ -84,7 +84,7 @@ std::optional<Task> parse(const std::string& line) {
 	u64 squarings{0};
 	from_chars(s.c_str(), end, squarings, 10);
 //printf ("Exec cert %d %d \n", (int) exp, (int) squarings);
-	if (exp > 1000 && squarings > 100) { return {{Task::CERT, u32(exp), AID, line, u32(squarings) }}; }
+	if (exp > 1000 && squarings > 100) { return {{.kind=Task::CERT, .exponent=u32(exp), .AID=AID, .line=line, .squarings=u32(squarings) }}; }
       }
     }
   }
@@ -110,7 +110,7 @@ string workName(i32 instance) { return "worktodo-" + to_string(instance) + ".txt
 
 optional<Task> getWork(Args& args, i32 instance) {
   string filename = workName(instance);           // Used for printf statements.  Using fd::path is problematic because it 8-bit char in Linux and 16-bit char in Windows.
-  fs::path localWork = filename;
+  fs::path const localWork = filename;
 
   // Try to get a task from the local worktodo-<N> file.
   if (optional<Task> task = bestTask(localWork, args.smallest)) { return task; }
@@ -118,7 +118,7 @@ optional<Task> getWork(Args& args, i32 instance) {
   if (args.masterDir.empty()) { log("No work to do found.  Add work to %s.\n", filename.c_str()); return {}; }
 
   filename = "worktodo.txt";
-  fs::path worktodo = args.masterDir / filename;
+  fs::path const worktodo = args.masterDir / filename;
 
   /*
     We need to aquire a task from the global worktodo.txt, and "atomically"
@@ -139,13 +139,13 @@ optional<Task> getWork(Args& args, i32 instance) {
   */
 
   for (int retry = 0; retry < 2; ++retry) {
-    u64 initialSize = fileSize(worktodo);
+    u64 const initialSize = fileSize(worktodo);
     if (!initialSize) { return {}; }
 
     optional<Task> task = bestTask(worktodo, args.smallest);
     if (!task) { return {}; }
 
-    string workLine = task->line;
+    string const workLine = task->line;
     File::append(localWork, workLine);
 
     if (deleteLine(worktodo, workLine, initialSize)) {
@@ -153,7 +153,7 @@ optional<Task> getWork(Args& args, i32 instance) {
     }
 
     // Undo add to local worktodo. Attempt twice.
-    bool found = deleteLine(localWork, workLine) || deleteLine(localWork, workLine);
+    bool const found = deleteLine(localWork, workLine) || deleteLine(localWork, workLine);
     assert(found);
     if (!found) { return {}; }
   }
@@ -169,14 +169,14 @@ optional<Task> getWork(Args& args, i32 instance) {
 std::optional<Task> Worktodo::getTask(Args &args, i32 instance) {
   if (instance == 0) {
     if (args.prpExp) {
-      u64 exp = args.prpExp;
+      u64 const exp = args.prpExp;
       args.prpExp = 0;
-      return Task{Task::PRP, exp};
-    } else if (args.llExp) {
-      u64 exp = args.llExp;
+      return Task{.kind=Task::PRP, .exponent=exp};
+    } if (args.llExp) {
+      u64 const exp = args.llExp;
       args.llExp = 0;
-      return Task{Task::LL, exp};
-    } else if (!args.verifyPath.empty()) {
+      return Task{.kind=Task::LL, .exponent=exp};
+    } if (!args.verifyPath.empty()) {
       auto path = args.verifyPath;
       args.verifyPath.clear();
       return Task{.kind=Task::VERIFY, .verifyPath=path};

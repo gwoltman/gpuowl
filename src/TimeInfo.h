@@ -29,7 +29,7 @@ public:
 
   bool operator<(const TimeInfo& rhs) const { return times[2] > rhs.times[2]; }
 
-  auto secs() const {
+  [[nodiscard]] auto secs() const {
     std::array<double, 3> ret{};
     for (int i = 0; i < 3; ++i) { ret[i] = times[i] * 1e-9; }
     return ret;

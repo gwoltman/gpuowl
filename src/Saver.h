@@ -40,7 +40,7 @@ class Saver {
   u32 nSavefiles;
 
   State initState();
-  void moveToTrash(fs::path file);
+  void moveToTrash(const fs::path& file);
   void trimFiles();
   fs::path mostRecentSavefile();
 

@@ -8,7 +8,7 @@ using namespace std;
 
 static volatile sig_atomic_t signalled = 0;
 
-static void (* volatile oldHandler)(int) = 0;
+static void (* volatile oldHandler)(int) = nullptr;
 
 static void signalHandler(int signal) { signalled = signal; }
 
@@ -27,6 +27,6 @@ void Signal::release() {
   if (isOwner) {
     isOwner = false;
     signal(SIGINT, oldHandler);
-    oldHandler = 0;
+    oldHandler = nullptr;
   }
 }

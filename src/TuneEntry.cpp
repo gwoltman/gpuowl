@@ -7,7 +7,7 @@
 
 // Returns whether *results* was updated.
 bool TuneEntry::update(vector<TuneEntry>& results) const {
-  u64 maxExp = fft.maxExp();
+  u64 const maxExp = fft.maxExp();
   [[maybe_unused]] bool didErase = false;
 
   int i{};
@@ -29,11 +29,11 @@ bool TuneEntry::update(vector<TuneEntry>& results) const {
 
 // Returns whether entry *e* represents an improvement over *results* (i.e. would update the results).
 bool TuneEntry::willUpdate(const vector<TuneEntry>& results) const {
-  u64 maxExp = fft.maxExp();
+  u64 const maxExp = fft.maxExp();
   for (const auto& r : results) {
     if (r.cost > cost) {
       break;
-    } else if (r.fft.maxExp() >= maxExp) {
+    } if (r.fft.maxExp() >= maxExp) {
       return false;
     }
   }
@@ -61,7 +61,7 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
     if (sscanf(line.c_str(), "%lf %31s", &cost, specBuf) < 2) {
       log("tune.txt line '%s' ignored\n", line.c_str());
     }
-    FFTConfig fft{specBuf};
+    FFTConfig const fft{specBuf};
     assert(cost >= prevCost && fft.maxExp() > prevMaxExp);
     prevCost = cost;
     prevMaxExp = fft.maxExp();
@@ -76,7 +76,7 @@ void TuneEntry::writeTuneFile(const vector<TuneEntry>& results) {
   [[maybe_unused]] double prevCost{};
   CycleFile tune{"tune.txt"};
   for (const TuneEntry& r : results) {
-    u64 maxExp = r.fft.maxExp();
+    u64 const maxExp = r.fft.maxExp();
     assert(r.cost >= prevCost && maxExp > prevMaxExp);
     prevCost = r.cost;
     prevMaxExp = maxExp;

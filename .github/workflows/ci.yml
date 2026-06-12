@@ -7,13 +7,13 @@ on:
     - cron:  '0 0 1 * *'
 
 jobs:
-  Linux:
-    name: Linux
+  Linux-OpenCL:
+    name: Linux OpenCL
 
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-22.04-arm, ubuntu-24.04-arm]
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04, ubuntu-22.04-arm, ubuntu-24.04-arm, ubuntu-26.04-arm]
         cxx: [g++, clang++]
         exclude:
         - os: ubuntu-22.04-arm
@@ -26,7 +26,7 @@ jobs:
     - name: Install
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y cppcheck ocl-icd-opencl-dev pocl-opencl-icd
+        sudo apt-get install -y ocl-icd-opencl-dev pocl-opencl-icd
         $CXX --version
     - name: Script
       run: |
@@ -39,14 +39,71 @@ jobs:
       with:
         name: ${{ matrix.os }}_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_${{ matrix.cxx }}_prpll
         path: ${{ github.workspace }}
-    - name: Cppcheck
+
+  Linux-CUDA:
+    name: Linux CUDA
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+        cxx: [g++, clang++]
+        exclude:
+        - os: ubuntu-22.04-arm
+          cxx: clang++
+      fail-fast: false
+    env:
+      CXX: ${{ matrix.cxx }}
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y nvidia-cuda-toolkit
+        $CXX --version
+    - name: Script
+      run: |
+        make CUDA=1 -O -j "$(nproc)"
+        cd build-cuda
+        rm -f -- *.o
+        ./prpll -h
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: ${{ matrix.os }}_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_${{ matrix.cxx }}_cuda_prpll
+        path: ${{ github.workspace }}
+
+  Cppcheck:
+    name: Cppcheck
+
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y cppcheck
+    - name: Script
       run: cppcheck --enable=all --force .
-    - name: Clang-Tidy
-      if: ${{ matrix.cxx == 'clang++' }}
+
+  Clang-Tidy:
+    name: Clang-Tidy
+
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Script
       run: clang-tidy -checks='bugprone-*,-bugprone-reserved-identifier,cert-*,-cert-dcl37-c,-cert-dcl51-cpp,clang-analyzer-*,concurrency-*,misc-*,-misc-no-recursion,modernize-*,-modernize-use-trailing-return-type,performance-*,portability-*,readability-const-return-type,readability-container-*,readability-duplicate-include,readability-else-after-return,readability-make-member-function-cons,readability-non-const-parameter,readability-redundant-*,readability-simplify-*,readability-string-compare,readability-use-*' -header-filter='.*' src/*.cpp -- -Wall -O3 -std=gnu++20
       continue-on-error: true
-    - name: ShellCheck
-      run: shopt -s globstar; shellcheck -o avoid-nullary-conditions,check-extra-masked-returns,check-set-e-suppressed,deprecate-which,quote-safe-variables,require-double-brackets -s bash **/*.sh
+
+  ShellCheck:
+    name: ShellCheck
+
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Script
+      run: shopt -s globstar; shellcheck -o avoid-nullary-conditions,check-set-e-suppressed,deprecate-which,quote-safe-variables,require-double-brackets -s bash **/*.sh
       continue-on-error: true
 
   Windows:

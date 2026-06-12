@@ -3,7 +3,6 @@
 #include "cudawrap.h"
 
 #include <stdexcept>
-#include <sstream>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -76,7 +75,7 @@ float getGpuRamGB(CUdevice dev) {
   return bytes / (1024.0f * 1024.0f * 1024.0f);
 }
 
-u64 getFreeMem(CUdevice dev) {
+u64 getFreeMem(CUdevice  /*dev*/) {
   // Need a context to query free memory
   size_t free_bytes = 0, total = 0;
   CU_CHECK(cuMemGetInfo(&free_bytes, &total));
@@ -119,7 +118,7 @@ CudaModule::CudaModule(const std::string& ptx, const std::string& name) {
   char errorLog[4096] = {};
   void* optionValues[] = { (void*)(size_t)sizeof(errorLog), (void*)errorLog };
 
-  CUresult err = cuModuleLoadDataEx(&module, ptx.c_str(), 2, options, optionValues);
+  CUresult const err = cuModuleLoadDataEx(&module, ptx.c_str(), 2, options, optionValues);
   if (err != CUDA_SUCCESS) {
     cuda_log("Module load error for '%s': %s\n", name.c_str(), errorLog);
     checkCuda(err, __FILE__, __LINE__, __func__, "cuModuleLoadDataEx");
@@ -226,7 +225,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
   while (i < source.size()) {
     // Strip #pragma OPENCL ... lines
     if (i + 14 <= source.size() && source.compare(i, 14, "#pragma OPENCL") == 0) {
-      bool atLineStart = (i == 0 || source[i-1] == '\n');
+      bool const atLineStart = (i == 0 || source[i-1] == '\n');
       if (atLineStart) {
         while (i < source.size() && source[i] != '\n') i++;
         result += "// [stripped pragma]";
@@ -238,7 +237,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
     // OpenCL: #define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
     // CUDA:   #define KERNEL(x) extern "C" __global__ void __launch_bounds__(x)
     if (i + 15 <= source.size() && source.compare(i, 15, "#define KERNEL(") == 0) {
-      bool atLineStart = (i == 0 || source[i-1] == '\n');
+      bool const atLineStart = (i == 0 || source[i-1] == '\n');
       if (atLineStart) {
         while (i < source.size() && source[i] != '\n') i++;
         result += "#ifdef CUDA_MIN_BLOCKS\n";
@@ -254,7 +253,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
     // Only strip exact OpenCL patterns (using OpenCL types like 'long', 'ulong', 'uint')
     // NOT our compat header's versions (which use 'long long', 'unsigned long long', etc.)
     if (i + 7 <= source.size() && source.compare(i, 7, "typedef") == 0) {
-      bool atLineStart = (i == 0 || source[i-1] == '\n');
+      bool const atLineStart = (i == 0 || source[i-1] == '\n');
       if (atLineStart) {
         size_t lineEnd = source.find('\n', i);
         if (lineEnd == std::string::npos) lineEnd = source.size();
@@ -289,7 +288,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
 
     // Handle __attribute__((...)) for overloadable and reqd_work_group_size
     if (i + 15 <= source.size() && source.compare(i, 15, "__attribute__((") == 0) {
-      size_t nameStart = i + 15;
+      size_t const nameStart = i + 15;
       if (nameStart + 12 <= source.size() && source.compare(nameStart, 12, "overloadable") == 0) {
         // Strip __attribute__((overloadable)) — C++ has native overloading
         i = skipBalancedParens(source, i + 13);
@@ -304,7 +303,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
         size_t numEnd = argsStart;
         while (numEnd < source.size() && source[numEnd] >= '0' && source[numEnd] <= '9') numEnd++;
         if (numEnd > argsStart) {
-          std::string wgSize = source.substr(argsStart, numEnd - argsStart);
+          std::string const wgSize = source.substr(argsStart, numEnd - argsStart);
           result += "__launch_bounds__(" + wgSize + ") ";
         }
         // Skip past the entire __attribute__((...))
@@ -325,7 +324,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
       };
       bool matched = false;
       for (int vi = 0; vecTypes[vi]; vi++) {
-        size_t tlen = strlen(vecTypes[vi]);
+        size_t const tlen = strlen(vecTypes[vi]);
         if (i + 1 + tlen <= source.size() && source.compare(i + 1, tlen, vecTypes[vi]) == 0) {
           // Check what follows: should be whitespace then '(' for a cast constructor
           size_t after = i + 1 + tlen;
@@ -363,13 +362,13 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
     // Also handles: "  local T lds[IN_WG / 2 * (MIDDLE <= 8 ? 2 * MIDDLE : MIDDLE)];"
     // But NOT: "local T2 *lds" in function params (which becomes just "T2 *lds" via macro)
     if (i + 6 <= source.size() && source.compare(i, 6, "local ") == 0) {
-      bool preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_'));
+      bool const preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_'));
       if (!preceded) {
         // Check if this "local" is followed by a type then a name then '['
         // i.e., it's a shared memory array declaration
         size_t lineEnd = source.find('\n', i);
         if (lineEnd == std::string::npos) lineEnd = source.size();
-        std::string line = source.substr(i, lineEnd - i);
+        std::string const line = source.substr(i, lineEnd - i);
         // Match: "local TYPE IDENT[" pattern — indicates array declaration
         // Array declarations have '[' and end with ';'. They may also contain '(' in
         // the array size expression (e.g., ternary operators). The key distinction is
@@ -386,11 +385,11 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
     }
     // Same for __local
     if (i + 8 <= source.size() && source.compare(i, 8, "__local ") == 0) {
-      bool preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_'));
+      bool const preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_'));
       if (!preceded) {
         size_t lineEnd = source.find('\n', i);
         if (lineEnd == std::string::npos) lineEnd = source.size();
-        std::string line = source.substr(i, lineEnd - i);
+        std::string const line = source.substr(i, lineEnd - i);
         if (line.find('[') != std::string::npos) {
           result += "__shared__ ";
           i += 8;
@@ -420,7 +419,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
       if (i + 8 < source.size() && source[i + 8] == '_') {
         result += source[i++];
       } else {
-        bool preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_'));
+        bool const preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_'));
         if (preceded) {
           result += source[i++];
         } else {
@@ -430,8 +429,8 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
     }
     // Match standalone "global" (not inside a word or PTX instruction)
     else if (i + 6 <= source.size() && source.compare(i, 6, "global") == 0) {
-      bool preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_' || source[i-1] == '.'));
-      bool followed = (i + 6 < source.size() && (isalnum(source[i + 6]) || source[i + 6] == '_'));
+      bool const preceded = (i > 0 && (isalnum(source[i-1]) || source[i-1] == '_' || source[i-1] == '.'));
+      bool const followed = (i + 6 < source.size() && (isalnum(source[i + 6]) || source[i + 6] == '_'));
       if (!preceded && !followed) {
         i += 6;
       } else {
@@ -462,9 +461,10 @@ std::string NvrtcProgram::compile(const std::string& source, const std::string& 
 
   // Convert options to char*
   std::vector<const char*> opts;
-  for (auto& o : options) opts.push_back(o.c_str());
+  opts.reserve(options.size());
+for (auto& o : options) opts.push_back(o.c_str());
 
-  nvrtcResult compileResult = nvrtcCompileProgram(prog, (int)opts.size(), opts.data());
+  nvrtcResult const compileResult = nvrtcCompileProgram(prog, (int)opts.size(), opts.data());
 
   // Get compilation log
   size_t logSize;

@@ -17,7 +17,7 @@ public:
   Event(Event&& oth) = default;
   ~Event();
 
-  cl_event get() const { return event.get(); }
+  [[nodiscard]] cl_event get() const { return event.get(); }
 
   bool isComplete();
   bool isRunning();

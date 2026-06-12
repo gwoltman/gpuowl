@@ -11,7 +11,7 @@ class Hash {
   
 public:
   template <typename... Ts>
-  static auto hash(Ts... data) {
+  static auto hash(const Ts&... data) {
     Hash hash;
     (hash.update(data),...);
     return std::move(hash).finish();

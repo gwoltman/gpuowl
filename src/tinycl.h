@@ -7,31 +7,31 @@
 #include <cstdint>
 #include <cstddef>
 
-typedef struct _cl_platform_id *    cl_platform_id;
-typedef struct _cl_device_id *      cl_device_id;
-typedef struct _cl_context *        cl_context;
-typedef struct _cl_command_queue *  cl_command_queue;
-typedef struct _cl_mem *            cl_mem;
-typedef struct _cl_program *        cl_program;
-typedef struct _cl_kernel *         cl_kernel;
-typedef struct _cl_event *          cl_event;
-typedef struct _cl_sampler *        cl_sampler;
+using cl_platform_id = struct _cl_platform_id *;
+using cl_device_id = struct _cl_device_id *;
+using cl_context = struct _cl_context *;
+using cl_command_queue = struct _cl_command_queue *;
+using cl_mem = struct _cl_mem *;
+using cl_program = struct _cl_program *;
+using cl_kernel = struct _cl_kernel *;
+using cl_event = struct _cl_event *;
+using cl_sampler = struct _cl_sampler *;
 
-typedef unsigned cl_bool;
-typedef unsigned cl_program_build_info;
-typedef unsigned cl_program_info;
-typedef unsigned cl_device_info;
-typedef unsigned cl_kernel_info;
-typedef unsigned cl_kernel_arg_info;
-typedef unsigned cl_kernel_work_group_info;
-typedef unsigned cl_profiling_info;
-typedef unsigned cl_event_info;
-typedef unsigned cl_command_queue_info;
+using cl_bool = unsigned;
+using cl_program_build_info = unsigned;
+using cl_program_info = unsigned;
+using cl_device_info = unsigned;
+using cl_kernel_info = unsigned;
+using cl_kernel_arg_info = unsigned;
+using cl_kernel_work_group_info = unsigned;
+using cl_profiling_info = unsigned;
+using cl_event_info = unsigned;
+using cl_command_queue_info = unsigned;
 
-typedef u64 cl_mem_flags;
-typedef u64 cl_svm_mem_flags;
-typedef u64 cl_device_type;
-typedef u64 cl_queue_properties;
+using cl_mem_flags = u64;
+using cl_svm_mem_flags = u64;
+using cl_device_type = u64;
+using cl_queue_properties = u64;
 
 extern "C" {
 

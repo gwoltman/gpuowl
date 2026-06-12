@@ -1,6 +1,5 @@
 // Copyright (C) 2017-2024 Mihai Preda.
 
-#include "timeutil.h"
 #include "File.h"
 #include "clwrap.h"
 
@@ -16,7 +15,7 @@
 using namespace std;
 
 // starting at 0 to -70
-array<string, 71> ERR_MES = {
+static array<string, 71> ERR_MES = {
 "SUCCESS", "DEVICE_NOT_FOUND", "DEVICE_NOT_AVAILABLE", "COMPILER_NOT_AVAILABLE",
 "MEM_OBJECT_ALLOCATION_FAILURE", "OUT_OF_RESOURCES", "OUT_OF_HOST_MEMORY", "PROFILING_INFO_NOT_AVAILABLE",
 "MEM_COPY_OVERLAP", "IMAGE_FORMAT_MISMATCH", "IMAGE_FORMAT_NOT_SUPPORTED", "BUILD_PROGRAM_FAILURE",
@@ -37,8 +36,8 @@ array<string, 71> ERR_MES = {
 };
 
 string errMes(int err) {
-  string nb = " ("s + to_string(err) + ")";
-  string mes = (err <= 0 && err >= -70) ? ERR_MES[-err] : 
+  string const nb = " ("s + to_string(err) + ")";
+  string const mes = (err <= 0 && err >= -70) ? ERR_MES[-err] : 
     (err == -1001) ? "ICD_NOT_FOUND" : ""s;
   return mes + nb;
 }
@@ -62,10 +61,10 @@ void check(int err, const char *file, int line, const char *func, string_view me
 }
 
 static void getInfo_(cl_device_id id, int what, size_t bufSize, void *buf, string_view whatStr) {
-  CHECK2(clGetDeviceInfo(id, what, bufSize, buf, NULL), whatStr);
+  CHECK2(clGetDeviceInfo(id, what, bufSize, buf, nullptr), whatStr);
 }
 
-#define GET_INFO(id, what, where) getInfo_(id, what, sizeof(where), &where, #what)
+#define GET_INFO(id, what, where) getInfo_(id, what, sizeof(where), &(where), #what)
 
 
 string getBdfFromDevice(cl_device_id id) {
@@ -215,7 +214,7 @@ cl_device_id getDevice(u32 argsDeviceId) {
 
 cl_context createContext(cl_device_id id) {  
   int err;
-  cl_context context = clCreateContext(NULL, 1, &id, NULL, NULL, &err);
+  cl_context context = clCreateContext(nullptr, 1, &id, nullptr, nullptr, &err);
   CHECK2(err, "clCreateContext");
   return context;
 }
@@ -230,7 +229,7 @@ void release(cl_event event)     { CHECK1(clReleaseEvent(event)); }
 
 Program loadSource(cl_context context, const string &source) {
   const char *ptr = source.c_str();
-  size_t size = source.size();
+  size_t const size = source.size();
   int err = 0;
   cl_program program = clCreateProgramWithSource(context, 1, &ptr, &size, &err);
   CHECK2(err, "clCreateProgramWithSource");
@@ -248,7 +247,7 @@ string getBuildLog(cl_program program, cl_device_id deviceId) {
       log("getBuildLog: log size is %lu bytes, not showing\n", (unsigned long) logSize);
       return {};
     }
-    std::unique_ptr<char[]> buf(new char[logSize + 1]);
+    std::unique_ptr<char[]> const buf(new char[logSize + 1]);
     err = clGetProgramBuildInfo(program, deviceId, CL_PROGRAM_BUILD_LOG, logSize, buf.get(), &logSize);
     CHECK2(err, "clGetProgramBuildInfo");
     buf.get()[logSize] = 0;
@@ -260,28 +259,28 @@ string getBuildLog(cl_program program, cl_device_id deviceId) {
 Program loadBinary(cl_context context, cl_device_id id, string_view fileName) {
   File f = File::openRead(fileName);
   if (!f) { return {}; }
-  string bytes = f.readAll();
-  size_t size = bytes.size();
-  const unsigned char *ptr = reinterpret_cast<const unsigned char *>(bytes.c_str());
+  string const bytes = f.readAll();
+  size_t const size = bytes.size();
+  const auto *ptr = reinterpret_cast<const unsigned char *>(bytes.c_str());
   int err = 0;
-  cl_program program = clCreateProgramWithBinary(context, 1, &id, &size, &ptr, NULL, &err);
+  cl_program program = clCreateProgramWithBinary(context, 1, &id, &size, &ptr, nullptr, &err);
   if (err) {
     log("Load binary %s : %s\n", string(fileName).c_str(), errMes(err).c_str());
     return {};
   }
-  if ((err = clBuildProgram(program, 1, &id, NULL, NULL, NULL))) {
+  if ((err = clBuildProgram(program, 1, &id, nullptr, nullptr, nullptr))) {
     log("Build binary %s : %s\n", string(fileName).c_str(), errMes(err).c_str());
     return {};
   }
   return Program{program};
 }
 
-string getBinary(cl_program program) {
+static string getBinary(cl_program program) {
   size_t size;
-  CHECK1(clGetProgramInfo(program, CL_PROGRAM_BINARY_SIZES, sizeof(size), &size, NULL));
+  CHECK1(clGetProgramInfo(program, CL_PROGRAM_BINARY_SIZES, sizeof(size), &size, nullptr));
   auto buf = make_unique<char[]>(size + 1);
-  char *ptr = buf.get();
-  CHECK1(clGetProgramInfo(program, CL_PROGRAM_BINARIES, sizeof(&buf), &ptr, NULL));
+  char  const*ptr = buf.get();
+  CHECK1(clGetProgramInfo(program, CL_PROGRAM_BINARIES, sizeof(&buf), &ptr, nullptr));
   return {buf.get(), size};
 }
 
@@ -330,27 +329,27 @@ EventHolder run(cl_queue queue, cl_kernel kernel,
                 vector<cl_event>&& waits,
                 const string &name, bool genEvent) {
   cl_event event{};
-  CHECK2(clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &workSize, &groupSize,
-                                waits.size(), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr),
-         name.c_str());
+  CHECK2(clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &workSize, &groupSize,
+                                waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr),
+         name);
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
 EventHolder read(cl_queue queue, vector<cl_event>&& waits,
                  bool blocking, cl_mem buf, size_t size, void *data, bool genEvent) {
-  size_t start = 0;
+  size_t const start = 0;
   cl_event event{};
   CHECK1(clEnqueueReadBuffer(queue, buf, blocking, start, size, data,
-                             waits.size(), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr));
+                             waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
 EventHolder write(cl_queue queue, vector<cl_event>&& waits,
                   bool blocking, cl_mem buf, size_t size, const void *data, bool genEvent) {
-  size_t start = 0;
+  size_t const start = 0;
   cl_event event{};
   CHECK1(clEnqueueWriteBuffer(queue, buf, blocking, start, size, data,
-                              waits.size(), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr));
+                              waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
@@ -358,7 +357,7 @@ EventHolder copyBuf(cl_queue queue, vector<cl_event>&& waits,
                     const cl_mem src, cl_mem dst, size_t size, bool genEvent) {
   cl_event event{};
   CHECK1(clEnqueueCopyBuffer(queue, src, dst, 0, 0, size,
-                             waits.size(), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr));
+                             waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
@@ -367,19 +366,19 @@ EventHolder fillBuf(cl_queue q, vector<cl_event>&& waits,
   assert(size);
   cl_event event{};
   CHECK1(clEnqueueFillBuffer(q, buf, pat, patSize, 0 /*start*/, size,
-                             waits.size(), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr));
+                             waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
 EventHolder enqueueMarker(cl_queue q) {
   cl_event event{};
-  CHECK1(clEnqueueMarkerWithWaitList(q, 0, 0, &event));
+  CHECK1(clEnqueueMarkerWithWaitList(q, 0, nullptr, &event));
   return EventHolder{event};
 }
 
 EventHolder enqueueMarkerWithWaits(cl_queue q, vector<cl_event>&& waits) {
   cl_event event{};
-  CHECK1(clEnqueueMarkerWithWaitList(q, waits.size(), waits.empty() ? 0 : waits.data(), &event));
+  CHECK1(clEnqueueMarkerWithWaitList(q, waits.size(), waits.empty() ? nullptr : waits.data(), &event));
   return EventHolder{event};
 }
 
@@ -391,13 +390,13 @@ void waitForEvents(vector<cl_event>&& waits) {
 
 int getKernelNumArgs(cl_kernel k) {
   int nArgs = 0;
-  CHECK1(clGetKernelInfo(k, CL_KERNEL_NUM_ARGS, sizeof(nArgs), &nArgs, NULL));
+  CHECK1(clGetKernelInfo(k, CL_KERNEL_NUM_ARGS, sizeof(nArgs), &nArgs, nullptr));
   return nArgs;
 }
 
 int getWorkGroupSize(cl_kernel k, cl_device_id device, const char *name) {
   size_t size[3];
-  CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_COMPILE_WORK_GROUP_SIZE, sizeof(size), &size, NULL), name);
+  CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_COMPILE_WORK_GROUP_SIZE, sizeof(size), &size, nullptr), name);
   return size[0];
 }
 
@@ -412,7 +411,7 @@ std::string getKernelArgName(cl_kernel k, int pos) {
 
 u32 getEventInfo(cl_event event) {
   u32 status = -1;
-  CHECK1(clGetEventInfo(event, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(status), &status, 0));
+  CHECK1(clGetEventInfo(event, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(status), &status, nullptr));
   return status;
 }
 
@@ -433,7 +432,7 @@ array<i64, 3> getEventNanos(cl_event event) {
 
   for (int i = 0; i < 4; ++i) {
     u64 t{};
-    CHECK1(clGetEventProfilingInfo(event, what[i], sizeof(t), &t, 0));
+    CHECK1(clGetEventProfilingInfo(event, what[i], sizeof(t), &t, nullptr));
     if (i) { ret[i - 1] = delta(prev, t); }
     prev = t;
   }
@@ -442,12 +441,12 @@ array<i64, 3> getEventNanos(cl_event event) {
 
 cl_context getQueueContext(cl_command_queue q) {
   cl_context ret;
-  CHECK1(clGetCommandQueueInfo(q, CL_QUEUE_CONTEXT, sizeof(cl_context), &ret, 0));
+  CHECK1(clGetCommandQueueInfo(q, CL_QUEUE_CONTEXT, sizeof(cl_context), &ret, nullptr));
   return ret;
 }
 
-cl_device_id getQueueDevice(cl_command_queue q) {
+static cl_device_id getQueueDevice(cl_command_queue q) {
   cl_device_id id;
-  CHECK1(clGetCommandQueueInfo(q, CL_QUEUE_DEVICE, sizeof(id), &id, 0));
+  CHECK1(clGetCommandQueueInfo(q, CL_QUEUE_DEVICE, sizeof(id), &id, nullptr));
   return id;
 }

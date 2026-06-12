@@ -18,7 +18,7 @@ class Background {
   std::deque<std::function<void()> > tasks;
   std::mutex mut;
   std::condition_variable cond;
-  bool stopRequested;
+  bool stopRequested{false};
   std::jthread thread;
 
   void run() {
@@ -30,9 +30,8 @@ class Background {
         while (tasks.empty()) {
           if (stopRequested) {
             return;
-          } else {
-            cond.wait(lock);
-          }
+          }             cond.wait(lock);
+         
         }
         task = tasks.front();
       }
@@ -48,7 +47,7 @@ class Background {
       }
 
       {
-        std::unique_lock lock(mut);
+        std::unique_lock const lock(mut);
         assert(!tasks.empty());
         tasks.pop_front();
         if (tasks.size() == maxSize - 1 || tasks.empty()) { cond.notify_all(); }
@@ -59,12 +58,12 @@ class Background {
 public:
   Background(unsigned size = 2) :
     maxSize{size},
-    stopRequested(false),
+    
     thread{&Background::run, this} {
   }
 
   ~Background() {
-    std::lock_guard lock(mut);
+    std::scoped_lock const lock(mut);
     stopRequested = true;
     cond.notify_all();
   }
@@ -74,7 +73,7 @@ public:
     while (!tasks.empty()) { cond.wait(lock); }
   }
 
-  template<typename T> void operator()(T task) {
+  template<typename T> void operator()(const T& task) {
     std::unique_lock lock(mut);
     while (tasks.size() >= maxSize) {
       cond.wait(lock);
