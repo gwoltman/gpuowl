@@ -32,7 +32,9 @@ void spin() {
 // The last WMUL workgroup's carries have been written to global memory.  Now we shuffle WMUL-1 workgroups carries up using local memory.
 void OVERLOAD shufl_carries_up(local void *lds2, i64 *carry, u32 me, u32 lowMe) {
   // If WMUL is one, there is no shuffling of carries
-  if (WMUL == 1) return;
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead of the clean looking if statement below we use the uglier #if
+  //if (WMUL == 1) return;
+#if WMUL > 1
 
   const u32 lds_i64s = LDS_BYTES / sizeof(i64);                 // Number of i64s in LDS used by shufl for each WMUL line
   local i64 *lds = (local i64 *) lds2;
@@ -80,12 +82,16 @@ void OVERLOAD shufl_carries_up(local void *lds2, i64 *carry, u32 me, u32 lowMe) 
     // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl and no trailing bar() is required.
     if (me >= G_W) for (i32 i = 0; i < NW; ++i) carry[i] = lds[i * G_W];
   }
+
+#endif
 }
 
 // The last WMUL workgroup's carries have been written to global memory.  Now we shuffle WMUL-1 workgroup carries up using local memory.
 void OVERLOAD shufl_carries_up(local void *lds2, i32 *carry, u32 me, u32 lowMe) {
   // If WMUL is one, there is no shuffling of carries
-  if (WMUL == 1) return;
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead of the clean looking if statement below we use the uglier #if
+  //if (WMUL == 1) return;
+#if WMUL > 1
 
   const u32 lds_i32s = LDS_BYTES / sizeof(i32);                 // Number of i32s in LDS used by shufl for each WMUL line
   local i32 *lds = (local i32 *) lds2;
@@ -99,6 +105,8 @@ void OVERLOAD shufl_carries_up(local void *lds2, i32 *carry, u32 me, u32 lowMe) 
   bar();
   // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl and no trailing bar() is required.
   if (me >= G_W) for (i32 i = 0; i < NW; ++i) carry[i] = lds[i * G_W];
+
+#endif
 }
 
 
@@ -199,7 +207,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
@@ -406,7 +419,12 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
@@ -619,7 +637,12 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
@@ -836,7 +859,12 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
@@ -1068,7 +1096,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
   // Tell next group that its carries are ready
@@ -1327,7 +1360,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
@@ -1582,7 +1620,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
@@ -1832,7 +1875,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
@@ -2114,7 +2162,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
+  // AMD's OpenCL Windows compiler generates warnings about always true if statements for WMUL-1.  So instead an #if is required
+#if WMUL == 1
+  if (gr < H) {
+#else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
+#endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
