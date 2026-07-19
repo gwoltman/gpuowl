@@ -37,6 +37,41 @@ static void ensureContextCurrent() {
   }
 }
 
+// Reference-count CUmodules so they get unloaded once nothing uses them.
+//
+// In OpenCL, clCreateKernel retains the program, so the underlying code object
+// stays alive until BOTH the program and every kernel derived from it are
+// released. PRPLL relies on this: KernelCompiler::loadAux() creates a kernel,
+// then releases the program while the kernel keeps running. We therefore cannot
+// unload the module in clReleaseProgram — a live CUfunction would be invalidated.
+//
+// Instead we count references: the owning program holds one ref (set when the
+// module is loaded), and each kernel created from it holds one more. The module
+// is unloaded when the count reaches zero. This is essential because Gpu::make()
+// builds a fresh set of ~36 kernels per work unit (and dozens of times during
+// tuning), all into the single process-lifetime CUDA context. Without unloading,
+// device memory grows unbounded and eventually cuLaunchKernel fails with
+// CUDA_ERROR_OUT_OF_MEMORY.
+//
+// Loading is single-threaded (KernelCompiler's async path is disabled), so a
+// plain map without locking is sufficient.
+static std::map<CUmodule, int> g_moduleRefCount;
+
+static void moduleRetain(CUmodule m) {
+  if (m) { ++g_moduleRefCount[m]; }
+}
+
+static void moduleRelease(CUmodule m) {
+  if (!m) return;
+  auto it = g_moduleRefCount.find(m);
+  if (it == g_moduleRefCount.end()) return;   // untracked module — leave as-is
+  if (--it->second <= 0) {
+    ensureContextCurrent();
+    cuModuleUnload(m);
+    g_moduleRefCount.erase(it);
+  }
+}
+
 // Global state for CUDA initialization
 static bool g_cudaInitialized = false;
 static void ensureCudaInit() {
@@ -123,13 +158,12 @@ int clReleaseContext(cl_context ctx) {
 
 int clReleaseProgram(cl_program p) {
   if (p) {
-    // NOTE: Do NOT unload the module here. PRPLL's loadAux() gets a kernel from
-    // the program, then releases the program. The kernel's CUfunction remains valid
-    // only while the CUmodule is loaded. In OpenCL, clCreateKernel retains the
-    // program. In our CUDA shim, we simply never unload modules — they persist for
-    // the process lifetime. This is safe because PRPLL creates a fixed set of kernels
-    // at startup and uses them until exit.
-    // if (p->moduleLoaded) cuModuleUnload(p->module);
+    // Drop the program's reference to its module. The module is unloaded only once
+    // every kernel created from it has also been released (see moduleRelease and the
+    // refcount rationale near the top of this file). This lets loadAux() release the
+    // program while keeping the kernel's CUfunction valid, matching OpenCL semantics,
+    // without leaking a module per Gpu::make().
+    if (p->moduleLoaded) { moduleRelease(p->module); }
     delete p;
   }
   return CL_SUCCESS;
@@ -172,6 +206,7 @@ cl_program clCreateProgramWithBinary(cl_context ctx, unsigned nDevices, const cl
     CUresult r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
     if (r == CUDA_SUCCESS) {
       prog->moduleLoaded = true;
+      moduleRetain(prog->module);  // program owns one reference
       if (binaryStatus) binaryStatus[0] = CL_SUCCESS;
     } else {
       fprintf(stderr, "cuModuleLoadData from cache failed: %d, PTX size=%zu\n", (int)r, lengths[0]);
@@ -440,6 +475,7 @@ cl_program clLinkProgram(cl_context ctx, unsigned nDevices, const cl_device_id*,
     return nullptr;
   }
   linked->moduleLoaded = true;
+  moduleRetain(linked->module);  // program owns one reference
 
   // Dump PTX to file when PRPLL_DUMP_PTX is set (e.g., PRPLL_DUMP_PTX=kernel)
   // Creates files like kernel_0.ptx, kernel_1.ptx, etc.
@@ -477,6 +513,7 @@ int clBuildProgram(cl_program prog, unsigned nDevices, const cl_device_id* devic
   CUresult r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
   if (r != CUDA_SUCCESS) return CL_BUILD_PROGRAM_FAILURE;
   prog->moduleLoaded = true;
+  moduleRetain(prog->module);  // program owns one reference
   return CL_SUCCESS;
 }
 
@@ -523,10 +560,11 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
   if (r != CUDA_SUCCESS) {
     fprintf(stderr, "cuModuleGetFunction('%s') failed: %d, moduleLoaded=%d, module=%p\n",
             name, (int)r, prog->moduleLoaded, (void*)prog->module);
-    delete k;
+    delete k;  // never retained the module, so nothing to release
     if (err) *err = CL_INVALID_KERNEL_NAME;
     return nullptr;
   }
+  moduleRetain(k->parentModule);  // kernel keeps the module alive past clReleaseProgram
 
   // Shared memory carveout: default adaptive carveout is optimal for mixed kernel workloads.
 
@@ -575,7 +613,10 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
 }
 
 int clReleaseKernel(cl_kernel k) {
-  delete k;
+  if (k) {
+    moduleRelease(k->parentModule);
+    delete k;
+  }
   return CL_SUCCESS;
 }
 
