@@ -1202,7 +1202,11 @@ int clGraphEndRecording(cl_command_queue q, cl_graph* graph) {
   auto* g = new _cl_graph;
   g->queue = q;
   CUresult r = cuStreamEndCapture(q->stream, &g->graph);
+#if CUDA_VERSION >= 12000
   if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, 0);
+#else
+  if (r == CUDA_SUCCESS) r = cuGraphInstantiateWithFlags(&g->graphExec, g->graph, 0);
+#endif
   *graph = g;
   return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
 }
