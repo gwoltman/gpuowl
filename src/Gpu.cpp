@@ -1636,7 +1636,7 @@ for (u32 i = 0; i < size; ++i) { r.emplace_back(timeBufVect, &queue, N); }
 pair<RoeInfo, RoeInfo> Gpu::readROE() {
   assert(roePos <= ROE_SIZE);
   if (roePos) {
-    vector<float> const roe = bufROE.read(roePos + 2);
+    vector<float> roe = bufROE.read(roePos + 2);
     assert(roe.size() == roePos + 2);
     // Split the roe buffer into two.  One for squarings and one for multiplications.  This is likely overkill as the multiplication ROE is not used - though
     // it could be useful for debugging (in which case we could support getting roe for squarings or multipplications, but not both).
@@ -1651,15 +1651,15 @@ pair<RoeInfo, RoeInfo> Gpu::readROE() {
     roePos = 0;
     mulRoePos.clear();
     return {roeStat(squareRoe), roeStat(mulRoe)};
-  } 
+  } else {
     return {};
- 
+  }
 }
 
 RoeInfo Gpu::readCarryStats() {
   assert(carryPos <= CARRY_SIZE);
   if (carryPos == 0) { return {}; }
-  vector<float> const carry = bufStatsCarry.read(carryPos + 2);
+  vector<float> carry = bufStatsCarry.read(carryPos + 2);
   assert(carry.size() == carryPos + 2);
   // Delete first two used to calculate carryPos on the GPU.
   carry[0] = carry[carryPos];
@@ -2131,7 +2131,7 @@ bool Gpu::equals9(const Words& a) {
   return true;
 }
 
-static int ulps(double a, double b) {
+[[maybe_unused]] static int ulps(double a, double b) {
   if (a == 0 && b == 0) { return 0; }
 
   u64 const aa = as<u64>(a);

@@ -707,7 +707,7 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
 
 // ---- Enqueue operations ----
 
-int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned  /*workDim*/,
+int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
                             const size_t*  /*globalOffset*/, const size_t* globalSize,
                             const size_t* localSize, unsigned  /*nWaits*/,
                             const cl_event*  /*waits*/, cl_event* event) {
@@ -751,7 +751,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned  /*workDim*
     if (!pStart) { cuEventCreate(&pStart, CU_EVENT_DEFAULT); cuEventCreate(&pEnd, CU_EVENT_DEFAULT); }
 
     cuEventRecord(pStart, q->stream);
-    CUresult cosnt r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
     cuEventRecord(pEnd, q->stream);
     cuEventSynchronize(pEnd);
     float ms = 0;
@@ -1127,7 +1127,7 @@ int clSetKernelArgSVMPointer(cl_kernel k, unsigned pos, const void* ptr) {
 // Computes the minimum address span covering all buffers, then sets one access policy
 // window with hitRatio sized so that only the actual buffer bytes get persisting treatment,
 // not the gaps between non-contiguous allocations.
-static void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers) {
+[[maybe_unused]] static void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers) {
   if (!q) return;
 
   // Find address span and total data size

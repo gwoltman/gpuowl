@@ -20,7 +20,7 @@ void initLog(const char *logName) {
   logFile = File::openAppend(logName);
 }
 
-static string longTimeStr()  { return timeStr("%Y-%m-%d %H:%M:%S %Z"); }
+[[maybe_unused]] static string longTimeStr()  { return timeStr("%Y-%m-%d %H:%M:%S %Z"); }
 string shortTimeStr() { return timeStr("%Y%m%d %H:%M:%S"); }
 
 static char logBuf[32 * 1024];

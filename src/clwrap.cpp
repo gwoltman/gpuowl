@@ -448,7 +448,7 @@ cl_context getQueueContext(cl_command_queue q) {
   return ret;
 }
 
-static cl_device_id getQueueDevice(cl_command_queue q) {
+[[maybe_unused]] static cl_device_id getQueueDevice(cl_command_queue q) {
   cl_device_id id;
   CHECK1(clGetCommandQueueInfo(q, CL_QUEUE_DEVICE, sizeof(id), &id, nullptr));
   return id;
