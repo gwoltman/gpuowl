@@ -33,7 +33,7 @@ namespace fs = std::filesystem;
 
 // When using multiple primes in an NTT the size of an integer FFT "word" can be 64 bits.  Original FP64 FFT needs only 32 bits.
 // C code will use i64 integer data.  The code that reads and writes GPU buffers will downsize the integers to 32 bits when required.
-typedef i64 Word;
+using Word = i64;
 
 // Create datatype names that mimic the ones used in OpenCL code
 using double2 = pair<double, double>;

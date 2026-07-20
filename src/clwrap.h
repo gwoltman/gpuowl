@@ -86,7 +86,7 @@ void saveBinary(cl_program program, string_view fileName);
 
 template<typename T>
 void setArg(cl_kernel k, int pos, const T &value, const string& name) {
-  CHECK2(clSetKernelArg(k, pos, sizeof(value), &value), (name + '[' + to_string(pos) + "] size " + to_string(sizeof(value))).c_str());
+  CHECK2(clSetKernelArg(k, pos, sizeof(value), &value), name + '[' + to_string(pos) + "] size " + to_string(sizeof(value)));
 }
 
 /*
@@ -94,7 +94,7 @@ template<>
 void setArg<int>(cl_kernel k, int pos, const int &value, const string& name);
 */
 
-cl_mem makeBuf_(cl_context context, unsigned kind, size_t size, const void *ptr = 0);
+cl_mem makeBuf_(cl_context context, unsigned kind, size_t size, const void *ptr = nullptr);
 cl_queue makeQueue(cl_device_id d, cl_context c, bool enableProfile);
 
 void flush( cl_queue q);

@@ -18,11 +18,11 @@ public:
   Timer() : start(clock::now()) {}
   
 
-  double at() const { return std::chrono::duration<double>(clock::now() - start).count(); }
+  [[nodiscard]] double at() const { return std::chrono::duration<double>(clock::now() - start).count(); }
 
   double reset() {
     auto now = clock::now();
-    double ret = std::chrono::duration<double>(now - start).count();
+    double const ret = std::chrono::duration<double>(now - start).count();
     start = now;
     return ret;
   }

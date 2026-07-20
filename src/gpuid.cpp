@@ -1,13 +1,14 @@
 // Copyright (C) 2017-2024 Mihai Preda.
 
 #include "gpuid.h"
+#include <utility>
 #include "clwrap.h"
 #include "File.h"
 
 using namespace std;
 
 static bool startsWith(string_view a, string_view b) {
-  return a.substr(0, b.length()) == b;
+  return a.starts_with(b);
 }
 
 string getBdfFromSysfs(int pos) {
@@ -58,18 +59,18 @@ string getUidFromSysfs(int pos) {
 
 /* BDF is PCIe Bus:Device.Function e.g. "6a:00.0" */
 string getUidFromBdf(const string& bdf) {
-  int pos = getSysfsFromBdf(bdf);
+  int const pos = getSysfsFromBdf(bdf);
   return pos >= 0 ? getUidFromSysfs(pos) : "";
 }
 
 string getBdfFromUid(const string& uid) {
-  int pos = getSysfsFromUid(uid);
+  int const pos = getSysfsFromUid(uid);
   return (pos >= 0) ? getBdfFromSysfs(pos) : "";
 }
 
 int getPosFromBdf(const string& bdf) {
   auto openclIds = getAllDeviceIDs();
-  for (int pos = 0; pos < int(openclIds.size()); ++pos) {
+  for (int pos = 0; std::cmp_less(pos, openclIds.size()); ++pos) {
     auto bdfAtPos = getBdfFromDevice(openclIds[pos]);
     // log("BDF '%s' at %d\n", bdfAtPos.c_str(), pos);
     if (bdf == bdfAtPos) { return pos; }
@@ -85,7 +86,7 @@ string getBdfFromPos(int pos) {
 }
 
 int getPosFromUid(const string& uid) {
-  string bdf = getBdfFromUid(uid);
+  string const bdf = getBdfFromUid(uid);
   if (bdf.empty()) { return -1; }
   return getPosFromBdf(bdf);
 }

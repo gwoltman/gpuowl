@@ -1,16 +1,10 @@
 // GpuOwl Mersenne primality tester; Copyright (C) 2017-2018 Mihai Preda.
 
 #include "common.h"
-#include "File.h"
-#include "timeutil.h"
 
-#include <cstdarg>
 #include <cstdio>
-#include <vector>
-#include <memory>
 #include <sstream>
 #include <iomanip>
-#include <filesystem>
 
 string hex(u64 x) {
   ostringstream out{};
@@ -24,7 +18,7 @@ std::string rstripNewline(std::string s) {
 }
 
 u32 crc32(const void *data, size_t size) {
-  u32 tab[16] = {
+  u32 const tab[16] = {
                  0x00000000, 0x1DB71064, 0x3B6E20C8, 0x26D930AC,
                  0x76DC4190, 0x6B6B51F4, 0x4DB26158, 0x5005713C,
                  0xEDB88320, 0xF00F9344, 0xD6D6A3E8, 0xCB61B38C,
@@ -41,11 +35,11 @@ u32 crc32(const void *data, size_t size) {
 string formatBound(u32 b) {
   if (b >= 1'000'000 && b % 1'000'000 == 0) {
     return to_string(b / 1'000'000) + 'M';
-  } else if (b >= 500'000 && b % 100'000 == 0) {
+  } if (b >= 500'000 && b % 100'000 == 0) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%.1fM", float(b) / 1'000'000);
     return buf;
-  } else {
+  } 
     return to_string(b);
-  }
+ 
 }

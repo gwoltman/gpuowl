@@ -11,6 +11,7 @@
 #include <cinttypes>
 #include <filesystem>
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -32,14 +33,14 @@ static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64
 struct BadHeaderError { string name; };
 
 bool startsWith(const string& s, const string& prefix) {
-  return s.rfind(prefix, 0) == 0;
+  return s.starts_with(prefix);
 }
 
-vector<u64> savefiles(fs::path dir, const string& prefix, const string& kind) {
+vector<u64> savefiles(const fs::path& dir, const string& prefix, const string& kind) {
   vector<u64> v;
   for (const auto& entry: fs::directory_iterator(dir)) {
     if (entry.is_regular_file()) {
-      string filename = entry.path().filename().string();
+      string const filename = entry.path().filename().string();
       auto dot = filename.find('.');
       if (dot != string::npos && startsWith(filename, prefix) && filename.substr(dot + 1) == kind) {
         assert(dot > prefix.size());
@@ -57,7 +58,7 @@ vector<u64> savefiles(fs::path dir, const string& prefix, const string& kind) {
       }
     }
   }
-  std::sort(v.begin(), v.end());
+  std::ranges::sort(v);
   return v;
 }
 
@@ -67,21 +68,21 @@ string str9(u64 k) {
   return buf;
 }
 
-fs::path pathFor(fs::path base, const string& prefix, const string& kind, u64 k) {
+fs::path pathFor(const fs::path& base, const string& prefix, const string& kind, u64 k) {
   return base / (prefix + str9(k) + '.' + kind);
 }
 
-fs::path pathUnverified(fs::path base, const string& prefix) {
+fs::path pathUnverified(const fs::path& base, const string& prefix) {
   return base / (prefix + "unverified.prp");
 }
 
 // find the "most advanced" file in dir with a name of the form
 // <prefix><id>.<kind>
 // e.g.: 125784077-010000000.prp
-fs::path findLast(fs::path dir, const string& prefix, const string& kind) {
+fs::path findLast(const fs::path& dir, const string& prefix, const string& kind) {
   vector<u64> v = savefiles(dir, prefix, kind);
   if (v.empty()) { return {}; }
-  u64 lastK = v.back();
+  u64 const lastK = v.back();
   fs::path path = pathFor(dir, prefix, kind, lastK);
   assert(is_regular_file(path));
   return path;
@@ -93,15 +94,15 @@ PRPState readState(const PRPState& dummy, File fi) {
   u64 res64{};
   double elapsed{};
 
-  string header = fi.readLine();
+  string const header = fi.readLine();
 
   if (sscanf(header.c_str(), PRP_v13, &exponent, &k, &blockSize, &res64, &nErrors, &elapsed) == 6) {
-    return {exponent, k, blockSize, res64, fi.readChecked<u32>(nWords(exponent)), nErrors, elapsed};
+    return {.exponent=exponent, .k=k, .blockSize=blockSize, .res64=res64, .check=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed};
   }
 
   u32 crc{};
   if (sscanf(header.c_str(), PRP_v12, &exponent, &k, &blockSize, &res64, &nErrors, &crc) == 6) {
-    return {exponent, k, blockSize, res64, fi.readWithCRC<u32>(nWords(exponent), crc), nErrors, 0};
+    return {.exponent=exponent, .k=k, .blockSize=blockSize, .res64=res64, .check=fi.readWithCRC<u32>(nWords(exponent), crc), .nErrors=nErrors, .elapsed=0};
   }
 
   log("Loading PRP from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
@@ -112,15 +113,15 @@ LLState readState(const LLState& dummy, File fi) {
   u64 exponent{}, k{};
   double elapsed{};
 
-  string header = fi.readLine();
+  string const header = fi.readLine();
 
   if (sscanf(header.c_str(), LL_v13, &exponent, &k, &elapsed) == 3) {
-    return {exponent, k, fi.readChecked<u32>(nWords(exponent)), elapsed};
+    return {.exponent=exponent, .k=k, .data=fi.readChecked<u32>(nWords(exponent)), .elapsed=elapsed};
   }
 
   u32 crc{};
   if (sscanf(header.c_str(), LL_v1, &exponent, &k, &crc) == 3) {
-    return {exponent, k, fi.readWithCRC<u32>(nWords(exponent), crc), 0};
+    return {.exponent=exponent, .k=k, .data=fi.readWithCRC<u32>(nWords(exponent), crc), .elapsed=0};
   }
 
   log("Loading LL from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
@@ -159,11 +160,11 @@ double roundNumberScore(u64 x) {
 } // namespace
 
 template<> PRPState Saver<PRPState>::initState() {
-  return {exponent, 0, blockSize, 3, makeWords(exponent, 1), 0, 0};
+  return {.exponent=exponent, .k=0, .blockSize=blockSize, .res64=3, .check=makeWords(exponent, 1), .nErrors=0, .elapsed=0};
 }
 
 template<> LLState Saver<LLState>::initState() {
-  return {exponent, 0, makeWords(exponent, 4), 0};
+  return {.exponent=exponent, .k=0, .data=makeWords(exponent, 4), .elapsed=0};
 }
 
 
@@ -191,14 +192,14 @@ Saver<State>::~Saver() = default;
 template<typename State>
 void Saver<State>::clear(u64 exponent) {
   error_code dummy;
-  fs::path base = std::is_same_v<State, PRPState> ?
+  fs::path const base = std::is_same_v<State, PRPState> ?
         fs::current_path() / to_string(exponent)
       : fs::current_path() / (string(State::KIND) + '-' + to_string(exponent));
   fs::remove_all(base, dummy);
 }
 
 template<typename State>
-void Saver<State>::moveToTrash(fs::path src) {
+void Saver<State>::moveToTrash(const fs::path& src) {
   log("Removing bad savefile '%s'\n", src.string().c_str());
   fancyRename(src, src + ".bad"s);
 }
@@ -216,7 +217,7 @@ fs::path Saver<State>::mostRecentSavefile() {
 template<typename State>
 State Saver<State>::load() {
   for (int i = 0; i < 2; ++i) {
-    fs::path path = mostRecentSavefile();
+    fs::path const path = mostRecentSavefile();
 
     if (path.empty()) {
       // no savefiles at all
@@ -254,9 +255,9 @@ void Saver<State>::trimFiles() {
     u64 prevK = 0;
 
     for (u32 i = 0; i < v.size() - 1; ++i) {
-      u64 k = v[i];
-      double niceBias = std::min(1.0, roundNumberScore(k) - 4);
-      double span = (v[i + 1] - prevK) * niceBias;
+      u64 const k = v[i];
+      double const niceBias = std::min(1.0, roundNumberScore(k) - 4);
+      double const span = (v[i + 1] - prevK) * niceBias;
       prevK = k;
       if (span < bestSpan) {
         bestSpan = span;
@@ -264,9 +265,9 @@ void Saver<State>::trimFiles() {
       }
     }
     assert(bestIdx >= 0);
-    u64 k = v[bestIdx];
+    u64 const k = v[bestIdx];
     // log("Deleting savefile %" PRIu64 "\n", k);
-    fs::path path = pathFor(base, prefix, State::KIND, k);
+    fs::path const path = pathFor(base, prefix, State::KIND, k);
     fs::remove(path);
     v.erase(v.begin() + bestIdx);
   }
@@ -274,7 +275,7 @@ void Saver<State>::trimFiles() {
 
 template<typename State>
 void Saver<State>::save(const State& state) {
-  fs::path path = pathFor(base, to_string(exponent) + '-', State::KIND, state.k);
+  fs::path const path = pathFor(base, to_string(exponent) + '-', State::KIND, state.k);
   ::writeState(*CycleFile{path}, state);
   trimFiles();
   // log("rm '%s'\n", pathUnverified(base, prefix).string().c_str());
@@ -288,7 +289,7 @@ void Saver<PRPState>::saveUnverified(const PRPState& state) const {
 
 template<typename State>
 void Saver<State>::dropMostRecent() {
-  fs::path path = mostRecentSavefile();
+  fs::path const path = mostRecentSavefile();
   assert(!path.empty());
   if (!path.empty()) { moveToTrash(path); }
 }

@@ -8,14 +8,13 @@
 #include <cstdio>
 #include <cstring>
 #include <cassert>
+#include <ranges>
 #include <string>
+#include <utility>
 #include <vector>
 #include <map>
 #include <algorithm>
 #include <sstream>
-#include <stdexcept>
-#include <fstream>
-#include <filesystem>
 #include <unordered_set>
 #ifdef __linux__
 #include <unistd.h>
@@ -76,7 +75,7 @@ static void moduleRelease(CUmodule m) {
 static bool g_cudaInitialized = false;
 static void ensureCudaInit() {
   if (!g_cudaInitialized) {
-    CUresult err = cuInit(0);
+    CUresult const err = cuInit(0);
     if (err != CUDA_SUCCESS) {
       fprintf(stderr, "cuInit failed: %d\n", (int)err);
     }
@@ -113,7 +112,7 @@ unsigned clGetPlatformIDs(unsigned num, cl_platform_id* platforms, unsigned* num
 
 int clGetDeviceIDs(cl_platform_id, cl_device_type, unsigned num, cl_device_id* devices, unsigned* numRet) {
   enumerateDevices();
-  unsigned n = g_devices.size();
+  unsigned const n = g_devices.size();
   if (numRet) *numRet = n;
   if (devices) {
     for (unsigned i = 0; i < min(num, n); i++) {
@@ -132,7 +131,7 @@ cl_context clCreateContext(const intptr_t*, unsigned nDevices, const cl_device_i
   CUctxCreateParams params{};
   CUresult r = cuCtxCreate_v4(&ctx->ctx, &params, 0, ctx->dev);
 #else
-  CUresult r = cuCtxCreate(&ctx->ctx, 0, ctx->dev);
+  CUresult const r = cuCtxCreate(&ctx->ctx, 0, ctx->dev);
 #endif
   if (r != CUDA_SUCCESS) {
     delete ctx;
@@ -179,7 +178,7 @@ int clReleaseCommandQueue(cl_command_queue q) {
 
 // ---- Program compilation (NVRTC) ----
 
-cl_program clCreateProgramWithSource(cl_context ctx, unsigned count, const char** strings,
+cl_program clCreateProgramWithSource(cl_context  /*ctx*/, unsigned count, const char** strings,
                                       const size_t* lengths, int* err) {
   auto* prog = new _cl_program;
   for (unsigned i = 0; i < count; i++) {
@@ -193,7 +192,7 @@ cl_program clCreateProgramWithSource(cl_context ctx, unsigned count, const char*
   return prog;
 }
 
-cl_program clCreateProgramWithBinary(cl_context ctx, unsigned nDevices, const cl_device_id*,
+cl_program clCreateProgramWithBinary(cl_context  /*ctx*/, unsigned  /*nDevices*/, const cl_device_id*,
                                       const size_t* lengths, const unsigned char** binaries,
                                       int* binaryStatus, int* err) {
   // "Binary" in CUDA land = PTX string
@@ -203,7 +202,7 @@ cl_program clCreateProgramWithBinary(cl_context ctx, unsigned nDevices, const cl
     prog->compiled = true;
     // Load the module (JIT-compile PTX to SASS)
     ensureContextCurrent();
-    CUresult r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
+    CUresult const r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
     if (r == CUDA_SUCCESS) {
       prog->moduleLoaded = true;
       moduleRetain(prog->module);  // program owns one reference
@@ -222,13 +221,13 @@ cl_program clCreateProgramWithBinary(cl_context ctx, unsigned nDevices, const cl
 // Build log storage (per-program)
 static string g_lastBuildLog;
 
-int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* devices, const char* options,
+int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id* devices, const char* options,
                      unsigned numHeaders, const cl_program* headers, const char* const* headerNames,
                      void (*)(cl_program, void*), void*) {
   if (!prog) return CL_INVALID_PROGRAM;
 
   // Get device arch for NVRTC
-  CUdevice dev = devices ? devices[0]->dev : g_devices[0].dev;
+  CUdevice const dev = devices ? devices[0]->dev : g_devices[0].dev;
   int major = 0, minor = 0;
   cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev);
   cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev);
@@ -242,17 +241,17 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
   //   -cl-finite-math-only  → --fmad=true (enable FMA contraction, the safe subset)
   //   -Dfoo=bar             → -Dfoo=bar (pass through)
   vector<string> nvrtcOpts;
-  nvrtcOpts.push_back(archOpt);
-  nvrtcOpts.push_back("-default-device");
-  nvrtcOpts.push_back("-std=c++17");
-  nvrtcOpts.push_back("-w");  // Suppress NVRTC macro redefinition warnings
+  nvrtcOpts.emplace_back(archOpt);
+  nvrtcOpts.emplace_back("-default-device");
+  nvrtcOpts.emplace_back("-std=c++17");
+  nvrtcOpts.emplace_back("-w");  // Suppress NVRTC macro redefinition warnings
 
   // FMA contraction: OpenCL uses -cl-finite-math-only + #pragma OPENCL FP_CONTRACT ON
   // to allow the compiler to contract a*b+c into FMA instructions. NVRTC's --fmad=true
   // is the safe equivalent — it ONLY enables FMA contraction without the dangerous
   // parts of -use_fast_math (no flush-to-zero, no reduced-precision division/sqrt).
   // This is critical for FFT performance: every butterfly is multiply-add pairs.
-  nvrtcOpts.push_back("--fmad=true");
+  nvrtcOpts.emplace_back("--fmad=true");
 
   // NOTE: --restrict (all kernel pointers are __restrict__) was tested but causes GPU read
   // errors — some PRPLL kernels use in-place operations where in/out buffers alias.
@@ -275,22 +274,22 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
     istringstream iss(options);
     string tok;
     while (iss >> tok) {
-      if (tok.substr(0, 2) == "-D") {
+      if (tok.starts_with("-D")) {
         // Fix AMD-only FFT variants for NVIDIA: variant_W=0 and variant_H=0 require
         // AMD builtins (__builtin_amdgcn_ds_bpermute etc). Replace with variant 2.
         // FFT_VARIANT is a 3-digit number WMH: e.g. 000, 101, 202
         if (tok.find("FFT_VARIANT=") != string::npos) {
-          size_t eqPos = tok.find('=');
+          size_t const eqPos = tok.find('=');
           string valStr = tok.substr(eqPos + 1);
           // Strip trailing 'u' suffix
           if (!valStr.empty() && valStr.back() == 'u') valStr.pop_back();
-          int val = atoi(valStr.c_str());
+          int const val = atoi(valStr.c_str());
           int vW = val / 100;
-          int vM = (val % 100) / 10;
+          int const vM = (val % 100) / 10;
           int vH = val % 10;
           if (vW == 0) vW = 2;  // AMD BCAST → NVIDIA generic
           if (vH == 0) vH = 2;
-          int newVal = vW * 100 + vM * 10 + vH;
+          int const newVal = vW * 100 + vM * 10 + vH;
           tok = "-DFFT_VARIANT=" + to_string(newVal) + "u";
         }
         nvrtcOpts.push_back(tok);
@@ -298,7 +297,7 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
         // FMA contraction already enabled above via --fmad=true.
         // Do NOT use -use_fast_math here — it enables flush-to-zero and
         // reduced-precision division/sqrt which breaks tailMul accuracy.
-      } else if (tok.substr(0, 14) == "--maxrregcount") {
+      } else if (tok.starts_with("--maxrregcount")) {
         nvrtcOpts.push_back(tok);
         maxregcount = atoi(tok.substr(15, 3).c_str());
       }
@@ -313,12 +312,12 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
   for (unsigned i = 0; i < numHeaders; i++)  {
     // First header: opencl_compat.cuh (inject as virtual NVRTC header)
     if (i == 0) {
-      nvrtcHeaders.push_back({"opencl_compat.cuh", headers[0]->source});
+      nvrtcHeaders.emplace_back("opencl_compat.cuh", headers[0]->source);
     }
     // Remaining headers need preprocessing
     else if (headers[i] && headerNames[i]) {
       // Preprocess OpenCL source for CUDA compatibility
-      string processedSrc = NvrtcProgram::preprocessOpenCL(headers[i]->source);
+      string const processedSrc = NvrtcProgram::preprocessOpenCL(headers[i]->source);
       // Debug: verify KERNEL macro replacement
 // I'm not sure what Sherpa was trying to print out here.  It prints out nothing useful.
 //      {
@@ -331,7 +330,7 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
 //          }
 //        }
 //      }
-      nvrtcHeaders.push_back({headerNames[i], processedSrc});
+      nvrtcHeaders.emplace_back(headerNames[i], processedSrc);
     }
   }
 
@@ -406,10 +405,10 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
   // If --maxrregcount is set it seems nvrtc compile ignores the setting.  Instead modify the PTX and load the modified PTX.
 
   if (maxregcount) {
-    string maxntidPattern = ".maxntid ";
-    string maxnregPattern = ".maxnreg " + to_string(maxregcount) + "\n";
+    string const maxntidPattern = ".maxntid ";
+    string const maxnregPattern = ".maxnreg " + to_string(maxregcount) + "\n";
     for (size_t startpos = 0; ; ) {
-      size_t pos = prog->ptx.find(maxntidPattern, startpos);
+      size_t const pos = prog->ptx.find(maxntidPattern, startpos);
       if (pos == string::npos) break;
       prog->ptx.insert(pos, maxnregPattern);
       startpos = pos + 20;
@@ -419,8 +418,8 @@ int clCompileProgram(cl_program prog, unsigned nDevices, const cl_device_id* dev
   return CL_SUCCESS;
 }
 
-cl_program clLinkProgram(cl_context ctx, unsigned nDevices, const cl_device_id*,
-                          const char* options, unsigned nProgs, const cl_program* progs,
+cl_program clLinkProgram(cl_context  /*ctx*/, unsigned  /*nDevices*/, const cl_device_id*,
+                          const char*  /*options*/, unsigned nProgs, const cl_program* progs,
                           void (*)(cl_program, void*), void*, int* err) {
   ensureContextCurrent();
   // In CUDA, compilation produces PTX directly — no separate link step needed.
@@ -452,7 +451,7 @@ cl_program clLinkProgram(cl_context ctx, unsigned nDevices, const cl_device_id*,
     (void*)(size_t)sizeof(jitErrorLog), (void*)jitErrorLog,
     (void*)(size_t)sizeof(jitInfoLog), (void*)jitInfoLog
   };
-  CUresult r = cuModuleLoadDataEx(&linked->module, linked->ptx.c_str(), 4, jitOpts, jitOptVals);
+  CUresult const r = cuModuleLoadDataEx(&linked->module, linked->ptx.c_str(), 4, jitOpts, jitOptVals);
   if (r != CUDA_SUCCESS) {
     const char* errName = nullptr;
     cuGetErrorName(r, &errName);
@@ -507,20 +506,20 @@ int clBuildProgram(cl_program prog, unsigned nDevices, const cl_device_id* devic
   }
 
   // clBuildProgram = compile + link in one step
-  int err = clCompileProgram(prog, nDevices, devices, options, 0, nullptr, nullptr, nullptr, nullptr);
+  int const err = clCompileProgram(prog, nDevices, devices, options, 0, nullptr, nullptr, nullptr, nullptr);
   if (err != CL_SUCCESS) return err;
 
-  CUresult r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
+  CUresult const r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
   if (r != CUDA_SUCCESS) return CL_BUILD_PROGRAM_FAILURE;
   prog->moduleLoaded = true;
   moduleRetain(prog->module);  // program owns one reference
   return CL_SUCCESS;
 }
 
-int clGetProgramBuildInfo(cl_program prog, cl_device_id, cl_program_build_info info,
+int clGetProgramBuildInfo(cl_program  /*prog*/, cl_device_id, cl_program_build_info info,
                            size_t size, void* value, size_t* sizeRet) {
   if (info == CL_PROGRAM_BUILD_LOG) {
-    size_t len = g_lastBuildLog.size() + 1;
+    size_t const len = g_lastBuildLog.size() + 1;
     if (sizeRet) *sizeRet = len;
     if (value && size >= len) {
       memcpy(value, g_lastBuildLog.c_str(), len);
@@ -538,7 +537,7 @@ int clGetProgramInfo(cl_program prog, cl_program_info info, size_t size, void* v
   } else if (info == CL_PROGRAM_BINARIES) {
     if (sizeRet) *sizeRet = sizeof(unsigned char*);
     if (value && size >= sizeof(unsigned char*)) {
-      unsigned char** ptrs = (unsigned char**)value;
+      auto* const* ptrs = (unsigned char**)value;
       if (ptrs[0]) memcpy(ptrs[0], prog->ptx.data(), prog->ptx.size());
     }
   }
@@ -556,7 +555,7 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
   auto* k = new _cl_kernel;
   k->name = name;
   k->parentModule = prog->module;
-  CUresult r = cuModuleGetFunction(&k->func, prog->module, name);
+  CUresult const r = cuModuleGetFunction(&k->func, prog->module, name);
   if (r != CUDA_SUCCESS) {
     fprintf(stderr, "cuModuleGetFunction('%s') failed: %d, moduleLoaded=%d, module=%p\n",
             name, (int)r, prog->moduleLoaded, (void*)prog->module);
@@ -591,16 +590,16 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
   k->reqWorkGroupSize = 256; // fallback
   {
     const string& ptx = prog->ptx;
-    string entryPattern = ".entry " + string(name) + "(";
-    size_t pos = ptx.find(entryPattern);
+    string const entryPattern = ".entry " + string(name) + "(";
+    size_t const pos = ptx.find(entryPattern);
     if (pos != string::npos) {
       // Found the kernel entry. Now find .maxntid before the next .entry or opening brace
       size_t searchEnd = ptx.find(".entry ", pos + 1);
       if (searchEnd == string::npos) searchEnd = ptx.size();
-      string maxntidPattern = ".maxntid ";
-      size_t mpos = ptx.find(maxntidPattern, pos);
+      string const maxntidPattern = ".maxntid ";
+      size_t const mpos = ptx.find(maxntidPattern, pos);
       if (mpos != string::npos && mpos < searchEnd) {
-        int val = atoi(ptx.c_str() + mpos + maxntidPattern.size());
+        int const val = atoi(ptx.c_str() + mpos + maxntidPattern.size());
         if (val > 0) {
           k->reqWorkGroupSize = val;
         }
@@ -629,7 +628,7 @@ int clSetKernelArg(cl_kernel k, unsigned pos, size_t size, const void* value) {
   // We need to store the CUdeviceptr (GPU address) instead of the cl_mem (host pointer).
   if (size == sizeof(cl_mem) && value) {
     cl_mem mem = *(cl_mem*)value;
-    if (mem && g_allocatedBuffers.count(mem)) {
+    if (mem && g_allocatedBuffers.contains(mem)) {
       CUdeviceptr devPtr = mem->ptr;
       k->setArg(pos, sizeof(CUdeviceptr), &devPtr);
       return CL_SUCCESS;
@@ -648,11 +647,11 @@ int clSetKernelArg(cl_kernel k, unsigned pos, size_t size, const void* value) {
 
 // ---- Buffer ----
 
-cl_mem clCreateBuffer(cl_context ctx, cl_mem_flags flags, size_t size, void* hostPtr, int* err) {
+cl_mem clCreateBuffer(cl_context  /*ctx*/, cl_mem_flags flags, size_t size, void* hostPtr, int* err) {
   auto* buf = new _cl_mem;
   buf->size = size;
   ensureContextCurrent();
-  CUresult r = cuMemAlloc(&buf->ptr, size);
+  CUresult const r = cuMemAlloc(&buf->ptr, size);
   if (r != CUDA_SUCCESS) {
     delete buf;
     if (err) *err = CL_MEM_OBJECT_ALLOCATION_FAILURE;
@@ -679,7 +678,7 @@ int clReleaseMemObject(cl_mem buf) {
 
 // ---- Command Queue ----
 
-cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id dev,
+cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id  /*dev*/,
                                                      const cl_queue_properties* props, int* err) {
   auto* q = new _cl_command_queue;
   q->context = ctx;
@@ -696,7 +695,7 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
 
   // Make sure context is current
   cuCtxSetCurrent(ctx->ctx);
-  CUresult r = cuStreamCreate(&q->stream, CU_STREAM_NON_BLOCKING);
+  CUresult const r = cuStreamCreate(&q->stream, CU_STREAM_NON_BLOCKING);
   if (r != CUDA_SUCCESS) {
     delete q;
     if (err) *err = CL_OUT_OF_RESOURCES;
@@ -708,26 +707,26 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
 
 // ---- Enqueue operations ----
 
-int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
-                            const size_t* globalOffset, const size_t* globalSize,
-                            const size_t* localSize, unsigned nWaits,
-                            const cl_event* waits, cl_event* event) {
+int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned  /*workDim*/,
+                            const size_t*  /*globalOffset*/, const size_t* globalSize,
+                            const size_t* localSize, unsigned  /*nWaits*/,
+                            const cl_event*  /*waits*/, cl_event* event) {
   if (!q || !k) return CL_INVALID_VALUE;
   ensureContextCurrent();
 
-  size_t gsX = globalSize[0];
-  size_t lsX = localSize ? localSize[0] : 256;
-  size_t numBlocksX = (gsX + lsX - 1) / lsX;
-  size_t gsY = (workDim > 1) ? globalSize[1] : 1;
-  size_t lsY = (workDim > 1) ? localSize[1] : 1;
-  size_t numBlocksY = (gsY + lsY - 1) / lsY;
+  size_t const gsX = globalSize[0];
+  size_t const lsX = localSize ? localSize[0] : 256;
+  size_t const numBlocksX = (gsX + lsX - 1) / lsX;
+  size_t const gsY = (workDim > 1) ? globalSize[1] : 1;
+  size_t const lsY = (workDim > 1) ? localSize[1] : 1;
+  size_t const numBlocksY = (gsY + lsY - 1) / lsY;
 
   // Build args array
   void* argPtrs[_cl_kernel::MAX_ARGS];
   k->buildArgPointers(argPtrs);
 
   // Env-gated kernel profiling (PRPLL_PROFILE=1) — takes priority over event profiling
-  static bool doProfile = (getenv("PRPLL_PROFILE") != nullptr);
+  static bool const doProfile = (getenv("PRPLL_PROFILE") != nullptr);
 
   // Event handling (skipped when env profiler is active)
   if (!doProfile && event && q->profiling) {
@@ -737,7 +736,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     ev->hasTimings = true;
     ev->commandType = CL_COMMAND_NDRANGE_KERNEL;
     cuEventRecord(ev->start, q->stream);
-    CUresult r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
     cuEventRecord(ev->end, q->stream);
     *event = ev;
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
@@ -752,14 +751,14 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     if (!pStart) { cuEventCreate(&pStart, CU_EVENT_DEFAULT); cuEventCreate(&pEnd, CU_EVENT_DEFAULT); }
 
     cuEventRecord(pStart, q->stream);
-    CUresult r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult cosnt r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
     cuEventRecord(pEnd, q->stream);
     cuEventSynchronize(pEnd);
     float ms = 0;
     cuEventElapsedTime(&ms, pStart, pEnd);
     kTime[k->name] += ms;
     kCount[k->name]++;
-    if (!kRegs.count(k->name)) {
+    if (!kRegs.contains(k->name)) {
       int regs = 0, shmem = 0;
       cuFuncGetAttribute(&regs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
       cuFuncGetAttribute(&shmem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);
@@ -772,7 +771,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
       fprintf(stderr, "\n=== NTT KERNEL PROFILE (%d launches) ===\n", totalLaunches);
       std::vector<std::pair<double, std::string>> sorted;
       double totalMs = 0;
-      for (auto& [n, t] : kTime) { sorted.push_back({t, n}); totalMs += t; }
+      for (auto& [n, t] : kTime) { sorted.emplace_back(t, n); totalMs += t; }
       std::sort(sorted.rbegin(), sorted.rend());
       for (auto& [t, n] : sorted) {
         fprintf(stderr, "  %6.1f ms (%5.1f%%) %5d calls  avg %.3f ms  regs=%d shmem=%d  %s\n",
@@ -784,7 +783,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
   }
 
-  CUresult r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
+  CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
   if (r != CUDA_SUCCESS) {
     const char* errName = nullptr;
     cuGetErrorName(r, &errName);
@@ -797,7 +796,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
 
 int clEnqueueReadBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
                          size_t offset, size_t size, void* ptr,
-                         unsigned nWaits, const cl_event* waits, cl_event* event) {
+                         unsigned  /*nWaits*/, const cl_event*  /*waits*/, cl_event* event) {
   // Must use stream-ordered copy because the stream was created with CU_STREAM_NON_BLOCKING,
   // which means cuMemcpyDtoH (NULL stream) won't wait for pending kernels on this stream.
   CUresult r = cuMemcpyDtoHAsync(ptr, buf->ptr + offset, size, q->stream);
@@ -810,7 +809,7 @@ int clEnqueueReadBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
 
 int clEnqueueWriteBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
                           size_t offset, size_t size, const void* ptr,
-                          unsigned nWaits, const cl_event* waits, cl_event* event) {
+                          unsigned  /*nWaits*/, const cl_event*  /*waits*/, cl_event* event) {
   // Must use stream-ordered copy (same reason as clEnqueueReadBuffer above)
   CUresult r = cuMemcpyHtoDAsync(buf->ptr + offset, ptr, size, q->stream);
   if (r == CUDA_SUCCESS && blocking) {
@@ -822,15 +821,15 @@ int clEnqueueWriteBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
 
 int clEnqueueCopyBuffer(cl_command_queue q, cl_mem src, cl_mem dst,
                          size_t srcOffset, size_t dstOffset, size_t size,
-                         unsigned nWaits, const cl_event* waits, cl_event* event) {
-  CUresult r = cuMemcpyDtoDAsync(dst->ptr + dstOffset, src->ptr + srcOffset, size, q->stream);
+                         unsigned  /*nWaits*/, const cl_event*  /*waits*/, cl_event* event) {
+  CUresult const r = cuMemcpyDtoDAsync(dst->ptr + dstOffset, src->ptr + srcOffset, size, q->stream);
   if (event) *event = nullptr;
   return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
 }
 
 int clEnqueueFillBuffer(cl_command_queue q, cl_mem buf, const void* pattern,
                          size_t patternSize, size_t offset, size_t size,
-                         unsigned nWaits, const cl_event* waits, cl_event* event) {
+                         unsigned  /*nWaits*/, const cl_event*  /*waits*/, cl_event* event) {
   CUresult r;
   if (patternSize == 1) {
     unsigned char val;
@@ -864,7 +863,7 @@ int clEnqueueMarkerWithWaitList(cl_command_queue q, unsigned nWaits, const cl_ev
   return CL_SUCCESS;
 }
 
-int clFlush(cl_command_queue q) {
+int clFlush(cl_command_queue  /*q*/) {
   // CUDA streams auto-flush; no-op
   return CL_SUCCESS;
 }
@@ -895,7 +894,7 @@ int clGetEventInfo(cl_event ev, cl_event_info info, size_t size, void* value, si
   if (info == CL_EVENT_COMMAND_EXECUTION_STATUS) {
     int status = CL_COMPLETE;
     if (ev->end) {
-      CUresult r = cuEventQuery(ev->end);
+      CUresult const r = cuEventQuery(ev->end);
       if (r == CUDA_ERROR_NOT_READY) status = CL_RUNNING;
     }
     if (sizeRet) *sizeRet = sizeof(int);
@@ -937,7 +936,7 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
   case CL_DEVICE_NAME: {
     char name[256];
     cuDeviceGetName(name, sizeof(name), dev->dev);
-    size_t len = strlen(name) + 1;
+    size_t const len = strlen(name) + 1;
     if (sizeRet) *sizeRet = len;
     if (value && size >= len) memcpy(value, name, len);
     break;
@@ -979,7 +978,7 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
     cuDriverGetVersion(&ver);
     char verStr[64];
     snprintf(verStr, sizeof(verStr), "CUDA %d.%d", ver / 1000, (ver % 1000) / 10);
-    size_t len = strlen(verStr) + 1;
+    size_t const len = strlen(verStr) + 1;
     if (sizeRet) *sizeRet = len;
     if (value && size >= len) memcpy(value, verStr, len);
     break;
@@ -1036,7 +1035,7 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
 int clGetPlatformInfo(cl_platform_id, cl_device_info info, size_t size, void* value, size_t* sizeRet) {
   if (info == CL_PLATFORM_VERSION) {
     const char* ver = "CUDA (via PRPLL CUDA backend)";
-    size_t len = strlen(ver) + 1;
+    size_t const len = strlen(ver) + 1;
     if (sizeRet) *sizeRet = len;
     if (value && size >= len) memcpy(value, ver, len);
     return CL_SUCCESS;
@@ -1070,19 +1069,19 @@ int clGetKernelInfo(cl_kernel k, cl_kernel_info info, size_t size, void* value, 
   return CL_SUCCESS;
 }
 
-int clGetKernelArgInfo(cl_kernel k, unsigned pos, cl_kernel_arg_info info,
+int clGetKernelArgInfo(cl_kernel  /*k*/, unsigned pos, cl_kernel_arg_info info,
                         size_t size, void* value, size_t* sizeRet) {
   if (info == CL_KERNEL_ARG_NAME) {
     char name[32];
     snprintf(name, sizeof(name), "arg%u", pos);
-    size_t len = strlen(name) + 1;
+    size_t const len = strlen(name) + 1;
     if (sizeRet) *sizeRet = len;
     if (value && size >= len) memcpy(value, name, len);
   }
   return CL_SUCCESS;
 }
 
-int clGetKernelWorkGroupInfo(cl_kernel k, cl_device_id dev, cl_kernel_work_group_info info,
+int clGetKernelWorkGroupInfo(cl_kernel k, cl_device_id  /*dev*/, cl_kernel_work_group_info info,
                               size_t size, void* value, size_t* sizeRet) {
   if (!k) return CL_INVALID_KERNEL;
   ensureContextCurrent();
@@ -1092,7 +1091,7 @@ int clGetKernelWorkGroupInfo(cl_kernel k, cl_device_id dev, cl_kernel_work_group
     // Previously we used CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK which returns the hardware max
     // based on register/shared memory usage — NOT the declared group size. This caused wrong
     // block sizes for every kernel (e.g., tailMul expected 64 threads but got 1024).
-    int wgSize = k->reqWorkGroupSize > 0 ? k->reqWorkGroupSize : 256;
+    int const wgSize = k->reqWorkGroupSize > 0 ? k->reqWorkGroupSize : 256;
     size_t wgs[3] = { (size_t)wgSize, 1, 1 };
     if (sizeRet) *sizeRet = sizeof(wgs);
     if (value && size >= sizeof(wgs)) memcpy(value, wgs, sizeof(wgs));
@@ -1115,7 +1114,7 @@ void clSVMFree(cl_context, void* ptr) {
 }
 
 int clSetKernelArgSVMPointer(cl_kernel k, unsigned pos, const void* ptr) {
-  CUdeviceptr dp = (CUdeviceptr)(uintptr_t)ptr;
+  auto dp = (CUdeviceptr)(uintptr_t)ptr;
   k->setArg(pos, sizeof(dp), &dp);
   return CL_SUCCESS;
 }
@@ -1128,7 +1127,7 @@ int clSetKernelArgSVMPointer(cl_kernel k, unsigned pos, const void* ptr) {
 // Computes the minimum address span covering all buffers, then sets one access policy
 // window with hitRatio sized so that only the actual buffer bytes get persisting treatment,
 // not the gaps between non-contiguous allocations.
-void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers) {
+static void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers) {
   if (!q) return;
 
   // Find address span and total data size
@@ -1138,21 +1137,21 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 
   for (auto buf : buffers) {
     if (!buf || buf->size == 0) continue;
-    CUdeviceptr lo = buf->ptr;
-    CUdeviceptr hi = buf->ptr + buf->size;
-    if (lo < minAddr) minAddr = lo;
-    if (hi > maxAddr) maxAddr = hi;
+    CUdeviceptr const lo = buf->ptr;
+    CUdeviceptr const hi = buf->ptr + buf->size;
+    minAddr = std::min(lo, minAddr);
+    maxAddr = std::max(hi, maxAddr);
     totalDataBytes += buf->size;
   }
 
   if (totalDataBytes == 0 || maxAddr <= minAddr) return;
 
-  size_t spanBytes = (size_t)(maxAddr - minAddr);
+  auto spanBytes = (size_t)(maxAddr - minAddr);
 
   // Query the device's max access policy window size
   int maxWindowSize = 0;
   cuDeviceGetAttribute(&maxWindowSize, CU_DEVICE_ATTRIBUTE_MAX_ACCESS_POLICY_WINDOW_SIZE, 0);
-  if (maxWindowSize > 0 && spanBytes > (size_t)maxWindowSize) {
+  if (maxWindowSize > 0 && std::cmp_greater(spanBytes, maxWindowSize)) {
     fprintf(stderr, "L2 persist: span %zuMB exceeds max window %dMB, clamping\n",
             spanBytes / (1024*1024), maxWindowSize / (1024*1024));
     spanBytes = maxWindowSize;
@@ -1161,7 +1160,7 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
   // hitRatio = actual data / window span. This way only the real buffer data gets
   // persisting treatment, and any gaps between allocations get streaming treatment.
   float hitRatio = (float)totalDataBytes / (float)spanBytes;
-  if (hitRatio > 1.0f) hitRatio = 1.0f;
+  hitRatio = std::min(hitRatio, 1.0f);
 
   CUstreamAttrValue attr;
   memset(&attr, 0, sizeof(attr));
@@ -1171,7 +1170,7 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
   attr.accessPolicyWindow.hitProp = CU_ACCESS_PROPERTY_PERSISTING;
   attr.accessPolicyWindow.missProp = CU_ACCESS_PROPERTY_STREAMING;
 
-  CUresult r = cuStreamSetAttribute(q->stream, CU_STREAM_ATTRIBUTE_ACCESS_POLICY_WINDOW, &attr);
+  CUresult const r = cuStreamSetAttribute(q->stream, CU_STREAM_ATTRIBUTE_ACCESS_POLICY_WINDOW, &attr);
   if (r != CUDA_SUCCESS) {
     fprintf(stderr, "L2 persist: cuStreamSetAttribute failed (%d)\n", (int)r);
   } else {

@@ -15,6 +15,7 @@
 #include "GpuCommon.h"
 #include "FFTConfig.h"
 
+#include <numbers>
 #include <vector>
 #include <memory>
 #include <filesystem>
@@ -35,7 +36,7 @@ struct PRPResult {
   bool isPrime{};
   u64 res64 = 0;
   u32 nErrors = 0;
-  fs::path proofPath{};
+  fs::path proofPath;
   std::string res2048;
 };
 
@@ -62,15 +63,15 @@ public:
   RoeInfo(u32 n, double max, double mean, double sd) : N{n}, max{max}, mean{mean}, sd{sd} {
     // https://en.wikipedia.org/wiki/Gumbel_distribution
     gumbelBeta = sd * 0.779696801233676; // sqrt(6)/pi
-    gumbelMiu = mean - gumbelBeta * 0.577215664901533; // Euler-Mascheroni
+    gumbelMiu = mean - gumbelBeta * std::numbers::egamma; // Euler-Mascheroni
   }
 
-  double z(double x = 0.5) const { return N ? (x - gumbelMiu) / gumbelBeta : 0.0; }
+  [[nodiscard]] double z(double x = 0.5) const { return N ? (x - gumbelMiu) / gumbelBeta : 0.0; }
 
-  double gumbelCDF(double x) const { return exp(-exp(-z(x))); }
-  double gumbelRightCDF(double x) const { return -expm1(-exp(-z(x))); }
+  [[nodiscard]] double gumbelCDF(double x) const { return exp(-exp(-z(x))); }
+  [[nodiscard]] double gumbelRightCDF(double x) const { return -expm1(-exp(-z(x))); }
 
-  std::string toString() const;
+  [[nodiscard]] std::string toString() const;
 
   u32 N{};
   double max{}, mean{}, sd{};
@@ -227,11 +228,11 @@ private:
   Graph graph_square[4];
 
   const int NUM_CACHE_GROUPS = 3;
-  void splitQueue(void);
-  void mergeQueue(void);
-  void endBottomHalf(void);
-  void replay(void);
-  void replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Queue *q = NULL, int base = 0, int kernelsToExecuteX = 0, int kernelsToExecuteY = 1);
+  void splitQueue();
+  void mergeQueue();
+  void endBottomHalf();
+  void replay();
+  void replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Queue *q = nullptr, int base = 0, int kernelsToExecuteX = 0, int kernelsToExecuteY = 1);
   int replay_next_arg(enum BOTTOM_HALF_KERNELS kern, int arg);
 
   void fftP(Buffer<double>& out, Buffer<double>& in) { fftP(out, reinterpret_cast<Buffer<Word>&>(in)); }
@@ -360,11 +361,11 @@ private:
 // Data buffers require extra space for padding.  We can probably tighten up the amount of extra memory allocated.
 // The worst case seems to be !INPLACE, MIDDLE=4, PAD_SIZE=512.
 
-#define MID_ADJUST(size,M,pad)                  ((pad == 0 || M != 4) ? (size) : (size) * 5/4)
-#define PAD_ADJUST(N,M,inplace,pad)             (inplace ? 3*N/2 : MID_ADJUST(pad == 0 ? N : pad <= 128 ? 9*N/8 : pad <= 256 ? 5*N/4 : 3*N/2, M, pad))
-#define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad)
-#define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad) * sizeof(float) / sizeof(double)
-#define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad) * sizeof(uint) / sizeof(double)
-#define GF61_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST(W*M*H*2, M, inplace, pad) * sizeof(ulong) / sizeof(double)
-#define TOTAL_DATA_SIZE(fft,W,M,H,inplace,pad)  (int)fft.FFT_FP64 * FP64_DATA_SIZE(W,M,H,inplace,pad) + (int)fft.FFT_FP32 * FP32_DATA_SIZE(W,M,H,inplace,pad) + \
-                                                (int)fft.NTT_GF31 * GF31_DATA_SIZE(W,M,H,inplace,pad) + (int)fft.NTT_GF61 * GF61_DATA_SIZE(W,M,H,inplace,pad)
+#define MID_ADJUST(size,M,pad)                  (((pad) == 0 || (M) != 4) ? (size) : (size) * 5/4)
+#define PAD_ADJUST(N,M,inplace,pad)             ((inplace) ? 3*(N)/2 : MID_ADJUST((pad) == 0 ? (N) : (pad) <= 128 ? 9*(N)/8 : (pad) <= 256 ? 5*(N)/4 : 3*(N)/2, M, pad))
+#define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad)
+#define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(float) / sizeof(double)
+#define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(uint) / sizeof(double)
+#define GF61_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(ulong) / sizeof(double)
+#define TOTAL_DATA_SIZE(fft,W,M,H,inplace,pad)  ((int)(fft).FFT_FP64 * FP64_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).FFT_FP32 * FP32_DATA_SIZE(W,M,H,inplace,pad) + \
+                                                (int)(fft).NTT_GF31 * GF31_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).NTT_GF61 * GF61_DATA_SIZE(W,M,H,inplace,pad))

@@ -51,7 +51,7 @@ public:
   void copyBuf(cl_mem src, cl_mem dst, u32 size, TimeInfo* tInfo);
   void finish();
 
-  EventHolder createSyncEvent(void) { if (!isAuxQueue && !graphRecording) queueCount++; return enqueueMarker(get()); }  // Enqueue a synchronization event.  Used to sync work among multiple queues.
+  EventHolder createSyncEvent() { if (!isAuxQueue && !graphRecording) queueCount++; return enqueueMarker(get()); }  // Enqueue a synchronization event.  Used to sync work among multiple queues.
   void waitForSyncEvent(EventHolder* e) { if (!isAuxQueue && !graphRecording) queueCount++; enqueueMarkerWithWaits(get(), {e->get()}); }  // Wait for a synchronization event to complete.
 
   void incSquareCount(int n = 1) { squareCount += n; }
@@ -64,12 +64,12 @@ public:
 private:                            // This replaces the "call queue->finish every 400 squarings" code in Gpu.cpp.  Solves the busy wait on nVidia GPUs.
   int MAX_QUEUE_COUNT;              // Queue size before a marker will be enqueued.  Typically, 100 to 1000 squarings.
   EventHolder markerEvent;          // Event associated with an enqueued marker placed in the queue every MAX_QUEUE_COUNT entries and before r/w operations.
-  bool markerQueued;                // TRUE if a marker and event have been queued
-  int queueCount;                   // Count of items added to the queue since last marker
-  int squareCount;                  // Count of squarings/multiplies since last marker queued
-  int squareTime;                   // Time to do one squaring (in microseconds)
-  bool firstSetTime;                // Flag so we can ignore first setSquareTime call (which is inaccurate because of all the initial openCL compiles)
-  bool graphRecording;              // Graph recording in progress.  waitForMarkerEvent and enqueueMarker must be avoided.
+  bool markerQueued{false};                // TRUE if a marker and event have been queued
+  int queueCount{0};                   // Count of items added to the queue since last marker
+  int squareCount{0};                  // Count of squarings/multiplies since last marker queued
+  int squareTime{50};                   // Time to do one squaring (in microseconds)
+  bool firstSetTime{true};                // Flag so we can ignore first setSquareTime call (which is inaccurate because of all the initial openCL compiles)
+  bool graphRecording{false};              // Graph recording in progress.  waitForMarkerEvent and enqueueMarker must be avoided.
   void queueMarkerEvent();          // Queue the marker event
   void waitForMarkerEvent();        // Wait for marker event to complete
 };

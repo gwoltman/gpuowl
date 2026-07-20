@@ -80,10 +80,10 @@ TrigCoefs trigCoefs(u32 n) {
   assert(mid % 2 == 1);
   assert(mid <= 15 || (mid % 625 == 0 && mid / 625 <= 13));
 
-  double scale = 1.0 / (twos / 4);
+  double const scale = 1.0 / (twos / 4);
   for (u32 i = 0; i < MUL_TAB.size(); ++i) {
     if (MUL_TAB[i] % mid == 0) {
-      return {MUL_TAB[i] / mid, scaleSin(SIN[i], scale), scaleCos(COS[i], scale)};
+      return {.scale=MUL_TAB[i] / mid, .sinCoefs=scaleSin(SIN[i], scale), .cosCoefs=scaleCos(COS[i], scale)};
     }
   }
   log("Trig tab not found for %u (%u * %u)\n", n, mid, twos);

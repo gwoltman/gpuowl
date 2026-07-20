@@ -25,13 +25,13 @@ class KernelCompiler {
 
   u64 contextHash{};
   
-  Program compile(const string& fileName, const string& args) const;
-  KernelHolder loadAux(const string& fileName, const string& kernelName, const string& args) const;
+  [[nodiscard]] Program compile(const string& fileName, const string& args) const;
+  [[nodiscard]] KernelHolder loadAux(const string& fileName, const string& kernelName, const string& args) const;
 
 public:
   const cl_device_id deviceId;
 
   KernelCompiler(const Args& args, const Context* context, const string& clArgs);
   
-  std::future<KernelHolder> load(const string& fileName, const string& kernelName, const string& args) const;
+  [[nodiscard]] std::future<KernelHolder> load(const string& fileName, const string& kernelName, const string& args) const;
 };

@@ -22,10 +22,10 @@ public:
     unsigned char digest[16];
     MD5Final(digest, &context);
     string s;
-    char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 16; ++i) {
-      s.push_back(hex[digest[i] >> 4]);
-      s.push_back(hex[digest[i] & 0xf]);
+    char const hex[] = "0123456789abcdef";
+    for (unsigned char const i : digest) {
+      s.push_back(hex[i >> 4]);
+      s.push_back(hex[i & 0xf]);
     }
     return s;
   }

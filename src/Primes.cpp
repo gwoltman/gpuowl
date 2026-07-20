@@ -9,7 +9,7 @@ Primes::Primes() {
 
   for (u32 i = 0; i < sieve.size(); ++i) {
     if (sieve[i]) {
-      u32 n = 2 * i + 3;
+      u32 const n = 2 * i + 3;
       for (u32 k = i + n; k < sieve.size(); k += n) { sieve.reset(k); }
     }
   }
@@ -21,7 +21,7 @@ bool Primes::isPrimeOdd(u64 n) const {
   if (n < 3) { return false; }
   for (u32 k = 0; k < sieve.size(); ++k) {
     if (sieve[k]) {
-      u32 p = k * 2 + 3;
+      u32 const p = k * 2 + 3;
       if (u64(p) * u64(p) > n) { return true; }
       if (n % p == 0) { return false; }
     }
@@ -53,8 +53,8 @@ u64 Primes::nextPrime(u64 n) const {
 
 u64 Primes::nearestPrime(u64 n) const {
   if (isPrime(n)) { return n; }
-  u64 a = prevPrime(n);
-  u64 b = nextPrime(n);
+  u64 const a = prevPrime(n);
+  u64 const b = nextPrime(n);
   assert(a < n && n < b);
   return n-a < b-n ? a : b;
 }

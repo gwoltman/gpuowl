@@ -12,7 +12,9 @@
 
 // We pre-calculate the maximum BPW for a number of fft specs.  From these entries we can either look up or interpolate to get the
 // maximum BPW for all variants of an FFT spec.  The variants for which maximum bpw are precomputed are 000, 101, 202, 010, 111, 212.
-#define NUM_BPW_ENTRIES 6
+enum {
+NUM_BPW_ENTRIES = 6
+};
 
 class Args;
 
@@ -39,17 +41,17 @@ public:
   FFTShape(enum FFT_TYPES t, const string& w, const string& m, const string& h);
   explicit FFTShape(const string& spec);
 
-  u32 size() const { return width * height * middle * 2; }
-  u32 nW() const { return (width == 1024 || width == 256 /*|| width == 4096*/) ? 4 : 8; }
-  u32 nH() const { return (height == 1024 || height == 256 /*|| height == 4096*/) ? 4 : 8; }
+  [[nodiscard]] u32 size() const { return width * height * middle * 2; }
+  [[nodiscard]] u32 nW() const { return (width == 1024 || width == 256 /*|| width == 4096*/) ? 4 : 8; }
+  [[nodiscard]] u32 nH() const { return (height == 1024 || height == 256 /*|| height == 4096*/) ? 4 : 8; }
 
-  float minBpw() const { return fft_type != FFT32 ? 3.0f : 1.0f; }
-  float maxBpw() const { return *max_element(bpw.begin(), bpw.end()); }
-  std::string spec() const { return (fft_type ? to_string(fft_type) + ':' : "") + numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
+  [[nodiscard]] float minBpw() const { return fft_type != FFT32 ? 3.0f : 1.0f; }
+  [[nodiscard]] float maxBpw() const { return *std::ranges::max_element(bpw); }
+  [[nodiscard]] std::string spec() const { return (fft_type ? to_string(fft_type) + ':' : "") + numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
 
-  float carry32BPW() const;
-  bool needsLargeCarry(u64 E) const;
-  bool isFavoredShape() const;
+  [[nodiscard]] float carry32BPW() const;
+  [[nodiscard]] bool needsLargeCarry(u64 E) const;
+  [[nodiscard]] bool isFavoredShape() const;
 };
 
 static const u32 N_VARIANT_W = 3;
@@ -82,17 +84,17 @@ public:
   // Size (in bytes) of integer data passed to FFTs/NTTs on the GPU
   u32 WordSize;
 
-  FFTShape shape{};
+  FFTShape shape;
   u32 variant;
   enum CARRY_KIND carry;
 
   explicit FFTConfig(const string& spec);
   FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry);
 
-  std::string spec() const;
-  u64 size() const { return shape.size(); }
-  u64 maxExp()  const { return u64(maxBpw() * shape.size()); }
+  [[nodiscard]] std::string spec() const;
+  [[nodiscard]] u64 size() const { return shape.size(); }
+  [[nodiscard]] u64 maxExp()  const { return u64(maxBpw() * shape.size()); }
 
-  float minBpw() const { return shape.minBpw(); }
-  float maxBpw() const;
+  [[nodiscard]] float minBpw() const { return shape.minBpw(); }
+  [[nodiscard]] float maxBpw() const;
 };

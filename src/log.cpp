@@ -11,7 +11,7 @@ thread_local vector<string> contextParts;
 
 thread_local File logFile;
 
-File stdoutFile{stdout, "stdout"};
+static File stdoutFile{stdout, "stdout"};
 
 string logContext() { return context; }
 
@@ -20,7 +20,7 @@ void initLog(const char *logName) {
   logFile = File::openAppend(logName);
 }
 
-string longTimeStr()  { return timeStr("%Y-%m-%d %H:%M:%S %Z"); }
+static string longTimeStr()  { return timeStr("%Y-%m-%d %H:%M:%S %Z"); }
 string shortTimeStr() { return timeStr("%Y%m%d %H:%M:%S"); }
 
 static char logBuf[32 * 1024];
@@ -28,9 +28,9 @@ static char logBuf[32 * 1024];
 void log(const char *fmt, ...) {
   static std::mutex logMutex;
 
-  string prefix = shortTimeStr() + ' ' + context;
+  string const prefix = shortTimeStr() + ' ' + context;
 
-  std::unique_lock lock(logMutex);
+  std::unique_lock const lock(logMutex);
   int pos = 0;
   snprintf(logBuf, sizeof(logBuf), "%s %n", prefix.c_str(), &pos);
 
@@ -38,7 +38,7 @@ void log(const char *fmt, ...) {
   va_start(va, fmt);
   vsnprintf(logBuf + pos, sizeof(logBuf) - pos, fmt, va);
   va_end(va);
-  string_view s{logBuf};
+  string_view const s{logBuf};
 
   if (logFile) { logFile.write(s); }
   stdoutFile.write(s);

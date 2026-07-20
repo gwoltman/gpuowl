@@ -13,7 +13,7 @@ TimeInfo* Profile::make(string_view s) {
 vector<const TimeInfo*> Profile::get() const {
   vector<const TimeInfo*> ret;
   for (auto& t : entries) { if (t->n) { ret.push_back(t.get()); } }
-  std::sort(ret.begin(), ret.end(), [](auto p1, auto p2) { return p1->times[2] > p2->times[2]; });
+  std::ranges::sort(ret, [](auto p1, auto p2) { return p1->times[2] > p2->times[2]; });
   return ret;
 }
 

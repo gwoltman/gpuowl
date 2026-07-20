@@ -14,7 +14,7 @@ public:
   FFTConfig fft;
 
   bool update(std::vector<TuneEntry>&) const;
-  bool willUpdate(const vector<TuneEntry>&) const;
+  [[nodiscard]] bool willUpdate(const vector<TuneEntry>&) const;
 
   static vector<TuneEntry> readTuneFile(const Args& args);
   static void writeTuneFile(const vector<TuneEntry>&);

@@ -6,6 +6,7 @@
 #include <cuda.h>
 #include <nvrtc.h>
 #include <string>
+#include <utility>
 #include <vector>
 #include <memory>
 #include <array>
@@ -47,8 +48,8 @@ public:
   explicit CudaContext(CUdevice dev);
   ~CudaContext();
 
-  CUcontext get() const { return ctx; }
-  CUdevice getDevice() const { return device; }
+  [[nodiscard]] CUcontext get() const { return ctx; }
+  [[nodiscard]] CUdevice getDevice() const { return device; }
   void makeCurrent();
 };
 
@@ -66,7 +67,7 @@ public:
     return *this;
   }
 
-  CUmodule get() const { return module; }
+  [[nodiscard]] CUmodule get() const { return module; }
   CUfunction getFunction(const char* name) const;
 };
 
@@ -77,7 +78,7 @@ public:
   CudaStream();
   ~CudaStream();
 
-  CUstream get() const { return stream; }
+  [[nodiscard]] CUstream get() const { return stream; }
   void sync();
 
   CudaStream(CudaStream&& rhs) noexcept : stream(rhs.stream) { rhs.stream = nullptr; }
@@ -99,8 +100,8 @@ public:
     return *this;
   }
 
-  CUdeviceptr get() const { return ptr; }
-  size_t size() const { return bytes; }
+  [[nodiscard]] CUdeviceptr get() const { return ptr; }
+  [[nodiscard]] size_t size() const { return bytes; }
 
   void readSync(void* dst, size_t n) const;
   void writeSync(const void* src, size_t n);
@@ -128,11 +129,11 @@ class CudaKernelLauncher {
 
 public:
   CudaKernelLauncher() = default;
-  CudaKernelLauncher(CUfunction f, const std::string& name, u32 blockSize)
-    : func(f), name(name), blockSize(blockSize) {}
+  CudaKernelLauncher(CUfunction f, std::string  name, u32 blockSize)
+    : func(f), name(std::move(name)), blockSize(blockSize) {}
 
   void launch(CUstream stream, u32 gridSize, void** args, u32 sharedMem = 0);
 
-  CUfunction get() const { return func; }
-  const std::string& getName() const { return name; }
+  [[nodiscard]] CUfunction get() const { return func; }
+  [[nodiscard]] const std::string& getName() const { return name; }
 };

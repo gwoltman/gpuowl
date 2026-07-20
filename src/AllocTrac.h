@@ -36,8 +36,8 @@ public:
   AllocTrac(const AllocTrac&) = delete;
   void operator=(const AllocTrac&) = delete;
 
-  AllocTrac(AllocTrac&& rhs) : size(rhs.size) { rhs.size = 0; }
-  AllocTrac& operator=(AllocTrac&& rhs) {
+  AllocTrac(AllocTrac&& rhs)  noexcept : size(rhs.size) { rhs.size = 0; }
+  AllocTrac& operator=(AllocTrac&& rhs)  noexcept {
     AllocTrac tmp{std::move(rhs)};
     swap(*this, tmp);
     return *this;

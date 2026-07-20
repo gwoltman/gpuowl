@@ -1,14 +1,13 @@
 // Copyright (C) Mihai Preda
 
 #include "Queue.h"
-#include "Args.h"
 #include "TimeInfo.h"
-#include "timeutil.h"
 #include "log.h"
 
 #include <cassert>
 #include <chrono>
 #include <thread>
+#include <utility>
 
 void Events::clearCompleted() { while (!empty() && front().isComplete()) { pop_front(); } }
 
@@ -44,7 +43,7 @@ void Queue::fillBufTE(cl_mem buf, u32 patSize, const void* pattern, u64 size, Ti
   add(::fillBuf(get(), {}, buf, pattern, patSize, size, hasEvents), tInfo);
 }
 
-string status(Events& events) {
+static string status(Events& events) {
   if (events.empty()) { return ""; }
   Event& f = events.front();
   return f.isComplete() ? "C" : f.isQueued() ? "Q" : f.isRunning() ? "R" : f.isSubmitted() ? "S" : "?";
@@ -125,7 +124,7 @@ void Queue::setSquareTime(int time) {
     firstSetTime = false;
     return;
   }
-  if (time < 30) time = 30;           // Assume a minimum square time of 30us
-  if (time > 3000) time = 3000;       // Assume a maximum square time of 3000us
+  time = std::max(time, 30);           // Assume a minimum square time of 30us
+  time = std::min(time, 3000);       // Assume a maximum square time of 3000us
   squareTime = time;
 }

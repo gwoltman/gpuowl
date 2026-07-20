@@ -4,6 +4,7 @@
 #include "TimeInfo.h"
 
 #include <cassert>
+#include <utility>
 
 Event::Event(EventHolder&& e, TimeInfo* tInfo) :
   event{std::move(e)},
@@ -13,7 +14,7 @@ Event::Event(EventHolder&& e, TimeInfo* tInfo) :
 }
 
 Event::~Event() {
-  [[maybe_unused]] bool done = isComplete();
+  [[maybe_unused]] bool const done = isComplete();
   assert(done);
 }
 

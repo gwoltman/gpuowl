@@ -5,21 +5,21 @@
  * This code is in the public domain; do with it what you wish.
  */
 #include "MD5.h"
-#include <string.h>
+#include <cstring>
 
 #define byteReverse(A,B)
 
 /* The four core functions - F1 is optimized somewhat */
 
 /* #define F1(x, y, z) (x & y | ~x & z) */
-#define F1(x, y, z) (z ^ (x & (y ^ z)))
+#define F1(x, y, z) ((z) ^ ((x) & ((y) ^ (z))))
 #define F2(x, y, z) F1(z, x, y)
-#define F3(x, y, z) (x ^ y ^ z)
-#define F4(x, y, z) (y ^ (x | ~z))
+#define F3(x, y, z) ((x) ^ (y) ^ (z))
+#define F4(x, y, z) ((y) ^ ((x) | ~(z)))
 
 /* This is the central step in the MD5 algorithm. */
 #define MD5STEP(f, w, x, y, z, data, s) \
-        ( w += f(x, y, z) + data,  w = w<<s | w>>(32-s),  w += x )
+        ( (w) += f(x, y, z) + (data),  (w) = (w)<<(s) | (w)>>(32-(s)),  (w) += (x) )
 
 /*
  * The core of the MD5 algorithm, this alters an existing MD5 hash to
@@ -132,7 +132,7 @@ void MD5Update(MD5Context *ctx, const unsigned char *buf, unsigned int len){
         /* Update bitcount */
 
         t = ctx->bits[0];
-        if ((ctx->bits[0] = t + ((unsigned)len << 3)) < t)
+        if ((ctx->bits[0] = t + (len << 3)) < t)
                 ctx->bits[1]++; /* Carry from low to high */
         ctx->bits[1] += len >> 29;
 

@@ -11,5 +11,5 @@ class Context : public std::unique_ptr<cl_context> {
 public:
   explicit Context(cl_device_id id): unique_ptr<cl_context>{createContext(id)}, id{id} {}
   
-  cl_device_id deviceId() const { return id; }
+  [[nodiscard]] cl_device_id deviceId() const { return id; }
 };

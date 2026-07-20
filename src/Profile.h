@@ -16,7 +16,7 @@ class Profile {
 public:
   TimeInfo *make(std::string_view s);
 
-  std::vector<const TimeInfo*> get() const;
+  [[nodiscard]] std::vector<const TimeInfo*> get() const;
 
   void reset();
 };
