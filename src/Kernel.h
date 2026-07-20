@@ -24,7 +24,8 @@ class Kernel {
   TimeInfo *timeInfo;
 
   Queue* queue;
-  size_t workSize;
+  size_t workSizeX;
+  size_t workSizeY;
   u32 groupSize = 0;
   
   KernelHolder kernel;
@@ -44,10 +45,14 @@ public:
   void finishLoad();
 
   // Change which queue is used to run a kernel
-  void setQueue(Queue *q) { queue = q; }
+  void setQueue(Queue *q) { if (q != NULL) queue = q; }
+
+  // Change number of kernels to execute.  Usually this is set by Gpu.cpp at object creation (by setting the total number of work-items in workSizeX).
+  // L2 striping requires the ability to change this setting on-the-fly.  One and two dimensional kernels are supported.
+  void setKernelsToExecute(size_t nX, size_t nY = 1);
 
   template<typename... Args> void setFixedArgs(int pos, const Args &...tail) { setArgs(pos, tail...); }
-  
+
   template<typename... Args> void operator()(const Args &...args) {
     if (!kernel) {
       startLoad(compiler);

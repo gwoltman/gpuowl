@@ -36,6 +36,41 @@ static void ensureContextCurrent() {
   }
 }
 
+// Reference-count CUmodules so they get unloaded once nothing uses them.
+//
+// In OpenCL, clCreateKernel retains the program, so the underlying code object
+// stays alive until BOTH the program and every kernel derived from it are
+// released. PRPLL relies on this: KernelCompiler::loadAux() creates a kernel,
+// then releases the program while the kernel keeps running. We therefore cannot
+// unload the module in clReleaseProgram — a live CUfunction would be invalidated.
+//
+// Instead we count references: the owning program holds one ref (set when the
+// module is loaded), and each kernel created from it holds one more. The module
+// is unloaded when the count reaches zero. This is essential because Gpu::make()
+// builds a fresh set of ~36 kernels per work unit (and dozens of times during
+// tuning), all into the single process-lifetime CUDA context. Without unloading,
+// device memory grows unbounded and eventually cuLaunchKernel fails with
+// CUDA_ERROR_OUT_OF_MEMORY.
+//
+// Loading is single-threaded (KernelCompiler's async path is disabled), so a
+// plain map without locking is sufficient.
+static std::map<CUmodule, int> g_moduleRefCount;
+
+static void moduleRetain(CUmodule m) {
+  if (m) { ++g_moduleRefCount[m]; }
+}
+
+static void moduleRelease(CUmodule m) {
+  if (!m) return;
+  auto it = g_moduleRefCount.find(m);
+  if (it == g_moduleRefCount.end()) return;   // untracked module — leave as-is
+  if (--it->second <= 0) {
+    ensureContextCurrent();
+    cuModuleUnload(m);
+    g_moduleRefCount.erase(it);
+  }
+}
+
 // Global state for CUDA initialization
 static bool g_cudaInitialized = false;
 static void ensureCudaInit() {
@@ -122,13 +157,12 @@ int clReleaseContext(cl_context ctx) {
 
 int clReleaseProgram(cl_program p) {
   if (p) {
-    // NOTE: Do NOT unload the module here. PRPLL's loadAux() gets a kernel from
-    // the program, then releases the program. The kernel's CUfunction remains valid
-    // only while the CUmodule is loaded. In OpenCL, clCreateKernel retains the
-    // program. In our CUDA shim, we simply never unload modules — they persist for
-    // the process lifetime. This is safe because PRPLL creates a fixed set of kernels
-    // at startup and uses them until exit.
-    // if (p->moduleLoaded) cuModuleUnload(p->module);
+    // Drop the program's reference to its module. The module is unloaded only once
+    // every kernel created from it has also been released (see moduleRelease and the
+    // refcount rationale near the top of this file). This lets loadAux() release the
+    // program while keeping the kernel's CUfunction valid, matching OpenCL semantics,
+    // without leaking a module per Gpu::make().
+    if (p->moduleLoaded) { moduleRelease(p->module); }
     delete p;
   }
   return CL_SUCCESS;
@@ -171,6 +205,7 @@ cl_program clCreateProgramWithBinary(cl_context  /*ctx*/, unsigned  /*nDevices*/
     CUresult const r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
     if (r == CUDA_SUCCESS) {
       prog->moduleLoaded = true;
+      moduleRetain(prog->module);  // program owns one reference
       if (binaryStatus) binaryStatus[0] = CL_SUCCESS;
     } else {
       fprintf(stderr, "cuModuleLoadData from cache failed: %d, PTX size=%zu\n", (int)r, lengths[0]);
@@ -439,6 +474,7 @@ cl_program clLinkProgram(cl_context  /*ctx*/, unsigned  /*nDevices*/, const cl_d
     return nullptr;
   }
   linked->moduleLoaded = true;
+  moduleRetain(linked->module);  // program owns one reference
 
   // Dump PTX to file when PRPLL_DUMP_PTX is set (e.g., PRPLL_DUMP_PTX=kernel)
   // Creates files like kernel_0.ptx, kernel_1.ptx, etc.
@@ -476,6 +512,7 @@ int clBuildProgram(cl_program prog, unsigned nDevices, const cl_device_id* devic
   CUresult const r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
   if (r != CUDA_SUCCESS) return CL_BUILD_PROGRAM_FAILURE;
   prog->moduleLoaded = true;
+  moduleRetain(prog->module);  // program owns one reference
   return CL_SUCCESS;
 }
 
@@ -522,10 +559,11 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
   if (r != CUDA_SUCCESS) {
     fprintf(stderr, "cuModuleGetFunction('%s') failed: %d, moduleLoaded=%d, module=%p\n",
             name, (int)r, prog->moduleLoaded, (void*)prog->module);
-    delete k;
+    delete k;  // never retained the module, so nothing to release
     if (err) *err = CL_INVALID_KERNEL_NAME;
     return nullptr;
   }
+  moduleRetain(k->parentModule);  // kernel keeps the module alive past clReleaseProgram
 
   // Shared memory carveout: default adaptive carveout is optimal for mixed kernel workloads.
 
@@ -574,7 +612,10 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
 }
 
 int clReleaseKernel(cl_kernel k) {
-  delete k;
+  if (k) {
+    moduleRelease(k->parentModule);
+    delete k;
+  }
   return CL_SUCCESS;
 }
 
@@ -673,9 +714,12 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned  /*workDim*
   if (!q || !k) return CL_INVALID_VALUE;
   ensureContextCurrent();
 
-  size_t const gs = globalSize[0];
-  size_t const ls = localSize ? localSize[0] : 256;
-  size_t const numBlocks = (gs + ls - 1) / ls;
+  size_t const gsX = globalSize[0];
+  size_t const lsX = localSize ? localSize[0] : 256;
+  size_t const numBlocksX = (gsX + lsX - 1) / lsX;
+  size_t const gsY = (workDim > 1) ? globalSize[1] : 1;
+  size_t const lsY = (workDim > 1) ? localSize[1] : 1;
+  size_t const numBlocksY = (gsY + lsY - 1) / lsY;
 
   // Build args array
   void* argPtrs[_cl_kernel::MAX_ARGS];
@@ -692,7 +736,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned  /*workDim*
     ev->hasTimings = true;
     ev->commandType = CL_COMMAND_NDRANGE_KERNEL;
     cuEventRecord(ev->start, q->stream);
-    CUresult const r = cuLaunchKernel(k->func, numBlocks, 1, 1, ls, 1, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
     cuEventRecord(ev->end, q->stream);
     *event = ev;
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
@@ -707,7 +751,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned  /*workDim*
     if (!pStart) { cuEventCreate(&pStart, CU_EVENT_DEFAULT); cuEventCreate(&pEnd, CU_EVENT_DEFAULT); }
 
     cuEventRecord(pStart, q->stream);
-    CUresult const r = cuLaunchKernel(k->func, numBlocks, 1, 1, ls, 1, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult cosnt r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
     cuEventRecord(pEnd, q->stream);
     cuEventSynchronize(pEnd);
     float ms = 0;
@@ -739,7 +783,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned  /*workDim*
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
   }
 
-  CUresult const r = cuLaunchKernel(k->func, numBlocks, 1, 1, ls, 1, 1, 0, q->stream, argPtrs, nullptr);
+  CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
   if (r != CUDA_SUCCESS) {
     const char* errName = nullptr;
     cuGetErrorName(r, &errName);
@@ -811,7 +855,7 @@ int clEnqueueMarkerWithWaitList(cl_command_queue q, unsigned nWaits, const cl_ev
   }
   if (event) {
     auto* ev = new _cl_event;
-    cuEventCreate(&ev->end, CU_EVENT_DEFAULT);
+    cuEventCreate(&ev->end, CU_EVENT_DISABLE_TIMING);
     cuEventRecord(ev->end, q->stream);
     ev->commandType = CL_COMMAND_MARKER;
     *event = ev;
@@ -1136,3 +1180,40 @@ static void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& b
   }
 }
 
+
+// OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features
+
+// Interface to nVidia CUDA graphs feature
+
+bool clIsGraphSupported(cl_device_id dev) {
+  int major = 0;
+  cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev->dev);
+  return (major >= 6);
+}
+
+int clGraphBeginRecording(cl_command_queue q) {
+  ensureContextCurrent();
+  CUresult r = cuStreamBeginCapture(q->stream, CU_STREAM_CAPTURE_MODE_GLOBAL);
+  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+}
+
+int clGraphEndRecording(cl_command_queue q, cl_graph* graph) {
+  ensureContextCurrent();
+  auto* g = new _cl_graph;
+  g->queue = q;
+  CUresult r = cuStreamEndCapture(q->stream, &g->graph);
+  if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, 0);
+  *graph = g;
+  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+}
+
+int clGraphLaunch(cl_graph graph) {
+  ensureContextCurrent();
+  CUresult r = cuGraphLaunch(graph->graphExec, graph->queue->stream);
+  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+}
+
+int clReleaseGraph(cl_graph graph) {
+  delete graph;
+  return CL_SUCCESS;
+}

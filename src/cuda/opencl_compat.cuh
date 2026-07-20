@@ -33,8 +33,8 @@
 
 // ---- Work-item functions ----
 #define get_local_id(d)    ((unsigned int)threadIdx.x)
-#define get_group_id(d)    ((unsigned int)blockIdx.x)
-#define get_local_size(d)  ((unsigned int)blockDim.x)
+#define get_group_id(d)    ((unsigned int)(d == 0 ? blockIdx.x : blockIdx.y))
+#define get_local_size(d)  ((unsigned int)(d == 0 ? blockDim.x : blockDim.y))
 #define get_global_id(d)   ((unsigned int)(blockIdx.x * blockDim.x + threadIdx.x))
 #define get_num_groups(d)  ((unsigned int)gridDim.x)
 #define get_global_size(d) ((unsigned int)(gridDim.x * blockDim.x))

@@ -15,13 +15,13 @@
 
 using cl_queue = cl_command_queue;
 
-
 void release(cl_context context);
 void release(cl_kernel k);
 void release(cl_mem buf);
 void release(cl_program program);
 void release(cl_queue queue);
 void release(cl_event event);
+void release(cl_graph graph);
 
 template<typename T>
 struct Deleter {
@@ -36,6 +36,7 @@ template<> struct default_delete<cl_mem> : public Deleter<cl_mem> {};
 template<> struct default_delete<cl_program> : public Deleter<cl_program> {};
 template<> struct default_delete<cl_queue> : public Deleter<cl_queue> {};
 template<> struct default_delete<cl_event> : public Deleter<cl_event> {};
+template<> struct default_delete<cl_graph> : public Deleter<cl_graph> {};
 }
 
 template<typename T> using Holder = std::unique_ptr<T, Deleter<T> >;
@@ -43,6 +44,7 @@ template<typename T> using Holder = std::unique_ptr<T, Deleter<T> >;
 using QueueHolder = std::unique_ptr<cl_queue>;
 using KernelHolder = std::unique_ptr<cl_kernel>;
 using EventHolder = std::unique_ptr<cl_event>;
+using GraphHolder = std::unique_ptr<cl_graph>;
 using Program = std::unique_ptr<cl_program>;
 
 class Context;
@@ -98,7 +100,7 @@ cl_queue makeQueue(cl_device_id d, cl_context c, bool enableProfile);
 void flush( cl_queue q);
 void finish(cl_queue q);
 
-EventHolder run(cl_queue queue, cl_kernel kernel, size_t groupSize, size_t workSize,
+EventHolder run(cl_queue queue, cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY,
                 vector<cl_event>&& waits, const string &name, bool genEvent);
 
 EventHolder read(cl_queue queue, vector<cl_event>&& waits,
@@ -136,3 +138,5 @@ cl_context getQueueContext(cl_command_queue q);
 // Buffers that are nullptr or zero-size are skipped.
 void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers);
 #endif
+
+

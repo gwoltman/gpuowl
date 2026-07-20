@@ -14,7 +14,8 @@ Kernel::Kernel(string_view name, KernelCompiler* compiler, TimeInfo* timeInfo, Q
   defines{defines},
   timeInfo{timeInfo},
   queue{queue},
-  workSize{workSize}
+  workSizeX{workSize},
+  workSizeY{1}
 {}
 
 Kernel::~Kernel() = default;
@@ -32,12 +33,27 @@ void Kernel::finishLoad() {
   assert(kernel);
   groupSize = getWorkGroupSize(kernel.get(), deviceId, name.c_str());
   assert(groupSize);
-  assert(workSize % groupSize == 0);
+  assert(workSizeX % groupSize == 0);
 
   for (auto [pos, arg] : pendingArgs) { setArgs(pos, arg); }
 }
 
+void Kernel::setKernelsToExecute(size_t nX, size_t nY) {  // The rare two-dimensional kernel execution
+  if (nX == 0) return;  // Use the default work size set at object creation.
+
+  // Make sure kernel is loaded so that we have the groupSize
+  if (!kernel) {
+    startLoad(compiler);
+    finishLoad();
+  }
+  if (!kernel) { throw std::runtime_error("OpenCL kernel "s + name + " not found"); }
+
+  // For 2D kernels, we only support groupSizeY of 1.  Setting workSizeY to more than one indicates a 2D kernel execution.
+  workSizeX = nX * groupSize;
+  workSizeY = nY;
+}
+
 void Kernel::run() {
   assert(kernel);
-  queue->run(kernel.get(), groupSize, workSize, timeInfo);
+  queue->run(kernel.get(), groupSize, workSizeX, workSizeY, timeInfo);
 }

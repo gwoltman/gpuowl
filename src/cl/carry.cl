@@ -41,8 +41,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   carryOut[G_W * g + me] = carry;
 
 #if ROE
-  updateStats(bufROE, posROE, roundMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
+  local u32 lds[G_W];
   updateStats(bufROE, posROE, carryMax);
 #endif
 }
@@ -98,9 +100,11 @@ KERNEL(G_W) carry(P(Word2) out, CP(F2) in, u32 posROE, P(CarryABM) carryOut, Big
   carryOut[G_W * g + me] = carry;
 
 #if ROE
-  updateStats(bufROE, posROE, roundMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -171,10 +175,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF31) in, u32 posROE, P(CarryABM) carryOut, P
   carryOut[G_W * g + me] = carry;
 
 #if ROE
+  local u32 lds[G_W];
   float fltRoundMax = (float) roundMax / (float) M31;      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(bufROE, posROE, fltRoundMax);
+  updateStats(lds, G_W, H, bufROE, posROE, fltRoundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -245,10 +251,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF61) in, u32 posROE, P(CarryABM) carryOut, P
   carryOut[G_W * g + me] = carry;
 
 #if ROE
+  local u32 lds[G_W];
   float fltRoundMax = (float) roundMax / (float) (M61 >> 32);      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(bufROE, posROE, fltRoundMax);
+  updateStats(lds, G_W, H, bufROE, posROE, fltRoundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -324,9 +332,11 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   carryOut[G_W * g + me] = carry;
 
 #if ROE
-  updateStats(bufROE, posROE, roundMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -407,9 +417,11 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   carryOut[G_W * g + me] = carry;
 
 #if ROE
-  updateStats(bufROE, posROE, roundMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -490,9 +502,11 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   carryOut[G_W * g + me] = carry;
 
 #if ROE
-  updateStats(bufROE, posROE, roundMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -580,10 +594,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
   carryOut[G_W * g + me] = carry;
 
 #if ROE
+  local u32 lds[G_W];
   float fltRoundMax = (float) roundMax / (float) 0x1FFFFFFF;      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(bufROE, posROE, fltRoundMax);
+  updateStats(lds, G_W, H, bufROE, posROE, fltRoundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -680,9 +696,11 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   carryOut[G_W * g + me] = carry;
 
 #if ROE
-  updateStats(bufROE, posROE, roundMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
-  updateStats(bufROE, posROE, carryMax);
+  local u32 lds[G_W];
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
