@@ -198,12 +198,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   }
   frac_bits = starting_frac_bits;     // Restore starting frac_bits for applying weights after carry propagation
 
-#if ROE
-  updateStats(bufROE, posROE, roundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -236,6 +230,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Calculate inverse weights
@@ -410,12 +410,6 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
     frac_bits += frac_bits_bigstep;
   }
 
-#if ROE
-  updateStats(bufROE, posROE, roundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -448,6 +442,12 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Shuffle carries up
@@ -627,13 +627,6 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
   }
   combo_counter = starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
 
-#if ROE
-  float fltRoundMax = (float) roundMax / (float) M31;      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(bufROE, posROE, fltRoundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -666,6 +659,13 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  float fltRoundMax = (float) roundMax / (float) M31;      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, fltRoundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Shuffle carries up
@@ -849,13 +849,6 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
   }
   combo_counter = starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
 
-#if ROE
-  float fltRoundMax = (float) roundMax / (float) (M61 >> 32);      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(bufROE, posROE, fltRoundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -888,6 +881,13 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  float fltRoundMax = (float) roundMax / (float) (M61 >> 32);      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, fltRoundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Shuffle carries up
@@ -1087,12 +1087,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   }
   combo_counter = starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
 
-#if ROE
-  updateStats(bufROE, posROE, roundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -1125,6 +1119,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Calculate inverse weights
@@ -1351,12 +1351,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   }
   combo_counter = starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
 
-#if ROE
-  updateStats(bufROE, posROE, roundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -1389,6 +1383,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  updateStats((local u32 *) ldsF2, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) ldsF2, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Shuffle carries up
@@ -1611,12 +1611,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   }
   combo_counter = starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
 
-#if ROE
-  updateStats(bufROE, posROE, roundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -1649,6 +1643,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Shuffle carries up
@@ -1865,13 +1865,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   m31_combo_counter = m31_starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
   m61_combo_counter = m61_starting_combo_counter;
 
-#if ROE
-  float fltRoundMax = (float) roundMax / (float) 0x1FFFFFFF;      // For speed, roundoff was computed as 32-bit integer.  Convert to float - divide by M61.
-  updateStats(bufROE, posROE, fltRoundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -1904,6 +1897,13 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  float fltRoundMax = (float) roundMax / (float) 0x1FFFFFFF;      // For speed, roundoff was computed as 32-bit integer.  Convert to float - divide by M61.
+  updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, fltRoundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Shuffle carries up
@@ -2153,12 +2153,6 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   m31_combo_counter = m31_starting_combo_counter;     // Restore starting counter for applying weights after carry propagation
   m61_combo_counter = m61_starting_combo_counter;
 
-#if ROE
-  updateStats(bufROE, posROE, roundMax);
-#elif STATS & (1 << MUL3)
-  updateStats(bufROE, posROE, carryMax);
-#endif
-
   // Write out our carries for the last line in this group. Only groups 0 to H/WMUL-1 need to write carries out.
   // Group H/WMUL is a duplicate of group 0 (producing the same results) so we don't care about that group writing out,
   // but it's fine either way.
@@ -2191,6 +2185,12 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Do some work while our carries may not be ready
 #if HAS_ASM
   __asm("s_setprio 0");
+#endif
+
+#if ROE
+  updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
+#elif STATS & (1 << MUL3)
+  updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, carryMax);
 #endif
 
   // Shuffle carries up

@@ -87,7 +87,7 @@ class Gpu {
   Background* background;
 
 public:
-  const Args& args;
+  Args& args;
 
 private:
   std::unique_ptr<Saver<PRPState>> saver;
@@ -223,10 +223,16 @@ private:
   vector<enum BOTTOM_HALF_KERNELS> recorded_kernels;
   vector<Buffer<double> *> recorded_kernel_args;
 
+  bool use_graphs;
+  Graph graph_square[4];
+
   const int NUM_CACHE_GROUPS = 3;
   void splitQueue(void);
   void mergeQueue(void);
+  void endBottomHalf(void);
   void replay(void);
+  void replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Queue *q = NULL, int base = 0, int kernelsToExecuteX = 0, int kernelsToExecuteY = 1);
+  int replay_next_arg(enum BOTTOM_HALF_KERNELS kern, int arg);
 
   void fftP(Buffer<double>& out, Buffer<double>& in) { fftP(out, reinterpret_cast<Buffer<Word>&>(in)); }
   void fftP(Buffer<double>& out, Buffer<Word>& in);

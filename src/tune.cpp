@@ -707,7 +707,8 @@ void Tune::tune() {
       args->flags["STORES"] = to_string(stores);
     }
 
-    // Find best FAST_BARRIER setting
+    // Find best FAST_BARRIER setting.  This setting does nothing when using the CUDA backend.
+#ifndef CUDA_BACKEND
     if (1 /*AMDGPU*/) {                 // FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
@@ -726,6 +727,7 @@ void Tune::tune() {
       configsUpdate(current_cost, best_cost, 0.000, "FAST_BARRIER", best_fast_barrier, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["FAST_BARRIER"] = to_string(best_fast_barrier);
     }
+#endif
 
     // Find best TAIL_KERNELS setting
     if (1) {
@@ -1033,12 +1035,53 @@ void Tune::tune() {
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_wmul = wmul; }
       }
       log("Best WMUL is %u.  Default WMUL is 2.\n", best_wmul);
-      configsUpdate(current_cost, best_cost, 0.003, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
+      configsUpdate(current_cost, best_cost, 0.000, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["WMUL"] = to_string(best_wmul);
+    }
+
+    // Find best MULTI_Q setting
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_multi_q = 0;
+      u32 current_multi_q = args->value("MULTI_Q", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 multi_q : {0, 1}) {
+        args->flags["MULTI_Q"] = to_string(multi_q);
+        double cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using MULTI_Q=%u is %6.1f\n", fft.spec().c_str(), multi_q, cost);
+        if (multi_q == current_multi_q) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_multi_q = multi_q; }
+      }
+      log("Best MULTI_Q is %u.  Default MULTI_Q is 0.\n", best_multi_q);
+      configsUpdate(current_cost, best_cost, 0.000, "MULTI_Q", best_multi_q, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["MULTI_Q"] = to_string(best_multi_q);
     }
 
     // Find best CUDA compiler options
 #if CUDA_BACKEND
+    // Find best GRAPHS setting
+    if (1) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_graphs = 0;
+      u32 current_graphs = args->value("GRAPHS", 1);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 graphs : {0, 1}) {
+        args->flags["GRAPHS"] = to_string(graphs);
+        double cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using GRAPHS=%u is %6.1f\n", fft.spec().c_str(), graphs, cost);
+        if (graphs == current_graphs) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_graphs = graphs; }
+      }
+      log("Best GRAPHS is %u.  Default GRAPHS is 1.\n", best_graphs);
+      configsUpdate(current_cost, best_cost, 0.000, "GRAPHS", best_graphs, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["GRAPHS"] = to_string(best_graphs);
+    }
+
+    // See if disabling our default register usage makes sense
     if (0) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());

@@ -25,9 +25,10 @@ Queue::Queue(const Context& context, bool profile, bool auxQueue) :
   markerEvent{},
   markerQueued(false),
   queueCount(0),
+  squareCount(0),
   squareTime(50),
-  squareKernels(4),
-  firstSetTime(true)
+  firstSetTime(true),
+  graphRecording(false)
 {
   // Formerly a constant (thus the CAPS).  nVidia is 3% CPU load at 400 or 500, and 35% load at 800 on my Linux machine.
   // AMD is just over 2% load at 1600 and 3200 on the same Linux machine.  Marginally better timings(?) at 3200.
@@ -56,9 +57,9 @@ void Queue::print() {
 
 void Queue::add(EventHolder&& e, TimeInfo* ti) {
   if (hasEvents) { events.emplace_back(std::move(e), ti); }
-  if (isAuxQueue) return;
+  if (isAuxQueue || graphRecording) return;
   queueCount++;
-  if (queueCount == MAX_QUEUE_COUNT) queueMarkerEvent();
+  if (queueCount >= MAX_QUEUE_COUNT) queueMarkerEvent();
 }
 
 void Queue::readSync(cl_mem buf, u32 size, void* out, TimeInfo* tInfo) {
@@ -74,20 +75,21 @@ void Queue::copyBuf(cl_mem src, cl_mem dst, u32 size, TimeInfo* tInfo) {
   add(::copyBuf(get(), {}, src, dst, size, hasEvents), tInfo);
 }
 
-void Queue::run(cl_kernel kernel, size_t groupSize, size_t workSize, TimeInfo* tInfo) {
-  add(::run(get(), kernel, groupSize, workSize, {}, tInfo->name, hasEvents), tInfo);
+void Queue::run(cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY, TimeInfo* tInfo) {
+  add(::run(get(), kernel, groupSizeX, workSizeX, workSizeY, {}, tInfo->name, hasEvents), tInfo);
 }
 
 void Queue::finish() {
-  assert (!isAuxQueue);
+  assert(!isAuxQueue);
   waitForMarkerEvent();
   ::finish(get());
   events.synced();
   queueCount = 0;
+  squareCount = 0;
 }
 
 void Queue::queueMarkerEvent() {
-  assert (!isAuxQueue);
+  assert(!isAuxQueue);
   waitForMarkerEvent();
   if (queueCount) {
     // AMD GPUs have no trouble waiting for a finish without a CPU busy wait.  So, instead of markers and events, simply run finish every now and then.
@@ -99,24 +101,26 @@ void Queue::queueMarkerEvent() {
       markerEvent = enqueueMarker(get());
       markerQueued = true;
       queueCount = 0;
+      squareCount = 0;
     }
   }
 }
 
 void Queue::waitForMarkerEvent() {
-  assert (!isAuxQueue);
+  assert(!isAuxQueue);
   if (!markerQueued) return;
   // By default, nVidia finish causes a CPU busy wait.  Instead, sleep for a while.  Since we know how many items are enqueued after the marker we can make an
   // educated guess of how long to sleep to keep CPU overhead low.
   while (getEventInfo(markerEvent.get()) != CL_COMPLETE) {
-    // There are 4, 7, or 10 kernels per squaring.  Don't overestimate sleep time.  Divide by much more than the number of kernels.
-    std::this_thread::sleep_for(std::chrono::microseconds(1 + queueCount * squareTime / squareKernels / 2));
+    // There are usually 4, 7, or 10 kernels per squaring.  Use a rolling average to create a very accurate kernel count.
+    // Don't overestimate sleep time.  Divide by much more than the number of kernels.
+    std::this_thread::sleep_for(std::chrono::microseconds((squareCount + 1) * squareTime / 2));
   }
   markerQueued = false;
 }
 
 void Queue::setSquareTime(int time) {
-  assert (!isAuxQueue);
+  assert(!isAuxQueue);
   if (firstSetTime) {                 // Ignore first setSquareTime call.  First measured times are wrong because of startup costs
     firstSetTime = false;
     return;

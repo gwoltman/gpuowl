@@ -231,7 +231,7 @@ constexpr bool isInList(const string& s, initializer_list<string> list) {
   return false;
 }
 
-string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
+string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul) {
   map<string, string> config;
 
@@ -287,7 +287,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "MODM31",
                               "LOADS","STORES",
                               "NOREG",                  // CUDA - experimental
-                              "WMUL"
+                              "WMUL",
+                              "MULTI_Q",
+                              "GRAPHS"
                             });
     if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
@@ -320,6 +322,29 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (fft.shape.width * shufl_bytes_w * wmul >= 32768) {
       log("Local shared memory limit of 32KB exceeded.  Changing to LDSPAD_W=0\n");
       config["LDSPAD_W"] = to_string(0);
+    }
+  }
+
+  // L2_STRIPING is not allowed if INPLACE=0.  Maximum L2_STRIPING is WIDTH/64 if MULTI_Q=0 and WIDTH/128 if MULTI_Q=1.
+  // Technically, L2_STRIPING of WIDTH/32, MULTI_Q=0 could be allowed but that is just a more complicated way to implement L2_STRIPING=0.
+  // Also, WIDTH/64, MULTI_Q=1 could be allowed with some marker/sync code changes but that is very similar to L2_STRIPING=0.
+  {
+    u32 l2_striping = args.value("L2_STRIPING", 0);
+    u32 multi_q = args.value("MULTI_Q", 0);
+    if (l2_striping && !in_place) {
+      config["L2_STRIPING"] = to_string(0);
+      args.flags["L2_STRIPING"] = to_string(0);
+      log("L2_STRIPING is only allowed if INPLACE=1.  Changing to L2_STRIPING=0.\n");
+    }
+    else if (multi_q == 0 && l2_striping > fft.shape.width/64) {
+      config["L2_STRIPING"] = to_string(fft.shape.width/64);
+      args.flags["L2_STRIPING"] = to_string(fft.shape.width/64);
+      log("Max L2_STRIPING when MULTI_Q=0 exceeded.  Changing to L2_STRIPING=%u.\n", fft.shape.width/64);
+    }
+    else if (multi_q > 0 && l2_striping > fft.shape.width/128) {
+      config["L2_STRIPING"] = to_string(fft.shape.width/128);
+      args.flags["L2_STRIPING"] = to_string(fft.shape.width/128);
+      log("Max L2_STRIPING when MULTI_Q=1 exceeded.  Changing to L2_STRIPING=%u.\n", fft.shape.width/128);
     }
   }
 
@@ -850,8 +875,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   BUF(bufSmallOut, 256),
   BUF(bufSumOut,     1),
   BUF(bufTrue,       1),
-  BUF(bufROE, ROE_SIZE),
-  BUF(bufStatsCarry, CARRY_SIZE),
+  BUF(bufROE, ROE_SIZE + 2),
+  BUF(bufStatsCarry, CARRY_SIZE + 2),
 
   BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
   BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
@@ -862,9 +887,11 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   timeBufVect{profile.make("proofBufVect")},
 
   recorded_kernels{},
-  recorded_kernel_args{}
-{    
+  recorded_kernel_args{},
 
+  use_graphs{},
+  graph_square{}
+{    
   float bitsPerWord = E / float(N);
   if (logFftSize) {
     log("FFT: %s %s (%.2f bpw)\n", numberK(N).c_str(), fft.spec().c_str(), bitsPerWord);
@@ -886,35 +913,35 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   if (useLongCarry) { log("Using long carry!\n"); }
 
   if (fft.FFT_FP64 || fft.FFT_FP32) {
-    kfftMidIn.setFixedArgs(2, bufTrigM);
-    kfftHin.setFixedArgs(2, bufTrigH);
+    kfftMidIn.setFixedArgs(3, bufTrigM);
+    kfftHin.setFixedArgs(3, bufTrigH);
     ktailSquareZero.setFixedArgs(2, bufTrigH);
-    ktailSquare.setFixedArgs(2, bufTrigH);
-    ktailMulLow.setFixedArgs(3, bufTrigH);
-    ktailMul.setFixedArgs(3, bufTrigH);
-    kfftMidOut.setFixedArgs(2, bufTrigM);
+    ktailSquare.setFixedArgs(3, bufTrigH);
+    ktailMulLow.setFixedArgs(4, bufTrigH);
+    ktailMul.setFixedArgs(4, bufTrigH);
+    kfftMidOut.setFixedArgs(3, bufTrigM);
     kfftW.setFixedArgs(2, bufTrigW);
   }
 
   if (fft.NTT_GF31) {
-    kfftMidInGF31.setFixedArgs(2, bufTrigM);
-    kfftHinGF31.setFixedArgs(2, bufTrigH);
+    kfftMidInGF31.setFixedArgs(3, bufTrigM);
+    kfftHinGF31.setFixedArgs(3, bufTrigH);
     ktailSquareZeroGF31.setFixedArgs(2, bufTrigH);
-    ktailSquareGF31.setFixedArgs(2, bufTrigH);
-    ktailMulLowGF31.setFixedArgs(3, bufTrigH);
-    ktailMulGF31.setFixedArgs(3, bufTrigH);
-    kfftMidOutGF31.setFixedArgs(2, bufTrigM);
+    ktailSquareGF31.setFixedArgs(3, bufTrigH);
+    ktailMulLowGF31.setFixedArgs(4, bufTrigH);
+    ktailMulGF31.setFixedArgs(4, bufTrigH);
+    kfftMidOutGF31.setFixedArgs(3, bufTrigM);
     kfftWGF31.setFixedArgs(2, bufTrigW);
   }
 
   if (fft.NTT_GF61) {
-    kfftMidInGF61.setFixedArgs(2, bufTrigM);
-    kfftHinGF61.setFixedArgs(2, bufTrigH);
+    kfftMidInGF61.setFixedArgs(3, bufTrigM);
+    kfftHinGF61.setFixedArgs(3, bufTrigH);
     ktailSquareZeroGF61.setFixedArgs(2, bufTrigH);
-    ktailSquareGF61.setFixedArgs(2, bufTrigH);
-    ktailMulLowGF61.setFixedArgs(3, bufTrigH);
-    ktailMulGF61.setFixedArgs(3, bufTrigH);
-    kfftMidOutGF61.setFixedArgs(2, bufTrigM);
+    ktailSquareGF61.setFixedArgs(3, bufTrigH);
+    ktailMulLowGF61.setFixedArgs(4, bufTrigH);
+    ktailMulGF61.setFixedArgs(4, bufTrigH);
+    kfftMidOutGF61.setFixedArgs(3, bufTrigM);
     kfftWGF61.setFixedArgs(2, bufTrigW);
   }
 
@@ -953,240 +980,521 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     selftestTrig();
   }
 
-  // If MULTI_Q option is set there are fewer kernels executed in the main queue, but there are some additional syncEvents and waits.
-  // That's a total of 4 kernels (carryFused, MidIn/Out, TailSquare) plus 1 syncEvent plus 1 or more syncWaits.
-  // If MULTI_Q option is not set there is carryFused + MidIn/Out and TailSquare for each NTT modulus.
-  // NOTE: We dont take into account the optional tailSquareZero kernel.  We theoretically should.
-  if (args.value("MULTI_Q", 0))
-    queue.setSquareKernels(5 + ((fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61) - 1));
-  else
-    queue.setSquareKernels(1 + 3 * (fft.FFT_FP64 + fft.FFT_FP32 + fft.NTT_GF31 + fft.NTT_GF61));
-  queue.finish();
-}
-
-// Optionallly split some of the MiddleIn/Tail/MiddleOut kernels off od executing on the main queue to run on an auxiliary queue.
-// This will increase GPU occupancy but will negatively impact L2 cache coherency.
-// If the L2 cache is large enough so that all FFT data fits in the cache, this ought to be a win.
-// If the L2 cache is small enough such that L2 cache hits are very low anyway, this might be a win.
-
-void Gpu::splitQueue(void) {
-
-  // If MULTI_Q -use not set, return
-  if (!args.value("MULTI_Q", 0)) return;
-
   // Create aux queues.  For now, we only have one auxiliary queue.  We could do more.
-  if (auxQueues.size() == 0) {
+  if (args.value("MULTI_Q", 0)) {
     auxQueues.push_back(Queue{*shared.context, args.profile, true});
   }
 
+  // Set flag indicating we're going to use CUDA graphs
+  use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && args.value("GRAPHS", 1);
+
+  // Process the queue.  I don't know if this is really needed.
+  queue.finish();
+}
+
+// Optionallly split some of the MiddleIn/Tail/MiddleOut kernels off of executing on the main queue to run on an auxiliary queue.
+// This will increase GPU occupancy but will negatively impact L2 cache coherency.
+// If the L2 cache is large enough so that all FFT data fits in the cache, this ought to be a win.
+// If the L2 cache is small enough such that L2 cache hits are very low anyway, this might be a win.
+void Gpu::splitQueue(void) {
   // Queue a sync event in the main queue.  Have all auxiliary queues wait on the event.
   EventHolder event = queue.createSyncEvent();
   for (size_t i = 0; i < auxQueues.size(); ++i) {
     auxQueues[i].waitForSyncEvent(&event);
   }
-
-  // Assign kernels to running on the main queue or an auxiliary queue
-
-  int which_queue = -1;
-
-  // For no particularly good reason, put a kernel that operates on 64-bit vaules in the main queue.
-  if (fft.NTT_GF61) {
-    if (which_queue != -1) {
-      kfftMidInGF61.setQueue(&auxQueues[which_queue]);
-      kfftHinGF61.setQueue(&auxQueues[which_queue]);
-      ktailSquareZeroGF61.setQueue(&auxQueues[which_queue]);
-      ktailSquareGF61.setQueue(&auxQueues[which_queue]);
-      ktailMulGF61.setQueue(&auxQueues[which_queue]);
-      ktailMulLowGF61.setQueue(&auxQueues[which_queue]);
-      kfftMidOutGF61.setQueue(&auxQueues[which_queue]);
-      kfftWGF61.setQueue(&auxQueues[which_queue]);
-    }
-    which_queue++;
-  }
-
-  if (fft.FFT_FP64 || fft.FFT_FP32) {
-    if (which_queue != -1) {
-      kfftMidIn.setQueue(&auxQueues[which_queue]);
-      kfftHin.setQueue(&auxQueues[which_queue]);
-      ktailSquareZero.setQueue(&auxQueues[which_queue]);
-      ktailSquare.setQueue(&auxQueues[which_queue]);
-      ktailMul.setQueue(&auxQueues[which_queue]);
-      ktailMulLow.setQueue(&auxQueues[which_queue]);
-      kfftMidOut.setQueue(&auxQueues[which_queue]);
-      kfftW.setQueue(&auxQueues[which_queue]);
-    }
-    // For no particularly good reason, put kernels that operate on 32-bit value in the same queue unless there are no kernels operating on 64-bit values
-    if (fft.FFT_FP64 || (fft.FFT_FP32 && which_queue == -1)) {
-      which_queue++;
-    }
-  }
-
-  if (fft.NTT_GF31) {
-    if (which_queue != -1) {
-      kfftMidInGF31.setQueue(&auxQueues[which_queue]);
-      kfftHinGF31.setQueue(&auxQueues[which_queue]);
-      ktailSquareZeroGF31.setQueue(&auxQueues[which_queue]);
-      ktailSquareGF31.setQueue(&auxQueues[which_queue]);
-      ktailMulGF31.setQueue(&auxQueues[which_queue]);
-      ktailMulLowGF31.setQueue(&auxQueues[which_queue]);
-      kfftMidOutGF31.setQueue(&auxQueues[which_queue]);
-      kfftWGF31.setQueue(&auxQueues[which_queue]);
-    }
-    //which_queue++;
-  }
 }
 
 void Gpu::mergeQueue(void) {
-
-  // If MULTI_Q -use not set, return
-  if (!args.value("MULTI_Q", 0)) return;
-
   // Queue a sync event in each auxiliary queue(s).  Wait on the event(s) in the main queue.
   for (size_t i = 0; i < auxQueues.size(); ++i) {
     EventHolder event = auxQueues[i].createSyncEvent();
     queue.waitForSyncEvent(&event);
   }
-
-  // Return kernels to running on the main queue
-  // NOTE: I believe there is no need to switch queues back and forth between the main and auxiliary queues.  No one currently uses the cache_group == 0 option.
-  if (fft.NTT_GF61) {
-    kfftMidInGF61.setQueue(&queue);
-    kfftHinGF61.setQueue(&queue);
-    ktailSquareZeroGF61.setQueue(&queue);
-    ktailSquareGF61.setQueue(&queue);
-    ktailMulGF61.setQueue(&queue);
-    ktailMulLowGF61.setQueue(&queue);
-    kfftMidOutGF61.setQueue(&queue);
-    kfftWGF61.setQueue(&queue);
-  }
-  if (fft.FFT_FP64 || fft.FFT_FP32) {
-    kfftMidIn.setQueue(&queue);
-    kfftHin.setQueue(&queue);
-    ktailSquareZero.setQueue(&queue);
-    ktailSquare.setQueue(&queue);
-    ktailMul.setQueue(&queue);
-    ktailMulLow.setQueue(&queue);
-    kfftMidOut.setQueue(&queue);
-    kfftW.setQueue(&queue);
-  }
-  if (fft.NTT_GF31) {
-    kfftMidInGF31.setQueue(&queue);
-    kfftHinGF31.setQueue(&queue);
-    ktailSquareZeroGF31.setQueue(&queue);
-    ktailSquareGF31.setQueue(&queue);
-    ktailMulGF31.setQueue(&queue);
-    ktailMulLowGF31.setQueue(&queue);
-    kfftMidOutGF31.setQueue(&queue);
-    kfftWGF31.setQueue(&queue);
-  }
 }
 
-// Replay the recorded bottom half kernels in a cache friendly order.  We support several
-// options here using multiple openCl command queues.
+// We've finished the "bottom half" of a squaring or multiply.  Replay the recorded bottom half kernel calls.
+void Gpu::endBottomHalf(void) {
+  replay();
+  // Increment the squaring count.  The queue's squarings/multiplies count determines how long to sleep when the queue is full.
+  // We only do this for the main command queue.  Auxiliary queues are not allowed to cause a CPU sleep.
+  queue.incSquareCount();
+}
+
+// Replay the recorded bottom half kernels in a cache friendly order.  We support several options here using multiple openCl command queues.
 void Gpu::replay(void) {
+  // If there are no recorded kernels to replay, we're done
+  if (recorded_kernels.size() == 0) return;
 
-  // If using multiple command queues, handle that now.
-  splitQueue();
+  // Get MULTI_Q and L2_STRIPING settings
+  bool multi_q = args.value("MULTI_Q", 0);
+  int l2_striping = args.value("L2_STRIPING", 0);
 
-  // For better L2 cache locality, operate on all the FP data, then operate on all the GF31 data, then GF61.
-  for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+  // In the simplest case, we use one command queue and process one data type at a time.  By processing one data type at a time, we reduce maximum L2 cache used.
+  // For example, a 4M GF61+GF31 NTT needs just 32MB L2 cache during GF61 processing of fftMiddleIn, tailSquare, and fftMiddleOut (and only 16MB duing GF31 processing).
+  // Without MULTI_Q, PRPLL needs 32MB + 16MB of L2 cache by processing both fftMiddleIns, then both tailSquares, then both fftMiddleOuts.
 
-    // Check for irrelevant cache gouup
-    if (cache_group == 1 && !(fft.FFT_FP64 || fft.FFT_FP32)) continue;
-    if (cache_group == 2 && !fft.NTT_GF31) continue;
-    if (cache_group == 3 && !fft.NTT_GF61) continue;
+  if ((!multi_q || fft.shape.fft_type == FFT64 || fft.shape.fft_type == FFT61 || fft.shape.fft_type == FFT31 || fft.shape.fft_type == FFT32) && !l2_striping) {
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      // Check for irrelevant cache group
+      if (cache_group == 1 && !(fft.FFT_FP64 || fft.FFT_FP32)) continue;
+      if (cache_group == 2 && !fft.NTT_GF31) continue;
+      if (cache_group == 3 && !fft.NTT_GF61) continue;
 
-    // Iterate over the recorded kernels
-    int arg = 0;
-    for (auto kern : recorded_kernels) {
-
-      // Call the appropriate kernel
-      if (kern == KMIDIN) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
-        // If not in place, the input is from the scratch buffer
-        Buffer<double> *in = in_place ? buf : &buf3;
-        Buffer<double> *out = buf;
-        if (cache_group == 1) kfftMidIn(*out, *in);
-        if (cache_group == 2) kfftMidInGF31(*out, *in);
-        if (cache_group == 3) kfftMidInGF61(*out, *in);
-      }
-
-      if (kern == KFFTHIN) {
-        Buffer<double> *out = recorded_kernel_args[arg++];
-        Buffer<double> *in = recorded_kernel_args[arg++];
-        if (cache_group == 1) kfftHin(*out, *in);
-        if (cache_group == 2) kfftHinGF31(*out, *in);
-        if (cache_group == 3) kfftHinGF61(*out, *in);
-      }
-
-      if (kern == KTAILSQUARE) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
-        // If not in place, the output is to the scratch buffer
-        Buffer<double> *in = buf;
-        Buffer<double> *out = in_place ? buf : &buf3;
-        if (!tail_single_kernel) {
-          if (cache_group == 1) ktailSquareZero(*out, *in);
-          if (cache_group == 2) ktailSquareZeroGF31(*out, *in);
-          if (cache_group == 3) ktailSquareZeroGF61(*out, *in);
-        }
-        if (cache_group == 1) ktailSquare(*out, *in);
-        if (cache_group == 2) ktailSquareGF31(*out, *in);
-        if (cache_group == 3) ktailSquareGF61(*out, *in);
-      }
-
-      if (kern == KTAILMUL) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
-        Buffer<double> *in2 = recorded_kernel_args[arg++];
-        // If not in place, the output is to the scratch buffer
-        Buffer<double> *in1 = buf;
-        Buffer<double> *out = in_place ? buf : &buf3;
-        if (cache_group == 1) ktailMul(*out, *in1, *in2);
-        if (cache_group == 2) ktailMulGF31(*out, *in1, *in2);
-        if (cache_group == 3) ktailMulGF61(*out, *in1, *in2);
-      }
-
-      if (kern == KTAILMULLOW) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
-        Buffer<double> *in2 = recorded_kernel_args[arg++];
-        // If not in place, the output is to the scratch buffer
-        Buffer<double> *in1 = buf;
-        Buffer<double> *out = in_place ? buf : &buf3;
-        if (cache_group == 1) ktailMulLow(*out, *in1, *in2);
-        if (cache_group == 2) ktailMulLowGF31(*out, *in1, *in2);
-        if (cache_group == 3) ktailMulLowGF61(*out, *in1, *in2);
-      }
-
-      if (kern == KMIDOUT) {
-        Buffer<double> *buf = recorded_kernel_args[arg++];
-        // If not in place, the input is from the scratch buffer
-        Buffer<double> *in = in_place ? buf : &buf3;
-        Buffer<double> *out = buf;
-        if (cache_group == 1) kfftMidOut(*out, *in);
-        if (cache_group == 2) kfftMidOutGF31(*out, *in);
-        if (cache_group == 3) kfftMidOutGF61(*out, *in);
-      }
-
-      if (kern == KFFTW) {
-        Buffer<double> *out = recorded_kernel_args[arg++];
-        Buffer<double> *in = recorded_kernel_args[arg++];
-        if (cache_group == 1) kfftW(*out, *in);
-        if (cache_group == 2) kfftWGF31(*out, *in);
-        if (cache_group == 3) kfftWGF61(*out, *in);
+      // Iterate over the recorded kernels.  Execute each.
+      int arg = 0;
+      for (auto kern : recorded_kernels) {
+        replay_one(kern, cache_group, arg);
+        arg = replay_next_arg(kern, arg);
       }
     }
+  }
+
+  // The next simple case, we use two command queues and process one data type in each queue.  This works well for large L2 caches where all FFT data fits in the cache.
+  // The extra command queue can hide the latency in starting up kernels for each data type.  Also occupancy may benefit as the queue may be executing kernels with different
+  // workgroup size, register usage, and local memory usage.  This case requires an FFT using at least two data types.
+
+  else if (multi_q && !l2_striping) {
+    // Switch tp using multiple command queues.
+    splitQueue();
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      // Check for irrelevant cache group
+      if (cache_group == 1 && !(fft.FFT_FP64 || fft.FFT_FP32)) continue;
+      if (cache_group == 2 && !fft.NTT_GF31) continue;
+      if (cache_group == 3 && !fft.NTT_GF61) continue;
+
+      // To better balance the load on the two command queues, put a 64-bit data type in one queue and two 32-bit data types in the other queue.
+      Queue *q;
+      if (cache_group == 1) q = &queue;
+      if (cache_group == 2) q = (fft.shape.fft_type == FFT323161 || fft.shape.fft_type == FFT3161) ? &queue : &auxQueues[0];
+      if (cache_group == 3) q = &auxQueues[0];
+
+      // Iterate over the recorded kernels.  Execute each.
+      int arg = 0;
+      for (auto kern : recorded_kernels) {
+        replay_one(kern, cache_group, arg, q);
+        arg = replay_next_arg(kern, arg);
+      }
+    }
+    // Using multiple command queues, go back to a single command queue
+    mergeQueue();
+  }
+
+  // The next case is L2 striping in one command queue.  The hope is two stripe groups plus one stripe are small enough to fit in the L2 caches
+  // for the fftMiddleIn, tailSquare, and fftMiddleOut kernels.
+  // Sadly, testing thusfar shows the extra overhead of more kernel launches and events/syncs outweighs the benefit of more L2 cache hits.
+#ifdef ORIGINAL_VERSION         // Very readable, replaced by version below which merges the teo base_lo and base_hi kernel calls into one combined kernel call
+  else if (!multi_q && l2_striping) {
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      // Check for irrelevant cache group
+      if (cache_group == 1 && !(fft.FFT_FP64 || fft.FFT_FP32)) continue;
+      if (cache_group == 2 && !fft.NTT_GF31) continue;
+      if (cache_group == 3 && !fft.NTT_GF61) continue;
+
+      // Allow larger caches to do several L2 stripes in a single "stripe group" at a time (increases occupancy, reduces kernel launch costs).
+      u32 stripe_group_size = l2_striping;
+
+//For now, only support INPLACE with its 16x16 transpose      
+
+      // Loop over all the stripes for this data type.  Let's define a stripe as one "column" of data processed by fftMiddleIn producing 16*MIDDLE tailSquare lines.
+      // Since tailSquare operates on Hermetian pairs of lines, fftMiddleIn alternates operating on low stripes and high stripes.
+      u32 num_stripes = fft.shape.width / 16;
+      u32 num_stripe_groups = num_stripes / stripe_group_size;
+      for (u32 i = 0; i < num_stripe_groups / 2; ++i) {
+        // Base_lo refers to the starting fftMiddleIn column number (x coordinate).  When fftMiddleIn uses a 16x16 transpose, base_lo advances 16 at a time.
+        // Base_hi refers to the fftMiddleIn column number that outputs the lines needed for Hermetian matching in tailSquare.
+        u32 base_lo = i * stripe_group_size * 16;
+        u32 base_hi = (num_stripe_groups - 1 - i) * stripe_group_size * 16;
+        bool last_block = (base_hi == fft.shape.width / 2);
+
+        // Iterate over the recorded kernels.  Execute each.
+        int arg = 0;
+        for (auto kern : recorded_kernels) {
+
+          if (kern == KMIDIN) {
+            u32 oneStripeKernelsToExecute = fft.shape.height / 16;
+            // If MIDDLE is odd, the first fftMiddleIn call must be preceeded by a fftMiddleIn call to produce the special N/2 tailSquare line from the WIDTH/2 column.
+            if (base_lo == 0 && (fft.shape.middle & 1)) {
+              replay_one(kern, cache_group, arg, &queue, fft.shape.width / 2, oneStripeKernelsToExecute);
+            }
+
+            // Produce one stripe group.  The last base value must take into account that the N/2 stripe has already been done if MIDDLE is odd.
+            u32 kernelsToExecute = stripe_group_size * oneStripeKernelsToExecute;
+            replay_one(kern, cache_group, arg, &queue, base_lo, kernelsToExecute);
+
+            u32 base = base_hi;                                                                                   // Read full base_hi stripe groups (usually)
+            if (last_block && (fft.shape.middle & 1)) base += 16, kernelsToExecute -= oneStripeKernelsToExecute;  // Skip first stripe for last block if MIDDLE is odd
+            if (kernelsToExecute) replay_one(kern, cache_group, arg, &queue, base, kernelsToExecute);
+          }
+
+          else if (kern == KFFTHIN) {
+            // fftMiddleIn produces 16 * MIDDLE lines
+            replay_one(kern, cache_group, arg, &queue, base_lo, stripe_group_size * 16 * fft.shape.middle);
+            replay_one(kern, cache_group, arg, &queue, base_hi, stripe_group_size * 16 * fft.shape.middle);
+          }
+ 
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+            // fftMiddleIn produces 16 * MIDDLE lines in base_lo and base_hi.  tailSquare kernel processes 2 lines linked by Hermetian symmetry.
+            // Tail kernels use two dimensions, the X coordinate bumps line number by one, the Y coordinate bumps line number by WIDTH.
+            u32 kernelsToExecuteX = stripe_group_size * 16;
+            u32 kernelsToExecuteY = (fft.shape.middle + 1) / 2;  // For base_lo, round odd middles up.
+
+            // We can now completely process lines from the lower half of the base_lo stripe group (Hermetian mates are mostly in upper half of base_hi stripe group)
+            replay_one(kern, cache_group, arg, &queue, base_lo, kernelsToExecuteX, kernelsToExecuteY);
+
+            // We can process most lines from the lower half of the base_hi stripe group (Hermetian mates are mostly in upper half of base_lo stripe group)
+            // The first line in the stripe group is the only line that is not ready for base_hi tail processing.
+            u32 base = base_hi + 1;                                           // Skip first line in base_hi (usually)
+            if (base_lo == 0) kernelsToExecuteX--;                            // Do one fewer line for the first tail call.
+            if (base_hi == fft.shape.width / 2) base--, kernelsToExecuteX++;  // Last tail call does not skip first line
+            if (fft.shape.middle & 1) kernelsToExecuteY--;                    // For base_hi, round odd middles down.
+            replay_one(kern, cache_group, arg, &queue, base, kernelsToExecuteX, kernelsToExecuteY);
+          }
+
+          else if (kern == KMIDOUT) {
+            u32 oneStripeKernelsToExecute = fft.shape.height / 16;
+            u32 kernelsToExecute = stripe_group_size * oneStripeKernelsToExecute;
+
+            // We've completely processed lines from the base_lo stripe group
+            replay_one(kern, cache_group, arg, &queue, base_lo, kernelsToExecute);
+
+            // The first stripe in the base_hi stripe group is not ready for output.
+            u32 base = base_hi + 16;                                                                        // Skip first stripe in base_hi (usually)
+            if (base_lo == 0) kernelsToExecute -= oneStripeKernelsToExecute;                                // Do one fewer stripe for the first midOut call.
+            if (base_hi == fft.shape.width / 2) base -= 16, kernelsToExecute += oneStripeKernelsToExecute;  // Last midOut call does not skip first stripe
+            if (kernelsToExecute) replay_one(kern, cache_group, arg, &queue, base, kernelsToExecute);
+          }
+
+          // Skip other kernels (KFFTW)
+          else;
+
+          // Advance argument index
+          arg = replay_next_arg(kern, arg);
+        }
+      }
+
+      // Iterate over the recorded kernels.  Execute any not already executed (KFFTW).
+      // FFTW cannot benefit from L2 striping, it can only benefit from datatype grouping.
+      int arg = 0;
+      for (auto kern : recorded_kernels) {
+        if (kern == KFFTW) replay_one(kern, cache_group, arg, &queue);
+        arg = replay_next_arg(kern, arg);
+      }
+    }
+  }
+#endif
+
+  // The next case is L2 striping in one command queue.  The hope is two stripe groups plus one stripe are small enough to fit in the L2 caches
+  // for the fftMiddleIn, tailSquare, and fftMiddleOut kernels.
+  // Sadly, testing thusfar shows the extra overhead of more kernel launches and events/syncs outweighs the benefit of more L2 cache hits.
+
+  else if (!multi_q && l2_striping) {
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      // Check for irrelevant cache group
+      if (cache_group == 1 && !(fft.FFT_FP64 || fft.FFT_FP32)) continue;
+      if (cache_group == 2 && !fft.NTT_GF31) continue;
+      if (cache_group == 3 && !fft.NTT_GF61) continue;
+
+      // Allow larger caches to do several L2 stripes in a single "stripe group" at a time (increases occupancy, reduces kernel launch costs).
+      u32 stripe_group_size = l2_striping;
+
+//For now, only support INPLACE with its 16x16 transpose      
+
+      // Loop over all the stripes for this data type.  Let's define a stripe as one "column" of data processed by fftMiddleIn producing 16*MIDDLE tailSquare lines.
+      // Since tailSquare operates on Hermetian pairs of lines, fftMiddleIn alternates operating on low stripes and high stripes.
+      u32 num_stripes = fft.shape.width / 16;
+      u32 num_stripe_groups = num_stripes / stripe_group_size;
+      for (u32 i = 0; i < num_stripe_groups / 2; ++i) {
+        bool last_block = (i == num_stripe_groups / 2 - 1);
+        // Base_lo refers to the starting fftMiddleIn column number (x coordinate).  When fftMiddleIn uses a 16x16 transpose, base_lo advances 16 at a time.
+        // Base_hi refers to the fftMiddleIn column number that outputs the lines needed for Hermetian matching in tailSquare.
+        u32 base_lo = i * stripe_group_size * 16;
+        // u32 base_hi = (num_stripe_groups - 1 - i) * stripe_group_size * 16;
+
+        // Iterate over the recorded kernels.  Execute each.
+        int arg = 0;
+        for (auto kern : recorded_kernels) {
+
+          if (kern == KMIDIN) {
+            // Do midIn on base_lo and base_hi.  If MIDDLE is odd, the first midIn call must be preceeded by a midIn call to produce the special N/2 tailSquare
+            // line from the WIDTH/2 column.  The last base pair must take into account that the N/2 stripe has already been done if MIDDLE is odd.
+            u32 oneStripeKernelsToExecute = fft.shape.height / 16;
+            u32 kernelsToExecute = 2 * stripe_group_size * oneStripeKernelsToExecute;
+            if (base_lo == 0 && (fft.shape.middle & 1)) kernelsToExecute += oneStripeKernelsToExecute;
+            if (last_block && (fft.shape.middle & 1)) kernelsToExecute -= oneStripeKernelsToExecute;
+            replay_one(kern, cache_group, arg, &queue, base_lo, kernelsToExecute);
+          }
+
+          else if (kern == KFFTHIN) {
+            // fftMiddleIn produces 2 * stripe_group_size * 16 * MIDDLE lines
+            replay_one(kern, cache_group, arg, &queue, base_lo, 2 * stripe_group_size * 16 * fft.shape.middle);
+          }
+ 
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+            // We can now completely process lines from the lower half of the base_lo stripe group (Hermetian mates are mostly in upper half of base_hi stripe group)
+            u32 half_size = (fft.shape.middle + 1) / 2;  // For base_lo, round odd middles up.
+            u32 stripeGroupLines = stripe_group_size * 16;
+            u32 kernelsToExecute = half_size * stripeGroupLines;
+            // We can process most lines from the lower half of the base_hi stripe group (Hermetian mates are mostly in upper half of base_lo stripe group)
+            // The first line in the stripe group is the only line that is not ready for base_hi tail processing.
+            if (base_lo == 0) stripeGroupLines--;               // Do one fewer line for the first tail call.
+            if (last_block) stripeGroupLines++;                 // Last tail call does not skip first line
+            if (fft.shape.middle & 1) half_size--;              // For base_hi, round odd middles down.
+            kernelsToExecute += half_size * stripeGroupLines;
+            // Call the kernel
+            replay_one(kern, cache_group, arg, &queue, base_lo, kernelsToExecute);
+          }
+
+          else if (kern == KMIDOUT) {
+            u32 oneStripeKernelsToExecute = fft.shape.height / 16;
+            u32 kernelsToExecute = 2 * stripe_group_size * oneStripeKernelsToExecute;
+            // We've completely processed lines from the base_lo stripe group.
+            // The first stripe in the base_hi stripe group is not ready for output.
+            // The last stripe group will does an extra stripe.
+            if (base_lo == 0) kernelsToExecute -= oneStripeKernelsToExecute;  // Do one fewer stripe for the first midOut call
+            if (last_block) kernelsToExecute += oneStripeKernelsToExecute;    // Last midOut call does not skip first stripe
+            replay_one(kern, cache_group, arg, &queue, base_lo, kernelsToExecute);
+          }
+
+          // Skip other kernels (KFFTW)
+          else;
+
+          // Advance argument index
+          arg = replay_next_arg(kern, arg);
+        }
+      }
+
+      // Iterate over the recorded kernels.  Execute any not already executed (KFFTW).
+      // FFTW cannot benefit from L2 striping, it can only benefit from datatype grouping.
+      int arg = 0;
+      for (auto kern : recorded_kernels) {
+        if (kern == KFFTW) replay_one(kern, cache_group, arg, &queue);
+        arg = replay_next_arg(kern, arg);
+      }
+    }
+  }
+
+  // The last case is L2 striping in two command queues.  The hope is four stripe groups plus two stripes are small enough to fit in the L2 caches for the
+  // fftMiddleIn, tailSquare, and fftMiddleOut kernels.  The hope also is the dual queue approach hides the overhead introduced by more kernel launches.
+  // Sadly, testing thusfar shows the extra overhead of more kernel launches and events/syncs outweighs the benefit of more L2 cache hits.
+
+  else if (multi_q && l2_striping) {
+    Queue *queues[2] = {&queue, &auxQueues[0]};
+    EventHolder midInEvents[2];
+    EventHolder tailEvents[2];
+
+    splitQueue();
+    for (int cache_group = 1; cache_group <= NUM_CACHE_GROUPS; ++cache_group) {
+      bool has_unexecuted_kernels = false;
+
+      // Check for irrelevant cache group
+      if (cache_group == 1 && !(fft.FFT_FP64 || fft.FFT_FP32)) continue;
+      if (cache_group == 2 && !fft.NTT_GF31) continue;
+      if (cache_group == 3 && !fft.NTT_GF61) continue;
+
+      // Allow larger caches to do several L2 stripes at a time (increases occupancy, reduces kernel launch costs).
+      u32 stripe_group_size = l2_striping;
+
+//For now, only support INPLACE with its 16x16 transpose      
+
+      // Loop over all the stripes for this data type.  Let's define a stripe as one "column" of data processed by fftMiddleIn producing 16*MIDDLE tailSquare lines.
+      // Since tailSquare operates on Hermetian pairs of lines, fftMiddleIn alternates operating on low stripes and high stripes.
+      u32 num_stripes = fft.shape.width / 16;
+      u32 num_stripe_groups = num_stripes / stripe_group_size;
+      for (u32 i = 0; i < num_stripe_groups / 2; ++i) {
+        int q = (i & 1);               // Index into which command queue to use
+        u32 i_within_queue = i >> 1;
+        bool last_i_within_queue = (i_within_queue == num_stripe_groups / 4 - 1);
+        // Base_lo refers to the starting fftMiddleIn column number (x coordinate).  When fftMiddleIn uses a 16x16 transpose, base_lo advances 16 at a time.
+        // Base_hi refers to the fftMiddleIn column number that outputs the lines needed for Hermetian matching in tailSquare.
+        u32 base_lo = (i_within_queue + q * num_stripe_groups / 4) * stripe_group_size * 16;
+        //u32 base_hi = fft.shape.width - stripe_group_size * 16 - base_lo;
+
+        // Iterate over the recorded kernels.  Execute each.
+        int arg = 0;
+        for (auto kern : recorded_kernels) {
+
+          if (kern == KMIDIN) {
+            // Do midIn on base_lo and base_hi.  If MIDDLE is odd, the first midIn call must be preceeded by a midIn call to produce the special N/2 tailSquare
+            // line from the WIDTH/2 column.  The first midIn call in the second command queue also must be preceeded by a midIn call to produce one L2 stripe.
+            // The last base_hi in each queue must take into account pre-read stripes in the other queue.
+#define q_requires_preread(q) (((q) == 0 && fft.shape.middle & 1) || ((q) == 1))
+            u32 oneStripeKernelsToExecute = fft.shape.height / 16;
+            u32 kernelsToExecute = 2 * stripe_group_size * oneStripeKernelsToExecute;
+            if (i_within_queue == 0 && q_requires_preread(q)) kernelsToExecute += oneStripeKernelsToExecute;
+            if (last_i_within_queue && q_requires_preread(!q)) kernelsToExecute -= oneStripeKernelsToExecute;
+            replay_one(kern, cache_group, arg, queues[q], base_lo, kernelsToExecute);
+            if (i_within_queue == 0 && q_requires_preread(q)) midInEvents[q] = queues[q]->createSyncEvent();
+            // The last block must sync with a pre-read from the other command queue
+            // BUG - if block is both i_within_queue == 0 and last_block_in_queue, then midInEvents[1] does not exist!
+            // Sanity checking L2_STRIPING setting to a max of WIDTH/128 at startup eliminates this bug.
+            if (last_i_within_queue && q_requires_preread(!q)) queues[q]->waitForSyncEvent(&midInEvents[!q]);
+          }
+
+          else if (kern == KFFTHIN) {
+            // fftMiddleIn produces 2 * stripe_group_size * 16 * MIDDLE lines
+            replay_one(kern, cache_group, arg, queues[q], base_lo, 2 * stripe_group_size * 16 * fft.shape.middle);
+          }
+
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+            // We can now completely process lines from the lower half of the base_lo stripe group (Hermetian mates are mostly in upper half of base_hi stripe group)
+            u32 half_size = (fft.shape.middle + 1) / 2;    // For base_lo, round odd middles up.
+            u32 stripeGroupLines = stripe_group_size * 16;
+            u32 kernelsToExecute = half_size * stripeGroupLines;
+            // We can process most lines from the lower half of the base_hi stripe group (Hermetian mates are mostly in upper half of base_lo stripe group)
+            // The first line in the stripe group is the only line that is not ready for base_hi tail processing.
+            if (i == 0) stripeGroupLines--;                         // Do one fewer line for the first tail call.
+            if (last_i_within_queue && q == 1) stripeGroupLines++;  // Last tail call does not skip first line
+            half_size = fft.shape.middle / 2;                       // For base_hi, round odd middles down.
+            kernelsToExecute += half_size * stripeGroupLines;
+            // Call the kernel
+            replay_one(kern, cache_group, arg, queues[q], base_lo, kernelsToExecute);
+            if (i_within_queue == 0 && q_requires_preread(q)) tailEvents[q] = queues[q]->createSyncEvent();
+// We could eliminate two events and syncs by having the last midIn wait on the first tailsquare.  It exposes a little less parallellism, but perhaps that is irrelevant.
+// For even middles, we only save one event and sync.
+            // The last block must sync with the first tailSquare in the other command queue
+            // BUG - if block is both i_within_queue == 0 and last_block_in_queue, then tailEvents[1] does not exist!
+            // Sanity checking L2_STRIPING setting to a max of WIDTH/128 at startup eliminates this bug.
+            if (last_i_within_queue && q_requires_preread(!q)) queues[q]->waitForSyncEvent(&tailEvents[!q]);
+          }
+
+          else if (kern == KMIDOUT) {
+            u32 oneStripeKernelsToExecute = fft.shape.height / 16;
+            u32 kernelsToExecute = 2 * stripe_group_size * oneStripeKernelsToExecute;
+            // We've completely processed lines from the base_lo stripe group.
+            // The first stripe in the base_hi stripe group is not ready for output.
+            // The last stripe group does an extra stripe.
+            if (i_within_queue == 0) kernelsToExecute -= oneStripeKernelsToExecute;  // Do one fewer stripe for the first midOut call
+            if (last_i_within_queue) kernelsToExecute += oneStripeKernelsToExecute;  // Last midOut call does not skip first stripe
+            replay_one(kern, cache_group, arg, queues[q], base_lo, kernelsToExecute);
+          }
+
+          // Skip other kernels (KFFTW)
+          else
+            has_unexecuted_kernels = true;
+
+          // Advance argument index
+          arg = replay_next_arg(kern, arg);
+        }
+      }
+
+      // Iterate over the recorded kernels again.  Execute any not already executed (KFFTW).
+      // FFTW cannot benefit from L2 striping, it can only benefit from datatype grouping.
+      if (has_unexecuted_kernels) {
+        int arg = 0;
+        mergeQueue();
+        for (auto kern : recorded_kernels) {
+          if (kern == KFFTW) replay_one(kern, cache_group, arg, &queue);
+          arg = replay_next_arg(kern, arg);
+        }
+        splitQueue();
+      }
+    }
+    mergeQueue();
   }
 
   // Empty the recorded kernels queue
   recorded_kernels.clear();
   recorded_kernel_args.clear();
+}
 
-  // If using multiple command queues, go back to a single command queue
-  mergeQueue();
+// Replay one recorded kernel on the specified queue, with specified base and kernelsToExecute.  Two dimensional work groups are supported for some kernels.
+// A kernelsToExecuteX of zero is permitted - used for the default kernelsToExecute (a.k.a. workSize) set at kernel creation that operates on all the FFT data.
+void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Queue *q, int base, int kernelsToExecuteX, int kernelsToExecuteY) {
+
+  // Call the appropriate kernel
+  if (kern == KMIDIN) {
+    Buffer<double> *buf = recorded_kernel_args[arg++];
+    // If not in place, the input is from the scratch buffer
+    Buffer<double> *in = in_place ? buf : &buf3;
+    Buffer<double> *out = buf;
+    if (cache_group == 1) { kfftMidIn.setQueue(q); kfftMidIn.setKernelsToExecute(kernelsToExecuteX); kfftMidIn(*out, *in, base); }
+    if (cache_group == 2) { kfftMidInGF31.setQueue(q); kfftMidInGF31.setKernelsToExecute(kernelsToExecuteX); kfftMidInGF31(*out, *in, base); }
+    if (cache_group == 3) { kfftMidInGF61.setQueue(q); kfftMidInGF61.setKernelsToExecute(kernelsToExecuteX); kfftMidInGF61(*out, *in, base); }
+  }
+
+  if (kern == KFFTHIN) {
+    Buffer<double> *out = recorded_kernel_args[arg++];
+    Buffer<double> *in = recorded_kernel_args[arg++];
+    if (cache_group == 1) { kfftHin.setQueue(q); kfftHin.setKernelsToExecute(kernelsToExecuteX); kfftHin(*out, *in, base); }
+    if (cache_group == 2) { kfftHinGF31.setQueue(q); kfftHinGF31.setKernelsToExecute(kernelsToExecuteX); kfftHinGF31(*out, *in, base); }
+    if (cache_group == 3) { kfftHinGF61.setQueue(q); kfftHinGF61.setKernelsToExecute(kernelsToExecuteX); kfftHinGF61(*out, *in, base); }
+  }
+
+  if (kern == KTAILSQUARE) {
+    Buffer<double> *buf = recorded_kernel_args[arg++];
+    // If not in place, the output is to the scratch buffer
+    Buffer<double> *in = buf;
+    Buffer<double> *out = in_place ? buf : &buf3;
+    if (!tail_single_kernel && base == 0) {
+      if (cache_group == 1) { ktailSquareZero.setQueue(q); ktailSquareZero(*out, *in); }
+      if (cache_group == 2) { ktailSquareZeroGF31.setQueue(q); ktailSquareZeroGF31(*out, *in); }
+      if (cache_group == 3) { ktailSquareZeroGF61.setQueue(q); ktailSquareZeroGF61(*out, *in); }
+      if (kernelsToExecuteX) kernelsToExecuteX--;
+    }
+    if (cache_group == 1) { ktailSquare.setQueue(q); ktailSquare.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquare(*out, *in, base); }
+    if (cache_group == 2) { ktailSquareGF31.setQueue(q); ktailSquareGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF31(*out, *in, base); }
+    if (cache_group == 3) { ktailSquareGF61.setQueue(q); ktailSquareGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF61(*out, *in, base); }
+  }
+
+  if (kern == KTAILMUL) {
+    Buffer<double> *buf = recorded_kernel_args[arg++];
+    Buffer<double> *in2 = recorded_kernel_args[arg++];
+    // If not in place, the output is to the scratch buffer
+    Buffer<double> *in1 = buf;
+    Buffer<double> *out = in_place ? buf : &buf3;
+    if (cache_group == 1) { ktailMul.setQueue(q); ktailMul.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMul(*out, *in1, *in2, base); }
+    if (cache_group == 2) { ktailMulGF31.setQueue(q); ktailMulGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF31(*out, *in1, *in2, base); }
+    if (cache_group == 3) { ktailMulGF61.setQueue(q); ktailMulGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF61(*out, *in1, *in2, base); }
+  }
+
+  if (kern == KTAILMULLOW) {
+    Buffer<double> *buf = recorded_kernel_args[arg++];
+    Buffer<double> *in2 = recorded_kernel_args[arg++];
+    // If not in place, the output is to the scratch buffer
+    Buffer<double> *in1 = buf;
+    Buffer<double> *out = in_place ? buf : &buf3;
+    if (cache_group == 1) { ktailMulLow.setQueue(q); ktailMulLow.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLow(*out, *in1, *in2, base); }
+    if (cache_group == 2) { ktailMulLowGF31.setQueue(q); ktailMulLowGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF31(*out, *in1, *in2, base); }
+    if (cache_group == 3) { ktailMulLowGF61.setQueue(q); ktailMulLowGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF61(*out, *in1, *in2, base); }
+  }
+
+  if (kern == KMIDOUT) {
+    Buffer<double> *buf = recorded_kernel_args[arg++];
+    // If not in place, the input is from the scratch buffer
+    Buffer<double> *in = in_place ? buf : &buf3;
+    Buffer<double> *out = buf;
+    if (cache_group == 1) { kfftMidOut.setQueue(q); kfftMidOut.setKernelsToExecute(kernelsToExecuteX); kfftMidOut(*out, *in, base); }
+    if (cache_group == 2) { kfftMidOutGF31.setQueue(q); kfftMidOutGF31.setKernelsToExecute(kernelsToExecuteX); kfftMidOutGF31(*out, *in, base); }
+    if (cache_group == 3) { kfftMidOutGF61.setQueue(q); kfftMidOutGF61.setKernelsToExecute(kernelsToExecuteX); kfftMidOutGF61(*out, *in, base); }
+  }
+
+  if (kern == KFFTW) {
+    Buffer<double> *out = recorded_kernel_args[arg++];
+    Buffer<double> *in = recorded_kernel_args[arg++];
+    if (cache_group == 1) { kfftW.setQueue(q); kfftW(*out, *in); }
+    if (cache_group == 2) { kfftWGF31.setQueue(q); kfftWGF31(*out, *in); }
+    if (cache_group == 3) { kfftWGF61.setQueue(q); kfftWGF61(*out, *in); }
+  }
+}
+
+// Advance the index into the array of kernel arguments
+int Gpu::replay_next_arg(enum BOTTOM_HALF_KERNELS kern, int arg) {
+
+  if (kern == KMIDIN || kern == KTAILSQUARE || kern == KMIDOUT) {
+    return arg + 1;
+  }
+
+  else { //if (kern == KFFTHIN || kern == KTAILMUL || kern == KTAILMULLOW || kern == KFFTW) {
+    return arg + 2;
+  }
 }
 
 // Call the appropriate kernels to support hybrid FFTs and NTTs
 
 void Gpu::fftP(Buffer<double>& buf, Buffer<Word>& in) {
+  // Work around a troublesome oddball case.  ModMul calls fftP and fftMidIn on one multiplication argument.  If !in_place, fftP writes to buf3, and fftMidIn is queued.
+  // Modmul then calls fftP on the other multiplication argument.  If we don't replay now, fftP overwrite buf3.
+  replay();  
   // If not in place, instead write the output to the scratch buffer
   Buffer<double> *out = in_place ? &buf : &buf3;
   kfftP(*out, in);
@@ -1237,7 +1545,7 @@ void Gpu::fftW(Buffer<double>& out, Buffer<double>& in) {
   recorded_kernel_args.push_back(&out);
   recorded_kernel_args.push_back(&in);
   // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
-  replay();
+  endBottomHalf();
 }
 
 void Gpu::carryA(Buffer<Word>& out, Buffer<double>& in) {
@@ -1258,29 +1566,29 @@ void Gpu::carryLL(Buffer<Word>& out, Buffer<double>& in) {
 
 void Gpu::carryFused(Buffer<double>& buf) {
   // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
-  replay();
-  assert(roePos <= ROE_SIZE);
+  endBottomHalf();
   // Like fftP, if not in place write the output to the scratch buffer
   Buffer<double> *in = &buf;
   Buffer<double> *out = in_place ? &buf : &buf3;
+  assert(roePos <= ROE_SIZE);
   roePos < wantROE ? kCarryFusedROE(*out, *in, roePos++)
                    : kCarryFused(*out, *in, updateCarryPos(1 << 0));
 }
 
 void Gpu::carryFusedMul(Buffer<double>& buf) {
   // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
-  replay();
-  assert(roePos <= ROE_SIZE);
+  endBottomHalf();
   // Like fftP, if not in place write the output to the scratch buffer
   Buffer<double> *in = &buf;
   Buffer<double> *out = in_place ? &buf : &buf3;
+  assert(roePos <= ROE_SIZE);
   roePos < wantROE ? kCarryFusedMulROE(*out, *in, roePos++)
                    : kCarryFusedMul(*out, *in, updateCarryPos(1 << 1));
 }
 
 void Gpu::carryFusedLL(Buffer<double>& buf) {
   // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
-  replay();
+  endBottomHalf();
   // Like fftP, if not in place write the output to the scratch buffer
   Buffer<double> *in = &buf;
   Buffer<double> *out = in_place ? &buf : &buf3;
@@ -1323,11 +1631,19 @@ vector<Buffer<Word>> Gpu::makeBufVector(u32 size) {
 pair<RoeInfo, RoeInfo> Gpu::readROE() {
   assert(roePos <= ROE_SIZE);
   if (roePos) {
-    vector<float> roe = bufROE.read(roePos);
-    assert(roe.size() == roePos);
-    bufROE.zero(roePos);
-    roePos = 0;
+    vector<float> roe = bufROE.read(roePos + 2);
+    assert(roe.size() == roePos + 2);
+    // Split the roe buffer into two.  One for squarings and one for multiplications.  This is likely overkill as the multiplication ROE is not used - though
+    // it could be useful for debugging (in which case we could support getting roe for squarings or multipplications, but not both).
     auto [squareRoe, mulRoe] = split(roe, mulRoePos);
+    // Delete first two used to calculate roePos on the GPU.  Do this after splitting the vector (mulRoePos recorded indices in "+ 2" format).
+    u32 squareRoeSize = squareRoe.size() - 2;
+    roe[0] = squareRoe[squareRoeSize];
+    roe[1] = squareRoe[squareRoeSize+1];
+    squareRoe.resize(squareRoeSize);
+    // Clear the ROE buffer and mulRoePos vector
+    bufROE.zero(roePos + 2);
+    roePos = 0;
     mulRoePos.clear();
     return {roeStat(squareRoe), roeStat(mulRoe)};
   } else {
@@ -1338,9 +1654,14 @@ pair<RoeInfo, RoeInfo> Gpu::readROE() {
 RoeInfo Gpu::readCarryStats() {
   assert(carryPos <= CARRY_SIZE);
   if (carryPos == 0) { return {}; }
-  vector<float> carry = bufStatsCarry.read(carryPos);
-  assert(carry.size() == carryPos);
-  bufStatsCarry.zero(carryPos);
+  vector<float> carry = bufStatsCarry.read(carryPos + 2);
+  assert(carry.size() == carryPos + 2);
+  // Delete first two used to calculate carryPos on the GPU.
+  carry[0] = carry[carryPos];
+  carry[1] = carry[carryPos+1];
+  carry.resize(carryPos);
+  // Clear the GPU buffer
+  bufStatsCarry.zero(carryPos + 2);
   carryPos = 0;
 
   RoeInfo ret = roeStat(carry);
@@ -1412,7 +1733,7 @@ void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, bool
   fftW(buf3, tmp1);
 
   // Register the current ROE pos as multiplication (vs. a squaring)
-  if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos); }
+  if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos + 2); }
 
   if (mul3) { carryM(ioA, buf3); } else { carryA(ioA, buf3); }
   carryB(ioA);
@@ -1427,7 +1748,6 @@ void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, bool mul3) {
 void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, bool mul3) {
   if (leadInB == LEAD_NONE) fftP(buf1, inB);
   if (leadInB != LEAD_MIDDLE) fftMidIn(buf1);
-  replay();  // Work around an odd bug.  The above executed fftP writing to buf3 if !in_place and queued fftMidIn.  If we don't replay now, mul will call fftP again overwriting buf3.
   mul(ioA, buf1, buf2, mul3);
 };
 
@@ -1631,6 +1951,27 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   // LL does not do Mul3
   assert(!(doMul3 && doLL));
 
+  // Use CUDA graphs for some common squarings
+  // NOTE: assumes that if doLL is set, it will always be set
+  bool graph_recording = false;
+  Graph *graph = NULL;
+  if (use_graphs && (&out == &bufData || &out == &bufAux) && &in == &out && leadIn == LEAD_WIDTH && leadOut == LEAD_WIDTH && !doMul3) {
+    // We have one graph for ROE and one for no-ROE and one for bufData and one for bufAux
+    bool roe = (roePos < wantROE);
+    bool srcData = (&out == &bufData);
+    graph = &graph_square[2 * roe + srcData];
+    // Execute an already recorded graph
+    if (graph->isRecorded()) {
+      graph->launch(&queue);
+      queue.incSquareCount();
+      if (roe) roePos++;   // WARNING: If we ever graph Gpu::Mul, we'll need to also maintain mulRoePos vector.
+      return;
+    }
+    // Otherwise, record a new graph
+    graph->beginRecording(&queue);
+    graph_recording = true;
+  }
+
   // In place FFTs use buf1.  Not in place FFTs also use buf3.
   // If leadIn is LEAD_NONE, in contains the input data, squaring starts at fftP
   // If leadIn is LEAD_WIDTH, buf1 (or buf3 if not in place) contains the input data, squaring starts at fftMidIn
@@ -1663,6 +2004,12 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
     } else {
       carryFused(buf1);
     }
+  }
+
+  // End CUDA graph recording (and execute the just recorded graph)
+  if (graph_recording) {
+    graph->endRecording(&queue);
+    graph->launch(&queue);
   }
 }
 

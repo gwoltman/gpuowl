@@ -5,6 +5,33 @@
 #include "tailutil.cl"
 #include "middle.cl"
 
+// If not doing L2 stripes, process the lines in any order.
+// If L2 striping, process lines output by fftMiddleIn.  fftMiddleIn outputs 16 * MIDDLE tailSquare lines.
+u32 get_line_number(u32 base) {
+  u32 g = get_group_id(0);
+#if L2_STRIPING
+  // Old, simple L2 striping code
+  // return get_group_id(1) * WIDTH + base + g;
+
+  // Process all lines from low half of base_lo stripe group.  One stripe group is stripe_group_size * 16 * MIDDLE lines.
+  u32 base_lo = base;
+  u32 stripe_group_size = L2_STRIPING;
+  u32 half_size = (MIDDLE + 1) / 2;  // For base_lo, round odd middles up.
+  u32 kernelsToExecute = half_size * stripe_group_size * 16;
+  if (g < kernelsToExecute) return g / (stripe_group_size * 16) * WIDTH + base_lo + g % (stripe_group_size * 16);
+  g -= kernelsToExecute;
+
+  // Process lines from low half of base_hi stripe group.  One stripe group is stripe_group_size * 16 * MIDDLE lines.
+  // The first line in the base_hi stripe group is not ready for processing (except for the last group).
+  u32 base_hi = WIDTH - stripe_group_size * 16 - base_lo;
+  if (base_hi != WIDTH / 2) base_hi++;   // Skip first line in base_hi (usually)
+  half_size = MIDDLE / 2;                // For base_hi, round odd middles up.
+  return g % half_size * WIDTH + base_hi + g / half_size;
+#else
+  return g;
+#endif
+}
+
 #if FFT_FP64
 
 // Handle the final multiplication step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
@@ -48,15 +75,14 @@ void OVERLOAD pairMul(u32 N, T2 *u, T2 *v, T2 *p, T2 *q, T2 base_squared, bool s
   }
 }
 
-KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES / sizeof(T2)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   T2 u[NH], v[NH];
   T2 p[NH], q[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
@@ -70,9 +96,9 @@ KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #if FFT_VARIANT_H != 0
   T2 w;
 #elif NH == 8
-  T2 w = fancyTrig_N(ND / SMALL_HEIGHT * me);
+  T2 w = fancyTrig_N(H * me);
 #else
-  T2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
+  T2 w = slowTrig_N(H * me, ND / NH);
 #endif
 
 #if MUL_LOW
@@ -163,8 +189,9 @@ void OVERLOAD pairMul(u32 N, F2 *u, F2 *v, F2 *p, F2 *q, F2 base_squared, bool s
   }
 }
 
-KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES / sizeof(F2)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(F2) inF2 = (CP(F2)) in;
   CP(F2) aF2 = (CP(F2)) a;
@@ -174,9 +201,7 @@ KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   F2 u[NH], v[NH];
   F2 p[NH], q[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
@@ -274,8 +299,9 @@ void OVERLOAD pairMul(u32 N, GF31 *u, GF31 *v, GF31 *p, GF31 *q, GF31 base_squar
   }
 }
 
-KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES / sizeof(GF31)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   CP(GF31) a31 = (CP(GF31)) (a + DISTGF31);
@@ -285,9 +311,7 @@ KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   GF31 u[NH], v[NH];
   GF31 p[NH], q[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
@@ -404,8 +428,9 @@ void OVERLOAD pairMul(u32 N, GF61 *u, GF61 *v, GF61 *p, GF61 *q, GF61 base_squar
   }
 }
 
-KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES / sizeof(GF61)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   CP(GF61) a61 = (CP(GF61)) (a + DISTGF61);
@@ -415,9 +440,7 @@ KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   GF61 u[NH], v[NH];
   GF61 p[NH], q[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);

@@ -5,6 +5,40 @@
 #include "tailutil.cl"
 #include "middle.cl"
 
+// If not doing L2 stripes, process the lines in any order.
+// If L2 striping, process lines output by fftMiddleIn.  fftMiddleIn outputs 16 * MIDDLE tailSquare lines.
+u32 get_line_number(u32 base) {
+  u32 g = get_group_id(0);
+#if !SINGLE_KERNEL
+#if L2_STRIPING
+  if (base == 0) g = g + 1;
+#else
+  g = g + 1;
+#endif
+#endif
+#if L2_STRIPING
+  // Old, simple L2 striping code
+  // return get_group_id(1) * WIDTH + base + g;
+
+  // Process all lines from low half of base_lo stripe group.  One stripe group is stripe_group_size * 16 * MIDDLE lines.
+  u32 base_lo = base;
+  u32 stripe_group_size = L2_STRIPING;
+  u32 half_size = (MIDDLE + 1) / 2;  // For base_lo, round odd middles up.
+  u32 kernelsToExecute = half_size * stripe_group_size * 16;
+  if (g < kernelsToExecute) return g / (stripe_group_size * 16) * WIDTH + base_lo + g % (stripe_group_size * 16);
+  g -= kernelsToExecute;
+
+  // Process lines from low half of base_hi stripe group.  One stripe group is stripe_group_size * 16 * MIDDLE lines.
+  // The first line in the base_hi stripe group is not ready for processing (except for the last group).
+  u32 base_hi = WIDTH - stripe_group_size * 16 - base_lo;
+  if (base_hi != WIDTH / 2) base_hi++;   // Skip first line in base_hi (usually)
+  half_size = MIDDLE / 2;                // For base_hi, round odd middles up.
+  return g % half_size * WIDTH + base_hi + g / half_size;
+#else
+  return g;
+#endif
+}
+
 #if FFT_FP64
 
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
@@ -58,7 +92,7 @@ void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special) {
 KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   local T2 lds[LDS_BYTES / sizeof(T2)];
   T2 u[NH];
-  u32 H = ND / SMALL_HEIGHT;
+  const u32 H = ND / SMALL_HEIGHT;
 
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
@@ -75,9 +109,9 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if FFT_VARIANT_H != 0
   T2 w;
 #elif NH == 8
-  T2 w = fancyTrig_N(ND / SMALL_HEIGHT * me);
+  T2 w = fancyTrig_N(H * me);
 #else
-  T2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
+  T2 w = slowTrig_N(H * me, ND / NH);
 #endif
 
   T2 trig = slowTrig_N(line + me * H, ND / NH);
@@ -94,20 +128,14 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES / sizeof(T2)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   T2 u[NH], v[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
-#else
-  u32 line1 = get_group_id(0) + 1;
-  u32 line2 = H - line1;
-#endif
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
@@ -121,9 +149,9 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if FFT_VARIANT_H != 0
   T2 w;
 #elif NH == 8
-  T2 w = fancyTrig_N(ND / SMALL_HEIGHT * me);
+  T2 w = fancyTrig_N(H * me);
 #else
-  T2 w = slowTrig_N(ND / SMALL_HEIGHT * me, ND / NH);
+  T2 w = slowTrig_N(H * me, ND / NH);
 #endif
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
@@ -207,21 +235,14 @@ void OVERLOAD pairSq2_special(T2 *u, T2 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local T2 lds[2 * LDS_BYTES / sizeof(T2)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   T2 u[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line_u = get_group_id(0);
+  u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
-#else
-  u32 line_u = get_group_id(0) + 1;
-  u32 line_v = H - line_u;
-#endif
-
   u32 me = get_local_id(0);
   u32 lowMe = me % G_H;  // lane-id in one of the two halves (half-workgroups).
 
@@ -348,7 +369,7 @@ void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special) {
 KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   local F2 lds[LDS_BYTES / sizeof(F2)];
   F2 u[NH];
-  u32 H = ND / SMALL_HEIGHT;
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -380,8 +401,9 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES / sizeof(F2)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -389,15 +411,8 @@ KERNEL(G_H) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   F2 u[NH], v[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
-#else
-  u32 line1 = get_group_id(0) + 1;
-  u32 line2 = H - line1;
-#endif
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
@@ -489,8 +504,9 @@ void OVERLOAD pairSq2_special(F2 *u, F2 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local F2 lds[2 * LDS_BYTES / sizeof(F2)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(F2) inF2 = (CP(F2)) in;
   P(F2) outF2 = (P(F2)) out;
@@ -498,16 +514,8 @@ KERNEL(G_H * 2) tailSquare(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   F2 u[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line_u = get_group_id(0);
+  u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
-#else
-  u32 line_u = get_group_id(0) + 1;
-  u32 line_v = H - line_u;
-#endif
-
   u32 me = get_local_id(0);
   u32 lowMe = me % G_H;  // lane-id in one of the two halves (half-workgroups).
 
@@ -629,13 +637,13 @@ void OVERLOAD pairSq(u32 N, GF31 *u, GF31 *v, GF31 base_squared, bool special) {
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   local GF31 lds[LDS_BYTES / sizeof(GF31)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
   TrigGF31 smallTrig31 = (TrigGF31) (smallTrig + DISTHTRIGGF31);
 
   GF31 u[NH];
-  u32 H = ND / SMALL_HEIGHT;
 
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
@@ -680,8 +688,9 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES / sizeof(GF31)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -689,15 +698,8 @@ KERNEL(G_H) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF31 u[NH], v[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
-#else
-  u32 line1 = get_group_id(0) + 1;
-  u32 line2 = H - line1;
-#endif
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
@@ -784,8 +786,9 @@ void OVERLOAD pairSq2_special(GF31 *u, GF31 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local GF31 lds[2 * LDS_BYTES / sizeof(GF31)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -793,16 +796,8 @@ KERNEL(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF31 u[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line_u = get_group_id(0);
+  u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
-#else
-  u32 line_u = get_group_id(0) + 1;
-  u32 line_v = H - line_u;
-#endif
-
   u32 me = get_local_id(0);
   u32 lowMe = me % G_H;  // lane-id in one of the two halves (half-workgroups).
 
@@ -880,10 +875,10 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_
 // This code should be faster (saves at least one wide mul) but the CUDA compiler makes poorer decisions regarding register usage resulting in local memory usage
 #if ENABLE_BETTER_ONEPAIRSQ
   X2qconjb(&a, &b);                             // X2(a, conjugate(b)).  a.x range is 0..2+, a.y range is -1-..1+, b.x range is -1-..1+, b.y range is 0..2+
-  a.y += 2*M61;					// a range is  0..2+ / 1-..3+
-  b.x += 2*M61;					// b range is 1-..3+ / 0..2+
+  a.y += 2*M61;                                 // a range is  0..2+ / 1-..3+
+  b.x += 2*M61;                                 // b range is 1-..3+ / 0..2+
 
-  ab = addq(a, b);				// Compute 2ab as (a + b)^2 - a^2 - b^2.  ab range is 1-..5+
+  ab = addq(a, b);                              // Compute 2ab as (a + b)^2 - a^2 - b^2.  ab range is 1-..5+
   a2 = csqq(a, 3, 4);                           // a2 = a^2, a2 range is 0..2+
   b2 = csq(b, 4, 3);                            // b2 = b^2, b2 range is 0..1+
 
@@ -978,13 +973,13 @@ void OVERLOAD pairSq(u32 N, GF61 *u, GF61 *v, GF61 base_squared, bool special) {
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
 KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   local GF61 lds[LDS_BYTES / sizeof(GF61)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
   TrigGF61 smallTrig61 = (TrigGF61) (smallTrig + DISTHTRIGGF61);
 
   GF61 u[NH];
-  u32 H = ND / SMALL_HEIGHT;
 
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
@@ -1029,8 +1024,9 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES / sizeof(GF61)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -1038,15 +1034,8 @@ KERNEL(G_H) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF61 u[NH], v[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line1 = get_group_id(0);
+  u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
-#else
-  u32 line1 = get_group_id(0) + 1;
-  u32 line2 = H - line1;
-#endif
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
@@ -1133,8 +1122,9 @@ void OVERLOAD pairSq2_special(GF61 *u, GF61 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local GF61 lds[2 * LDS_BYTES / sizeof(GF61)];
+  const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
@@ -1142,16 +1132,8 @@ KERNEL(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   GF61 u[NH];
 
-  u32 H = ND / SMALL_HEIGHT;
-
-#if SINGLE_KERNEL
-  u32 line_u = get_group_id(0);
+  u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
-#else
-  u32 line_u = get_group_id(0) + 1;
-  u32 line_v = H - line_u;
-#endif
-
   u32 me = get_local_id(0);
   u32 lowMe = me % G_H;  // lane-id in one of the two halves (half-workgroups).
 

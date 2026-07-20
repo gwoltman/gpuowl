@@ -135,14 +135,48 @@ float OVERLOAD boundCarry(i32 c) { return ldexp(fabs((float) c), -32); }
 float OVERLOAD boundCarry(i64 c) { return ldexp(fabs((float) (i32) (c >> 8)), -24); }
 
 #if STATS || ROE
-void updateStats(global uint *bufROE, u32 posROE, float roundMax) {
+void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *bufROE, u32 posROE, float roundMax) {
   assert(roundMax >= 0);
-  // work_group_reduce_max() allocates an additional 256Bytes LDS for a 64lane workgroup, so avoid it.
-  // u32 groupRound = work_group_reduce_max(as_uint(roundMax));
-  // if (get_local_id(0) == 0) { atomic_max(bufROE + posROE, groupRound); }
 
-  // Do the reduction directly over global mem.
-  atomic_max(bufROE + posROE, as_uint(roundMax));
+  // This barrier may be needed by carryFused because this code does not partition lds memory the same way shufl does
+  bar();
+  // Reduce to a single roundMax value
+  u32 me = get_local_id(0);
+  u32 u32RoundMax = as_uint(roundMax);
+  while (num_threads > 1) {
+    // Write roundMax for high half of threads to local memory.  Ignore threads not participating in the reduction.
+   if (num_threads >= WAVEFRONT) bar();
+      __asm("bar.sync 0;");
+    if (me >= num_threads / 2 && me < num_threads) lds[me - num_threads / 2] = u32RoundMax;
+    if (num_threads > WAVEFRONT) {
+      bar();                             // work around a weird CUDA NVCC bug where two bar() calls are required???! (Titan V, CUDA 13.0, WMUL=2)
+      bar();
+    }
+    // Low half of threads do a max
+    if (me < num_threads / 2) {
+      u32 highHalfMax = lds[me];
+      if (u32RoundMax < highHalfMax) u32RoundMax = highHalfMax;
+    }
+    // Cut num threads in half, loop
+    num_threads /= 2;
+  }
+
+// We could use shfl_down_sync (and AMD's equivalent) instead of LDS memory once num_threads < WAVEFRONT (see https://github.com/mahmoudmaftah/MaxReduction-Cuda/blob/main/code/reduction_benchmarks.cu)
+// We could instead write the reduced ROE sequentially to bufROE and then do a max_reduction after last atomic_add
+
+  // Merge this max with others
+  if (me == 0) {
+    // The bufROE entry to update is stored in the first bufROE entry.  This value used to be passed into carryFused as an argument.
+    // CUDA graphs don't allow arguments to change.  Thus, calculating posROE and storing it in bufROE workd better.
+    posROE = bufROE[0];
+    atomic_max(bufROE + posROE + 2, u32RoundMax);
+    // The second bufRoe entry is a count of the number atomic_maxes performed.  When the last atomic_max is done, increment posROE and clear the counter.
+    u32 old_value = atomic_add(bufROE + 1, 1);
+    if (old_value == num_blocks - 1) {
+      bufROE[0] = posROE + 1;
+      bufROE[1] = 0;
+    }
+  }
 }
 #endif
 
@@ -685,7 +719,7 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
 #if EXP / NWORDS >= 32                                  // nBits is 32 or more
-  return carryStep(x, outCarry, isBigWord);		// Should be just as fast as code below
+  return carryStep(x, outCarry, isBigWord);             // Should be just as fast as code below
 //  u32 xmid_topbit = i96_mid32(x) & (1 << (bigwordBits - 32 - 1));
 //  i32 whi = ulowFixedBits(i96_mid32(x), bigwordBits - 32 - 1) - xmid_topbit;
 //  i64 xhi = i96_hi64(x) + xmid_topbit;
@@ -696,7 +730,7 @@ Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   *outCarry = (i96_hi64(x) + (w < 0)) << (32 - nBits);
   return w;
 #else                                                   // nBits less than 32
-  return carryStep(x, outCarry, isBigWord);		// Should be faster than code below
+  return carryStep(x, outCarry, isBigWord);             // Should be faster than code below
 //  i32 w = lowFixedBits(i96_lo32(x), bigwordBits);
 //  *outCarry = (as_long((int2)(xtract32(i96_lo64(x), bigwordBits), xtract32(i96_hi64(x), bigwordBits))) + (w < 0)) << (bigwordBits - nBits);
 //  return w;
