@@ -674,9 +674,12 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
   if (!q || !k) return CL_INVALID_VALUE;
   ensureContextCurrent();
 
-  size_t gs = globalSize[0];
-  size_t ls = localSize ? localSize[0] : 256;
-  size_t numBlocks = (gs + ls - 1) / ls;
+  size_t gsX = globalSize[0];
+  size_t lsX = localSize ? localSize[0] : 256;
+  size_t numBlocksX = (gsX + lsX - 1) / lsX;
+  size_t gsY = (workDim > 1) ? globalSize[1] : 1;
+  size_t lsY = (workDim > 1) ? localSize[1] : 1;
+  size_t numBlocksY = (gsY + lsY - 1) / lsY;
 
   // Build args array
   void* argPtrs[_cl_kernel::MAX_ARGS];
@@ -693,7 +696,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     ev->hasTimings = true;
     ev->commandType = CL_COMMAND_NDRANGE_KERNEL;
     cuEventRecord(ev->start, q->stream);
-    CUresult r = cuLaunchKernel(k->func, numBlocks, 1, 1, ls, 1, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
     cuEventRecord(ev->end, q->stream);
     *event = ev;
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
@@ -708,7 +711,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     if (!pStart) { cuEventCreate(&pStart, CU_EVENT_DEFAULT); cuEventCreate(&pEnd, CU_EVENT_DEFAULT); }
 
     cuEventRecord(pStart, q->stream);
-    CUresult r = cuLaunchKernel(k->func, numBlocks, 1, 1, ls, 1, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
     cuEventRecord(pEnd, q->stream);
     cuEventSynchronize(pEnd);
     float ms = 0;
@@ -740,7 +743,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
   }
 
-  CUresult r = cuLaunchKernel(k->func, numBlocks, 1, 1, ls, 1, 1, 0, q->stream, argPtrs, nullptr);
+  CUresult r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
   if (r != CUDA_SUCCESS) {
     const char* errName = nullptr;
     cuGetErrorName(r, &errName);
@@ -812,7 +815,7 @@ int clEnqueueMarkerWithWaitList(cl_command_queue q, unsigned nWaits, const cl_ev
   }
   if (event) {
     auto* ev = new _cl_event;
-    cuEventCreate(&ev->end, CU_EVENT_DEFAULT);
+    cuEventCreate(&ev->end, CU_EVENT_DISABLE_TIMING);
     cuEventRecord(ev->end, q->stream);
     ev->commandType = CL_COMMAND_MARKER;
     *event = ev;
@@ -1137,3 +1140,40 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
   }
 }
 
+
+// OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features
+
+// Interface to nVidia CUDA graphs feature
+
+bool clIsGraphSupported(cl_device_id dev) {
+  int major = 0;
+  cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev->dev);
+  return (major >= 6);
+}
+
+int clGraphBeginRecording(cl_command_queue q) {
+  ensureContextCurrent();
+  CUresult r = cuStreamBeginCapture(q->stream, CU_STREAM_CAPTURE_MODE_GLOBAL);
+  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+}
+
+int clGraphEndRecording(cl_command_queue q, cl_graph* graph) {
+  ensureContextCurrent();
+  auto* g = new _cl_graph;
+  g->queue = q;
+  CUresult r = cuStreamEndCapture(q->stream, &g->graph);
+  if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, 0);
+  *graph = g;
+  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+}
+
+int clGraphLaunch(cl_graph graph) {
+  ensureContextCurrent();
+  CUresult r = cuGraphLaunch(graph->graphExec, graph->queue->stream);
+  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+}
+
+int clReleaseGraph(cl_graph graph) {
+  delete graph;
+  return CL_SUCCESS;
+}

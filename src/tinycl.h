@@ -95,12 +95,12 @@ int clGetKernelWorkGroupInfo(cl_kernel, cl_device_id, cl_kernel_work_group_info,
 
 int clGetEventInfo(cl_event, cl_event_info paramName, size_t paramValueSize, void* paramValue, size_t* sizeRet);
 int clGetEventProfilingInfo(cl_event, cl_profiling_info, size_t, void*, size_t* sizeRet);
-  
+
 void* clSVMAlloc(cl_context, cl_svm_mem_flags, size_t, unsigned alignment);
 void clSVMFree(cl_context, void*);
 
 int clSetKernelArgSVMPointer(cl_kernel, unsigned, const void *);
-  
+
 }
 
 #define CL_SUCCESS              0
@@ -320,3 +320,15 @@ typedef union
 #define CL_INVALID_DEVICE_PARTITION_COUNT           -68
 #define CL_INVALID_PIPE_SIZE                        -69
 #define CL_INVALID_DEVICE_QUEUE                     -70
+
+// OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features
+// This is only supported by our CUDA translation of openCL.  Since this file is for the
+// native openCL builds, these extension routines basicly do nothing.
+
+struct _cl_graph {};
+typedef _cl_graph* cl_graph;
+bool clIsGraphSupported(cl_device_id);
+int clGraphBeginRecording(cl_command_queue);
+int clGraphEndRecording(cl_command_queue, cl_graph*);
+int clGraphLaunch(cl_graph);
+int clReleaseGraph(cl_graph);

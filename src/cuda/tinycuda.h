@@ -319,3 +319,20 @@ void clSVMFree(cl_context, void*);
 int clSetKernelArgSVMPointer(cl_kernel, unsigned, const void*);
 
 }
+
+// OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features
+
+// cl_graph provides an openCL-like interface for CUgraph and CUgraphExec pair
+struct _cl_graph {
+  CUgraph graph;
+  CUgraphExec graphExec;
+  cl_command_queue queue;               // Queue to launch the graph on (same as queue that graph was recorded on)
+  _cl_graph() : graph{}, graphExec{} {}
+  ~_cl_graph() { if (graph) cuGraphDestroy(graph); if (graphExec) cuGraphExecDestroy(graphExec); }
+};
+typedef _cl_graph* cl_graph;
+bool clIsGraphSupported(cl_device_id);
+int clGraphBeginRecording(cl_command_queue);
+int clGraphEndRecording(cl_command_queue, cl_graph*);
+int clGraphLaunch(cl_graph);
+int clReleaseGraph(cl_graph);

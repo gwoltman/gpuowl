@@ -227,6 +227,7 @@ void release(cl_mem buf)         { CHECK1(clReleaseMemObject(buf)); }
 void release(cl_queue queue)     { CHECK1(clReleaseCommandQueue(queue)); }
 void release(cl_kernel k)        { CHECK1(clReleaseKernel(k)); }
 void release(cl_event event)     { CHECK1(clReleaseEvent(event)); }
+void release(cl_graph graph)     { CHECK1(clReleaseGraph(graph));}
 
 Program loadSource(cl_context context, const string &source) {
   const char *ptr = source.c_str();
@@ -326,11 +327,13 @@ void flush( cl_queue q) { CHECK1(clFlush(q)); }
 void finish(cl_queue q) { CHECK1(clFinish(q)); }
 
 EventHolder run(cl_queue queue, cl_kernel kernel,
-                size_t groupSize, size_t workSize,
+                size_t groupSizeX, size_t workSizeX, size_t workSizeY,
                 vector<cl_event>&& waits,
                 const string &name, bool genEvent) {
   cl_event event{};
-  CHECK2(clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &workSize, &groupSize,
+  size_t workSizes[2] = {workSizeX, workSizeY};
+  size_t groupSizes[2] = {groupSizeX, 1};
+  CHECK2(clEnqueueNDRangeKernel(queue, kernel, workSizeY == 1 ? 1 : 2, NULL, workSizes, groupSizes,
                                 waits.size(), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr),
          name.c_str());
   return genEvent ? EventHolder{event} : EventHolder{};
@@ -451,3 +454,15 @@ cl_device_id getQueueDevice(cl_command_queue q) {
   CHECK1(clGetCommandQueueInfo(q, CL_QUEUE_DEVICE, sizeof(id), &id, 0));
   return id;
 }
+
+// OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features.
+// These routines are defined in clwrap_cuda.cpp for the CUDA translation of openCL.
+// The dummy implementation below is for the native openCL builds.
+
+#ifndef CUDA_BACKEND
+bool clIsGraphSupported(cl_device_id dev) { return 0; }
+int clGraphBeginRecording(cl_command_queue q) { return CL_INVALID_VALUE; }
+int clGraphEndRecording(cl_command_queue q, cl_graph* g) { return CL_INVALID_VALUE; }
+int clGraphLaunch(cl_graph g) { return CL_INVALID_VALUE; }
+int clReleaseGraph(cl_graph g) { return CL_INVALID_VALUE; }
+#endif
