@@ -146,7 +146,6 @@ void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *b
   while (num_threads > 1) {
     // Write roundMax for high half of threads to local memory.  Ignore threads not participating in the reduction.
    if (num_threads >= WAVEFRONT) bar();
-      __asm("bar.sync 0;");
     if (me >= num_threads / 2 && me < num_threads) lds[me - num_threads / 2] = u32RoundMax;
     if (num_threads > WAVEFRONT) {
       bar();                             // work around a weird CUDA NVCC bug where two bar() calls are required???! (Titan V, CUDA 13.0, WMUL=2)
