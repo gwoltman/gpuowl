@@ -45,7 +45,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   auto& clNames = getClFileNames();
   auto& clFiles = getClFiles();
   assert(clNames.size() == clFiles.size());
-  int const n = clNames.size();
+  int const n = int(clNames.size());
   for (int i = 0; i < n; ++i) {
     auto &src = clFiles[i];
     files.emplace_back(clNames[i], src);
@@ -68,12 +68,12 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
   }
 #ifdef CUDA_BACKEND
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
-                             clSources.size(), (const cl_program*) (clSources.data()), getClFileNames().data(),
+                             u32(clSources.size()), (const cl_program*) (clSources.data()), getClFileNames().data(),
                              nullptr, nullptr);
 #else
   // Skip first file (opencl_compat.cuh) if this is a standard openCL application rather than a CUDA translation
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
-                             clSources.size()-1, (const cl_program*) (clSources.data()+1), getClFileNames().data()+1,
+                             u32(clSources.size())-1, (const cl_program*) (clSources.data()+1), getClFileNames().data()+1,
                              nullptr, nullptr);
 #endif
   if (string const mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }

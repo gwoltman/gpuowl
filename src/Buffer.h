@@ -35,7 +35,7 @@ private:
     , tInfo{tInfo}
   {}
 
-  void fill(T value, u32 sizeOrFull = 0) {
+  void fill(T value, size_t sizeOrFull = 0) {
     assert(sizeOrFull <= size);
     auto fillSize = sizeOrFull ? sizeOrFull : size;
     queue->fillBuf(get(), value, fillSize * sizeof(T), tInfo);

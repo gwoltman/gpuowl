@@ -39,7 +39,7 @@ void Queue::writeTE(cl_mem buf, u64 size, const void* data, TimeInfo* tInfo) {
   events.synced();
 }
 
-void Queue::fillBufTE(cl_mem buf, u32 patSize, const void* pattern, u64 size, TimeInfo* tInfo) {
+void Queue::fillBufTE(cl_mem buf, size_t patSize, const void* pattern, size_t size, TimeInfo* tInfo) {
   add(::fillBuf(get(), {}, buf, pattern, patSize, size, hasEvents), tInfo);
 }
 
@@ -61,16 +61,16 @@ void Queue::add(EventHolder&& e, TimeInfo* ti) {
   if (queueCount >= MAX_QUEUE_COUNT) queueMarkerEvent();
 }
 
-void Queue::readSync(cl_mem buf, u32 size, void* out, TimeInfo* tInfo) {
+void Queue::readSync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo) {
   add(read(get(), {}, true, buf, size, out, hasEvents), tInfo);
   events.synced();
 }
 
-void Queue::readAsync(cl_mem buf, u32 size, void* out, TimeInfo* tInfo) {
+void Queue::readAsync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo) {
   add(read(get(), {}, false, buf, size, out, hasEvents), tInfo);
 }
 
-void Queue::copyBuf(cl_mem src, cl_mem dst, u32 size, TimeInfo* tInfo) {
+void Queue::copyBuf(cl_mem src, cl_mem dst, size_t size, TimeInfo* tInfo) {
   add(::copyBuf(get(), {}, src, dst, size, hasEvents), tInfo);
 }
 

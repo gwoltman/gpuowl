@@ -41,7 +41,7 @@ namespace {
 vector<TuneConfig> permute(const vector<pair<string, vector<string>>>& params) {
   vector<TuneConfig> configs;
 
-  int const n = params.size();
+  int const n = int(params.size());
   vector<int> vpos(n);
   while (true) {
     TuneConfig config;
@@ -115,7 +115,7 @@ float Tune::maxBpw(FFTConfig fft) {
   // This doesn't need to be a very accurate estimate.
   // This estimate comes from analyzing a 4M FFT and a 7.5M FFT.
   // The 4M FFT needed a .015 step, the 7.5M FFT needed a .012 step.
-  float bpw_step = .015 + (log2(fft.size()) - log2(4.0*1024*1024)) / (log2(7.5*1024*1024) - log2(4.0*1024*1024)) * (.012 - .015);
+  float bpw_step = float(.015 + (log2(fft.size()) - log2(4.0*1024*1024)) / (log2(7.5*1024*1024) - log2(4.0*1024*1024)) * (.012 - .015));
 
   // Pick a bpw that might be close to Z=34, it is best to err on the high side of Z=34
   float bpw1 = fft.maxBpw() - 9 * bpw_step;                                      // Old bpw gave Z=28, we want Z=34 (or more)
@@ -173,11 +173,11 @@ printf ("Reguess bpw for %s is %.2f first Z22 is %.2f\n", fft.spec().c_str(), bp
 }
 
 float Tune::zForBpw(float bpw, FFTConfig fft, u32 count) {
-  u64 exponent = (count == 1) ? primes.prevPrime(fft.size() * bpw) : primes.nextPrime(fft.size() * bpw);
+  u64 exponent = (count == 1) ? primes.prevPrime(u64(fft.size() * bpw)) : primes.nextPrime(u64(fft.size() * bpw));
   float total_z = 0.0f;
   for (u32 i = 0; i < count; i++, exponent = primes.nextPrime (exponent + 1)) {
     auto [ok, res, roeSq, roeMul] = Gpu::make(exponent, shared, fft, {}, false)->measureROE(true);
-    float const z = roeSq.z();
+    float const z = float(roeSq.z());
     total_z += z;
 log("Zforbpw %.2f (z %.2f) : %s\n", bpw, z, fft.spec().c_str());
     if (!ok) { log("Error at bpw %.2f (z %.2f) : %s\n", bpw, z, fft.spec().c_str()); continue; }
@@ -249,15 +249,15 @@ void Tune::carryTune() {
     double m = 0;
     const float mid = fft.shape.carry32BPW();
     for (float const bpw : {mid - 0.05f, mid + 0.05f}) {
-      u64 const exponent = primes.nearestPrime(fft.size() * bpw);
+      u64 const exponent = primes.nearestPrime(u64(fft.size() * bpw));
       auto [ok, carry] = Gpu::make(exponent, shared, fft, {}, false)->measureCarry();
       m = carry.max;
       if (!ok) { log("Error %s at %f\n", fft.spec().c_str(), bpw); }
-      zv.push_back(carry.z());
+      zv.push_back(float(carry.z()));
     }
 
     float const avg = (zv[0] + zv[1]) / 2;
-    u64 const exponent = fft.shape.carry32BPW() * fft.size();
+    u64 const exponent = u64(fft.shape.carry32BPW() * fft.size());
     double const pErr100 = -expm1(-exp(-avg) * exponent * 100);
     log("%14s %.3f : %.3f (%.3f %.3f) %f %.0f%%\n", fft.spec().c_str(), mid, avg, zv[0], zv[1], m, pErr100 * 100);
     fo.printf("%f %f\n", log2(fft.size()), avg);
@@ -367,7 +367,7 @@ void Tune::tune() {
     if (s == "inplace") time_inplace_only = true;
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
-      if (keyVal.front() == "quick") quick = stod(keyVal.back());
+      if (keyVal.front() == "quick") quick = stoi(keyVal.back());
       if (keyVal.front() == "minexp") min_exponent = stoull(keyVal.back());
       if (keyVal.front() == "maxexp") max_exponent = stoull(keyVal.back());
     }
@@ -594,7 +594,7 @@ void Tune::tune() {
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_fft_load = 0;
         double best_cost = -1.0;
-	for (u32 const fft_load : {0, 1, 2, 3, 4}) {
+        for (u32 const fft_load : {0, 1, 2, 3, 4}) {
           if (fft_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(loads / 10 * 10 + fft_load);
           double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
@@ -612,7 +612,7 @@ void Tune::tune() {
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_fft_store = 0;
         double best_cost = -1.0;
-	for (u32 const fft_store : {0, 1, 2, 3, 4}) {
+        for (u32 const fft_store : {0, 1, 2, 3, 4}) {
           if (fft_store >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["STORES"] = to_string(stores / 10 * 10 + fft_store);
           double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
@@ -630,10 +630,10 @@ void Tune::tune() {
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_cs_load = 0, best_cs_store = 0;
         double best_cost = -1.0;
-	for (u32 const cs : {0, 1, 2}) {   // Test three combinations:  Default load/store, non-temporal, last-use load with L2 store
+        for (u32 const cs : {0, 1, 2}) {   // Test three combinations:  Default load/store, non-temporal, last-use load with L2 store
           if (cs >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
-	  u32 const cs_load = cs == 0 ? 0 : cs == 1 ? 1 : 4;
-	  u32 const cs_store = cs == 0 ? 0 : cs == 1 ? 1 : 2;
+          u32 const cs_load = cs == 0 ? 0 : cs == 1 ? 1 : 4;
+          u32 const cs_store = cs == 0 ? 0 : cs == 1 ? 1 : 2;
           args->flags["LOADS"] = to_string(loads / 100 * 100 + cs_load * 10 + loads % 10);
           args->flags["STORES"] = to_string(stores / 100 * 100 + cs_store * 10 + stores % 10);
           double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
@@ -653,7 +653,7 @@ void Tune::tune() {
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_trig_load = 0;
         double best_cost = -1.0;
-	for (u32 const trig_load : {0, 5}) {
+        for (u32 const trig_load : {0, 5}) {
           if (trig_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(loads / 1000 * 1000 + trig_load * 100 + loads % 100);
           double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
@@ -671,7 +671,7 @@ void Tune::tune() {
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_trig_load = 0;
         double best_cost = -1.0;
-	for (u32 const trig_load : {0, 1, 2, 3, 4, 5}) {
+        for (u32 const trig_load : {0, 1, 2, 3, 4, 5}) {
           if (trig_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(loads / 10000 * 10000 + trig_load * 1000 + loads % 1000);
           double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
@@ -689,7 +689,7 @@ void Tune::tune() {
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_trig_load = 0;
         double best_cost = -1.0;
-	for (u32 const trig_load : {0, 1, 2, 3, 4, 5}) {
+        for (u32 const trig_load : {0, 1, 2, 3, 4, 5}) {
           if (trig_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["LOADS"] = to_string(trig_load * 10000 + loads % 10000);
           double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
@@ -798,7 +798,7 @@ void Tune::tune() {
     if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
-      u64 const exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
+      u64 const exponent = primes.prevPrime(u64(fft.maxBpw() * 0.95 * fft.shape.size()));   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tail_trigs = 0;
       u32 const current_tail_trigs = args->value("TAIL_TRIGS32", 2);
       double best_cost = -1.0;
@@ -881,7 +881,7 @@ void Tune::tune() {
     if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
-      u64 const exponent = primes.prevPrime(fft.maxBpw() * 0.95 * fft.shape.size());   // Back off the maxExp as different settings will have different maxBpw
+      u64 const exponent = primes.prevPrime(u64(fft.maxBpw() * 0.95 * fft.shape.size()));   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tabmul_chain = 0;
       u32 const current_tabmul_chain = args->value("TABMUL_CHAIN32", 0);
       double best_cost = -1.0;

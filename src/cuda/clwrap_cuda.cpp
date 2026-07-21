@@ -112,7 +112,7 @@ unsigned clGetPlatformIDs(unsigned num, cl_platform_id* platforms, unsigned* num
 
 int clGetDeviceIDs(cl_platform_id, cl_device_type, unsigned num, cl_device_id* devices, unsigned* numRet) {
   enumerateDevices();
-  unsigned const n = g_devices.size();
+  unsigned const n = u32(g_devices.size());
   if (numRet) *numRet = n;
   if (devices) {
     for (unsigned i = 0; i < min(num, n); i++) {
@@ -714,12 +714,12 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
   if (!q || !k) return CL_INVALID_VALUE;
   ensureContextCurrent();
 
-  size_t const gsX = globalSize[0];
-  size_t const lsX = localSize ? localSize[0] : 256;
-  size_t const numBlocksX = (gsX + lsX - 1) / lsX;
-  size_t const gsY = (workDim > 1) ? globalSize[1] : 1;
-  size_t const lsY = (workDim > 1) ? localSize[1] : 1;
-  size_t const numBlocksY = (gsY + lsY - 1) / lsY;
+  unsigned int const gsX = u32(globalSize[0]);
+  unsigned int const lsX = u32(localSize ? localSize[0] : 256);
+  unsigned int const numBlocksX = (gsX + lsX - 1) / lsX;
+  unsigned int const gsY = u32((workDim > 1) ? globalSize[1] : 1);
+  unsigned int const lsY = u32((workDim > 1) ? localSize[1] : 1);
+  unsigned int const numBlocksY = (gsY + lsY - 1) / lsY;
 
   // Build args array
   void* argPtrs[_cl_kernel::MAX_ARGS];

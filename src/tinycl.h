@@ -326,7 +326,7 @@ typedef union
 // native openCL builds, these extension routines basicly do nothing.
 
 struct _cl_graph {};
-typedef _cl_graph* cl_graph;
+using cl_graph = struct _cl_graph *;
 bool clIsGraphSupported(cl_device_id);
 int clGraphBeginRecording(cl_command_queue);
 int clGraphEndRecording(cl_command_queue, cl_graph*);

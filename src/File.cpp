@@ -36,7 +36,7 @@ File::~File() {
   f = nullptr;
 }
 
-i64 File::size(const fs::path &name) {
+u64 File::size(const fs::path &name) {
   error_code dummy;
   return filesystem::file_size(name, dummy);
 }

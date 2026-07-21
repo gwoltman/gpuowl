@@ -144,7 +144,7 @@ float getGpuRamGB(cl_device_id id) {
   try {
     u64 totSize = 0; 
     GET_INFO(id, CL_DEVICE_GLOBAL_MEM_SIZE, totSize);
-    return ldexp(totSize, -30); // to GB
+    return float(ldexp(totSize, -30)); // to GB
   } catch (const gpu_error& err) {
   }
   return 0;
@@ -333,7 +333,7 @@ EventHolder run(cl_queue queue, cl_kernel kernel,
   size_t workSizes[2] = {workSizeX, workSizeY};
   size_t groupSizes[2] = {groupSizeX, 1};
   CHECK2(clEnqueueNDRangeKernel(queue, kernel, workSizeY == 1 ? 1 : 2, nullptr, workSizes, groupSizes,
-                                waits.size(), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr),
+                                u32(waits.size()), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr),
          name.c_str());
   return genEvent ? EventHolder{event} : EventHolder{};
 }
@@ -343,7 +343,7 @@ EventHolder read(cl_queue queue, vector<cl_event>&& waits,
   size_t const start = 0;
   cl_event event{};
   CHECK1(clEnqueueReadBuffer(queue, buf, blocking, start, size, data,
-                             waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
+                             u32(waits.size()), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
@@ -352,7 +352,7 @@ EventHolder write(cl_queue queue, vector<cl_event>&& waits,
   size_t const start = 0;
   cl_event event{};
   CHECK1(clEnqueueWriteBuffer(queue, buf, blocking, start, size, data,
-                              waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
+                              u32(waits.size()), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
@@ -360,7 +360,7 @@ EventHolder copyBuf(cl_queue queue, vector<cl_event>&& waits,
                     const cl_mem src, cl_mem dst, size_t size, bool genEvent) {
   cl_event event{};
   CHECK1(clEnqueueCopyBuffer(queue, src, dst, 0, 0, size,
-                             waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
+                             u32(waits.size()), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
@@ -369,7 +369,7 @@ EventHolder fillBuf(cl_queue q, vector<cl_event>&& waits,
   assert(size);
   cl_event event{};
   CHECK1(clEnqueueFillBuffer(q, buf, pat, patSize, 0 /*start*/, size,
-                             waits.size(), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
+                             u32(waits.size()), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
   return genEvent ? EventHolder{event} : EventHolder{};
 }
 
@@ -381,13 +381,13 @@ EventHolder enqueueMarker(cl_queue q) {
 
 EventHolder enqueueMarkerWithWaits(cl_queue q, vector<cl_event>&& waits) {
   cl_event event{};
-  CHECK1(clEnqueueMarkerWithWaitList(q, waits.size(), waits.empty() ? nullptr : waits.data(), &event));
+  CHECK1(clEnqueueMarkerWithWaitList(q, u32(waits.size()), waits.empty() ? nullptr : waits.data(), &event));
   return EventHolder{event};
 }
 
 void waitForEvents(vector<cl_event>&& waits) {
   if (!waits.empty()) {
-    CHECK1(clWaitForEvents(waits.size(), waits.data()));
+    CHECK1(clWaitForEvents(u32(waits.size()), waits.data()));
   }
 }
 
@@ -400,7 +400,7 @@ int getKernelNumArgs(cl_kernel k) {
 int getWorkGroupSize(cl_kernel k, cl_device_id device, const char *name) {
   size_t size[3];
   CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_COMPILE_WORK_GROUP_SIZE, sizeof(size), &size, nullptr), name);
-  return size[0];
+  return int(size[0]);
 }
 
 std::string getKernelArgName(cl_kernel k, int pos) {

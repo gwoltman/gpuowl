@@ -26,7 +26,7 @@ class Queue : public QueueHolder {
   bool isAuxQueue;
 
   void writeTE(cl_mem buf, u64 size, const void* data, TimeInfo *tInfo);
-  void fillBufTE(cl_mem buf, u32 patSize, const void* pattern, u64 size, TimeInfo* tInfo);
+  void fillBufTE(cl_mem buf, size_t patSize, const void* pattern, size_t size, TimeInfo* tInfo);
   void flush();
   void print();
   void add(EventHolder &&e, TimeInfo* ti);
@@ -43,12 +43,12 @@ public:
   void write(cl_mem buf, const vector<T>& v, TimeInfo* tInfo) { writeTE(buf, v.size() * sizeof(T), v.data(), tInfo); }
 
   template<typename T>
-  void fillBuf(cl_mem buf, T pattern, u32 size, TimeInfo* tInfo) { fillBufTE(buf, sizeof(T), &pattern, size, tInfo); }
+  void fillBuf(cl_mem buf, T pattern, size_t size, TimeInfo* tInfo) { fillBufTE(buf, sizeof(T), &pattern, size, tInfo); }
 
   void run(cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY, TimeInfo* tInfo);
-  void readSync(cl_mem buf, u32 size, void* out, TimeInfo* tInfo);
-  void readAsync(cl_mem buf, u32 size, void* out, TimeInfo* tInfo);
-  void copyBuf(cl_mem src, cl_mem dst, u32 size, TimeInfo* tInfo);
+  void readSync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo);
+  void readAsync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo);
+  void copyBuf(cl_mem src, cl_mem dst, size_t size, TimeInfo* tInfo);
   void finish();
 
   EventHolder createSyncEvent() { if (!isAuxQueue && !graphRecording) queueCount++; return enqueueMarker(get()); }  // Enqueue a synchronization event.  Used to sync work among multiple queues.

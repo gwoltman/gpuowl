@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cassert>
-#ifndef _MSC_VER		// unistd.h does not exist for MSVC
+#ifndef _MSC_VER                // unistd.h does not exist for MSVC
 #include <unistd.h>
 #endif
 #include <filesystem>
@@ -60,9 +60,9 @@ class File {
   
   File(const fs::path &path, const string& mode, bool throwOnError);
 
-  bool readNoThrow(void* data, u32 nBytes) const { return fread(data, nBytes, 1, this->get()); }
+  bool readNoThrow(void* data, size_t nBytes) const { return fread(data, nBytes, 1, this->get()); }
   
-  void read(void* data, u32 nBytes) const {
+  void read(void* data, size_t nBytes) const {
     if (!readNoThrow(data, nBytes)) { throw ReadError{name}; }
   }
 
@@ -89,7 +89,7 @@ class File {
 public:
   const std::string name;
 
-  static i64 size(const fs::path& name);
+  static u64 size(const fs::path& name);
 
   static File openRead(const fs::path& name) { return File{name, "rb", false}; }
   static File openReadThrow(const fs::path& name) { return File{name, "rb", true}; }
@@ -142,7 +142,7 @@ public:
   template<typename T>
   void write(const T& x) const { write(&x, sizeof(T)); }
 
-  void write(const void* data, u32 nBytes) const {
+  void write(const void* data, size_t nBytes) const {
     if (!fwrite(data, nBytes, 1, this->get())) { throw WriteError{name}; }
   }
   
@@ -177,7 +177,7 @@ public:
   
   void write(const string& s) { write(string_view(s)); }
   void write(const char* s) { write(string_view(s)); }
-  void write(string_view s) { write(s.data(), u32(s.size())); }
+  void write(string_view s) { write(s.data(), s.size()); }
 
   operator bool() const { return f != nullptr; }
   [[nodiscard]] FILE* get() const { return f; }
@@ -223,7 +223,7 @@ public:
   }
 
   template<typename T>
-  [[nodiscard]] [[nodiscard]] std::vector<T> read(u32 nWords) const {
+  [[nodiscard]] std::vector<T> read(size_t nWords) const {
     vector<T> ret;
     ret.resize(nWords);
     read(ret.data(), nWords * sizeof(T));
@@ -231,7 +231,7 @@ public:
   }
 
   template<typename T>
-  [[nodiscard]] std::vector<T> readChecked(u32 nWords) const {
+  [[nodiscard]] std::vector<T> readChecked(size_t nWords) const {
     u32 const expectedCRC = read<u32>(1)[0];
     return readWithCRC<T>(nWords, expectedCRC);
   }
@@ -243,7 +243,7 @@ public:
   }
 
   template<typename T>
-  [[nodiscard]] std::vector<T> readWithCRC(u32 nWords, u32 crc) const {
+  [[nodiscard]] std::vector<T> readWithCRC(size_t nWords, u32 crc) const {
     auto data = read<T>(nWords);
     if (crc != crc32(data)) {
       log("File '%s' : CRC: expected %u, actual %u\n", name.c_str(), crc, crc32(data));
@@ -252,18 +252,18 @@ public:
     return data;
   }
 
-  std::vector<u32> readBytesLE(u32 nBytes) {
+  std::vector<u32> readBytesLE(size_t nBytes) {
     assert(nBytes > 0);
-    u32 const nWords = (nBytes - 1) / 4 + 1;
+    size_t const nWords = (nBytes - 1) / 4 + 1;
     vector<u32> data(nWords);
     read(data.data(), nBytes);
     return data;
   }
 
-  u32 readUpTo(void* data, u32 nUpToBytes) { return u32(fread(data, 1, nUpToBytes, this->get())); }
+  size_t readUpTo(void* data, size_t nUpToBytes) { return fread(data, 1, nUpToBytes, this->get()); }
 
   string readAll() {
-    u32 const sz = u32(size());
+    u64 const sz = size();
     return {read<char>(sz).data(), sz};
   }
 };

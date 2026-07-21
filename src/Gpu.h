@@ -265,8 +265,8 @@ private:
   void squareCERT(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, false); }
   void squareLL(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, true); }
 
-  u32 squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3);
-  u32 squareLoop(Buffer<Word>& io, u64 from, u64 to) { return squareLoop(io, io, from, to, false); }
+  u64 squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3);
+  u64 squareLoop(Buffer<Word>& io, u64 from, u64 to) { return squareLoop(io, io, from, to, false); }
 
   bool isEqual(Buffer<Word>& bufCheck, Buffer<Word>& bufAux);
   u64 bufResidue(Buffer<Word>& buf);

@@ -21,19 +21,19 @@
 namespace proof {
 
 array<u64, 4> hashWords(u64 E, const Words& words) {
-  return std::move(SHA3{}.update(words.data(), (E-1)/8+1)).finish();
+  return std::move(SHA3{}.update(words.data(), u32((E-1)/8+1))).finish();
 }
 
 array<u64, 4> hashWords(u64 E, array<u64, 4> prefix, const Words& words) {
-  return std::move(SHA3{}.update(prefix).update(words.data(), (E-1)/8+1)).finish();
+  return std::move(SHA3{}.update(prefix).update(words.data(), u32((E-1)/8+1))).finish();
 }
 
 string fileHash(const fs::path& filePath) {
   File fi = File::openReadThrow(filePath);
   char buf[64 * 1024];
   MD5 h;
-  u32 size = 0;
-  while ((size = fi.readUpTo(buf, sizeof(buf)))) { h.update(buf, size); }
+  size_t size = 0;
+  while ((size = fi.readUpTo(buf, sizeof(buf)))) { h.update(buf, u32(size)); }
   return std::move(h).finish();
 }
 
@@ -56,13 +56,13 @@ ProofInfo getInfo(const fs::path& proofFile) {
 
 fs::path Proof::file(const fs::path& proofDir) const {
   string const strE = to_string(E);
-  u32 const power = middles.size();
+  u32 const power = u32(middles.size());
   return proofDir / (strE + '-' + to_string(power) + ".proof");  
 }
 
 void Proof::save(const fs::path& proofFile) const {
   File const fo = File::openWrite(proofFile);
-  u32 const power = middles.size();
+  u32 const power = u32(middles.size());
   fo.printf(HEADER_v2, power, E, '\n');
   fo.write(B.data(), (E-1)/8+1);
   for (const Words& w : middles) { fo.write(w.data(), (E-1)/8+1); }
@@ -77,7 +77,7 @@ Proof Proof::load(const fs::path& path) {
     log("Proof file '%s' has invalid header\n", path.string().c_str());
     throw "Invalid proof header";
   }
-  u32 const nBytes = (E - 1) / 8 + 1;
+  u32 const nBytes = u32((E - 1) / 8 + 1);
   Words const B = fi.readBytesLE(nBytes);
   vector<Words> middles;
   middles.reserve(power);
@@ -89,7 +89,7 @@ bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
   // log("B         %016" PRIx64 "\n", res64(B));
   // for (u32 i = 0; i < middles.size(); ++i) { log("Middle[%u] %016" PRIx64 "\n", i, res64(middles[i])); }
 
-  u32 const power = middles.size();
+  u32 const power = u32(middles.size());
   assert(power > 0);
 
   bool const isPrime = (B == makeWords(E, 9));
@@ -118,7 +118,7 @@ bool Proof::verify(Gpu *gpu, const vector<u64>& hashes) const {
   }
     
   log("proof verification: doing %" PRIu64 " iterations\n", span);
-  A = gpu->expExp2(A, span);
+  A = gpu->expExp2(A, u32(span));
 
   bool const ok = (A == B);
   if (ok) {
@@ -149,18 +149,18 @@ ProofSet::ProofSet(u64 E, u32 power)
   u32 p;
   u64 span;
   for (p = 0, span = (E + 1) / 2; p < power; ++p, span = (span + 1) / 2) {
-    for (u32 i = 0, end = points.size(); i < end; ++i) {
+    for (u32 i = 0, end = u32(points.size()); i < end; ++i) {
       points.push_back(points[i] + span);
     }
   }
 
-  assert(points.size() == (1u << power));
+  assert(u32(points.size()) == (1u << power));
   assert(points.front() == 0);
 
   points.front() = E;
   std::ranges::sort(points);
 
-  assert(points.size() == (1u << power));
+  assert(u32(points.size()) == (1u << power));
   assert(points.back() == E);
 
   points.push_back(u32(-1)); // guard element
@@ -200,7 +200,7 @@ u32 ProofSet::bestPower(u64 E) {
 
   assert(E > 0);
   // log2(x)/2 is log4(x)
-  int const power = 10 + floor(log2(E / 60e6) / 2);
+  int const power = int(10 + floor(log2(double(E) / 60e6) / 2));
   assert(power >= 2);
   return power;
 }
@@ -222,7 +222,7 @@ u32 ProofSet::effectivePower(u64 E, u32 power, u64 currentK) {
 }
     
 bool ProofSet::fileExists(u64 k) const {
-  return File::size(proofPath(E) / to_string(k)) == i64(E / 32 + 2) * 4;
+  return File::size(proofPath(E) / to_string(k)) == (E / 32 + 2) * 4;
 }
 
 bool ProofSet::isValidTo(u64 limitK) const {

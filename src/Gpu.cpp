@@ -73,19 +73,19 @@ double invWeightM1(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
 double boundUnderOne(double x) { return std::min(x, nexttoward(1, 0)); }
 
 float weight32(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return exp2((double)(extra(N, E, kAt(H, line, col) + rep)) / N);
+  return float(exp2((double)(extra(N, E, kAt(H, line, col) + rep)) / N));
 }
 
 float invWeight32(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return exp2(-(double)(extra(N, E, kAt(H, line, col) + rep)) / N);
+  return float(exp2(-(double)(extra(N, E, kAt(H, line, col) + rep)) / N));
 }
 
 float weightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return expm1(M_LN2 * (double)(extra(N, E, kAt(H, line, col) + rep)) / N);
+  return float(expm1(M_LN2 * (double)(extra(N, E, kAt(H, line, col) + rep)) / N));
 }
 
 float invWeightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
-  return expm1(M_LN2 * - (double)(extra(N, E, kAt(H, line, col) + rep)) / N);
+  return float(expm1(M_LN2 * - (double)(extra(N, E, kAt(H, line, col) + rep)) / N));
 }
 
 Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
@@ -353,8 +353,8 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   string defines = toDefine(config);
   if (doLog) { log("config: %s\n", defines.c_str()); }
 
+  defines += toDefine("EXP", u32(E));   // FIX THIS when openCL code supports 64-bit exponents!!!
   defines += toDefine(initializer_list<pair<string, u32>>{
-                    {"EXP", E},
                     {"WIDTH", fft.shape.width},
                     {"SMALL_HEIGHT", fft.shape.height},
                     {"MIDDLE", fft.shape.middle},
@@ -498,7 +498,7 @@ RoeInfo roeStat(const vector<float>& roe) {
     sumRoe  += x;
     sum2Roe += x * x;
   }
-  u32 const n = roe.size();
+  u32 const n = u32(roe.size());
 
   double const sdRoe = sqrt(n * sum2Roe - sumRoe * sumRoe) / n;
   double const meanRoe = sumRoe / n;
@@ -514,7 +514,7 @@ public:
   explicit IterationTimer(u64 kStart) : kStart(kStart) { }
 
   float reset(u64 k) {
-    float const secs = timer.reset();
+    float const secs = float(timer.reset());
 
     u64 const its = max(u64(1), k - kStart);
     kStart = k;
@@ -1642,7 +1642,7 @@ pair<RoeInfo, RoeInfo> Gpu::readROE() {
     // it could be useful for debugging (in which case we could support getting roe for squarings or multipplications, but not both).
     auto [squareRoe, mulRoe] = split(roe, mulRoePos);
     // Delete first two used to calculate roePos on the GPU.  Do this after splitting the vector (mulRoePos recorded indices in "+ 2" format).
-    u32 squareRoeSize = squareRoe.size() - 2;
+    u32 squareRoeSize = u32(squareRoe.size()) - 2;
     roe[0] = squareRoe[squareRoeSize];
     roe[1] = squareRoe[squareRoeSize+1];
     squareRoe.resize(squareRoeSize);
@@ -2018,7 +2018,7 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   }
 }
 
-u32 Gpu::squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3) {
+u64 Gpu::squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3) {
   assert(from < to);
   enum LEAD_TYPE leadIn = LEAD_NONE;
   for (u64 k = from; k < to; ++k) {
@@ -2076,7 +2076,7 @@ static string formatETA(u32 secs) {
   return string(buf);  
 }
 
-static string getETA(u32 step, u32 total, float secsPerStep) {
+static string getETA(u64 step, u64 total, float secsPerStep) {
   u32 const etaSecs = max(0u, u32((total - step) * secsPerStep));
   return formatETA(etaSecs);
 }
@@ -2119,7 +2119,7 @@ void Gpu::doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u3
 
   RoeInfo const carryStats = readCarryStats();
   if (carryStats.N > 2) {
-    u32 const m = ldexp(carryStats.max, 32);
+    u32 const m = u32(ldexp(carryStats.max, 32));
     double const z = carryStats.z();
     log("Carry: %x Z(%u)=%.1f\n", m, carryStats.N, z);
   }
@@ -2137,7 +2137,7 @@ bool Gpu::equals9(const Words& a) {
   u64 const aa = as<u64>(a);
   u64 const bb = as<u64>(b);
   bool const sameSign = (aa >> 63) == (bb >> 63);
-  int const delta = sameSign ? bb - aa : bb + aa;
+  int const delta = int(sameSign ? bb - aa : bb + aa);
   return delta;
 }
 
@@ -2196,7 +2196,7 @@ void Gpu::selftestTrig() {
       [[maybe_unused]] i64 const prev = 0;
       u64 min = -1;
       u64 sum = 0;
-      for (long const x : times) {
+      for (i64 const x : times) {
         
 #if 0
         if (x != prev) {
@@ -2227,12 +2227,12 @@ static void doDiv3(u64 E, Words& words) {
   assert(topBits > 0 && topBits < 32);
   {
     u64 const w = (u64(r) << topBits) + words.back();
-    words.back() = w / 3;
+    words.back() = u32(w / 3);
     r = w % 3;
   }
   for (auto it = words.rbegin() + 1, end = words.rend(); it != end; ++it) {
     u64 const w = (u64(r) << 32) + *it;
-    *it = w / 3;
+    *it = u32(w / 3);
     r = w % 3;
   }
 }
@@ -2645,7 +2645,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
       log("   %9" PRIu64 " %016" PRIx64 " %s\n", k, res, formatSecsPerIter(secsPerIt).c_str());
       RoeInfo const carryStats = readCarryStats();
       if (carryStats.N) {
-        u32 const m = ldexp(carryStats.max, 32);
+        u32 const m = u32(ldexp(carryStats.max, 32));
         double const z = carryStats.z();
         log("Carry: %x Z(%u)=%.1f\n", m, carryStats.N, z);
       }
@@ -2832,7 +2832,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
     if (k >= kEnd) {
       fs::remove (fname);
-      return std::move(SHA3{}.update(data.data(), (E-1)/8+1)).finish();
+      return std::move(SHA3{}.update(data.data(), u32((E-1)/8+1))).finish();
     }
 
     if (doStop) { throw "stop requested"; }

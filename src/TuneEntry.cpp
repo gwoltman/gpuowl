@@ -10,7 +10,7 @@ bool TuneEntry::update(vector<TuneEntry>& results) const {
   u64 const maxExp = fft.maxExp();
   [[maybe_unused]] bool didErase = false;
 
-  int i{};
+  size_t i{};
   for (i = results.size() - 1; i >= 0 && results[i].cost > cost; --i) {
     if (results[i].fft.maxExp() <= maxExp) {
       results.erase(std::next(results.begin(), i));

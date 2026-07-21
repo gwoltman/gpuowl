@@ -92,7 +92,7 @@ public:
   FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry);
 
   [[nodiscard]] std::string spec() const;
-  [[nodiscard]] u64 size() const { return shape.size(); }
+  [[nodiscard]] u32 size() const { return shape.size(); }
   [[nodiscard]] u64 maxExp()  const { return u64(maxBpw() * shape.size()); }
 
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }

@@ -20,15 +20,15 @@ public:
   Hash& update(const void* data, u32 size) { h.update(data, size); return *this; }
 
   template<typename T, std::size_t N>
-  Hash&& update(const array<T, N>& v) && { h.update(v.data(), N * sizeof(T)); return std::move(*this); }
+  Hash&& update(const array<T, N>& v) && { h.update(v.data(), u32(N * sizeof(T))); return std::move(*this); }
 
-  void update(u32 x) { h.update(&x, sizeof(x)); }
-  void update(u64 x) { h.update(&x, sizeof(x)); }
+  void update(u32 x) { h.update(&x, u32(sizeof(x))); }
+  void update(u64 x) { h.update(&x, u32(sizeof(x))); }
 
   template<typename T>
-  void update(const vector<T>& v) { h.update(v.data(), v.size() * sizeof(T)); }
+  void update(const vector<T>& v) { h.update(v.data(), u32(v.size() * sizeof(T))); }
 
-  void update(const string& s) {h.update(s.c_str(), s.size()); }
+  void update(const string& s) {h.update(s.c_str(), u32(s.size())); }
   
   auto finish() && { return std::move(h).finish(); }
 };

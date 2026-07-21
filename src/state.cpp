@@ -1,8 +1,6 @@
 // Copyright 2017 Mihai Preda.
 
 #include "state.h"
-#include "shared.h"
-
 #include <cassert>
 
 static i64 lowBits(i64 u, int bits) { return (u << (64 - bits)) >> (64 - bits); }
@@ -10,7 +8,7 @@ static i64 lowBits(i64 u, int bits) { return (u << (64 - bits)) >> (64 - bits); 
 std::vector<u32> compactBits(const vector<Word> &dataVect, u64 E) {
   if (dataVect.empty()) { return {}; } // Indicating all zero
 
-  u32 const N = dataVect.size();
+  u32 const N = u32(dataVect.size());
   const Word *data = dataVect.data();
 
   std::vector<u32> out;

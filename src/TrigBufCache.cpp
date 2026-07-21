@@ -303,9 +303,9 @@ static float trigError(float c, float s) { return abs(trigNorm(c, s) - 1.0f); }
 
 // Round trig double to float as to satisfy c^2 + s^2 == 1 as best as possible
 static float2 roundTrig(double lc, double ls) {
-  float const c1 = lc;
+  float const c1 = float(lc);
   float const c2 = nexttoward(c1, lc);
-  float const s1 = ls;
+  float const s1 = float(ls);
   float const s2 = nexttoward(s1, ls);
 
   float c = c1;
@@ -858,7 +858,7 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
 
 static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix) {
   vector<double2> tab;
-  u32 tabsize;
+  size_t tabsize;
 
   if (fft.FFT_FP64) {
     tab = genSmallTrigFP64(size, radix);
@@ -897,7 +897,7 @@ static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix) {
 
 static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   vector<double2> tab;
-  u32 tabsize;
+  size_t tabsize;
 
   if (fft.FFT_FP64) {
     tab = genSmallTrigComboFP64(args, width, middle, size, radix, tail_single_wide);
@@ -936,7 +936,7 @@ static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u
 
 static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width) {
   vector<double2> tab;
-  u32 tabsize;
+  size_t tabsize;
 
   if (fft.FFT_FP64) {
     tab = genMiddleTrigFP64(smallH, middle, width);
