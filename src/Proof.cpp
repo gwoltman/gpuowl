@@ -135,7 +135,7 @@ ProofSet::ProofSet(u64 E, u32 power)
   : E{E}, power{power} {
 
   assert(E & 1); // E is supposed to be prime
-  if (power <= 0 || power > 12) {
+  if (power <= 0 || power > 13) {
     log("Invalid proof power: %u\n", power);
     throw "Invalid proof power";
   }
@@ -163,7 +163,7 @@ ProofSet::ProofSet(u64 E, u32 power)
   assert(u32(points.size()) == (1u << power));
   assert(points.back() == E);
 
-  points.push_back(u32(-1)); // guard element
+  points.push_back(u64(-1LL)); // guard element
   cacheIt = points.begin();
 
   for ([[maybe_unused]] u64 const p : points) {
@@ -188,7 +188,7 @@ bool ProofSet::isInPoints(u64 E, u32 power, u64 k) {
 }
 
 bool ProofSet::canDo(u64 E, u32 power, u64 currentK) {
-  assert(power > 0 && power <= 12);
+  assert(power > 0 && power <= 13);
   return ProofSet{E, power}.isValidTo(currentK);
 }
 
@@ -200,7 +200,8 @@ u32 ProofSet::bestPower(u64 E) {
 
   assert(E > 0);
   // log2(x)/2 is log4(x)
-  int const power = int(10 + floor(log2(double(E) / 60e6) / 2));
+  int power = int(10 + floor(log2(double(E) / 60e6) / 2));
+  if (power > 13) power = 13;
   assert(power >= 2);
   return power;
 }

@@ -353,7 +353,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   string defines = toDefine(config);
   if (doLog) { log("config: %s\n", defines.c_str()); }
 
-  defines += toDefine("EXP", u32(E));   // FIX THIS when openCL code supports 64-bit exponents!!!
+  defines += toDefine("EXP", E);
   defines += toDefine(initializer_list<pair<string, u32>>{
                     {"WIDTH", fft.shape.width},
                     {"SMALL_HEIGHT", fft.shape.height},

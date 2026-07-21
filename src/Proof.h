@@ -58,7 +58,7 @@ public:
   u32 power;
   
 private:  
-  vector<u64> points;  
+  vector<u64> points;
   
   bool isValidTo(u64 limitK) const;
 
