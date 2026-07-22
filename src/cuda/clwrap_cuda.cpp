@@ -1193,7 +1193,7 @@ bool clIsGraphSupported(cl_device_id dev) {
 
 int clGraphBeginRecording(cl_command_queue q) {
   ensureContextCurrent();
-  CUresult r = cuStreamBeginCapture(q->stream, CU_STREAM_CAPTURE_MODE_GLOBAL);
+  CUresult r = cuStreamBeginCapture(q->stream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL);
   return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
 }
 
