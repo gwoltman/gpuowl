@@ -351,8 +351,9 @@ void Tune::tune() {
   bool time_FFTs = false;
   bool time_NTTs = false;
   bool time_FP32 = true;
+  bool time_FFT6431 = false;
   bool time_inplace_only = NVIDIAGPU;           // Default is nVidia is better off with INPLACE=1, AMD GPUs need to time extra options used when INPLACE=0
-  int quick = 7;                                        // Run config from slowest (quick=1) to fastest (quick=10)
+  int quick = 7;                                // Run config from slowest (quick=1) to fastest (quick=10)
   u64 min_exponent = 75000000;
   u64 max_exponent = 350000000;
   if (!args->fftSpec.empty()) { min_exponent = 0; max_exponent = 1000000000000ull; }
@@ -363,7 +364,8 @@ void Tune::tune() {
     if (s == "noconfig") tune_config = false;
     if (s == "fp64") time_FFTs = true;
     if (s == "ntt") time_NTTs = true;
-    if (s == "nofp32") time_FP32 = false;
+    if (s == "fp6431") time_FFT6431 = true;      // It is rare to have a GPU good at both FP64 and integer ops.  TitanV is one.  Allow tuning FFT6431.
+    if (s == "nofp32") time_FP32 = false;        // Workaround bug in some openCL compilers that cannot compile our FP32 openCL code
     if (s == "inplace") time_inplace_only = true;
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
@@ -1183,7 +1185,8 @@ skip_1K_256 = false;
 
     // Skip some FFTs and NTTs
     if (shape.fft_type == FFT64 && !time_FFTs) continue;
-    if (shape.fft_type != FFT64 && !time_NTTs) continue;
+    if (shape.fft_type == FFT6431 && !time_FFT6431) continue;
+    if (shape.fft_type != FFT64 && shape.fft_type != FFT6431 && !time_NTTs) continue;
     if ((shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231 || shape.fft_type == FFT32) && !time_FP32) continue;
 
     // Time an exponent that's good for all variants and carry-config.
@@ -1195,8 +1198,9 @@ skip_1K_256 = false;
     // Loop through all possible variants
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
 
-      // Only FP64 code supports variants
+      // Only FP64 code supports variants.  For FFT6431, we've not worked out how variant_M = 1 affects max exp.
       if (variant != 202 && !FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) continue;
+      if (shape.fft_type == FFT6431 && variant_M(variant) == 1) continue;
 
       // Only AMD GPUs support variant zero (BCAST) and only if width <= 1024.  CLANG doesn't support builtins.  Let NO_ASM bypass variant zero.
       if (variant_W(variant) == 0) {

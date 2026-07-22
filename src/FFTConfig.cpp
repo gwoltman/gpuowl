@@ -83,7 +83,7 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
 
 vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
   vector<FFTShape> configs;
-  for (enum FFT_TYPES const type : {FFT64, FFT3161, FFT3261, FFT61, FFT323161}) {
+  for (enum FFT_TYPES const type : {FFT64, FFT6431, FFT3161, FFT3261, FFT61, FFT323161}) {
     for (u32 const width : {256, 512, 1024, 4096}) {
       for (u32 const height : {256, 512, 1024}) {
         if (width == 256 && height == 1024) { continue; } // Skip because we prefer width >= height
