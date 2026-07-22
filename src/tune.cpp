@@ -1085,7 +1085,7 @@ void Tune::tune() {
     }
 
     // See if disabling our default register usage makes sense
-    if (0) {
+    if (true) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_noreg = 0;
