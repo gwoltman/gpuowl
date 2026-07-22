@@ -772,11 +772,6 @@ void OVERLOAD bar(const u32 WG) {
   }
 }
 
-// A half-barrier is only needed when half-a-workgroup needs a barrier.
-// This is used e.g. by the double-wide tailSquare, where LDS is split between the halves.
-void halfBar() { if (get_enqueued_local_size(0) / 2 > WAVEFRONT) { bar(); } }
-
-
 // nVidia GPUs (Hopper architecture sm 9.0 and later) support Programatic Dependent Launch where the tail end execution of one kernel can overlap
 // with the beginning of the next kernel.  This requires a special launch kernel command that is only available in CUDA 12.0 and later.
 // These routines let us take advantage of this CUDA feature.  These routines do nothing in OpenCL.

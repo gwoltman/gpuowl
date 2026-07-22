@@ -1575,7 +1575,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 #if NTT_GF31
 
 void OVERLOAD shufl(local GF31 *lds, GF31 *u, u32 f, u32 numWG, u32 lowMe) {
-  shufl32((local F2 *) lds, (local F2 *) u, f, numWG, lowMe);
+  shufl32((local F2 *) lds, (F2 *) u, f, numWG, lowMe);
 }
 
 void OVERLOAD fft_RADIX(GF31 *u) {
