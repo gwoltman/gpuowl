@@ -167,16 +167,11 @@ named "config.txt" in the prpll run directory.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune
 -roe               : measure the Round-Off Error (Z) for more iterations (slow)
 
--use <define>      : comma separated list of defines for configuring gpuowl.cl, such as:
+-use <define>      : comma separated list of defines for configuring openCL code, such as:
   -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
                      may not work on Nvidia GPUs or on RDNA AMD GPUs where it produces errors
                      (which are nevertheless detected).
   -use NO_ASM      : do not use __asm() blocks (inline assembly)
-  -use STATS=<val> : enable carry statistics collection & logging, for the kernel according to <val>:
-                     1 = CarryFused
-                     2 = CarryFusedMul
-                     4 = CarryA
-                     8 = CarryMul
   -use TAIL_KERNELS=<val> : change how tailSquare operates according to <val>:
                      0 = single wide, single kernel
                      1 = single wide, two kernels
@@ -196,18 +191,21 @@ named "config.txt" in the prpll run directory.
                      1 = All trig values are pre-computed and read from memmory.
 
   -use DEBUG       : enable asserts in OpenCL kernels (slow, developers)
+  -use STATS=<val> : enable carry statistics collection & logging (developers), for the kernel according to <val>:
+                     1 = CarryFused, 2 = CarryFusedMul, 4 = CarryA, 8 = CarryMul
 
 -tune <options>    : Looks for best settings to include in config.txt.  Times many FFTs to find fastest one to test exponents -- written to tune.txt.
                      An -fft <spec> can be given on the command line to limit which FFTs are timed.
                      Options are not required.  If present, the options are a comma separated list from below.
                          noconfig     - Skip timings to find best config.txt settings.
-			 inplace      - Skip timings for not-in-place FFTs and NTTs.  All nVidia GPUs seem to prefer in-place FFTs and NTTs.
-			 fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
+                         inplace      - Skip timings for not-in-place FFTs and NTTs.  All nVidia GPUs seem to prefer in-place FFTs and NTTs.
+                         fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
                          ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
                          nofp32       - Do not tune for settings that affect FP32 FFTs.  Some openCL compilers have trouble with FP32.
                          minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.
                          maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.
-                         quick=<val> - Higher values equals a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
+                         fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
+                         quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
 -device <N>        : select the GPU at position N in the list of devices
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
 -pci    <BDF>      : select the GPU with the given PCI BDF, e.g. "0c:00.0"
