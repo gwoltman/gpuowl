@@ -420,7 +420,9 @@ void Args::parse(const string& line) {
 
 void Args::setDefaults() {
   uid = getUidFromPos(device);
-  log("device %d, OpenCL %s, unique id '%s'\n", device, getDriverVersionByPos(device).c_str(), uid.c_str());
+  cl_device_id dev = getDevice(device);
+  log("device %d, OpenCL %s, %s, unique id '%s'\n", device, getDriverVersionByPos(device).c_str(),
+      isAmdGpu(dev) ? getBoardName(dev).c_str() : getDeviceName(dev).c_str(), uid.c_str());
   
   if (!masterDir.empty()) {
     assert(masterDir.is_absolute());
