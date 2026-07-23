@@ -22,7 +22,7 @@ jobs:
     env:
       CXX: ${{ matrix.cxx }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Install
       run: |
         sudo apt-get update -y
@@ -30,15 +30,15 @@ jobs:
         $CXX --version
     - name: Script
       run: |
-        make -O -j "$(nproc)"
-        cd build-release
+        make DEBUG=1 -O -j "$(nproc)"
+        cd build-debug
         rm -f -- *.o
         ./prpll -h
     - uses: actions/upload-artifact@v7
       if: always()
       with:
         name: ${{ matrix.os }}_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_${{ matrix.cxx }}_prpll
-        path: ${{ github.workspace }}
+        path: build-debug/
 
   Linux-CUDA:
     name: Linux CUDA
@@ -55,7 +55,7 @@ jobs:
     env:
       CXX: ${{ matrix.cxx }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Install
       run: |
         sudo apt-get update -y
@@ -63,22 +63,22 @@ jobs:
         $CXX --version
     - name: Script
       run: |
-        make CUDA=1 -O -j "$(nproc)"
-        cd build-cuda
+        make DEBUG=1 CUDA=1 -O -j "$(nproc)"
+        cd build-debug
         rm -f -- *.o
         ./prpll -h
     - uses: actions/upload-artifact@v7
       if: always()
       with:
         name: ${{ matrix.os }}_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_${{ matrix.cxx }}_cuda_prpll
-        path: ${{ github.workspace }}
+        path: build-debug/
 
   Cppcheck:
     name: Cppcheck
 
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Install
       run: |
         sudo apt-get update -y
@@ -91,7 +91,7 @@ jobs:
 
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Script
       run: clang-tidy -checks='bugprone-*,-bugprone-reserved-identifier,cert-*,-cert-dcl37-c,-cert-dcl51-cpp,clang-analyzer-*,concurrency-*,misc-*,-misc-no-recursion,modernize-*,-modernize-use-trailing-return-type,performance-*,portability-*,readability-const-return-type,readability-container-*,readability-duplicate-include,readability-else-after-return,readability-make-member-function-cons,readability-non-const-parameter,readability-redundant-*,readability-simplify-*,readability-string-compare,readability-use-*' -header-filter='.*' src/*.cpp -- -Wall -O3 -std=gnu++20
       continue-on-error: true
@@ -101,13 +101,13 @@ jobs:
 
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Script
       run: shopt -s globstar; shellcheck -o avoid-nullary-conditions,check-set-e-suppressed,deprecate-which,quote-safe-variables,require-double-brackets -s bash **/*.sh
       continue-on-error: true
 
-  Windows:
-    name: Windows
+  Windows-MSYS2:
+    name: Windows MSYS2
 
     runs-on: ${{ matrix.os }}
     strategy:
@@ -119,7 +119,7 @@ jobs:
       CXX: ${{ matrix.cxx }}
       PACKAGE_PREFIX: mingw-w64-${{ endsWith(matrix.os, '-arm') && 'clang-aarch64' || 'x86_64' }}-
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Before Install
       run: |
         echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -137,15 +137,63 @@ jobs:
         & $env:CXX --version
     - name: Script
       run: |
-        make -O -j $env:NUMBER_OF_PROCESSORS
-        cd build-release
+        make DEBUG=1 -O -j $env:NUMBER_OF_PROCESSORS
+        cd build-debug
         rm *.o
         .\prpll.exe -h
     - uses: actions/upload-artifact@v7
       if: always()
       with:
         name: win_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_${{ matrix.cxx }}_prpll
-        path: ${{ github.workspace }}
+        path: build-debug/
+
+  Windows-MSVC-OpenCL:
+    name: Windows MSVC OpenCL
+
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v7
+    - uses: step-security/msvc-dev-cmd@v1
+    - name: Install OpenCL
+      run: |
+        vcpkg install opencl
+    - name: Before Script
+      shell: bash
+      run: |
+        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
+        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
+    - name: Script
+      run: |
+        msbuild PRPLL.sln /m /p:Configuration=OpenCL-Debug /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
+        & .\build-msvc\OpenCL\Debug\prpll.exe -h
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: win_x86_msvc_opencl_prpll
+        path: build-msvc/
+
+  Windows-MSVC-CUDA:
+    name: Windows MSVC CUDA
+
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v7
+    - uses: step-security/msvc-dev-cmd@v1
+    - name: Install CUDA Toolkit
+      uses: N-Storm/cuda-toolkit@v0.2.34
+    - name: Before Script
+      shell: bash
+      run: |
+        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
+        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
+    - name: Script
+      run: |
+        msbuild PRPLL.sln /m /p:Configuration=CUDA-Debug
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: win_x86_msvc_cuda_prpll
+        path: build-msvc/
 
   macOS:
     name: macOS
@@ -158,18 +206,18 @@ jobs:
     env:
       CXX: g++-15
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Install
       run: |
         $CXX --version
     - name: Script
       run: |
-        make -j "$(sysctl -n hw.ncpu)"
-        cd build-release
+        make DEBUG=1 -j "$(sysctl -n hw.ncpu)"
+        cd build-debug
         rm -f -- *.o
         ./prpll -h
     - uses: actions/upload-artifact@v7
       if: always()
       with:
         name: macos_${{ endsWith(matrix.os, '-intel') && 'x86' || 'arm' }}_prpll
-        path: ${{ github.workspace }}
+        path: build-debug/

@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="OpenCL-Debug|x64">
+      <Configuration>OpenCL-Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="OpenCL-Release|x64">
+      <Configuration>OpenCL-Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="CUDA-Debug|x64">
+      <Configuration>CUDA-Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="CUDA-Release|x64">
+      <Configuration>CUDA-Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="CUDA-Release-non-static|x64">
+      <Configuration>CUDA-Release-non-static</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include=".\src\AllocTrac.cpp" />
+    <ClCompile Include=".\src\Args.cpp" />
+    <ClCompile Include=".\src\bundle.cpp" />
+    <ClCompile Include=".\src\clwrap.cpp" />
+    <ClCompile Include=".\src\common.cpp" />
+    <ClCompile Include=".\src\CycleFile.cpp" />
+    <ClCompile Include=".\src\Event.cpp" />
+    <ClCompile Include=".\src\FFTConfig.cpp" />
+    <ClCompile Include=".\src\File.cpp" />
+    <ClCompile Include=".\src\fs.cpp" />
+    <ClCompile Include=".\src\Gpu.cpp" />
+    <ClCompile Include=".\src\gpuid.cpp" />
+    <ClCompile Include=".\src\Kernel.cpp" />
+    <ClCompile Include=".\src\KernelCompiler.cpp" />
+    <ClCompile Include=".\src\log.cpp" />
+    <ClCompile Include=".\src\main.cpp" />
+    <ClCompile Include=".\src\md5.cpp" />
+    <ClCompile Include=".\src\Primes.cpp" />
+    <ClCompile Include=".\src\Profile.cpp" />
+    <ClCompile Include=".\src\Proof.cpp" />
+    <ClCompile Include=".\src\Queue.cpp" />
+    <ClCompile Include=".\src\Saver.cpp" />
+    <ClCompile Include=".\src\sha3.cpp" />
+    <ClCompile Include=".\src\Signal.cpp" />
+    <ClCompile Include=".\src\state.cpp" />
+    <ClCompile Include=".\src\Task.cpp" />
+    <ClCompile Include=".\src\TimeInfo.cpp" />
+    <ClCompile Include=".\src\timeutil.cpp" />
+    <ClCompile Include=".\src\Trig.cpp" />
+    <ClCompile Include=".\src\TrigBufCache.cpp" />
+    <ClCompile Include=".\src\tune.cpp" />
+    <ClCompile Include=".\src\TuneEntry.cpp" />
+    <ClCompile Include=".\src\version.cpp" />
+    <ClCompile Include=".\src\Worktodo.cpp" />
+    <ClCompile Include=".\src\cuda\clwrap_cuda.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'=='OpenCL-Debug' Or '$(Configuration)'=='OpenCL-Release'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include=".\src\cuda\cudawrap.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'=='OpenCL-Debug' Or '$(Configuration)'=='OpenCL-Release'">true</ExcludedFromBuild>
+    </ClCompile>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{2B3F9C8E-3384-0407-D9E1-D3E86AA8823A}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>PRPLL</RootNamespace>
+    <ProjectName>PRPLL</ProjectName>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)'=='OpenCL-Debug' Or '$(Configuration)'=='CUDA-Debug'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='OpenCL-Release' Or '$(Configuration)'=='CUDA-Release' Or '$(Configuration)'=='CUDA-Release-non-static'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)'=='OpenCL-Debug'">
+    <OutDir>$(ProjectDir)build-msvc\OpenCL\Debug\</OutDir>
+    <IntDir>$(ProjectDir)build-msvc\obj\OpenCL\Debug\</IntDir>
+    <TargetName>prpll</TargetName>
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='OpenCL-Release'">
+    <OutDir>$(ProjectDir)build-msvc\OpenCL\Release\</OutDir>
+    <IntDir>$(ProjectDir)build-msvc\obj\OpenCL\Release\</IntDir>
+    <TargetName>prpll</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='CUDA-Debug'">
+    <OutDir>$(ProjectDir)build-msvc\CUDA\Debug\</OutDir>
+    <IntDir>$(ProjectDir)build-msvc\obj\CUDA\Debug\</IntDir>
+    <TargetName>prpll</TargetName>
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='CUDA-Release'">
+    <OutDir>$(ProjectDir)build-msvc\CUDA\Release\</OutDir>
+    <IntDir>$(ProjectDir)build-msvc\obj\CUDA\Release\</IntDir>
+    <TargetName>prpll</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='CUDA-Release-non-static'">
+    <OutDir>$(ProjectDir)build-msvc\CUDA\Release-non-static\</OutDir>
+    <IntDir>$(ProjectDir)build-msvc\obj\CUDA\Release-non-static\</IntDir>
+    <TargetName>prpll</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>WIN32;WIN64;_CONSOLE;_CRT_SECURE_NO_WARNINGS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='OpenCL-Debug' Or '$(Configuration)'=='CUDA-Debug'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='OpenCL-Release' Or '$(Configuration)'=='CUDA-Release' Or '$(Configuration)'=='CUDA-Release-non-static'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='OpenCL-Debug'">
+    <Link>
+      <AdditionalLibraryDirectories>$(OpenCLRoot)\debug\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>OpenCL.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='OpenCL-Release'">
+    <Link>
+      <AdditionalLibraryDirectories>$(OpenCLRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>OpenCL.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='CUDA-Debug' Or '$(Configuration)'=='CUDA-Release' Or '$(Configuration)'=='CUDA-Release-non-static'">
+    <ClCompile>
+      <PreprocessorDefinitions>CUDA_BACKEND;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)\src\cuda;$(CUDA_PATH)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='CUDA-Debug' Or '$(Configuration)'=='CUDA-Release-non-static'">
+    <Link>
+      <AdditionalDependencies>cuda.lib;nvrtc.lib;Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='CUDA-Release'">
+    <Link>
+      <AdditionalDependencies>cuda.lib;nvrtc_static.lib;nvrtc-builtins_static.lib;nvptxcompiler_static.lib;Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

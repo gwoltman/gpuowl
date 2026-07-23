@@ -47,7 +47,7 @@ endif
 ifeq ($(DEBUG), 1)
 
 BIN=build-debug
-CXXFLAGS = -g $(COMMON_FLAGS)
+CXXFLAGS = -g -Og $(COMMON_FLAGS)
 STRIP=
 
 else
