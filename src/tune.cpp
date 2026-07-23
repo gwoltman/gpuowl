@@ -938,7 +938,7 @@ void Tune::tune() {
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_modm31 = modm31; }
       }
       log("Best MODM31 is %u.  Default MODM31 is 0.\n", best_modm31);
-      configsUpdate(current_cost, best_cost, 0.003, "MODM31", best_modm31, newConfigKeyVals, suggestedConfigKeyVals);
+      configsUpdate(current_cost, best_cost, 0.000, "MODM31", best_modm31, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["MODM31"] = to_string(best_modm31);
     }
 
@@ -1064,7 +1064,7 @@ void Tune::tune() {
 
     // Find best CUDA compiler options
 #if CUDA_BACKEND
-    // Find best GRAPHS setting
+    // Find best GRAPHS setting.  Require a clear advantage to override the default GRAPHS setting.  GRAPHS=1 will use less CPU time.
     if (true) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
@@ -1080,7 +1080,7 @@ void Tune::tune() {
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_graphs = graphs; }
       }
       log("Best GRAPHS is %u.  Default GRAPHS is 1.\n", best_graphs);
-      configsUpdate(current_cost, best_cost, 0.000, "GRAPHS", best_graphs, newConfigKeyVals, suggestedConfigKeyVals);
+      configsUpdate(current_cost, best_cost, 0.003, "GRAPHS", best_graphs, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["GRAPHS"] = to_string(best_graphs);
     }
 
