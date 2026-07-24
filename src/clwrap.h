@@ -133,6 +133,9 @@ u32 getEventInfo(cl_event event);
 cl_context getQueueContext(cl_command_queue q);
 
 #ifdef CUDA_BACKEND
+// Set L1 cache configuration - 4 possibilities
+void cudaSetL1Config(int x);
+
 // Set L2 cache persistence for multiple read-only buffers on the given stream.
 // Computes the address span covering all buffers and sets a single access policy window.
 // Buffers that are nullptr or zero-size are skipped.

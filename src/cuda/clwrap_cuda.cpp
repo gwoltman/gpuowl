@@ -1123,6 +1123,15 @@ int clSetKernelArgSVMPointer(cl_kernel k, unsigned pos, const void* ptr) {
 
 // C++ linkage — must be outside the extern "C" block above.
 
+// Set L1 cache configuration
+void cudaSetL1Config(int x) {
+  ensureContextCurrent();
+  cuCtxSetCacheConfig (x == 0 ? CU_FUNC_CACHE_PREFER_NONE :            // no preference for shared memory or L1 (default)
+                       x == 1 ? CU_FUNC_CACHE_PREFER_SHARED :          // prefer larger shared memory and smaller L1 cache
+                       x == 2 ? CU_FUNC_CACHE_PREFER_L1 :              // prefer larger L1 cache and smaller shared memory
+                       CU_FUNC_CACHE_PREFER_EQUAL);                    // prefer equal sized L1 cache and shared memory
+}
+
 // Set L2 cache persistence for multiple read-only buffers on the given stream.
 // Computes the minimum address span covering all buffers, then sets one access policy
 // window with hitRatio sized so that only the actual buffer bytes get persisting treatment,

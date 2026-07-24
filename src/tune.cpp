@@ -1064,6 +1064,26 @@ void Tune::tune() {
 
     // Find best CUDA compiler options
 #if CUDA_BACKEND
+    // Find best L1CUDA setting.
+    if (true) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_l1cuda = 0;
+      u32 current_l1cuda = args->value("L1CUDA", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 l1cuda : {0, 1, 2, 3}) {
+        args->flags["L1CUDA"] = to_string(l1cuda);
+        double cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using L1CUDA=%u is %6.1f\n", fft.spec().c_str(), l1cuda, cost);
+        if (l1cuda == current_l1cuda) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_l1cuda = l1cuda; }
+      }
+      log("Best L1CUDA is %u.  Default L1CUDA is 1.\n", best_l1cuda);
+      configsUpdate(current_cost, best_cost, 0.000, "L1CUDA", best_l1cuda, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["L1CUDA"] = to_string(best_l1cuda);
+    }
+
     // Find best GRAPHS setting.  Require a clear advantage to override the default GRAPHS setting.  GRAPHS=1 will use less CPU time.
     if (true) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
@@ -1084,7 +1104,7 @@ void Tune::tune() {
       args->flags["GRAPHS"] = to_string(best_graphs);
     }
 
-    // See if disabling our default register usage makes sense
+    // See if disabling the default register usage makes sense
     if (true) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());

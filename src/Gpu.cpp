@@ -992,6 +992,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   // Set flag indicating we're going to use CUDA graphs
   use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && args.value("GRAPHS", 1);
 
+  // Set L1 cache configuration.  Really we should only do this once rather than once per worker.
+  // However, the current way PRPLL is organized would then make this option hard to tune.
+#if CUDA_BACKEND
+    cudaSetL1Config(args.value("L1CUDA", 0));
+#endif
+
   // Process the queue.  I don't know if this is really needed.
   queue.finish();
 }
