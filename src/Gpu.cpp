@@ -291,7 +291,8 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "NOREG",                  // CUDA - experimental
                               "WMUL",
                               "MULTI_Q",
-                              "GRAPHS"
+                              "GRAPHS",
+                              "L1CUDA"
                             });
     if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
