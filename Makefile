@@ -24,7 +24,11 @@ ifeq ($(CUDA), 1)
  CUDASRCS1 = clwrap_cuda.cpp cudawrap.cpp
  CUDAFLAGS = -DCUDA_BACKEND -Isrc/cuda -I/usr/local/cuda/include
  CUDAOBJS = $(CUDASRCS1:%.cpp=$(BIN)/%.o)
- OPENCL_LIBS = -L/usr/local/cuda/lib64 -lcuda -lnvrtc
+ ifeq ($(CUDA_STATIC), 1)
+  OPENCL_LIBS = -L/usr/local/cuda/lib64 -Wl,--start-group -lnvrtc_static -lnvrtc-builtins_static -lnvptxcompiler_static -Wl,--end-group -lcuda
+ else
+  OPENCL_LIBS = -L/usr/local/cuda/lib64 -lnvrtc -lcuda
+ endif
 else
  BIN=build-release
  CUDAFLAGS =
