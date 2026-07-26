@@ -1079,7 +1079,7 @@ void Tune::tune() {
         if (l1cuda == current_l1cuda) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_l1cuda = l1cuda; }
       }
-      log("Best L1CUDA is %u.  Default L1CUDA is 1.\n", best_l1cuda);
+      log("Best L1CUDA is %u.  Default L1CUDA is 0.\n", best_l1cuda);
       configsUpdate(current_cost, best_cost, 0.000, "L1CUDA", best_l1cuda, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["L1CUDA"] = to_string(best_l1cuda);
     }
