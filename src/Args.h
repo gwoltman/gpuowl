@@ -58,7 +58,7 @@ public:
 
   bool safeMath = true;
   bool clean = true;
-  bool verbose = false;
+  int verbose = 0;
   bool useCache = false;
   bool profile = false;
   bool smallest = false;

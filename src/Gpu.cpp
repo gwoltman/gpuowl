@@ -981,7 +981,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   bufStatsCarry.zero();
   bufTrue.write({1});
 
-  if (args.verbose) {
+  if (args.verbose >= 99) {
     selftestTrig();
   }
 
