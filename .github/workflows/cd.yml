@@ -1,0 +1,157 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+jobs:
+  Linux-OpenCL:
+    name: Linux OpenCL
+
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Script
+      run: |
+        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace ubuntu:22.04 bash -s <<'EOF'
+        set -e -o pipefail
+        apt-get update -y
+        apt-get install -y build-essential git ocl-icd-opencl-dev
+        g++ --version
+
+        make -O -j "$(nproc)"
+        cd build-release
+        rm -f -- *.o
+        ./prpll -h
+        EOF
+    - uses: actions/upload-artifact@v7
+      with:
+        name: PRPLL-NTT_linux_x86_opencl
+        path: |
+          README.*
+          LICENSE
+          tools/
+          build-release/*
+
+  Linux-CUDA:
+    name: Linux CUDA
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+        - cuda: '13.2.1'
+          container: 'ubuntu24.04'
+        - cuda: '12.9.2'
+          container: 'ubuntu24.04'
+        - cuda: '11.8.0'
+          container: 'ubuntu22.04'
+        # - cuda: '10.2'
+        #   container: 'ubuntu18.04'
+      fail-fast: false
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Script
+      run: |
+        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "nvcr.io/nvidia/cuda:${{ matrix.cuda }}-devel-${{ matrix.container }}" bash -s <<'EOF'
+        set -e -o pipefail
+        apt-get update -y
+        apt-get install -y build-essential git
+        g++ --version
+
+        make CUDA=1 ${{ matrix.cuda != '10.2' && 'CUDA_STATIC=1' || '' }} -O -j "$(nproc)"
+        cd build-cuda
+        rm -f -- *.o
+        if [[ "${{ matrix.cuda }}" == "10.2" ]]; then
+          cp /usr/local/cuda/lib64/libnvrtc.so.10.2 /usr/local/cuda/lib64/libnvrtc-builtins.so.10.2 .
+        fi
+        # ./prpll -h
+        EOF
+    - uses: actions/upload-artifact@v7
+      with:
+        name: PRPLL-NTT_linux_x86_cuda_${{ matrix.cuda }}
+        path: |
+          README.*
+          LICENSE
+          tools/
+          build-cuda/*
+
+  Windows-OpenCL:
+    name: Windows OpenCL
+
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - uses: step-security/msvc-dev-cmd@v1
+    - name: Install OpenCL
+      run: |
+        vcpkg install opencl
+    - name: Before Script
+      shell: bash
+      run: |
+        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
+        printf '"%s"\n' "$(basename "$(git describe --tags --long --always)")" > src/version.inc
+    - name: Script
+      run: |
+        msbuild PRPLL.sln /m /p:Configuration=OpenCL-Release /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
+        cd build-msvc\OpenCL\Release\
+        & .\prpll -h
+    - uses: actions/upload-artifact@v7
+      with:
+        name: PRPLL-NTT_win_x86_opencl
+        path: |
+          README.*
+          LICENSE
+          tools/
+          build-msvc/OpenCL/Release/*
+
+  Windows-CUDA:
+    name: Windows CUDA
+
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        cuda: ['13.2.1', '12.9.2', '11.8.0', '10.2.89']
+      fail-fast: false
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - uses: step-security/msvc-dev-cmd@v1
+    - name: Install CUDA Toolkit
+      uses: N-Storm/cuda-toolkit@v0.2.34
+      with:
+        cuda: ${{ matrix.cuda }}
+    - name: Before Script
+      shell: bash
+      run: |
+        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
+        printf '"%s"\n' "$(basename "$(git describe --tags --long --always)")" > src/version.inc
+    - name: Script
+      run: |
+        msbuild PRPLL.sln /m /p:Configuration=CUDA-${{ matrix.cuda != '10.2.89' && 'Release' || 'Release-non-static' }}
+        cd build-msvc\CUDA\Release*\
+        if ("${{ matrix.cuda }}" -eq "10.2.89") {
+          Copy-Item "$env:CUDA_PATH\bin\nvrtc64_102_0.dll", "$env:CUDA_PATH\bin\nvrtc-builtins64_102.dll" .
+        }
+        # & .\prpll -h
+    - uses: actions/upload-artifact@v7
+      with:
+        name: PRPLL-NTT_win_x86_cuda_${{ matrix.cuda }}
+        path: |
+          README.*
+          LICENSE
+          tools/
+          build-msvc/CUDA/Release*/*

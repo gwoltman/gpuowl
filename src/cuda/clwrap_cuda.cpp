@@ -1136,6 +1136,7 @@ void cudaSetL1Config(int x) {
 // Computes the minimum address span covering all buffers, then sets one access policy
 // window with hitRatio sized so that only the actual buffer bytes get persisting treatment,
 // not the gaps between non-contiguous allocations.
+#if CUDA_VERSION >= 11000
 [[maybe_unused]] static void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers) {
   if (!q) return;
 
@@ -1188,6 +1189,7 @@ void cudaSetL1Config(int x) {
             buffers.size());
   }
 }
+#endif
 
 
 // OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features
@@ -1213,8 +1215,10 @@ int clGraphEndRecording(cl_command_queue q, cl_graph* graph) {
   CUresult r = cuStreamEndCapture(q->stream, &g->graph);
 #if CUDA_VERSION >= 12000
   if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, 0);
-#else
+#elif CUDA_VERSION >= 11040
   if (r == CUDA_SUCCESS) r = cuGraphInstantiateWithFlags(&g->graphExec, g->graph, 0);
+#else
+  if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, nullptr, nullptr, 0);
 #endif
   *graph = g;
   return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;

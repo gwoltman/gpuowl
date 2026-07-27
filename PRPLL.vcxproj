@@ -158,6 +158,14 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>WINVER=0x0601;_WIN32_WINNT=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalOptions>/SUBSYSTEM:CONSOLE,6.01 %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='OpenCL-Debug'">
     <Link>
       <AdditionalLibraryDirectories>$(OpenCLRoot)\debug\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
@@ -186,7 +194,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='CUDA-Release'">
     <Link>
-      <AdditionalDependencies>cuda.lib;nvrtc_static.lib;nvrtc-builtins_static.lib;nvptxcompiler_static.lib;Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>cuda.lib;nvrtc_static.lib;nvrtc-builtins_static.lib;nvptxcompiler_static.lib;User32.lib;Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
