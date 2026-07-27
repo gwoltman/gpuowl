@@ -10,7 +10,6 @@ Global
 		OpenCL-Release|x64 = OpenCL-Release|x64
 		CUDA-Debug|x64 = CUDA-Debug|x64
 		CUDA-Release|x64 = CUDA-Release|x64
-		CUDA-Release-non-static|x64 = CUDA-Release-non-static|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{2B3F9C8E-3384-0407-D9E1-D3E86AA8823A}.OpenCL-Debug|x64.ActiveCfg = OpenCL-Debug|x64
@@ -21,8 +20,6 @@ Global
 		{2B3F9C8E-3384-0407-D9E1-D3E86AA8823A}.CUDA-Debug|x64.Build.0 = CUDA-Debug|x64
 		{2B3F9C8E-3384-0407-D9E1-D3E86AA8823A}.CUDA-Release|x64.ActiveCfg = CUDA-Release|x64
 		{2B3F9C8E-3384-0407-D9E1-D3E86AA8823A}.CUDA-Release|x64.Build.0 = CUDA-Release|x64
-		{2B3F9C8E-3384-0407-D9E1-D3E86AA8823A}.CUDA-Release-non-static|x64.ActiveCfg = CUDA-Release-non-static|x64
-		{2B3F9C8E-3384-0407-D9E1-D3E86AA8823A}.CUDA-Release-non-static|x64.Build.0 = CUDA-Release-non-static|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

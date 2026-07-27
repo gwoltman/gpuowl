@@ -4,6 +4,11 @@
 
 # On Windows invoke with "make exe" or "make all"
 
+DEBUG = 0
+CUDA = 0
+STATIC_RUNTIME = 0
+STATIC_CUDA = 0
+
 # Uncomment below as desired to set a particular compiler or force a debug build:
 # CXX = g++-12
 # DEBUG = 1
@@ -12,22 +17,17 @@
 
 HOST_OS = $(shell uname -s)
 
-ifeq ($(HOST_OS), Darwin)
-# Real GCC (not clang), needed for 128-bit floats and std::filesystem::path
-CXX ?= g++-15
-else
 CXX ?= g++
-endif
 
 ifeq ($(CUDA), 1)
  BIN=build-cuda
  CUDASRCS1 = clwrap_cuda.cpp cudawrap.cpp
  CUDAFLAGS = -DCUDA_BACKEND -Isrc/cuda -I/usr/local/cuda/include
  CUDAOBJS = $(CUDASRCS1:%.cpp=$(BIN)/%.o)
- ifeq ($(CUDA_STATIC), 1)
-  OPENCL_LIBS = -L/usr/local/cuda/lib64 -Wl,--start-group -lnvrtc_static -lnvrtc-builtins_static -lnvptxcompiler_static -Wl,--end-group -lcuda
+ ifeq ($(STATIC_CUDA), 1)
+  OPENCL_LIBS = -L/usr/local/cuda/lib64 -Wl,--start-group -lnvrtc_static -lnvrtc-builtins_static -lnvptxcompiler_static -Wl,--end-group -lcuda -lpthread -ldl
  else
-  OPENCL_LIBS = -L/usr/local/cuda/lib64 -lnvrtc -lcuda
+  OPENCL_LIBS = -L/usr/local/cuda/lib64 -Wl,-rpath,'$$ORIGIN' -lnvrtc -lcuda -lpthread
  endif
 else
  BIN=build-release
@@ -36,15 +36,24 @@ else
  ifeq ($(HOST_OS), Darwin)
   OPENCL_LIBS = -framework OpenCL
  else
-  OPENCL_LIBS = -lOpenCL
+  OPENCL_LIBS = -lOpenCL -lpthread
  endif
 endif
 
-ifneq ($(findstring MINGW, $(HOST_OS)), MINGW)
- COMMON_FLAGS = -Wall $(CUDAFLAGS) -std=c++20 -static-libstdc++ -static-libgcc
-else
+COMMON_FLAGS = -Wall -Wextra $(CUDAFLAGS) -std=c++20
+
+ifeq ($(STATIC_RUNTIME),1)
+ LDFLAGS += -static-libstdc++ -static-libgcc
+
+ ifeq ($(findstring MINGW, $(HOST_OS)), MINGW)
 # For mingw-64 use this:
- COMMON_FLAGS = -Wall $(CUDAFLAGS) -std=c++20 -static-libstdc++ -static-libgcc -static
+  LDFLAGS += -static
+ endif
+endif
+
+ifeq ($(findstring MINGW, $(HOST_OS)), MINGW)
+ CPPFLAGS += -DWINVER=0x0601 -D_WIN32_WINNT=0x0601
+ LDFLAGS += -Wl,--subsystem,console:6.01
 endif
 # -fext-numeric-literals
 
@@ -52,12 +61,10 @@ ifeq ($(DEBUG), 1)
 
 BIN=build-debug
 CXXFLAGS = -g -Og $(COMMON_FLAGS)
-STRIP=
 
 else
 
-CXXFLAGS = -O3 -DNDEBUG $(COMMON_FLAGS)
-STRIP=-s
+CXXFLAGS = -O3 -flto -DNDEBUG $(COMMON_FLAGS)
 
 endif
 
@@ -81,14 +88,14 @@ prpll: $(BIN)/prpll
 amd: $(BIN)/prpll-amd
 
 #$(BIN)/test: $(BIN)/test.o
-#	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBPATH) ${STRIP}
+#	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBPATH)
 
 $(BIN)/prpll: ${OBJS}
-	$(CXX) $(CXXFLAGS) -o $@ ${OBJS} $(LIBPATH) $(OPENCL_LIBS) ${STRIP}
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) -o $@ ${OBJS} $(LIBPATH) $(OPENCL_LIBS)
 
 # Instead of linking with libOpenCL, link with libamdocl64
 $(BIN)/prpll-amd: ${OBJS}
-	$(CXX) $(CXXFLAGS) -o $@ ${OBJS} $(LIBPATH) -lamdocl64 -L/opt/rocm/lib ${STRIP}
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) -o $@ ${OBJS} $(LIBPATH) -lamdocl64 -L/opt/rocm/lib
 
 clean:
 	rm -rf build-debug build-release build-cuda
