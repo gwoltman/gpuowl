@@ -12,6 +12,10 @@
 #define LDS_BYTES     ((WG * RADIX + 56) * SHUFL_BYTES)
 #elif LDSPAD && SHUFL_BYTES == 8 && RADIX == 4
 #define LDS_BYTES     ((WG * RADIX + 12) * SHUFL_BYTES)
+#elif LDSPAD && SHUFL_BYTES == 4 && RADIX == 8
+#define LDS_BYTES     ((WG * RADIX + 56) * SHUFL_BYTES)
+#elif LDSPAD && SHUFL_BYTES == 4 && RADIX == 4
+#define LDS_BYTES     ((WG * RADIX + 12) * SHUFL_BYTES)
 #else
 #define LDS_BYTES     (WG * RADIX * SHUFL_BYTES)
 #endif
@@ -401,7 +405,7 @@ void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
       bar(WG);
       for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 2) & 7) * (WG + 1) + (lowMe / 16) * 16 + (lowMe & 1) * 8 + i] = u[i]; }
       bar(WG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[(i / 2) * 16 + (i & 1) * (4 * (WG + 1)) + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; }
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[(i / 2) * 16 + (i & 1) * (4 * (WG + 1)) +  (lowMe / 16)      * (WG + 1) + (lowMe & 15)]; }
       else          for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 64 + (lowMe / 128) * 16             + ((lowMe / 16) & 7) * (WG + 1) + (lowMe & 15)]; }
       return;
     }
@@ -430,7 +434,7 @@ void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
       bar(WG);
       for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 1) + (lowMe / 16) * 16 + (lowMe & 3) * 4 + i] = u[i]; }
       bar(WG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 16                     + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; }
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 16                     +  (lowMe / 16)      * (WG + 1) + (lowMe & 15)]; }
       else          for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; }
       return;
     }
@@ -514,12 +518,92 @@ void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
     for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * WG + lowMe]; }
   }
 
-  // If SHUFL_BYTES is 4 we split the F2 values into 2 int values.  These are written to LDS memory using two instructions.
-  // NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS!!
+  // If SHUFL_BYTES is 4 we split the F2 values into two F values.  These are written to LDS memory using two instructions.
   else if (SHUFL_BYTES == 4) {
-    // Accessing lds memory as ints might be faster than F2 accesses (halving LDS memory requirements)
     local F* lds = ((local F*) lds2);
     if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F);
+
+#if LDSPAD
+    // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 4 bytes at a time, which means groups of 32 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS that does not use much padding and generates good code because all the lowMe calcs can be computed up front.
+    // In the example:  lds[0..63] = 0, 64, ...448, 1, 65..., 2, 66..., 3, 67..., 32, 96...   lds[64..127] = +4
+    // Read from LDS in the desired output order.  In the example:  output[0..63] = 0, 64, ... 448, 1, 65...   output[64..127] = +8
+    // Pad one value after every row to eliminate bank conflicts.
+    if (!force_default && f == 1 && RADIX == 8) {
+      bar(WG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 7) * (WG + 1) + (lowMe / 32) * 32 + (lowMe & 3) * 8 + i] = u[i].x; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i / 4) * 32 + (i & 3) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64 + (lowMe / 256) * 32             + ((lowMe / 32) & 7) * (WG + 1) + (lowMe & 31)]; }
+      bar(WG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 7) * (WG + 1) + (lowMe / 32) * 32 + (lowMe & 3) * 8 + i] = u[i].y; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i / 4) * 32 + (i & 3) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64 + (lowMe / 256) * 32             + ((lowMe / 32) & 7) * (WG + 1) + (lowMe & 31)]; }
+      return;
+    }
+
+    // Special case second n == 8 to eliminate LDS bank conflicts.  We're writing 4 bytes at a time, which means groups of 32 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
+    // Pad 8 values after every 64 values to eliminate bank conflicts.
+    if (!force_default && f == 8 && RADIX == 8) {
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { lds[ (lowMe / 8)      * (WG + 8)                     + i * 8 + (lowMe & 7)] = u[i].x; }
+      else          for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 7) * (WG + 8) + (lowMe / 64) * 64 + i * 8 + (lowMe & 7)] = u[i].x; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * (WG + 8) + lowMe]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64 + lowMe / 64 * (WG + 8) + (lowMe & 63)]; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { lds[ (lowMe / 8)      * (WG + 8)                     + i * 8 + (lowMe & 7)] = u[i].y; }
+      else          for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 7) * (WG + 8) + (lowMe / 64) * 64 + i * 8 + (lowMe & 7)] = u[i].y; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * (WG + 8) + lowMe]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64 + lowMe / 64 * (WG + 8) + (lowMe & 63)]; }
+      return;
+    }
+
+    // Special case first n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 32 must have unique LDS banks.
+    // Input values are in order.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS that does not use much padding and generates good code because all the lowMe calcs can be computed up front.
+    // In the example:  lds[0..63] = 0, 64, ...192, 1.., 2.., 7.., 32...   lds[64..127] = +8
+    // Read from LDS in the desired output order.  In the example:  output[0..63] = 0, 64, ... 192, 1, 65...   output[64..127] = +16
+    // Pad one value after every row to eliminate bank conflicts.
+    if (!force_default && f == 1 && RADIX == 4) {
+      bar(WG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 3) * (WG + 1) + (lowMe / 32) * 32 + (lowMe & 7) * 4 + i] = u[i].x; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i / 2) * 32 + (i & 1) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64 +             (lowMe / 128) * 32 + ((lowMe / 32) & 3) * (WG + 1) + (lowMe & 31)]; }
+      bar(WG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 3) * (WG + 1) + (lowMe / 32) * 32 + (lowMe & 7) * 4 + i] = u[i].y; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i / 2) * 32 + (i & 1) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64 +             (lowMe / 128) * 32 + ((lowMe / 32) & 3) * (WG + 1) + (lowMe & 31)]; }
+      return;
+    }
+
+    // Special case second n == 4 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
+    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
+    // Output to LDS that does not use much padding and generates good code because all the lowMe calcs can be computed up front.
+    // In the example:  lds[0..63] = 0...192, 16..., 32..., 48..., 1.... ... 8...   lds[64..127] = +2
+    // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0...192, 16... 32.. 48.. 1...  lds[64..127] = +4
+    // Pad 4 values after every row to eliminate bank conflicts.
+    if (!force_default && f == 4 && RADIX == 4) {
+      bar(WG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 3) * (WG + 4) + (lowMe / 32) * 32 + ((lowMe / 4) & 1) * 16 + i * 4 + (lowMe & 3)] = u[i].x; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i / 2) * 32 + (i & 1) * (2 * (WG + 4)) +  (lowMe / 32)      * (WG + 4) + (lowMe & 31)]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64             + (lowMe / 128) * 32 + ((lowMe / 32) & 3) * (WG + 4) + (lowMe & 31)]; }
+      bar(WG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 3) * (WG + 4) + (lowMe / 32) * 32 + ((lowMe / 4) & 1) * 16 + i * 4 + (lowMe & 3)] = u[i].y; }
+      bar(WG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i / 2) * 32 + (i & 1) * (2 * (WG + 4)) +  (lowMe / 32)      * (WG + 4) + (lowMe & 31)]; }
+      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64             + (lowMe / 128) * 32 + ((lowMe / 32) & 3) * (WG + 4) + (lowMe & 31)]; }
+      return;
+    }
+#endif
 
     bar(WG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = u[i].x; }
