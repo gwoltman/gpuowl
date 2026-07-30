@@ -4,7 +4,7 @@ on:
   push:
   pull_request:
   schedule:
-    - cron:  '0 0 1 * *'
+    - cron: '0 0 1 * *'
 
 jobs:
   Linux-OpenCL:
@@ -48,9 +48,6 @@ jobs:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
         cxx: [g++, clang++]
-        exclude:
-        - os: ubuntu-22.04-arm
-          cxx: clang++
       fail-fast: false
     env:
       CXX: ${{ matrix.cxx }}
@@ -133,7 +130,7 @@ jobs:
     - name: Install Clang
       if: ${{ matrix.cxx == 'clang++' }}
       run: |
-        pacman -S --noconfirm mingw-w64-x86_64-clang
+        pacman -S --noconfirm "${env:PACKAGE_PREFIX}clang"
         & $env:CXX --version
     - name: Script
       run: |
@@ -204,7 +201,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-15-intel, macos-latest]
+        os: [macos-26-intel, macos-latest]
       fail-fast: false
     env:
       CXX: g++-15
