@@ -405,7 +405,7 @@ void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
       bar(WG);
       for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 2) & 7) * (WG + 1) + (lowMe / 16) * 16 + (lowMe & 1) * 8 + i] = u[i]; }
       bar(WG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[(i / 2) * 16 + (i & 1) * (4 * (WG + 1)) +  (lowMe / 16)      * (WG + 1) + (lowMe & 15)]; }
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[(i / 2) * 16 + (i & 1) * (4 * (WG + 1)) + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; }
       else          for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 64 + (lowMe / 128) * 16             + ((lowMe / 16) & 7) * (WG + 1) + (lowMe & 15)]; }
       return;
     }
