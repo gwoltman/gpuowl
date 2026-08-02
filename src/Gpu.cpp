@@ -581,7 +581,7 @@ Gpu::~Gpu() {
 // Part of GPU initialization is to compute the default number of registers each kernel should target during compilation.
 // Kernel register usage is critical for maximizing GPU occupancy.  The default values can be overrriden with command line arguments.
 // This feature currently only works for the CUDA compiler.
-string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
+string Gpu::numCudaRegisters([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
 #if CUDA_BACKEND
   int regs = 0;
   const char *use_override = "";
@@ -1267,7 +1267,7 @@ void Gpu::replay() {
           }
 
           // Skip other kernels (KFFTW)
-          else;
+          else {}
 
           // Advance argument index
           arg = replay_next_arg(kern, arg);
@@ -2521,7 +2521,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   return secsPerIt * 1e6;
 }
 
-PRPResult Gpu::isPrimePRP(const Task& task) {
+PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   assert(E == task.exponent);
 
   // This timer is used to measure total elapsed time to be written to the savefile.
@@ -2704,7 +2704,7 @@ PRPResult Gpu::isPrimePRP(const Task& task) {
   }
 }
 
-LLResult Gpu::isPrimeLL(const Task& task) {
+LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
   assert(E == task.exponent);
   wantROE = 0;
 

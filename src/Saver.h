@@ -19,7 +19,7 @@ struct PRPState {
   u64 res64;
   vector<u32> check;
   u32 nErrors;
-  double elapsed;
+  double elapsed{};
 };
 
 struct LLState {

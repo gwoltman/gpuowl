@@ -88,7 +88,7 @@ fs::path findLast(const fs::path& dir, const string& prefix, const string& kind)
   return path;
 }
 
-PRPState readState(const PRPState& dummy, File fi) {
+PRPState readState([[maybe_unused]] const PRPState& dummy, File fi) {
   u64 exponent{}, k{};
   u32 blockSize{}, nErrors{};
   u64 res64{};
@@ -109,7 +109,7 @@ PRPState readState(const PRPState& dummy, File fi) {
   throw BadHeaderError{fi.name};
 }
 
-LLState readState(const LLState& dummy, File fi) {
+LLState readState([[maybe_unused]] const LLState& dummy, File fi) {
   u64 exponent{}, k{};
   double elapsed{};
 

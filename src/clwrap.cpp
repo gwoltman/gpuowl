@@ -459,9 +459,9 @@ cl_context getQueueContext(cl_command_queue q) {
 // The dummy implementation below is for the native openCL builds.
 
 #ifndef CUDA_BACKEND
-bool clIsGraphSupported(cl_device_id dev) { return 0; }
-int clGraphBeginRecording(cl_command_queue q) { return CL_INVALID_VALUE; }
-int clGraphEndRecording(cl_command_queue q, cl_graph* g) { return CL_INVALID_VALUE; }
-int clGraphLaunch(cl_graph g) { return CL_INVALID_VALUE; }
-int clReleaseGraph(cl_graph g) { return CL_INVALID_VALUE; }
+bool clIsGraphSupported(cl_device_id) { return 0; }
+int clGraphBeginRecording(cl_command_queue) { return CL_INVALID_VALUE; }
+int clGraphEndRecording(cl_command_queue, cl_graph*) { return CL_INVALID_VALUE; }
+int clGraphLaunch(cl_graph) { return CL_INVALID_VALUE; }
+int clReleaseGraph(cl_graph) { return CL_INVALID_VALUE; }
 #endif

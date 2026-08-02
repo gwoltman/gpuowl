@@ -254,7 +254,7 @@ u64 ProofSet::next(u64 k) const {
   return *cacheIt;
 }
 
-void ProofSet::save(u64 E, u32 power, u64 k, const Words& words) {
+void ProofSet::save(u64 E, [[maybe_unused]] u32 power, u64 k, const Words& words) {
   assert(k && k <= E);
   assert(isInPoints(E, power, k));
 
@@ -262,7 +262,7 @@ void ProofSet::save(u64 E, u32 power, u64 k, const Words& words) {
   assert(load(E, power, k) == words);
 }
 
-Words ProofSet::load(u64 E, u32 power, u64 k) {
+Words ProofSet::load(u64 E, [[maybe_unused]] u32 power, u64 k) {
   assert(k && k <= E);
   assert(isInPoints(E, power, k));
   return File::openReadThrow(proofPath(E) / to_string(k)).readChecked<u32>(E/32 + 1);
