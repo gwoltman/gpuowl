@@ -137,15 +137,15 @@ float OVERLOAD boundCarry(i64 c) { return ldexp(fabs((float) (i32) (c >> 8)), -2
 #if STATS || ROE
 void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *bufROE, u32 posROE, float roundMax) {
   assert(roundMax >= 0);
-
-  // This barrier may be needed by carryFused because this code does not partition lds memory the same way shufl does
-  bar();
-  // Reduce to a single roundMax value
   u32 me = get_local_id(0);
   u32 u32RoundMax = as_uint(roundMax);
-  while (num_threads > 1) {
+
+  // Reduce to a handful of roundMax values
+  // We could use shfl_down_sync (and AMD's equivalent) instead of LDS memory once num_threads < WAVEFRONT
+  // (see https://github.com/mahmoudmaftah/MaxReduction-Cuda/blob/main/code/reduction_benchmarks.cu)
+  while (num_threads > 8) {
     // Write roundMax for high half of threads to local memory.  Ignore threads not participating in the reduction.
-   if (num_threads >= WAVEFRONT) bar();
+    if (num_threads > WAVEFRONT) bar();
     if (me >= num_threads / 2 && me < num_threads) lds[me - num_threads / 2] = u32RoundMax;
     if (num_threads > WAVEFRONT) {
       bar();                             // work around a weird CUDA NVCC bug where two bar() calls are required???! (Titan V, CUDA 13.0, WMUL=2)
@@ -160,20 +160,19 @@ void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *b
     num_threads /= 2;
   }
 
-// We could use shfl_down_sync (and AMD's equivalent) instead of LDS memory once num_threads < WAVEFRONT (see https://github.com/mahmoudmaftah/MaxReduction-Cuda/blob/main/code/reduction_benchmarks.cu)
-// We could instead write the reduced ROE sequentially to bufROE and then do a max_reduction after last atomic_add
-
-  // Merge this max with others
-  if (me == 0) {
-    // The bufROE entry to update is stored in the first bufROE entry.  This value used to be passed into carryFused as an argument.
-    // CUDA graphs don't allow arguments to change.  Thus, calculating posROE and storing it in bufROE workd better.
+  // The bufROE entry to update is stored in the first bufROE entry.  This value used to be passed into carryFused as an argument.
+  // CUDA graphs don't allow arguments to change.  Thus, calculating posROE and storing it in bufROE works better.
+  if (me < num_threads) {
     posROE = bufROE[0];
     atomic_max(bufROE + posROE + 2, u32RoundMax);
+
     // The second bufRoe entry is a count of the number atomic_maxes performed.  When the last atomic_max is done, increment posROE and clear the counter.
-    u32 old_value = atomic_add(bufROE + 1, 1);
-    if (old_value == num_blocks - 1) {
-      bufROE[0] = posROE + 1;
-      bufROE[1] = 0;
+    if (me == 0) {
+      u32 old_value = atomic_add(bufROE + 1, 1);
+      if (old_value == num_blocks - 1) {
+        bufROE[0] = posROE + 1;
+        bufROE[1] = 0;
+      }
     }
   }
 }
