@@ -398,7 +398,7 @@ int getKernelNumArgs(cl_kernel k) {
 }
 
 int getWorkGroupSize(cl_kernel k, cl_device_id device, const char *name) {
-  size_t size[3];
+  size_t size[3]{};
   CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_COMPILE_WORK_GROUP_SIZE, sizeof(size), &size, nullptr), name);
   return int(size[0]);
 }
