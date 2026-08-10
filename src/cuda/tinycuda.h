@@ -43,6 +43,7 @@ using cl_mem = _cl_mem*;
 
 // cl_program: dual-purpose — stores either source string or compiled PTX/module
 struct _cl_program {
+  cl_context context;
   std::string source;     // OpenCL source (before NVRTC compilation)
   std::string preprocessedSource; // CUDA source after preprocessOpenCL (for parsing __launch_bounds__)
   std::string ptx;        // Compiled PTX (after NVRTC compilation)

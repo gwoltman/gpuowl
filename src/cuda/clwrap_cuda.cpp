@@ -178,9 +178,10 @@ int clReleaseCommandQueue(cl_command_queue q) {
 
 // ---- Program compilation (NVRTC) ----
 
-cl_program clCreateProgramWithSource(cl_context  /*ctx*/, unsigned count, const char** strings,
+cl_program clCreateProgramWithSource(cl_context ctx, unsigned count, const char** strings,
                                       const size_t* lengths, int* err) {
   auto* prog = new _cl_program;
+  prog->context = ctx;
   for (unsigned i = 0; i < count; i++) {
     if (lengths && lengths[i]) {
       prog->source.append(strings[i], lengths[i]);
@@ -192,11 +193,12 @@ cl_program clCreateProgramWithSource(cl_context  /*ctx*/, unsigned count, const 
   return prog;
 }
 
-cl_program clCreateProgramWithBinary(cl_context  /*ctx*/, unsigned  /*nDevices*/, const cl_device_id*,
+cl_program clCreateProgramWithBinary(cl_context ctx, unsigned  /*nDevices*/, const cl_device_id*,
                                       const size_t* lengths, const unsigned char** binaries,
                                       int* binaryStatus, int* err) {
   // "Binary" in CUDA land = PTX string
   auto* prog = new _cl_program;
+  prog->context = ctx;
   if (lengths && binaries && lengths[0] > 0) {
     prog->ptx.assign((const char*)binaries[0], lengths[0]);
     prog->compiled = true;
@@ -418,7 +420,7 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   return CL_SUCCESS;
 }
 
-cl_program clLinkProgram(cl_context  /*ctx*/, unsigned  /*nDevices*/, const cl_device_id*,
+cl_program clLinkProgram(cl_context ctx, unsigned  /*nDevices*/, const cl_device_id*,
                           const char*  /*options*/, unsigned nProgs, const cl_program* progs,
                           void (*)(cl_program, void*), void*, int* err) {
   ensureContextCurrent();
@@ -430,6 +432,7 @@ cl_program clLinkProgram(cl_context  /*ctx*/, unsigned  /*nDevices*/, const cl_d
   }
 
   auto* linked = new _cl_program;
+  linked->context = ctx;
   linked->ptx = progs[0]->ptx;
   linked->compiled = true;
   // Carry preprocessed source through for KERNEL(N) parsing in clCreateKernel
@@ -566,7 +569,24 @@ cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
   moduleRetain(k->parentModule);  // kernel keeps the module alive past clReleaseProgram
 
   // Shared memory carveout: default adaptive carveout is optimal for mixed kernel workloads.
+  // Remainder of memory will be used for L1 cache.
+// This was not measurably faster on my 570Ti Laptop.  We should try it on other GPUs.
+// If MULTI_Q is set, we might need to set all the middleIn, tailSquare, and middleOut kernels to use the same carveout value (which
+// negates the primary benefit since middleIn and middleOut are the kernels using low carveouts).  For now, disable the capability by default.
+if (getenv("TRY_LDS_CARVEOUT"))
+  {
+    int numRegs = 0, shmem = 0, maxThreads = 0, maxShared = 0;
+    cuFuncGetAttribute(&numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
+    cuFuncGetAttribute(&shmem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);
+    cuFuncGetAttribute(&maxThreads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k->func);
+    cuDeviceGetAttribute(&maxShared, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR, prog->context->dev);
 
+    int max_occupancy = 65536 / (numRegs * maxThreads);         // Maximum occupancy due to register pressure
+    int carveout = 100 * (max_occupancy * shmem) / maxShared;   // Percent of shared memory needed for max occupancy
+    if (carveout > 100) carveout = 100;
+    cuFuncSetAttribute(k->func, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT, carveout);
+  }
+		  
   // Log register and shared memory usage per kernel when PRPLL_DUMP_PTX is set
   {
     static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
