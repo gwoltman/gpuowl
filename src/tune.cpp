@@ -614,7 +614,7 @@ void Tune::tune() {
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_fft_store = 0;
         double best_cost = -1.0;
-        for (u32 const fft_store : {0, 1, 2, 3, 4}) {
+        for (u32 const fft_store : {0, 1, 2, 3}) {
           if (fft_store >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
           args->flags["STORES"] = to_string(stores / 10 * 10 + fft_store);
           double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);

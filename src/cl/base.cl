@@ -316,7 +316,7 @@ typedef global const float2* BigTabFP32;
 //
 // nVidia GPUs have lots of different caching options for loads and stores.
 // AMD GPUs have have far fewer options for loads and stores.
-// These routines let us try the different options.
+// These routines and macros let us try the different options.
 //
 
 // Basic load and store.  Presumably stored in all caches using a standard LRU algorithm.
@@ -404,7 +404,7 @@ void OVERLOAD L2STORE(i32 *mem, i32 val) {
 #define L2STORE    STORE
 #endif
 
-// Routines for loading data from memory into the L1 and L2 caches, but cache line is marked evict first.
+// Routines for loading data from memory into the L1 and L2 caches, but cache line is marked evict first to limit cache pollution.
 
 #if HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
 T2 OVERLOAD EFLOAD(CP(T2) mem) {
@@ -517,7 +517,7 @@ GF31 OVERLOAD LULOAD(TrigGF31 mem) {
 #define LULOAD    LOAD
 #endif
 
-// Routines for loading a read-only and placing it in the non-coherent texture cache.
+// Routines for loading a read-only value and placing it in the non-coherent texture cache.
 
 #if HAS_PTX >= 500         // Texture cache requires sm_50 support or higher
 T2 OVERLOAD NCLOAD(Trig mem) {
@@ -557,11 +557,58 @@ i32 OVERLOAD NCLOAD(i32 *mem) {
 }
 GF31 OVERLOAD NCLOAD(TrigGF31 mem) {
   GF31 retval;
-  __asm("ld.global.lu.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
+  __asm("ld.global.nc.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
   return retval;
 }
 #else
 #define NCLOAD    LOAD
+#endif
+
+// Routines for loading data from memory into the L1 and L2 caches.  This should be same as the default LOAD macro.
+
+#if HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
+T2 OVERLOAD CALOAD(CP(T2) mem) {
+  T2 retval;
+  __asm("ld.global.ca.v2.f64  {%0, %1}, [%2];" : "=d"(retval.x), "=d"(retval.y) : "l"(mem));
+  return retval;
+}
+T OVERLOAD CALOAD(TrigSingle mem) {
+  T retval;
+  __asm("ld.global.ca.f64  %0, [%1];" : "=d"(retval) : "l"(mem));
+  return retval;
+}
+F2 OVERLOAD CALOAD(CP(F2) mem) {
+  F2 retval;
+  __asm("ld.global.ca.v2.f32  {%0, %1}, [%2];" : "=f"(retval.x), "=f"(retval.y) : "l"(mem));
+  return retval;
+}
+F OVERLOAD CALOAD(TrigSingleFP32 mem) {
+  F retval;
+  __asm("ld.global.ca.f32  %0, [%1];" : "=f"(retval) : "l"(mem));
+  return retval;
+}
+i64 OVERLOAD CALOAD(i64 *mem) {
+  i64 retval;
+  __asm("ld.global.ca.b64  %0, [%1];" : "=l"(retval) : "l"(mem));
+  return retval;
+}
+GF61 OVERLOAD CALOAD(TrigGF61 mem) {
+  GF61 retval;
+  __asm("ld.global.ca.v2.b64  {%0, %1}, [%2];" : "=l"(retval.x), "=l"(retval.y) : "l"(mem));
+  return retval;
+}
+i32 OVERLOAD CALOAD(i32 *mem) {
+  i32 retval;
+  __asm("ld.global.ca.b32  %0, [%1];" : "=r"(retval) : "l"(mem));
+  return retval;
+}
+GF31 OVERLOAD CALOAD(TrigGF31 mem) {
+  GF31 retval;
+  __asm("ld.global.ca.v2.b32  {%0, %1}, [%2];" : "=r"(retval.x), "=r"(retval.y) : "l"(mem));
+  return retval;
+}
+#else
+#define CALOAD    LOAD
 #endif
 
 //
@@ -588,6 +635,8 @@ GF31 OVERLOAD NCLOAD(TrigGF31 mem) {
 #define FFTLOAD    EFLOAD
 #elif FFTLOAD_TYPE == 4
 #define FFTLOAD    LULOAD
+#elif FFTLOAD_TYPE == 5
+#define FFTLOAD    NCLOAD
 #else
 #define FFTLOAD    LOAD
 #endif
@@ -613,6 +662,8 @@ GF31 OVERLOAD NCLOAD(TrigGF31 mem) {
 #define CSLOAD    EFLOAD
 #elif CSLOAD_TYPE == 4
 #define CSLOAD    LULOAD
+#elif CSLOAD_TYPE == 5
+#define CSLOAD    NCLOAD
 #else
 #define CSLOAD    LOAD
 #endif
@@ -645,7 +696,7 @@ GF31 OVERLOAD NCLOAD(TrigGF31 mem) {
 #endif
 
 // Routines for loading trig data that is used once but is smaller than a cache line.  The rest of the cache line will be needed soon.
-// If possible, data should saved in L1(?) and L2 caches and perhaps marked evict first.
+// If possible, data should be saved in L1(?) and L2 caches and perhaps marked evict first.
 // TS stands for "Trig Several reuses".
 
 #if TSLOAD_TYPE == 1
@@ -695,24 +746,24 @@ void PREFETCHL2(const __global void *addr) {
 #if FFT_FP64
 void OVERLOAD read(u32 WG, u32 N, T2 *u, const global T2 *in, u32 base) {
   in += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { u[i] = in[i * WG]; }
+  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG]); }
 }
 
 void OVERLOAD write(u32 WG, u32 N, T2 *u, global T2 *out, u32 base) {
   out += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { out[i * WG] = u[i]; }
+  for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG], u[i]); }
 }
 #endif
 
 #if FFT_FP32
 void OVERLOAD read(u32 WG, u32 N, F2 *u, const global F2 *in, u32 base) {
   in += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { u[i] = in[i * WG]; }
+  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG]); }
 }
 
 void OVERLOAD write(u32 WG, u32 N, F2 *u, global F2 *out, u32 base) {
   out += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { out[i * WG] = u[i]; }
+  for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG], u[i]); }
 }
 #endif
 
