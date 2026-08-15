@@ -30,14 +30,14 @@
 
 // 64-bit implementations of reverse routines
 
-#if FFT_FP64 | NTT_GF61
+#if FFT_FP64 || NTT_GF61
 
-void OVERLOAD reverse(local T2 *lds2, T2 *u, bool bump) {
+void OVERLOAD reverse(local T2_GF61 *lds2, T2_GF61 *u, bool bump) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me + bump;
 
   if (SHUFL_BYTES_H >= 8) {
-    local T2 *lds = lds2;
+    local T2_GF61 *lds = lds2;
     bar(WG);
 #if NH == 8
     lds[revMe + 0 * WG] = u[3];
@@ -53,7 +53,7 @@ void OVERLOAD reverse(local T2 *lds2, T2 *u, bool bump) {
   }
 
   else if (SHUFL_BYTES_H == 4) {
-    local T *lds = (local T *) lds2;
+    local T_Z61 *lds = (local T_Z61 *) lds2;
     bar(WG);
 #if NH == 8
     lds[revMe + 0 * WG] = u[3].x;
@@ -81,13 +81,13 @@ void OVERLOAD reverse(local T2 *lds2, T2 *u, bool bump) {
   }
 }
 
-void OVERLOAD reverseLine(local T2 *lds, T2 *u) {
+void OVERLOAD reverseLine(local T2_GF61 *lds, T2_GF61 *u) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me;
 
   if (SHUFL_BYTES_H == 16) {
-    local T2 *ldsOut = lds + revMe;
-    local T2 *ldsIn = lds + me;
+    local T2_GF61 *ldsOut = lds + revMe;
+    local T2_GF61 *ldsIn = lds + me;
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = u[i]; }
     bar(WG);
@@ -95,8 +95,8 @@ void OVERLOAD reverseLine(local T2 *lds, T2 *u) {
   }
 
   else if (SHUFL_BYTES_H == 8) {
-    local T *ldsOut = (local T *) lds + revMe;
-    local T *ldsIn = (local T *) lds + me;
+    local T_Z61 *ldsOut = (local T_Z61 *) lds + revMe;
+    local T_Z61 *ldsIn = (local T_Z61 *) lds + me;
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = u[i].x; }
     bar(WG);
@@ -113,19 +113,19 @@ void OVERLOAD reverseLine(local T2 *lds, T2 *u) {
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = as_int4(u[i]).x; }
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.x = ldsIn[WG * i]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.x = ldsIn[WG * i]; u[i] = as_T2_GF61(tmp); }
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = as_int4(u[i]).y; }
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.y = ldsIn[WG * i]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.y = ldsIn[WG * i]; u[i] = as_T2_GF61(tmp); }
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = as_int4(u[i]).z; }
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.z = ldsIn[WG * i]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.z = ldsIn[WG * i]; u[i] = as_T2_GF61(tmp); }
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = as_int4(u[i]).w; }
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.w = ldsIn[WG * i]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < NH; ++i) { int4 tmp = as_int4(u[i]); tmp.w = ldsIn[WG * i]; u[i] = as_T2_GF61(tmp); }
   }
 }
 
@@ -133,13 +133,13 @@ void OVERLOAD reverseLine(local T2 *lds, T2 *u) {
 // These versions are for the kernel(s) that use a double-wide workgroup (u in half the workgroup, v in the other half)
 //
 
-void OVERLOAD reverse2(local T2 *lds2, T2 *u) {
+void OVERLOAD reverse2(local T2_GF61 *lds2, T2_GF61 *u) {
   u32 me = get_local_id(0);
   u32 lowMe = me % WG;
 
   if (SHUFL_BYTES_H >= 8) {
-    local T2 *lds = lds2;
-    if (me >= WG) lds += LDS_BYTES / sizeof(T2);
+    local T2_GF61 *lds = lds2;
+    if (me >= WG) lds += LDS_BYTES / sizeof(T2_GF61);
     // For NH=8, u[0] to u[3] are left unchanged.  Write to lds:
     //  u[7]rev   u[6]rev   u[5]rev   u[4]rev
     //  v[7]rev   v[6]rev   v[5]rev   v[4]rev
@@ -155,8 +155,8 @@ void OVERLOAD reverse2(local T2 *lds2, T2 *u) {
   }
 
   else if (SHUFL_BYTES_H == 4) {
-    local T *lds = (local T *) lds2;
-    if (me >= WG) lds += LDS_BYTES / sizeof(T);
+    local T_Z61 *lds = (local T_Z61 *) lds2;
+    if (me >= WG) lds += LDS_BYTES / sizeof(T_Z61);
     bar(WG);
     for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i].x; }
     bar(WG);
@@ -169,16 +169,16 @@ void OVERLOAD reverse2(local T2 *lds2, T2 *u) {
 }
 
 // This is used to reverse the second part of a line, and cross the reversed parts between the halves.
-void OVERLOAD revCrossLine(local T2* lds2, T2 *u) {
+void OVERLOAD revCrossLine(local T2_GF61 *lds2, T2_GF61 *u) {
   u32 me = get_local_id(0);
   u32 lowMe = me % WG;
   u32 revLowMe = WG - 1 - lowMe;
 
   if (SHUFL_BYTES_H >= 8) {
-    local T2 *ldsOut = lds2;
-    local T2 *ldsIn = lds2;
-    if (me < WG) ldsOut += LDS_BYTES / sizeof(T2);     // Crossing LDS halves
-    else ldsIn += LDS_BYTES / sizeof(T2);               // Staying within LDS halves (just like shufl)
+    local T2_GF61 *ldsOut = lds2;
+    local T2_GF61 *ldsIn = lds2;
+    if (me < WG) ldsOut += LDS_BYTES / sizeof(T2_GF61); // Crossing LDS halves
+    else ldsIn += LDS_BYTES / sizeof(T2_GF61);          // Staying within LDS halves (just like shufl)
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
@@ -186,10 +186,10 @@ void OVERLOAD revCrossLine(local T2* lds2, T2 *u) {
   }
 
   else if (SHUFL_BYTES_H == 4) {
-    local T *ldsOut = (local T *) lds2;
-    local T *ldsIn = (local T *) lds2;
-    if (me < WG) ldsOut += LDS_BYTES / sizeof(T);
-    else ldsIn += LDS_BYTES / sizeof(T);
+    local T_Z61 *ldsOut = (local T_Z61 *) lds2;
+    local T_Z61 *ldsIn = (local T_Z61 *) lds2;
+    if (me < WG) ldsOut += LDS_BYTES / sizeof(T_Z61);
+    else ldsIn += LDS_BYTES / sizeof(T_Z61);
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].x; }
     bar();   // we need a full bar because we just crossed halves
@@ -211,7 +211,7 @@ void OVERLOAD revCrossLine(local T2* lds2, T2 *u) {
 //      u[2]    u[3]            // Returned in u[1]
 //      v[3]rev v[2]rev         // Returned in u[2]
 //      v[1]rev v[0]rev         // Returned in u[3]
-void OVERLOAD reverseLine2(local T2 *lds, T2 *u) {
+void OVERLOAD reverseLine2(local T2_GF61 *lds, T2_GF61 *u) {
   u32 me = get_local_id(0);
 
 // NOTE:  It is important that this routine use lds memory in coordination with shufl.  Failure to do so would require an
@@ -228,7 +228,7 @@ void OVERLOAD reverseLine2(local T2 *lds, T2 *u) {
 // That means saving to lds using index: me < WG ? me % WG + i * WG : 8*WG-1 - me % WG - i * WG
 
 #if 1
-  local T2 *ldsOut = lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  local T2_GF61 *ldsOut = lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
   i32 ldsOutInc = (me < WG) ? WG : -WG;
   for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { *ldsOut = u[i]; }
 
@@ -236,18 +236,18 @@ void OVERLOAD reverseLine2(local T2 *lds, T2 *u) {
   bar();
   for (u32 i = 0; i < NH; ++i) { u[i] = lds[i * 2*WG]; }
 #else
-  local T *ldsOut = (local T *) lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  local T_Z61 *ldsOut = (local T_Z61 *) lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
   i32 ldsOutInc = (me < WG) ? WG : -WG;
   for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { ldsOut[0] = u[i].x; ldsOut[NH*2*WG] = u[i].y; }
 
-  local T *ldsIn = (local T *) lds + me;
+  local T_Z61 *ldsIn = (local T_Z61 *) lds + me;
   bar();
   for (u32 i = 0; i < NH; ++i) { u[i].x = ldsIn[i * 2*WG]; u[i].y = ldsIn[NH*2*WG + i * 2*WG]; }
 #endif
 }
 
 // Undo a reverseLine2
-void OVERLOAD unreverseLine2(local T2 *lds, T2 *u) {
+void OVERLOAD unreverseLine2(local T2_GF61 *lds, T2_GF61 *u) {
   u32 me = get_local_id(0);
 
 // NOTE:  It is important that this routine use lds memory in coordination with reverseLine2 and shufl.  By initially
@@ -256,7 +256,7 @@ void OVERLOAD unreverseLine2(local T2 *lds, T2 *u) {
 // lds memory) we can issue a qualified bar() call before calling FFT_HEIGHT2.
 
 #if 1
-  local T2 *ldsOut = lds + me;
+  local T2_GF61 *ldsOut = lds + me;
   for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i]; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
@@ -269,7 +269,7 @@ void OVERLOAD unreverseLine2(local T2 *lds, T2 *u) {
   bar();
   for (u32 i = 0; i < NH; ++i, lds += ldsInc) { u[i] = *lds; }
 #else
-  local T *ldsOut = (local T *) lds + me;
+  local T_Z61 *ldsOut = (local T_Z61 *) lds + me;
   for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i].x; ldsOut[NH*2*WG + i * 2*WG] = u[i].y; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
@@ -277,7 +277,7 @@ void OVERLOAD unreverseLine2(local T2 *lds, T2 *u) {
 // 0..GH-1 +1*WG    GH-1..0 +6*WG
 // 0..GH-1 +2*WG    GH-1..0 +5*WG
 // 0..GH-1 +3*WG    GH-1..0 +4*WG
-  local T *ldsIn = (local T *) lds + ((me < WG) ? me % WG : (NH*2)*WG-1 - me % WG);
+  local T_Z61 *ldsIn = (local T_Z61 *) lds + ((me < WG) ? me % WG : (NH*2)*WG-1 - me % WG);
   i32 ldsInc = (me < WG) ? WG : -WG;
   bar();
   for (u32 i = 0; i < NH; ++i, ldsIn += ldsInc) { u[i].x = ldsIn[0]; u[i].y = ldsIn[NH*2*WG]; }
@@ -290,12 +290,12 @@ void OVERLOAD unreverseLine2(local T2 *lds, T2 *u) {
 
 
 /**************************************************************************/
-/*            Similar to above, but for an FFT based on FP32              */
+/*        Similar to above, but for an FFT based on FP32 or GF31          */
 /**************************************************************************/
 
-#if FFT_FP32 | NTT_GF31
+#if FFT_FP32 || NTT_GF31
 
-void OVERLOAD reverse(local F2 *lds, F2 *u, bool bump) {
+void OVERLOAD reverse(local F2_GF31 *lds, F2_GF31 *u, bool bump) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me + bump;
 
@@ -315,13 +315,13 @@ void OVERLOAD reverse(local F2 *lds, F2 *u, bool bump) {
   }
 }
 
-void OVERLOAD reverseLine(local F2 *lds, F2 *u) {
+void OVERLOAD reverseLine(local F2_GF31 *lds, F2_GF31 *u) {
   u32 me = get_local_id(0);
   u32 revMe = WG - 1 - me;
 
   if (SHUFL_BYTES_H >= 8) {
-    local F2 *ldsOut = lds + revMe;
-    local F2 *ldsIn = lds + me;
+    local F2_GF31 *ldsOut = lds + revMe;
+    local F2_GF31 *ldsIn = lds + me;
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = u[i]; }
     bar(WG);
@@ -329,8 +329,8 @@ void OVERLOAD reverseLine(local F2 *lds, F2 *u) {
   }
 
   else if (SHUFL_BYTES_H == 4) {
-    local F *ldsOut = (local F *) lds + revMe;
-    local F *ldsIn = (local F *) lds + me;
+    local F_Z31 *ldsOut = (local F_Z31 *) lds + revMe;
+    local F_Z31 *ldsIn = (local F_Z31 *) lds + me;
     bar(WG);
     for (u32 i = 0; i < NH; ++i) { ldsOut[WG * (NH - 1 - i)] = u[i].x; }
     bar(WG);
@@ -346,7 +346,7 @@ void OVERLOAD reverseLine(local F2 *lds, F2 *u) {
 // These versions are for the kernel(s) that use a double-wide workgroup (u in half the workgroup, v in the other half)
 //
 
-void OVERLOAD reverse2(local F2 *lds, F2 *u) {
+void OVERLOAD reverse2(local F2_GF31 *lds, F2_GF31 *u) {
   u32 me = get_local_id(0);
   u32 lowMe = me % WG;
 
@@ -368,14 +368,14 @@ void OVERLOAD reverse2(local F2 *lds, F2 *u) {
 }
 
 // This is used to reverse the second part of a line, and cross the reversed parts between the halves.
-void OVERLOAD revCrossLine(local F2* lds2, F2 *u) {
+void OVERLOAD revCrossLine(local F2_GF31 *lds2, F2_GF31 *u) {
   u32 me = get_local_id(0);
   u32 lowMe = me % WG;
   u32 revLowMe = WG - 1 - lowMe;
 
   if (SHUFL_BYTES_H >= 4) {
-    local F2 *ldsOut = lds2;
-    local F2 *ldsIn = lds2;
+    local F2_GF31 *ldsOut = lds2;
+    local F2_GF31 *ldsIn = lds2;
     if (me < WG) ldsOut += LDS_BYTES / sizeof(F2);
     else ldsIn += LDS_BYTES / sizeof(F2);
     bar();   // we need a full bar because we're crossing halves
@@ -395,7 +395,7 @@ void OVERLOAD revCrossLine(local F2* lds2, F2 *u) {
 //      u[2]    u[3]            // Returned in u[1]
 //      v[3]rev v[2]rev         // Returned in u[2]
 //      v[1]rev v[0]rev         // Returned in u[3]
-void OVERLOAD reverseLine2(local F2 *lds, F2 *u) {
+void OVERLOAD reverseLine2(local F2_GF31 *lds, F2_GF31 *u) {
   u32 me = get_local_id(0);
 
 // NOTE:  It is important that this routine use lds memory in coordination with shufl.  Failure to do so would require an
@@ -412,7 +412,7 @@ void OVERLOAD reverseLine2(local F2 *lds, F2 *u) {
 // That means saving to lds using index: me < WG ? me % WG + i * WG : 8*WG-1 - me % WG - i * WG
 
 #if 1
-  local F2 *ldsOut = lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  local F2_GF31 *ldsOut = lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
   i32 ldsOutInc = (me < WG) ? WG : -WG;
   for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { *ldsOut = u[i]; }
 
@@ -420,18 +420,18 @@ void OVERLOAD reverseLine2(local F2 *lds, F2 *u) {
   bar();
   for (u32 i = 0; i < NH; ++i) { u[i] = lds[i * 2*WG]; }
 #else
-  local F *ldsOut = (local F *) lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
+  local F_Z31 *ldsOut = (local F_Z31 *) lds + (me < WG ? me % WG : (NH*2)*WG-1 - me % WG);
   i32 ldsOutInc = (me < WG) ? WG : -WG;
   for (u32 i = 0; i < NH; ++i, ldsOut += ldsOutInc) { ldsOut[0] = u[i].x; ldsOut[NH*2*WG] = u[i].y; }
 
-  local F *ldsIn = (local F *) lds + me;
+  local F_Z31 *ldsIn = (local F_Z31 *) lds + me;
   bar();
   for (u32 i = 0; i < NH; ++i) { u[i].x = ldsIn[i * 2*WG]; u[i].y = ldsIn[NH*2*WG + i * 2*WG]; }
 #endif
 }
 
 // Undo a reverseLine2
-void OVERLOAD unreverseLine2(local F2 *lds, F2 *u) {
+void OVERLOAD unreverseLine2(local F2_GF31 *lds, F2_GF31 *u) {
   u32 me = get_local_id(0);
 
 // NOTE:  It is important that this routine use lds memory in coordination with reverseLine2 and shufl.  By initially
@@ -440,7 +440,7 @@ void OVERLOAD unreverseLine2(local F2 *lds, F2 *u) {
 // lds memory) we can issue a qualified bar() call before calling FFT_HEIGHT2.
 
 #if 1
-  local F2 *ldsOut = lds + me;
+  local F2_GF31 *ldsOut = lds + me;
   for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i]; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
@@ -453,7 +453,7 @@ void OVERLOAD unreverseLine2(local F2 *lds, F2 *u) {
   bar();
   for (u32 i = 0; i < NH; ++i, lds += ldsInc) { u[i] = *lds; }
 #else
-  local F *ldsOut = (local F *) lds + me;
+  local F_Z31 *ldsOut = (local F_Z31 *) lds + me;
   for (u32 i = 0; i < NH; ++i) { ldsOut[i * 2*WG] = u[i].x; ldsOut[NH*2*WG + i * 2*WG] = u[i].y; }
 
 // For NH=4, the lds indices (where to read each outgoing u[i] which has v[i] in the upper threads) looks like this:
@@ -461,85 +461,11 @@ void OVERLOAD unreverseLine2(local F2 *lds, F2 *u) {
 // 0..GH-1 +1*WG    GH-1..0 +6*WG
 // 0..GH-1 +2*WG    GH-1..0 +5*WG
 // 0..GH-1 +3*WG    GH-1..0 +4*WG
-  local F *ldsIn = (local F *) lds + ((me < WG) ? me % WG : (NH*2)*WG-1 - me % WG);
+  local F_Z31 *ldsIn = (local F_Z31 *) lds + ((me < WG) ? me % WG : (NH*2)*WG-1 - me % WG);
   i32 ldsInc = (me < WG) ? WG : -WG;
   bar();
   for (u32 i = 0; i < NH; ++i, ldsIn += ldsInc) { u[i].x = ldsIn[0]; u[i].y = ldsIn[NH*2*WG]; }
 #endif
-}
-
-#endif
-
-#endif
-
-
-/**************************************************************************/
-/*          Similar to above, but for an NTT based on GF(M31^2)           */
-/**************************************************************************/
-
-#if NTT_GF31
-
-void OVERLOAD reverse(local GF31 *lds, GF31 *u, bool bump) {
-  reverse((local F2 *) lds, (F2 *) u, bump);
-}
-
-void OVERLOAD reverseLine(local GF31 *lds, GF31 *u) {
-  reverseLine((local F2 *) lds, (F2 *) u);
-}
-
-void OVERLOAD reverse2(local GF31 *lds, GF31 *u) {
-  reverse2((local F2 *) lds, (F2 *) u);
-}
-
-void OVERLOAD revCrossLine(local GF31* lds, GF31 *u) {
-  revCrossLine((local F2 *) lds, (F2 *) u);
-}
-
-#if 0    // Unused
-
-void OVERLOAD reverseLine2(local GF31 *lds, GF31 *u) {
-  reverseLine2((local F2 *) lds, (F2 *) u);
-}
-
-void OVERLOAD unreverseLine2(local GF31 *lds, GF31 *u) {
-  unreverseLine2((local F2 *) lds, (F2 *) u);
-}
-
-#endif
-
-#endif
-
-
-/**************************************************************************/
-/*          Similar to above, but for an NTT based on GF(M61^2)           */
-/**************************************************************************/
-
-#if NTT_GF61
-
-void OVERLOAD reverse(local GF61 *lds, GF61 *u, bool bump) {
-  reverse((local T2 *) lds, (T2 *) u, bump);
-}
-
-void OVERLOAD reverseLine(local GF61 *lds, GF61 *u) {
-  reverseLine((local T2 *) lds, (T2 *) u);
-}
-
-void OVERLOAD reverse2(local GF61 *lds, GF61 *u) {
-  reverse2((local T2 *) lds, (T2 *) u);
-}
-
-void OVERLOAD revCrossLine(local GF61* lds, GF61 *u) {
-  revCrossLine((local T2 *) lds, (T2 *) u);
-}
-
-#if 0    // Unused
-
-void OVERLOAD reverseLine2(local GF61 *lds, GF61 *u) {
-  reverseLine2((local T2 *) lds, (T2 *) u);
-}
-
-void OVERLOAD unreverseLine2(local GF61 *lds, GF61 *u) {
-  unreverseLine2((local T2 *) lds, (T2 *) u);
 }
 
 #endif

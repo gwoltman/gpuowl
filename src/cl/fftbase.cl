@@ -20,7 +20,7 @@
 #define LDS_BYTES     (WG * RADIX * SHUFL_BYTES)
 #endif
 
-#if FFT_FP64 | NTT_GF61
+#if FFT_FP64 || NTT_GF61
 
 // Shufl two or more fft_WIDTHs or FFT_HEIGHTs operating on 64-bit values using LDS_BYTES of LDS memory.
 // Care is taken that each simultaneous workgroup does not interfere with the LDS memory of other simultaneous workgroups --
@@ -33,7 +33,7 @@
 // before next LDS memory usage.  All routines that use LDS memory MUST OBEY THIS PROTOCOL of bar() before LDS use and
 // only bar(WG) required before next use.  ALSO NOTE: the first shufl call does not need to do bar(WG).  A relatively
 // minor optimization would be to special case the first shufl call.
-void OVERLOAD shufl64(local T2 *lds2, T2 *u, u32 f, u32 numWG, u32 lowMe) {
+void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe) {
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
@@ -48,8 +48,8 @@ void OVERLOAD shufl64(local T2 *lds2, T2 *u, u32 f, u32 numWG, u32 lowMe) {
 
   // If SHUFL_BYTES is 16 we can write the complete T2 value to LDS memory with one instruction.
   if (SHUFL_BYTES == 16) {
-    local T2* lds = ((local T2*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T2);
+    local T2_GF61* lds = lds2;
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T2_GF61);
 
 #if LDSPAD
     // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 16 bytes at a time, which means groups of 8 must have unique LDS banks.
@@ -170,8 +170,8 @@ void OVERLOAD shufl64(local T2 *lds2, T2 *u, u32 f, u32 numWG, u32 lowMe) {
 
   // If SHUFL_BYTES is 8 we split the T2 values into two T values.  These are written to LDS memory with two instructions.
   else if (SHUFL_BYTES == 8) {
-    local T* lds = ((local T*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T);
+    local T_Z61* lds = ((local T_Z61*) lds2);
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T_Z61);
 
 #if LDSPAD
     // Special case first n == 8 code to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
@@ -352,29 +352,29 @@ void OVERLOAD shufl64(local T2 *lds2, T2 *u, u32 f, u32 numWG, u32 lowMe) {
     bar(WG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).x; }
     bar(WG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + lowMe]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
     bar(WG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).y; }
     bar(WG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + lowMe]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
     bar(WG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).z; }
     bar(WG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + lowMe]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
     bar(WG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).w; }
     bar(WG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + lowMe]; u[i] = as_double2(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
   }
 }
 
 #endif
 
 
-#if FFT_FP32 | NTT_GF31
+#if FFT_FP32 || NTT_GF31
 
-// Shufl two or more fft_WIDTHs or FFT_HEIGHTs using two 4-byte floats.
-void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
+// Shufl two or more fft_WIDTHs or FFT_HEIGHTs using two 4-byte floats or Z31s.
+void OVERLOAD shufl(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, u32 lowMe) {
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
@@ -391,8 +391,8 @@ void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
 
   // If SHUFL_BYTES is 8 or more we can write the complete F2 value to LDS memory with one instruction.
   if (SHUFL_BYTES >= 8) {
-    local F2* lds = ((local F2*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F2);
+    local F2_GF31* lds = lds2;
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F2_GF31);
 
 #if LDSPAD
     // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 8 bytes at a time, which means groups of 16 must have unique LDS banks.
@@ -520,8 +520,8 @@ void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
 
   // If SHUFL_BYTES is 4 we split the F2 values into two F values.  These are written to LDS memory using two instructions.
   else if (SHUFL_BYTES == 4) {
-    local F* lds = ((local F*) lds2);
-    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F);
+    local F_Z31* lds = ((local F_Z31*) lds2);
+    if (numWG > 1) lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F_Z31);
 
 #if LDSPAD
     // Special case first n == 8 to eliminate LDS bank conflicts.  We're writing 4 bytes at a time, which means groups of 32 must have unique LDS banks.
@@ -620,10 +620,6 @@ void OVERLOAD shufl32(local F2 *lds2, F2 *u, u32 f, u32 numWG, u32 lowMe) {
 
 
 #if FFT_FP64
-
-void OVERLOAD shufl(local T2 *lds, T2 *u, u32 f, u32 numWG, u32 lowMe) {
-  shufl64(lds, u, f, numWG, lowMe);
-}
 
 void OVERLOAD chainMul4(T2 *u, T2 w) {
   u[1] = cmul(u[1], w);
@@ -1195,10 +1191,6 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 
 #if FFT_FP32
 
-void OVERLOAD shufl(local F2 *lds, F2 *u, u32 f, u32 numWG, u32 lowMe) {
-  shufl32(lds, u, f, numWG, lowMe);
-}
-
 void OVERLOAD fft_RADIX(F2 *u) {
 #if RADIX == 4
   fft4(u);
@@ -1658,10 +1650,6 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 
 #if NTT_GF31
 
-void OVERLOAD shufl(local GF31 *lds, GF31 *u, u32 f, u32 numWG, u32 lowMe) {
-  shufl32((local F2 *) lds, (F2 *) u, f, numWG, lowMe);
-}
-
 void OVERLOAD fft_RADIX(GF31 *u) {
 #if RADIX == 4
   fft4(u);
@@ -1743,10 +1731,6 @@ void OVERLOAD fft_common(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, u32
 /**************************************************************************/
 
 #if NTT_GF61
-
-void OVERLOAD shufl(local GF61 *lds, GF61 *u, u32 f, u32 numWG, u32 lowMe) {
-  shufl64((local T2 *) lds, (T2 *) u, f, numWG, lowMe);
-}
 
 void OVERLOAD fft_RADIX(GF61 *u) {
 #if RADIX == 4

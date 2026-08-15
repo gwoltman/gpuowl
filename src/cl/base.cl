@@ -394,6 +394,12 @@ void OVERLOAD L2STORE(P(T2) mem, T2 val) {
 void OVERLOAD L2STORE(P(F2) mem, F2 val) {
   __asm("st.global.cg.v2.f32  [%0], {%1, %2};" : : "l"(mem), "f"(val.x), "f"(val.y));
 }
+void OVERLOAD L2STORE(P(GF61) mem, GF61 val) {
+  __asm("st.global.cg.v2.b64  [%0], {%1, %2};" : : "l"(mem), "l"(val.x), "l"(val.y));
+}
+void OVERLOAD L2STORE(P(GF31) mem, GF31 val) {
+  __asm("st.global.cg.v2.b32  [%0], {%1, %2};" : : "l"(mem), "r"(val.x), "r"(val.y));
+}
 void OVERLOAD L2STORE(i64 *mem, i64 val) {
   __asm("st.global.cg.b64  [%0], %1;" : : "l"(mem), "l"(val));
 }
@@ -459,6 +465,12 @@ void OVERLOAD EFSTORE(P(T2) mem, T2 val) {
 }
 void OVERLOAD EFSTORE(P(F2) mem, F2 val) {
   __asm("st.global.cs.v2.f32  [%0], {%1, %2};" : : "l"(mem), "f"(val.x), "f"(val.y));
+}
+void OVERLOAD EFSTORE(P(GF61) mem, GF61 val) {
+  __asm("st.global.cs.v2.b64  [%0], {%1, %2};" : : "l"(mem), "l"(val.x), "l"(val.y));
+}
+void OVERLOAD EFSTORE(P(GF31) mem, GF31 val) {
+  __asm("st.global.cs.v2.b32  [%0], {%1, %2};" : : "l"(mem), "r"(val.x), "r"(val.y));
 }
 void OVERLOAD EFSTORE(i64 *mem, i64 val) {
   __asm("st.global.cs.b64  [%0], %1;" : : "l"(mem), "l"(val));
@@ -743,51 +755,43 @@ void PREFETCHL2(const __global void *addr) {
 #endif
 }
 
+// Some routines can be written for any 64-bit data type (T2 or GF61).  Same for 32-bit data types (F2 or GF31).
+// Some routines can be written to work 32-bit and 64-bit data types.
+// These #defines make it easy to write those routines.  This used to be done with type-casting, but
+// this method generates better PTX code (not sure if that results in any better run times).
+
 #if FFT_FP64
-void OVERLOAD read(u32 WG, u32 N, T2 *u, const global T2 *in, u32 base) {
-  in += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG]); }
-}
-
-void OVERLOAD write(u32 WG, u32 N, T2 *u, global T2 *out, u32 base) {
-  out += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG], u[i]); }
-}
+#define T_Z61 T
+#define T2_GF61 T2
+#define T2_F2_GF31_GF61 T2
+#define as_T2_GF61 as_double2
 #endif
-
-#if FFT_FP32
-void OVERLOAD read(u32 WG, u32 N, F2 *u, const global F2 *in, u32 base) {
-  in += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG]); }
-}
-
-void OVERLOAD write(u32 WG, u32 N, F2 *u, global F2 *out, u32 base) {
-  out += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG], u[i]); }
-}
-#endif
-
-#if NTT_GF31
-void OVERLOAD read(u32 WG, u32 N, GF31 *u, const global GF31 *in, u32 base) {
-  in += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { u[i] = in[i * WG]; }
-}
-
-void OVERLOAD write(u32 WG, u32 N, GF31 *u, global GF31 *out, u32 base) {
-  out += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { out[i * WG] = u[i]; }
-}
-#endif
-
 #if NTT_GF61
-void OVERLOAD read(u32 WG, u32 N, GF61 *u, const global GF61 *in, u32 base) {
+#define T_Z61 Z61
+#define T2_GF61 GF61
+#define T2_F2_GF31_GF61 GF61
+#define as_T2_GF61 as_ulong2
+#endif
+#if FFT_FP32
+#define F_Z31 F
+#define F2_GF31 F2
+#define T2_F2_GF31_GF61 F2
+#endif
+#if NTT_GF31
+#define F_Z31 Z31
+#define F2_GF31 GF31
+#define T2_F2_GF31_GF61 GF31
+#endif
+
+#if FFT_FP64 || NTT_GF61 || FFT_FP32 || NTT_GF31
+void OVERLOAD read(u32 WG, u32 N, T2_F2_GF31_GF61 *u, const global T2_F2_GF31_GF61 *in, u32 base) {
   in += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { u[i] = in[i * WG]; }
+  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG]); }
 }
 
-void OVERLOAD write(u32 WG, u32 N, GF61 *u, global GF61 *out, u32 base) {
+void OVERLOAD write(u32 WG, u32 N, T2_F2_GF31_GF61 *u, global T2_F2_GF31_GF61 *out, u32 base) {
   out += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { out[i * WG] = u[i]; }
+  for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG], u[i]); }
 }
 #endif
 
