@@ -962,7 +962,12 @@ Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b
 
 Z61 OVERLOAD mul(Z61 a, Z61 b) { return modM61(weakMul(a, b, 2, 2)); }
 
-Z61 OVERLOAD fma(Z61 a, Z61 b, Z61 c) { return modM61(weakMulAdd(a, b, c, 2, 2)); }
+// Not named fma(): declaring a user overload of fma() hides the OpenCL builtin
+// fma(float,float,float), so in a build with both FFT_FP32 and NTT_GF61 the float call sites
+// (chainMul4() in fftbase.cl, for one) resolve to this overload instead, convert their float
+// arguments to ulong, and return ulong2 where float2 is expected. This overload has no call
+// sites, so the name is free to change.
+Z61 OVERLOAD fmaZ61(Z61 a, Z61 b, Z61 c) { return modM61(weakMulAdd(a, b, c, 2, 2)); }
 
 // Multiply by 2
 Z61 OVERLOAD mul2(Z61 a) { return add(a, a); }
