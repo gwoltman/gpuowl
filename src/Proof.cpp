@@ -142,8 +142,11 @@ ProofSet::ProofSet(u64 E, u32 power)
 
   fs::create_directories(proofPath(E));
 
-  vector<u64> spans;
-  for (u64 span = (E + 1) / 2; spans.size() < power; span = (span + 1) / 2) { spans.push_back(span); }
+  rebuildPoints();
+}
+
+void ProofSet::rebuildPoints() {
+  points.clear();
 
   points.push_back(0);
   u32 p;
@@ -169,6 +172,12 @@ ProofSet::ProofSet(u64 E, u32 power)
   for ([[maybe_unused]] u64 const p : points) {
     assert(p > E || isInPoints(E, power, p));
   }
+}
+
+void ProofSet::reducePower() {
+  assert(power > 0);
+  --power;
+  rebuildPoints();
 }
 
 bool ProofSet::isInPoints(u64 E, u32 power, u64 k) {

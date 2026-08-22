@@ -59,6 +59,8 @@ public:
   
 private:  
   vector<u64> points;
+
+  void rebuildPoints();
   
   bool isValidTo(u64 limitK) const;
 
@@ -86,6 +88,6 @@ public:
   void save(u64 k, const Words& words) const { return save(E, power, k, words); }
   Words load(u64 k) const { return load(E, power, k); }
 
-  void reducePower() { power--; }
+  void reducePower();
   std::pair<Proof, vector<u64>> computeProof(Gpu *gpu) const;
 };
