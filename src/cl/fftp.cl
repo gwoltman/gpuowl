@@ -3,7 +3,9 @@
 #include "base.cl"
 #include "fftwidth.cl"
 #include "weight.cl"
-#include "middle.cl"
+
+#define INCLUDE_FILE "middle.cl"
+#include "expand.cl"
 
 #if FFT_TYPE == FFT64
 

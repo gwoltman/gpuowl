@@ -755,46 +755,6 @@ void PREFETCHL2(const __global void *addr) {
 #endif
 }
 
-// Some routines can be written for any 64-bit data type (T2 or GF61).  Same for 32-bit data types (F2 or GF31).
-// Some routines can be written to work 32-bit and 64-bit data types.
-// These #defines make it easy to write those routines.  This used to be done with type-casting, but
-// this method generates better PTX code (not sure if that results in any better run times).
-
-#if FFT_FP64
-#define T_Z61 T
-#define T2_GF61 T2
-#define T2_F2_GF31_GF61 T2
-#define as_T2_GF61 as_double2
-#endif
-#if NTT_GF61
-#define T_Z61 Z61
-#define T2_GF61 GF61
-#define T2_F2_GF31_GF61 GF61
-#define as_T2_GF61 as_ulong2
-#endif
-#if FFT_FP32
-#define F_Z31 F
-#define F2_GF31 F2
-#define T2_F2_GF31_GF61 F2
-#endif
-#if NTT_GF31
-#define F_Z31 Z31
-#define F2_GF31 GF31
-#define T2_F2_GF31_GF61 GF31
-#endif
-
-#if FFT_FP64 || NTT_GF61 || FFT_FP32 || NTT_GF31
-void OVERLOAD read(u32 WG, u32 N, T2_F2_GF31_GF61 *u, const global T2_F2_GF31_GF61 *in, u32 base) {
-  in += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG]); }
-}
-
-void OVERLOAD write(u32 WG, u32 N, T2_F2_GF31_GF61 *u, global T2_F2_GF31_GF61 *out, u32 base) {
-  out += base + (u32) get_local_id(0);
-  for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG], u[i]); }
-}
-#endif
-
 // On "classic" AMD GCN GPUs such as Radeon VII, the wavefront size was always 64. On RDNA GPUs the wavefront can
 // be configured to be either 64 or 32. We use the FAST_BARRIER define as an indicator for GCN GPUs.
 // On Nvidia GPUs the wavefront size is 32.

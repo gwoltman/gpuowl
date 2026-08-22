@@ -34,9 +34,23 @@
 #define MIDDLE_OUT_LDS_TRANSPOSE 1
 #endif
 
+// These were the original read/write routines for accessing FFT data.  I'm not sure if they are used anymore.
+
+#ifdef T2_F2_GF31_GF61
+void OVERLOAD read(u32 WG_SZ, u32 N, T2_F2_GF31_GF61 *u, const global T2_F2_GF31_GF61 *in, u32 base) {
+  in += base + (u32) get_local_id(0);
+  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG_SZ]); }
+}
+
+void OVERLOAD write(u32 WG_SZ, u32 N, T2_F2_GF31_GF61 *u, global T2_F2_GF31_GF61 *out, u32 base) {
+  out += base + (u32) get_local_id(0);
+  for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG_SZ], u[i]); }
+}
+#endif
+
 #if !INPLACE                       // Original implementation (not in place)
 
-#if FFT_FP64 || NTT_GF61
+#ifdef T2_GF61
 
 //****************************************************************************************
 // Pair of routines to write data from carryFused and read data into fftMiddleIn
@@ -90,7 +104,7 @@ void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 //      x         ranges 0...SMALL_HEIGHT-1 (multiples of one)          (also known as 0...G_H-1 and 0...NH-1)
 //      y         ranges 0...MIDDLE*WIDTH-1 (multiples of SMALL_HEIGHT)
 
-void OVERLOAD writeMiddleInLine (P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x)
 {
   //u32 SIZEY = IN_WG / IN_SIZEX;
   //u32 num_x_chunks = WIDTH / IN_SIZEX;                // Number of x chunks
@@ -278,7 +292,7 @@ void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 // adjusted to effect a transpose.  Or caller must transpose the x and y values and send us an out pointer with thread_id added in.
 // In other words, caller is responsible for deciding the best way to transpose x and y values.
 
-void OVERLOAD writeMiddleOutLine (P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x)
 {
   //u32 SIZEY = OUT_WG / OUT_SIZEX;
   //u32 num_x_chunks = SMALL_HEIGHT / OUT_SIZEX;  // Number of x chunks
@@ -378,7 +392,7 @@ void OVERLOAD readCarryFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
 /*        Similar to above, but for an FFT based on FP32 or GF31          */
 /**************************************************************************/
 
-#if FFT_FP32 || NTT_GF31
+#ifdef F2_GF31
 
 void OVERLOAD writeCarryFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {
 #if PAD_SIZE > 0
@@ -404,7 +418,7 @@ void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
 #endif
 }
 
-void OVERLOAD writeMiddleInLine (P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x)
 {
 #if PAD_SIZE > 0
   u32 SIZEY = IN_WG / IN_SIZEX;
@@ -512,7 +526,7 @@ void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
 #endif
 }
 
-void OVERLOAD writeMiddleOutLine (P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x)
 {
 #if PAD_SIZE > 0
   u32 SIZEY = OUT_WG / OUT_SIZEX;
@@ -659,7 +673,7 @@ void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 // This leaves the "columns" starting at +1KB unused - suggesting a pad of +1KB before the 64Ks would yield a better distribution in the L2 cache.
 // However, if we have say an 8-way 16MB L2 cache then each way contains 2MB.  If so, we'd want to pad 1KB before the 16th 64K FFT data value.
 
-#if FFT_FP64 || NTT_GF61
+#ifdef T2_GF61
 
 //****************************************************************************************
 // Pair of routines to read/write data to/from carryFused
@@ -721,7 +735,7 @@ void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.
-void OVERLOAD writeMiddleInLine (P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 {
   out += (x / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, y / 16) * 16) + (x % 16);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM], u[i]); }
@@ -764,7 +778,7 @@ void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
-void OVERLOAD writeMiddleOutLine (P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 {
   out += (y / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, x / 16) * 16) + (x % 16);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM], u[i]); }
@@ -777,7 +791,7 @@ void OVERLOAD writeMiddleOutLine (P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 /*        Similar to above, but for an FFT based on FP32 or GF31          */
 /**************************************************************************/
 
-#if FFT_FP32 || NTT_GF31
+#ifdef F2_GF31
 
 //****************************************************************************************
 // Pair of routines to read/write data to/from carryFused
@@ -840,7 +854,7 @@ void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
 }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.
-void OVERLOAD writeMiddleInLine (P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 {
   out += (x / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, y / 16) * 16) + (x % 16);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM32], u[i]); }
@@ -883,7 +897,7 @@ void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
 }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
-void OVERLOAD writeMiddleOutLine (P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 {
   out += (y / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, x / 16) * 16) + (x % 16);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM32], u[i]); }

@@ -2,7 +2,9 @@
 
 #include "base.cl"
 #include "fft-middle.cl"
-#include "middle.cl"
+
+#define INCLUDE_FILE "middle.cl"
+#include "expand.cl"
 
 #if !INPLACE                  // Original implementation (not in place)
 

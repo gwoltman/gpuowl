@@ -4,7 +4,9 @@
 #include "fftwidth.cl"
 #include "carryutil.cl"
 #include "weight.cl"
-#include "middle.cl"
+
+#define INCLUDE_FILE "middle.cl"
+#include "expand.cl"
 
 void spin() {
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_s_sleep)
