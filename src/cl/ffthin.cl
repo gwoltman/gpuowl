@@ -2,7 +2,9 @@
 
 #include "base.cl"
 #include "fftheight.cl"
-#include "middle.cl"
+
+#define INCLUDE_FILE "middle.cl"
+#include "expand.cl"
 
 // If not doing L2 stripes, process the lines in any order.
 // If L2 striping, process lines output by fftMiddleIn.  fftMiddleIn outputs 2 * stripe_group_size * 16 * MIDDLE tailSquare lines.
