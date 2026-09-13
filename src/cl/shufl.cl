@@ -86,7 +86,7 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // Pad 4 values after every row to eliminate bank conflicts.
     if (f == 4 && r == 4 && RADIX == 4) {
       bar(WG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[lowMe / 4 * (WG + 4) + i * 4 + (lowMe & 3)] = u[i]; }
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 4) + (lowMe / 16) * 16 + i * 4 + (lowMe & 3)] = u[i]; }
       bar(WG);
       if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 16                     +  (lowMe / 16)      * (WG + 4) + (lowMe & 15)]; }
       else          for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 4) + (lowMe & 15)]; }
