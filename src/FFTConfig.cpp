@@ -222,7 +222,7 @@ FFTConfig::FFTConfig(const string& spec) {
       throw "Invalid FFT spec";
     }
     if (m < 2 || m > 16) {
-      log("Middle must be between 1 and 16.\n");
+      log("Middle must be between 2 and 16.\n");
       throw "Invalid FFT spec";
     }
     if (h != 256 && h != 512 && h != 1024) {
