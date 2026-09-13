@@ -177,14 +177,25 @@ float FFTShape::carry32BPW() const {
   // We model carry with a Gumbel distrib similar to the one used for ROE, and measure carry with
   // -use STATS=1. See -carryTune
 
-//GW:  I have no idea why this is needed.  Without it, -tune fails on FFT sizes from 256K to 1M
-// Perhaps it has something to do with RNDVALdoubleToLong in carryutil
-if (18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())) > 19.0) return 19.0f;
+  // The 19.0 cap is a hard limit of the CARRY32 code, not an empirical one, which is why the formula
+  // above must be clamped for the smaller FFTs (without it, -tune failed on FFT sizes from 256K to 1M).
+  //
+  // In the CARRY32 case weightAndCarryOne() returns the raw bits of RNDVAL + value rather than stripping
+  // RNDVAL off (carryutil.cl:217-219), so bit 51 is set iff value >= 0 and bits 52+ hold the exponent.
+  // carryStep(i64, i32*) then takes the carry as xtract32(x, nBits), i.e. bits [nBits, nBits+32).  That
+  // window must stay strictly below bit 51 for the sign fill to work, so nBits <= 19, and since a big word
+  // has nBits = EXP / NWORDS + 1 that means EXP / NWORDS <= 18, i.e. bpw < 19.0.  At nBits = 20 the window
+  // includes bit 51 and every big word with a non-negative value yields a large negative carry.
+  if (18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())) > 19.0) return 19.0f;
 
   return float(18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())));
 }
 
 bool FFTShape::needsLargeCarry(u64 E) const {
+  // carry32BPW() caps at 19.0 and the comparison below is a strict >, so E == 19 * size() would still
+  // select CARRY32 with EXP / NWORDS == 19, which the CARRY32 code cannot handle (see carry32BPW()).
+  // Test the kernel's own EXP / NWORDS expression to close that off-by-one.
+  if (E / size() >= 19) { return true; }
   return E / double(size()) > carry32BPW();
 }
 
