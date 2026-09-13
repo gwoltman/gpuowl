@@ -45,7 +45,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   updateStats(lds, G_W, H, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(bufROE, posROE, carryMax);
+  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
 #endif
 }
 
