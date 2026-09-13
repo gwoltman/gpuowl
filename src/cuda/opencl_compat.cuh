@@ -40,16 +40,24 @@
 #define get_global_size(d) ((unsigned int)(gridDim.x * blockDim.x))
 #define get_enqueued_local_size(d) get_local_size(d)
 
-// ---- Barriers ----
-#define CLK_LOCAL_MEM_FENCE 0
-#define CLK_GLOBAL_MEM_FENCE 0
-#define barrier(flags) __syncthreads()
+// ---- Barriers and fences ----
+#define CLK_LOCAL_MEM_FENCE  (1 << 0)
+#define CLK_GLOBAL_MEM_FENCE (1 << 1)
 
-// ---- Memory fences ----
-// OpenCL write_mem_fence / read_mem_fence → CUDA __threadfence()
-#define write_mem_fence(flags) __threadfence()
-#define read_mem_fence(flags) __threadfence()
-#define mem_fence(flags) __threadfence()
+__device__ __forceinline__ void ocl_barrier(int flags) {
+  __syncthreads();  // execution barrier is unconditional regardless of flags
+  // __syncthreads() already fences both shared and global memory per CUDA's
+  // documented semantics, so no additional fence is needed here for either flag.
+}
+#define barrier(flags) ocl_barrier(flags)
+
+__device__ __forceinline__ void ocl_mem_fence(int flags) {
+  if (flags & CLK_GLOBAL_MEM_FENCE) __threadfence();
+  else if (flags & CLK_LOCAL_MEM_FENCE) __threadfence_block();
+}
+#define mem_fence(flags) ocl_mem_fence(flags)
+#define write_mem_fence(flags) ocl_mem_fence(flags)
+#define read_mem_fence(flags) ocl_mem_fence(flags)
 
 // ---- Overloadable ----
 // CUDA C++ supports function overloading natively
@@ -268,6 +276,7 @@ __device__ __forceinline__ uint mad_hi(uint a, uint b, uint c) {
 // ---- Atomic operations ----
 #define atomic_max(p, v) atomicMax((unsigned int*)(p), (unsigned int)(v))
 #define atomic_add(p, v) atomicAdd(p, v)
+#define atomic_cmpxchg(p, old, new) atomicCAS((int *)(p), old, new)
 
 // OpenCL 2.0 C11-style atomics — optimized for CUDA carry stairway pattern.
 // The carryFused kernel uses: producer writes data, threadfence, bar, atomic_store(flag, 1)
