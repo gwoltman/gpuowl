@@ -65,7 +65,7 @@ std::optional<Task> parse(const std::string& line) {
     u64 exp{};
     auto [ptr, _] = from_chars(s.c_str(), end, exp, 10);
     if (ptr != end) { exp = 0; }
-    if (exp > 1000) { return {{.kind=isPRP ? Task::PRP : Task::LL, .exponent=u32(exp), .AID=AID, .line=line, .squarings=0}}; }
+    if (exp > 1000) { return {{.kind=isPRP ? Task::PRP : Task::LL, .exponent=exp, .AID=AID, .line=line, .squarings=0}}; }
   }
   if (isCERT) {
     vector<string> parts = split(topParts.back(), ',');
@@ -84,7 +84,7 @@ std::optional<Task> parse(const std::string& line) {
 	u64 squarings{0};
 	from_chars(s.c_str(), end, squarings, 10);
 //printf ("Exec cert %d %d \n", (int) exp, (int) squarings);
-	if (exp > 1000 && squarings > 100) { return {{.kind=Task::CERT, .exponent=u32(exp), .AID=AID, .line=line, .squarings=u32(squarings) }}; }
+	if (exp > 1000 && squarings > 100) { return {{.kind=Task::CERT, .exponent=exp, .AID=AID, .line=line, .squarings=u32(squarings) }}; }
       }
     }
   }
