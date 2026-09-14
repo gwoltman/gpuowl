@@ -214,7 +214,9 @@ i64 weightAndCarryOne(T u, T invWeight, i64 inCarry, float* maxROE, int sloppy_r
   float roundoff = fabs((float) fma(u, invWeight, RNDVALCarry - d));
   *maxROE = max(*maxROE, roundoff);
 
-  // Convert to long (for CARRY32 case we don't need to strip off the RNDVAL bits)
+  // Convert to long (for CARRY32 case we don't need to strip off the RNDVAL bits).
+  // Leaving RNDVAL in place is only safe while the carry extraction window stays below bit 51 -- see the
+  // #error below and FFTShape::carry32BPW.
   if (sloppy_result_is_acceptable) return as_long(d);
   else return RNDVALdoubleToLong(d);
 
@@ -799,6 +801,13 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 /* Support both 32-bit and 64-bit carries */
 
 #if WordSize <= 4
+// A 32-bit carry means weightAndCarryOne returns RNDVAL + value un-stripped, and carryStep(i64, i32*) reads
+// the carry from bits [nBits, nBits+32).  That window must stay strictly below the RNDVAL bit 51, so
+// nBits <= 19; a big word has nBits = EXP / NWORDS + 1.  The host is supposed to select CARRY64 before this
+// point (FFTShape::needsLargeCarry); fail loudly rather than compute wrong carries if it ever does not.
+#if !CARRY64 && FFT_TYPE == FFT64 && EXP / NWORDS >= 19
+#error "CARRY32 requires EXP / NWORDS <= 18; this exponent needs CARRY64 (-carry long)"
+#endif
 #define iCARRY i32
 #include "carryinc.cl"
 #undef iCARRY
