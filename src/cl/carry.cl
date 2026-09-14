@@ -6,6 +6,12 @@
 #include "carryutil.cl"
 #include "weight.cl"
 
+// Number of workgroups this kernel is launched with: it is enqueued with hN / CARRY_LEN work-items
+// and a workgroup of G_W, so hN / (CARRY_LEN * G_W) = BIG_HEIGHT * NW / CARRY_LEN.  updateStats needs
+// this exact count -- passing BIG_HEIGHT is only correct when NW == CARRY_LEN, which fails for WIDTH=256
+// where nW() is 4.  CARRY_LEN divides BIG_HEIGHT since BIG_HEIGHT = MIDDLE * SMALL_HEIGHT.
+#define CARRY_GROUPS    (NW * (BIG_HEIGHT / CARRY_LEN))
+
 #if FFT_TYPE == FFT64
 
 // Carry propagation with optional MUL-3, over CARRY_LEN words.
@@ -42,10 +48,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
 #if ROE
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -101,10 +107,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(F2) in, u32 posROE, P(CarryABM) carryOut, Big
 
 #if ROE
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -177,10 +183,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF31) in, u32 posROE, P(CarryABM) carryOut, P
 #if ROE
   local u32 lds[G_W];
   float fltRoundMax = (float) roundMax / (float) M31;      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(lds, G_W, H, bufROE, posROE, fltRoundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, fltRoundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -253,10 +259,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF61) in, u32 posROE, P(CarryABM) carryOut, P
 #if ROE
   local u32 lds[G_W];
   float fltRoundMax = (float) roundMax / (float) (M61 >> 32);      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(lds, G_W, H, bufROE, posROE, fltRoundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, fltRoundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -333,10 +339,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
 #if ROE
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -418,10 +424,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
 #if ROE
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -503,10 +509,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
 #if ROE
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -596,10 +602,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
 #if ROE
   local u32 lds[G_W];
   float fltRoundMax = (float) roundMax / (float) 0x1FFFFFFF;      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
-  updateStats(lds, G_W, H, bufROE, posROE, fltRoundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, fltRoundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
@@ -697,10 +703,10 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
 #if ROE
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, roundMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, roundMax);
 #elif (STATS & (1 << (2 + MUL3)))
   local u32 lds[G_W];
-  updateStats(lds, G_W, H, bufROE, posROE, carryMax);
+  updateStats(lds, G_W, CARRY_GROUPS, bufROE, posROE, carryMax);
 #endif
 }
 
