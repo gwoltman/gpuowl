@@ -523,6 +523,13 @@ public:
   }
 };
 
+// The block sizes baseCheckStep() knows about.  blockSize comes from the savefile, so it must be
+// validated on load (see Gpu::loadPRP) -- a bad value here would otherwise produce checkStep == 0
+// in a release build, where the assert below is compiled out, and then "k % checkStep" divides by zero.
+bool isValidBlockSize(u32 blockSize) {
+  return blockSize == 200 || blockSize == 400 || blockSize == 500 || blockSize == 1000;
+}
+
 u32 baseCheckStep(u32 blockSize) {
   switch (blockSize) {
     case 200:  return 40'000;
@@ -530,8 +537,8 @@ u32 baseCheckStep(u32 blockSize) {
     case 500:  return 200'000;
     case 1000: return 1'000'000;
     default:
-      assert(false);
-      return 0;
+      log("Invalid blockSize %u\n", blockSize);
+      throw "invalid blockSize";
   }
 }
 
@@ -2291,6 +2298,16 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
     }
 
     PRPState state = saver.load();
+
+    // blockSize is read straight out of the savefile, and the v12 CRC covers the check data but not
+    // the header.  Reject an out-of-range value the same way a residue mismatch is rejected, so an
+    // earlier savefile gets a chance, rather than letting it reach baseCheckStep().
+    if (!isValidBlockSize(state.blockSize)) {
+      log("EE %9" PRIu64 " on-load: invalid blockSize %u\n", state.k, state.blockSize);
+      if (!state.k) { break; }
+      continue;
+    }
+
     writeState(state.k, state.check, state.blockSize);
     u64 const res = dataResidue();
 
