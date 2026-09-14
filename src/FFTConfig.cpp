@@ -237,7 +237,7 @@ FFTConfig::FFTConfig(const string& spec) {
   
   if (v.size() == 1) {
     *this = {FFTShape::multiSpec(spec).front(), LAST_VARIANT, CARRY_AUTO};
-  } if (v.size() == 3) {
+  } else if (v.size() == 3) {
     *this = {FFTShape{fft_type, v[0], v[1], v[2]}, LAST_VARIANT, CARRY_AUTO};
   } else if (v.size() == 4) {
     *this = {FFTShape{fft_type, v[0], v[1], v[2]}, parseInt(v[3]), CARRY_AUTO};
