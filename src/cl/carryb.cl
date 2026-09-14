@@ -32,6 +32,18 @@ KERNEL(G_W) carryB(P(Word2) io, CP(CarryABM) carryIn) {
     u32 p = i * WIDTH + me;
     bool biglit0 = frac_bits + (2*i) * FRAC_BPW_HI <= FRAC_BPW_HI;
     bool biglit1 = frac_bits + (2*i) * FRAC_BPW_HI >= -FRAC_BPW_HI;   // Same as frac_bits + (2*i) * FRAC_BPW_HI + FRAC_BPW_HI <= FRAC_BPW_HI;
+    // carryB has no carry-out: a carry leaving the last word of this group would be dropped, silently
+    // losing 1 ulp at the first word of the next group.  On the last word pair, add the carry into the
+    // high word without normalizing it -- as carryFinal does at the end of the fused carry chain -- so
+    // that nothing can escape the group.  An un-normalized word holds the same value and is normalized
+    // by the next iteration.
+    if (i == CARRY_LEN - 1) {
+      Word2 a = io[p];
+      a.x = carryStep(a.x + carry, &carry, biglit0);
+      a.y += carry;
+      io[p] = a;
+      return;
+    }
     io[p] = carryWord(io[p], &carry, biglit0, biglit1);
     if (!carry) { return; }
   }
