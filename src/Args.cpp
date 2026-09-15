@@ -5,9 +5,11 @@
 #include "clwrap.h"
 #include "gpuid.h"
 #include "Proof.h"
+#include "version.h"
 
 #include <vector>
 #include <string>
+#include <cstdio>
 #include <cstring>
 #include <cassert>
 #include <cstdlib>
@@ -286,7 +288,11 @@ void Args::parse(const string& line) {
       printHelp();
       throw "help";
     } if (key == "-version") {
-      // log("PRPLL %s\n", VERSION);
+      // Plain stdout, no log prefix: the flag exists for scripts and launchers
+      // that record which build wrote a result (Task.cpp reports VERSION to
+      // PrimeNet), so the one line must be the version and nothing else.
+      printf("%s\n", (VERSION[0] == 'v') ? VERSION + 1 : VERSION);
+      fflush(stdout);
       throw "version";
     } if (key == "-info") {
       if (s.empty()) {
