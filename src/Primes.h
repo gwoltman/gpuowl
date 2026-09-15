@@ -6,7 +6,7 @@
 #include "common.h"
 
 class Primes {
-  std::bitset<50000> sieve;           // Allows for testing prims up to 10 billion
+  std::bitset<50000> sieve;           // Allows for testing primes up to 10 billion
   [[nodiscard]] bool isPrimeOdd(u64 n) const;
 
 public:
