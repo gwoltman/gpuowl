@@ -1017,10 +1017,34 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
     if (value && size >= 1) memcpy(value, empty, 1);
     break;
   }
-  case CL_DEVICE_BOARD_NAME_AMD:
-  case CL_DEVICE_PCIE_ID_AMD:
   case CL_DEVICE_TOPOLOGY_AMD: {
-    // AMD-specific queries — return failure
+    // The device's PCIe position in the AMD extension's shape, so `-pci
+    // <bus:device.function>` selects a CUDA device the way it selects an AMD
+    // one (gpuid.cpp getPosFromBdf → clwrap.cpp getBdfFromDevice). The
+    // enumeration ordinal `-device N` names is not stable — CUDA orders
+    // FASTEST_FIRST unless CUDA_DEVICE_ORDER says otherwise, and a second
+    // card or a driver update can renumber — while the bus id is what
+    // nvidia-smi and every launcher already know the card by.
+    char bdf[32] = {0};
+    if (cuDeviceGetPCIBusId(bdf, sizeof(bdf), dev->dev) != CUDA_SUCCESS) return CL_INVALID_VALUE;
+    // "0000:6a:00.0" — domain:bus:device.function; tolerate a missing domain.
+    unsigned domain = 0, bus = 0, device = 0, function = 0;
+    if (sscanf(bdf, "%x:%x:%x.%x", &domain, &bus, &device, &function) != 4 &&
+        sscanf(bdf, "%x:%x.%x", &bus, &device, &function) != 3) {
+      return CL_INVALID_VALUE;
+    }
+    cl_device_topology_amd top{};
+    top.pcie.type = CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD;
+    top.pcie.bus = (char) bus;
+    top.pcie.device = (char) device;
+    top.pcie.function = (char) function;
+    if (sizeRet) *sizeRet = sizeof(top);
+    if (value && size >= sizeof(top)) memcpy(value, &top, sizeof(top));
+    break;
+  }
+  case CL_DEVICE_BOARD_NAME_AMD:
+  case CL_DEVICE_PCIE_ID_AMD: {
+    // AMD-specific queries with no CUDA counterpart — return failure
     return CL_INVALID_VALUE;
   }
   case CL_DEVICE_GLOBAL_FREE_MEMORY_AMD: {
