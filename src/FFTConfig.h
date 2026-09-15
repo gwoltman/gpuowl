@@ -47,6 +47,7 @@ public:
 
   [[nodiscard]] float minBpw() const { return fft_type != FFT32 ? 3.0f : 1.0f; }
   [[nodiscard]] float maxBpw() const { return *std::ranges::max_element(bpw); }
+  [[nodiscard]] u64 maxExp() const { return u64(maxBpw() * size()); }
   [[nodiscard]] std::string spec() const { return (fft_type ? to_string(fft_type) + ':' : "") + numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
 
   [[nodiscard]] float carry32BPW() const;
@@ -93,7 +94,7 @@ public:
 
   [[nodiscard]] std::string spec() const;
   [[nodiscard]] u32 size() const { return shape.size(); }
-  [[nodiscard]] u64 maxExp()  const { return u64(maxBpw() * shape.size()); }
+  [[nodiscard]] u64 maxExp() const { return shape.maxExp(); }
 
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }
   [[nodiscard]] float maxBpw() const;

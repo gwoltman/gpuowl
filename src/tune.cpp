@@ -1200,6 +1200,9 @@ skip_1K_256 = false;
 
   vector<TuneEntry> results = TuneEntry::readTuneFile(*args);
 
+  // Time FFT shapes smallest-to-largest exponent handled
+  std::ranges::stable_sort(shapes, [](const FFTShape& a, const FFTShape& b) { return a.maxExp() < b.maxExp(); });
+
   // Loop through all possible FFT shapes
   for (const FFTShape& shape : shapes) {
 
