@@ -835,14 +835,23 @@ void OVERLOAD barsync(const u32 numWG, const u32 WG) {
 // with the beginning of the next kernel.  This requires a special launch kernel command that is only available in CUDA 12.0 and later.
 // These routines let us take advantage of this CUDA feature.  These routines do nothing in OpenCL.
 
+// Switched on per run with -use PDL=1. The CUDA shim launches a kernel with
+// programmatic stream serialization exactly when its compiled code contains
+// the wait below (it reads the PTX), so a kernel that never waits is never
+// allowed to start early. Off, both routines compile to nothing and every
+// launch is ordinary.
+#ifndef PDL
+#define PDL 0
+#endif
+
 void dependentLaunch() {
-#if CUDA_BACKEND && HAS_PTX >= 900 && ENABLE_PDL
+#if CUDA_BACKEND && HAS_PTX >= 900 && PDL
   __asm volatile("griddepcontrol.launch_dependents;");    // same as cudaTriggerProgrammaticLaunchCompletion();
 #endif
 }
 
 void dependentLaunchWait() {
-#if CUDA_BACKEND && HAS_PTX >= 900 && ENABLE_PDL
+#if CUDA_BACKEND && HAS_PTX >= 900 && PDL
   __asm volatile("griddepcontrol.wait;");                 // same as cudaGridDependencySynchronize();
 #endif
 }
