@@ -212,9 +212,10 @@ using cl_queue = cl_command_queue;
 #define CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV     0x4000
 #define CL_DEVICE_COMPUTE_CAPABILITY_MINOR_NV     0x4001
 
-// AMD-specific (unused but must exist for compilation)
+// AMD-specific; the shim answers CL_DEVICE_TOPOLOGY_AMD from the CUDA device's PCI bus id
 #define CL_DEVICE_PCIE_ID_AMD           0x4034
 #define CL_DEVICE_TOPOLOGY_AMD          0x4037
+#define CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD 1
 #define CL_DEVICE_BOARD_NAME_AMD        0x4038
 #define CL_DEVICE_GLOBAL_FREE_MEMORY_AMD 0x4039
 
