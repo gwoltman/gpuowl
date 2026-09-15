@@ -119,6 +119,15 @@ struct NvrtcProgram {
   static std::string compile(const std::string& source, const std::string& name,
                               const std::vector<std::string>& options,
                               const std::vector<std::pair<std::string, std::string>>& headers = {});
+
+  // PTX plus, when NVRTC ran its ptxas for a real --gpu-architecture=sm_XY
+  // (NVRTC >= 11.1), the CUBIN — SASS the driver loads without a JIT, with
+  // every option (--maxrregcount included) already applied. `cubin` is empty
+  // when the toolkit or the architecture flag gave none.
+  struct Images { std::string ptx; std::string cubin; };
+  static Images compileImages(const std::string& source, const std::string& name,
+                              const std::vector<std::string>& options,
+                              const std::vector<std::pair<std::string, std::string>>& headers = {});
 };
 
 // ---- Kernel launcher ----
