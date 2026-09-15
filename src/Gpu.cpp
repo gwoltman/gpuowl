@@ -292,7 +292,8 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "WMUL",
                               "MULTI_Q",
                               "GRAPHS",
-                              "L1CUDA"
+                              "L1CUDA",
+                              "PDL"                     // CUDA, sm_90+: programmatic dependent launch
                             });
     if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());

@@ -184,6 +184,8 @@ named "config.txt" in the prpll run directory.
   -use INPLACE=n   : Perform tranforms in-place.  Great if the reduced memory usage fits in the GPU's L2 cache.
                      0 = not in-place, 1 = nVidia friendly access pattern, 2 = AMD friendly access pattern.
   -use PAD=<val>   : insert pad bytes to possibly improve memory access patterns.  Val is number bytes to pad.
+  -use PDL=1       : CUDA on Hopper (sm_90) and later: programmatic dependent launch — a kernel's tail overlaps the
+                     next kernel's start (fftMiddleOut → carryFused → fftMiddleIn → tailSquare). Off by default; measure.
   -use MIDDLE_IN_LDS_TRANSPOSE=0|1  : Transpose values in local memory before writing to global memory
   -use MIDDLE_OUT_LDS_TRANSPOSE=0|1 : Transpose values in local memory before writing to global memory
   -use TABMUL_CHAIN=<val>: Controls how trig values are obtained in WIDTH and HEIGHT when FFT-spec is 1.
