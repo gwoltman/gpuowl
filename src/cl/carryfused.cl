@@ -212,15 +212,14 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -232,8 +231,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -267,7 +268,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -275,14 +276,18 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -315,6 +320,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -444,15 +450,14 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
     if (lowMe % WAVEFRONT == 0) { 
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -464,8 +469,10 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -491,7 +498,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -499,14 +506,18 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -539,6 +550,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -681,15 +693,14 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (lowMe % WAVEFRONT == 0) { 
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
+    if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -701,8 +712,10 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -729,7 +742,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -737,14 +750,18 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -776,6 +793,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -923,15 +941,14 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (lowMe % WAVEFRONT == 0) { 
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
+    if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -943,8 +960,10 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -971,7 +990,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -979,14 +998,18 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -1019,6 +1042,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -1180,16 +1204,15 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #endif
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
-  // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+    // Tell next group that its carries are ready
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (lowMe % WAVEFRONT == 0) { 
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
+    if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -1201,8 +1224,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -1236,7 +1261,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -1244,14 +1269,18 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -1284,6 +1313,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -1465,15 +1495,14 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (lowMe % WAVEFRONT == 0) { 
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
+    if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -1485,8 +1514,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -1512,7 +1543,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -1520,14 +1551,18 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -1560,6 +1595,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -1745,15 +1781,14 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (lowMe % WAVEFRONT == 0) { 
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
+    if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -1765,8 +1800,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -1792,7 +1829,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -1800,14 +1837,18 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -1840,6 +1881,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -2019,15 +2061,14 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -2039,8 +2080,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -2067,7 +2110,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -2075,14 +2118,18 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -2115,6 +2162,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
@@ -2327,15 +2375,14 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-#if OLD_FENCE
-    // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-#else
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
-    if (lowMe % WAVEFRONT == 0) { 
+#if !OLD_FENCE
+    barsync(WMUL, G_W);
+    if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
       atomic_store((atomic_uint *) &ready[pos], 1);
     }
+    sync();
 #endif
   }
 
@@ -2347,8 +2394,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #else
     if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    sync();
 #endif
   }
 #endif
@@ -2374,7 +2423,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
   if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
-  // work_group_barrier(CLK_GLOBAL_MEM_FENCE, memory_scope_device);
+  sync();
   bar();
 #endif
   if (me < G_W) {
@@ -2382,14 +2431,18 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
+    sync();
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
       do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
+    sync();
+    barsync(WMUL, G_W);
     mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    sync();
 #endif
 #if HAS_ASM
     __asm("s_setprio 1");
@@ -2422,6 +2475,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
         for (i32 i = NW-1; i; --i) { carry[i] = carry[i-1]; }
         carry[0] = carry[NW];
       }
+      sync();
     }
   }
 
