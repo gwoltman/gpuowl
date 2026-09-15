@@ -855,13 +855,32 @@ int clEnqueueFillBuffer(cl_command_queue q, cl_mem buf, const void* pattern,
     unsigned char val;
     memcpy(&val, pattern, 1);
     r = cuMemsetD8Async(buf->ptr + offset, val, size, q->stream);
+  } else if (patternSize == 2) {
+    unsigned short val;
+    memcpy(&val, pattern, 2);
+    r = cuMemsetD16Async(buf->ptr + offset, val, size / 2, q->stream);
   } else if (patternSize == 4) {
     unsigned int val;
     memcpy(&val, pattern, 4);
     r = cuMemsetD32Async(buf->ptr + offset, val, size / 4, q->stream);
+  } else if (patternSize % 4 == 0 && size % patternSize == 0) {
+    // A pattern of N 32-bit words (Buffer<i64>/<u64>/<double>: N == 2): one
+    // strided memset per word writes word i of every pattern-sized slot —
+    // pitch = the pattern, width = one element, height = the slot count.
+    // Two driver calls instead of a host-side pattern buffer and a copy.
+    r = CUDA_SUCCESS;
+    size_t const slots = size / patternSize;
+    for (size_t i = 0; i < patternSize / 4 && r == CUDA_SUCCESS; ++i) {
+      unsigned int word;
+      memcpy(&word, static_cast<const unsigned char*>(pattern) + 4 * i, 4);
+      r = cuMemsetD2D32Async(buf->ptr + offset + 4 * i, patternSize, word, 1, slots, q->stream);
+    }
   } else {
-    // For other pattern sizes, fall back to memset 0 (common case is zero-fill)
-    r = cuMemsetD8Async(buf->ptr + offset, 0, size, q->stream);
+    // Neither a memset width nor a whole number of word-multiple slots: the
+    // OpenCL contract has no answer here, and a silent zero-fill (the old
+    // fallback) would hand the caller data it did not ask for.
+    if (event) *event = nullptr;
+    return CL_INVALID_VALUE;
   }
   if (event) *event = nullptr;
   return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
