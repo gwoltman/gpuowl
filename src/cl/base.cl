@@ -766,6 +766,24 @@ void PREFETCHL2(const __global void *addr) {
 #endif
 #endif
 
+// Default settings for USE_REGISTER_BARSYNC.  OpenCL on nVidia has compiler issues when USE_REGISTER_BARSYNC=0.  Annoying, as register bar.sync is slower in many cases.
+#ifndef USE_REGISTER_BARSYNC
+#if CUDA_BACKEND
+#define USE_REGISTER_BARSYNC 0
+#else
+#define USE_REGISTER_BARSYNC 1
+#endif
+#endif
+
+// Force divergent threads in a warp to converge.  Early CUDA versions did not require this.  Later versions lets the compiler choose to converge or not.
+// I've not seen any cases where the compiler does not converge when we'd like it to, but just in case this routine will fix the problem.
+void OVERLOAD sync() {
+#if ENABLE_SYNC && HAS_PTX >= 600         // bar.warp.sync requires sm_60 support or higher
+  __asm("bar.warp.sync 0xffffffff;" : : );
+#endif
+}
+
+// Create a barrier across all threads.
 void OVERLOAD bar(void) {
   // barrier(CLK_LOCAL_MEM_FENCE) is correct, but it turns out that on some GPUs
   // (in particular on Radeon VII and Radeon PRO VII) barrier(0) works as well and is faster.
@@ -777,14 +795,39 @@ void OVERLOAD bar(void) {
 #endif
 }
 
+// Create a barrier across a subset of threads OR across all threads if that is faster.
 void OVERLOAD bar(const u32 WG) {
-  if (WG > WAVEFRONT) {
+  if (WG <= WAVEFRONT) return;
 #if ENABLE_BARSYNC && HAS_PTX >= 200         // bar.sync with thread count requires sm_20 support or higher.  Slower on TitanV, need to try on later nVidia GPUs.
-    __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
+  __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
+// The above is GROSSLY slow on an RTX 5070Ti.  The code below is much faster (may need to be expanded to handle more than four named barriers).
+// WARNING, WARNING, WARNING: On TitanV using CUDA 12.9 tools and driver 580, similar code in LDSbar does not work in openCL (but works in CUDA build).
+//    if (get_local_id(0) / WG + 1 == 1) __asm("bar.sync 1, %0;" : : "n"(WG));
+//    else if (get_local_id(0) / WG + 1 == 2) __asm("bar.sync 2, %0;" : : "n"(WG));
+//    else if (get_local_id(0) / WG + 1 == 2) __asm("bar.sync 3, %0;" : : "n"(WG));
+//    else __asm("bar.sync 4, %0;" : : "n"(WG));
 #else
-    bar();
+  bar();
 #endif
+}
+
+// Create a barrier across a subset of threads.  Substituting a barrier on all threads is not permitted.
+void OVERLOAD barsync(const u32 numWG, const u32 WG) {
+  if (WG <= WAVEFRONT) return;
+#if HAS_PTX >= 200         // bar.sync with thread count requires sm_20 support or higher.
+#if USE_REGISTER_BARSYNC   // bar.sync with a register is horribly slow on an RTX 5070Ti.
+  __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
+#else                      // WARNING, WARNING, WARNING: On TitanV using CUDA 12.9 tools and driver 580, this branch does not work in openCL (but works in CUDA build).
+  for (u32 i = 1; i <= numWG; i++) {
+    if (i == get_local_id(0) / WG + 1) {
+      __asm("bar.sync %0, %1;" : : "n"(i), "n"(WG));
+      break;
+    }
   }
+#endif
+#else
+  #error - GPU not capable of barrier on a subset of threads
+#endif
 }
 
 // nVidia GPUs (Hopper architecture sm 9.0 and later) support Programatic Dependent Launch where the tail end execution of one kernel can overlap
