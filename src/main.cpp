@@ -16,6 +16,7 @@
 #include "Gpu.h"
 #include "tune.h"
 
+#include <cstring>
 #include <filesystem>
 #include <thread>
 #include <utility>
@@ -45,6 +46,12 @@ static void gpuWorker(GpuCommon shared, i32 instance) {
 extern int putenv(char *);
 #endif
 
+// The exceptions that end a run on purpose: the user's stop, and the two
+// flags that only print. Everything else thrown to main() is a failure.
+static bool isCleanExit(const char *reason) {
+  return !strcmp(reason, "stop requested") || !strcmp(reason, "help") || !strcmp(reason, "version");
+}
+
 int main(int argc, char **argv) {
 //!MSVC version support
 #ifdef _MSC_VER
@@ -62,7 +69,11 @@ int main(int argc, char **argv) {
   setenv("ROC_SIGNAL_POOL_SIZE", "32", 0);
 #endif
 
-  int const exitCode = 0;
+  // 0 for a normal end — the queue ran dry, a stop was requested, -h or
+  // -version — and 1 for an exception nobody else classified (a kernel that
+  // would not compile, a missing device, a bad argument), so a supervisor
+  // can tell "out of work" from "cannot run" without parsing the log.
+  int exitCode = 0;
 
   try {
     string const mainLine = Args::mergeArgs(argc, argv);
@@ -129,10 +140,12 @@ int main(int argc, char **argv) {
     }
   } catch (const char *mes) {
     log("Exiting because \"%s\"\n", mes);
+    exitCode = isCleanExit(mes) ? 0 : 1;
   } catch (const string& mes) {
     log("Exiting because \"%s\"\n", mes.c_str());
+    exitCode = isCleanExit(mes.c_str()) ? 0 : 1;
   }
 
   log("Bye\n");
-  return exitCode; // not used yet.
+  return exitCode;
 }
