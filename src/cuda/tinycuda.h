@@ -49,6 +49,7 @@ struct _cl_program {
   std::string ptx;        // Compiled PTX (after NVRTC compilation); always the text — clCreateKernel reads .maxntid from it
   std::string cubin;      // NVRTC's CUBIN for this device's sm, when it produced one; loaded ahead of the PTX JIT
   CUmodule module{};        // Loaded module (after cuModuleLoadData)
+  std::string buildLog;   // This program's last compile/link diagnostics (clGetProgramBuildInfo)
   bool compiled{false};
   bool moduleLoaded{false};
 
