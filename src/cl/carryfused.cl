@@ -227,15 +227,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -465,15 +459,9 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -708,15 +696,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -956,15 +938,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -1220,15 +1196,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -1510,15 +1480,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -1796,15 +1760,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -2076,15 +2034,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
@@ -2390,15 +2342,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #if OLD_FENCE
   // Order the carry stores ahead of the ready flag.  This barrier must be reached by every work-item of the
   // workgroup: gr is uniform, but "me >= (WMUL-1) * G_W" is not, and a barrier under divergent control flow
-  // is undefined.  As in bar(G_W), no barrier is needed when a sub-workgroup is a single wavefront.
-#if WMUL == 1
-  if (gr < H) {
-#else
+  // is undefined.  No barrier is needed when a sub-workgroup is a single wavefront.
   if (gr < H / WMUL) {
-#endif
-#if G_W > WAVEFRONT
-    bar();
-#endif
+    bar(G_W);
 #if WMUL == 1
     if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
 #else
