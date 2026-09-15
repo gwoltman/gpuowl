@@ -118,8 +118,14 @@ $(DEPDIR)/%.d: ;
 
 src/version.cpp : src/version.inc
 
+# The version string compiled into the binary and reported to PrimeNet in
+# every result. Defaults to `git describe` of the checkout; a build from an
+# exported tree (no .git) or a packager that wants the upstream string passes
+# it explicitly: make VERSION=v8.0-57-g6cb4c12
+VERSION ?= $(shell basename `git describe --tags --long --dirty --always --match 'v/prpll/*'`)
+
 src/version.inc: FORCE
-	echo \"`basename \`git describe --tags --long --dirty --always --match v/prpll/*\``\" > $(BIN)/version.new
+	echo \"$(VERSION)\" > $(BIN)/version.new
 	diff -q -N $(BIN)/version.new $@ >/dev/null || mv $(BIN)/version.new $@
 	echo Version: `cat $@`
 
