@@ -775,10 +775,11 @@ void PREFETCHL2(const __global void *addr) {
 #endif
 #endif
 
-// Force divergent threads in a warp to converge.  Early CUDA versions did not require this.  Later versions lets the compiler choose to converge or not.
-// I've not seen any cases where the compiler does not converge when we'd like it to, but just in case this routine will fix the problem.
+// Force divergent threads in a warp to converge.  AMD GCN does not require this, all threads in a WAVEFRONT operate in lockstep.  Early CUDA versions did also.
+// The sync is needed in cases where one thread is setting a flag or state on behalf of all the threads in a WAVEFRONT.  For example, carryFused has thread 0 set
+// the carries-are-ready flag on behalf of all 32 threads in a warp.
 void OVERLOAD sync() {
-#if ENABLE_SYNC && HAS_PTX >= 600         // bar.warp.sync requires sm_60 support or higher
+#if HAS_PTX >= 600         // bar.warp.sync requires sm_60 support or higher
   __asm("bar.warp.sync 0xffffffff;" : : );
 #endif
 }
