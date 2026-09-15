@@ -10,6 +10,8 @@ thread_local string context;
 thread_local vector<string> contextParts;
 
 thread_local File logFile;
+// A worker's log file adopted by a helper thread (LogLinkScope); borrowed, never owned.
+thread_local File* linkedLogFile = nullptr;
 
 static File stdoutFile{stdout, "stdout"};
 
@@ -40,9 +42,15 @@ void log(const char *fmt, ...) {
   va_end(va);
   string_view const s{logBuf};
 
-  if (logFile) { logFile.write(s); }
+  if (logFile) { logFile.write(s); } else if (linkedLogFile && *linkedLogFile) { linkedLogFile->write(s); }
   stdoutFile.write(s);
 }
+
+LogLink logLink() { return {logFile ? &logFile : linkedLogFile, context}; }
+
+LogLinkScope::LogLinkScope(const LogLink& link) : previous{linkedLogFile}, context{link.context} { linkedLogFile = link.file; }
+
+LogLinkScope::~LogLinkScope() { linkedLogFile = previous; }
 
 LogContext::LogContext(const string& s) : part{s} {
   contextParts.push_back(s);

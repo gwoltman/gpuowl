@@ -8,6 +8,9 @@
 #include <cassert>
 #include <cinttypes>
 #include <future>
+#include <semaphore>
+#include <thread>
+#include <algorithm>
 #include <utility>
 
 using namespace std;
@@ -138,11 +141,28 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
 }
 
 std::future<KernelHolder> KernelCompiler::load(const string& fileName, const string& kernelName, const string& args) const {
-#if 0
-  // Do the compilation in parallel on a separate thread.
-  // Unfortunatelly no benefit on ROCm (the compiler serializes).
-  return async(std::launch::async, &KernelCompiler::loadAux, this, fileName, kernelName, args);
+#ifdef CUDA_BACKEND
+  // NVRTC compiles independently per thread, so the ~36 kernels of a Gpu
+  // compile in parallel — bounded to the core count and to eight: each
+  // NVRTC instance holds a few hundred MB while it runs, so 36 at once, or
+  // one per thread of a 32-thread machine, would take gigabytes of host
+  // memory for a speedup that eight threads over 36 kernels already give
+  // most of. The CUDA shim makes the context current per thread and guards
+  // its shared module counts. The thread logs through this worker's log
+  // file and context (LogLink): the log is thread-local, and a fresh thread
+  // would otherwise print its "Loaded" lines to stdout alone, unprefixed.
+  static std::counting_semaphore<8> slots{std::max(1u, std::min(8u, std::thread::hardware_concurrency()))};
+  LogLink const link = logLink();
+  return async(std::launch::async, [this, fileName, kernelName, args, link] {
+    slots.acquire();
+    struct Release { std::counting_semaphore<8>& s; ~Release() { s.release(); } } release{slots};
+    LogLinkScope const logScope{link};
+    return loadAux(fileName, kernelName, args);
+  });
 #else
+  // Serial: the ROCm compiler serializes parallel builds anyway (no benefit
+  // measured), and the OpenCL runtime's thread-safety for concurrent
+  // clCompileProgram varies by vendor.
   std::promise<KernelHolder> promise;
   promise.set_value(loadAux(fileName, kernelName, args));
   return promise.get_future();

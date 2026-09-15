@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 #include <map>
+#include <mutex>
+#include <atomic>
 #include <algorithm>
 #include <sstream>
 #include <unordered_set>
@@ -52,22 +54,35 @@ static void ensureContextCurrent() {
 // device memory grows unbounded and eventually cuLaunchKernel fails with
 // CUDA_ERROR_OUT_OF_MEMORY.
 //
-// Loading is single-threaded (KernelCompiler's async path is disabled), so a
-// plain map without locking is sufficient.
+// KernelCompiler compiles kernels on parallel threads under CUDA, each
+// loading its module and creating its kernel, so the map is shared: one
+// mutex around every access (the counts are the only state the compile
+// threads share; the CUDA context is per-thread current, see
+// ensureContextCurrent).
 static std::map<CUmodule, int> g_moduleRefCount;
+static std::mutex g_moduleRefMutex;
 
 static void moduleRetain(CUmodule m) {
-  if (m) { ++g_moduleRefCount[m]; }
+  if (!m) return;
+  std::lock_guard<std::mutex> lock(g_moduleRefMutex);
+  ++g_moduleRefCount[m];
 }
 
 static void moduleRelease(CUmodule m) {
   if (!m) return;
-  auto it = g_moduleRefCount.find(m);
-  if (it == g_moduleRefCount.end()) return;   // untracked module — leave as-is
-  if (--it->second <= 0) {
+  bool unload = false;
+  {
+    std::lock_guard<std::mutex> lock(g_moduleRefMutex);
+    auto it = g_moduleRefCount.find(m);
+    if (it == g_moduleRefCount.end()) return;   // untracked module — leave as-is
+    if (--it->second <= 0) {
+      g_moduleRefCount.erase(it);
+      unload = true;
+    }
+  }
+  if (unload) {
     ensureContextCurrent();
     cuModuleUnload(m);
-    g_moduleRefCount.erase(it);
   }
 }
 
@@ -193,24 +208,73 @@ cl_program clCreateProgramWithSource(cl_context ctx, unsigned count, const char*
   return prog;
 }
 
+// The "binary" the kernel cache stores (CL_PROGRAM_BINARIES) and hands back
+// (clCreateProgramWithBinary): the PTX text, then — when NVRTC produced a
+// CUBIN that this driver loaded — this marker and the CUBIN. The PTX stays,
+// and stays first, because clCreateKernel reads each kernel's declared
+// work-group size (.maxntid) and its PDL wait from the PTX text; a CUBIN
+// carries neither as text. A blob without the marker is a plain PTX (the
+// format before the CUBIN), and loads as before.
+static const char CUBIN_MARKER[] = "\n// PRPLL-CUBIN\n";
+static const size_t CUBIN_MARKER_LEN = sizeof(CUBIN_MARKER) - 1;
+
+static string cacheBlob(const _cl_program* prog) {
+  if (prog->cubin.empty()) { return prog->ptx; }
+  string blob;
+  blob.reserve(prog->ptx.size() + CUBIN_MARKER_LEN + prog->cubin.size());
+  blob += prog->ptx;
+  blob += CUBIN_MARKER;
+  blob += prog->cubin;
+  return blob;
+}
+
+// Loads prog->cubin when there is one — SASS for this device, so no JIT and
+// no PTX-version check to fail on a driver older than the toolkit — and
+// otherwise, or when the driver rejects it (logged), the PTX through the JIT.
+// A rejected CUBIN is dropped so the cache stores what loaded.
+static CUresult loadModule(_cl_program* prog, unsigned nOpts, CUjit_option* opts, void** optVals) {
+  if (!prog->cubin.empty()) {
+    CUresult const r = cuModuleLoadDataEx(&prog->module, prog->cubin.data(), nOpts, opts, optVals);
+    if (r == CUDA_SUCCESS) { return r; }
+    const char* errName = nullptr;
+    cuGetErrorName(r, &errName);
+    fprintf(stderr, "CUBIN rejected by the driver: %s (%d) — loading the PTX through the JIT instead\n", errName ? errName : "?", (int)r);
+    prog->cubin.clear();
+  }
+  return cuModuleLoadDataEx(&prog->module, prog->ptx.c_str(), nOpts, opts, optVals);
+}
+
 cl_program clCreateProgramWithBinary(cl_context ctx, unsigned  /*nDevices*/, const cl_device_id*,
                                       const size_t* lengths, const unsigned char** binaries,
                                       int* binaryStatus, int* err) {
-  // "Binary" in CUDA land = PTX string
   auto* prog = new _cl_program;
   prog->context = ctx;
   if (lengths && binaries && lengths[0] > 0) {
-    prog->ptx.assign((const char*)binaries[0], lengths[0]);
+    string blob((const char*)binaries[0], lengths[0]);
+    // A bare ELF is a CUBIN without its PTX: nothing to read the kernels'
+    // work-group sizes from. Refuse it; the caller recompiles and overwrites.
+    if (blob.compare(0, 4, "\177ELF", 4) == 0) {
+      fprintf(stderr, "Cached kernel binary is a bare CUBIN (no PTX): recompiling\n");
+      if (binaryStatus) binaryStatus[0] = CL_INVALID_BINARY;
+      if (err) *err = CL_INVALID_BINARY;
+      return prog;
+    }
+    size_t const mark = blob.find(CUBIN_MARKER);
+    if (mark == string::npos) {
+      prog->ptx = std::move(blob);
+    } else {
+      prog->ptx = blob.substr(0, mark);
+      prog->cubin = blob.substr(mark + CUBIN_MARKER_LEN);
+    }
     prog->compiled = true;
-    // Load the module (JIT-compile PTX to SASS)
     ensureContextCurrent();
-    CUresult const r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
+    CUresult const r = loadModule(prog, 0, nullptr, nullptr);
     if (r == CUDA_SUCCESS) {
       prog->moduleLoaded = true;
       moduleRetain(prog->module);  // program owns one reference
       if (binaryStatus) binaryStatus[0] = CL_SUCCESS;
     } else {
-      fprintf(stderr, "cuModuleLoadData from cache failed: %d, PTX size=%zu\n", (int)r, lengths[0]);
+      fprintf(stderr, "cuModuleLoadData from cache failed: %d, blob size=%zu\n", (int)r, lengths[0]);
       prog->compiled = false;
       if (binaryStatus) binaryStatus[0] = CL_INVALID_BINARY;
       if (err) { *err = CL_INVALID_BINARY; return prog; }
@@ -220,8 +284,6 @@ cl_program clCreateProgramWithBinary(cl_context ctx, unsigned  /*nDevices*/, con
   return prog;
 }
 
-// Build log storage (per-program)
-static string g_lastBuildLog;
 
 int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id* devices, const char* options,
                      unsigned numHeaders, const cl_program* headers, const char* const* headerNames,
@@ -370,26 +432,29 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   // Debug: dump NVRTC options when dumping PTX
   {
     static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    static bool dumpedOnce = false;
-    if (dumpPrefix && !dumpedOnce) {
-      dumpedOnce = true;
+    static std::atomic<bool> dumpedOnce{false};
+    if (dumpPrefix && !dumpedOnce.exchange(true)) {
       fprintf(stderr, "NVRTC options (%zu):\n", nvrtcOpts.size());
       for (auto& o : nvrtcOpts) fprintf(stderr, "  %s\n", o.c_str());
     }
   }
 
   try {
-    prog->ptx = NvrtcProgram::compile(processedSource, "prpll_kernel.cu", nvrtcOpts, nvrtcHeaders);
+    auto images = NvrtcProgram::compileImages(processedSource, "prpll_kernel.cu", nvrtcOpts, nvrtcHeaders);
+    prog->ptx = std::move(images.ptx);
+    // PRPLL_PTX_ONLY=1 keeps the driver's JIT path, for comparing the two.
+    static const bool ptxOnly = getenv("PRPLL_PTX_ONLY") != nullptr;
+    prog->cubin = ptxOnly ? string{} : std::move(images.cubin);
     prog->compiled = true;
-    g_lastBuildLog.clear();
+    prog->buildLog.clear();
   } catch (const exception& e) {
-    g_lastBuildLog = e.what();
+    prog->buildLog = e.what();
     prog->compiled = false;
     fprintf(stderr, "NVRTC COMPILE FAILED: %s\n", e.what());
     // Dump the full preprocessed source for debugging
     {
       char fname[64];
-      static int failCount = 0;
+      static std::atomic<int> failCount{0};
       snprintf(fname, sizeof(fname), "prpll_fail_%d.cu", failCount++);
       FILE* f = fopen(fname, "w");
       if (f) {
@@ -404,7 +469,9 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     return CL_COMPILE_PROGRAM_FAILURE;
   }
 
-  // If --maxrregcount is set it seems nvrtc compile ignores the setting.  Instead modify the PTX and load the modified PTX.
+  // NVRTC applies --maxrregcount when it runs ptxas itself, i.e. in the CUBIN.
+  // PTX carries no register cap and the driver JIT never sees the option, so
+  // the PTX fallback gets a .maxnreg directive spliced in ahead of every entry.
 
   if (maxregcount) {
     string const maxntidPattern = ".maxntid ";
@@ -434,6 +501,7 @@ cl_program clLinkProgram(cl_context ctx, unsigned  /*nDevices*/, const cl_device
   auto* linked = new _cl_program;
   linked->context = ctx;
   linked->ptx = progs[0]->ptx;
+  linked->cubin = progs[0]->cubin;
   linked->compiled = true;
   // Carry preprocessed source through for KERNEL(N) parsing in clCreateKernel
   for (unsigned i = 0; i < nProgs; ++i) {
@@ -454,7 +522,7 @@ cl_program clLinkProgram(cl_context ctx, unsigned  /*nDevices*/, const cl_device
     (void*)(size_t)sizeof(jitErrorLog), (void*)jitErrorLog,
     (void*)(size_t)sizeof(jitInfoLog), (void*)jitInfoLog
   };
-  CUresult const r = cuModuleLoadDataEx(&linked->module, linked->ptx.c_str(), 4, jitOpts, jitOptVals);
+  CUresult const r = loadModule(linked, 4, jitOpts, jitOptVals);
   if (r != CUDA_SUCCESS) {
     const char* errName = nullptr;
     cuGetErrorName(r, &errName);
@@ -512,20 +580,23 @@ int clBuildProgram(cl_program prog, unsigned nDevices, const cl_device_id* devic
   int const err = clCompileProgram(prog, nDevices, devices, options, 0, nullptr, nullptr, nullptr, nullptr);
   if (err != CL_SUCCESS) return err;
 
-  CUresult const r = cuModuleLoadData(&prog->module, prog->ptx.c_str());
+  CUresult const r = loadModule(prog, 0, nullptr, nullptr);
   if (r != CUDA_SUCCESS) return CL_BUILD_PROGRAM_FAILURE;
   prog->moduleLoaded = true;
   moduleRetain(prog->module);  // program owns one reference
   return CL_SUCCESS;
 }
 
-int clGetProgramBuildInfo(cl_program  /*prog*/, cl_device_id, cl_program_build_info info,
+int clGetProgramBuildInfo(cl_program prog, cl_device_id, cl_program_build_info info,
                            size_t size, void* value, size_t* sizeRet) {
+  if (!prog) return CL_INVALID_PROGRAM;
   if (info == CL_PROGRAM_BUILD_LOG) {
-    size_t const len = g_lastBuildLog.size() + 1;
+    // This program's own log — a process-wide "last log" would report the
+    // diagnostics of whichever compile finished last on another thread.
+    size_t const len = prog->buildLog.size() + 1;
     if (sizeRet) *sizeRet = len;
     if (value && size >= len) {
-      memcpy(value, g_lastBuildLog.c_str(), len);
+      memcpy(value, prog->buildLog.c_str(), len);
     }
   }
   return CL_SUCCESS;
@@ -533,15 +604,20 @@ int clGetProgramBuildInfo(cl_program  /*prog*/, cl_device_id, cl_program_build_i
 
 int clGetProgramInfo(cl_program prog, cl_program_info info, size_t size, void* value, size_t* sizeRet) {
   if (!prog) return CL_INVALID_PROGRAM;
+  // The cache blob — PTX, then the CUBIN behind CUBIN_MARKER when one
+  // loaded; see clCreateProgramWithBinary for the reading side.
   if (info == CL_PROGRAM_BINARY_SIZES) {
-    size_t ptxSize = prog->ptx.size();
+    size_t blobSize = cacheBlob(prog).size();
     if (sizeRet) *sizeRet = sizeof(size_t);
-    if (value && size >= sizeof(size_t)) memcpy(value, &ptxSize, sizeof(size_t));
+    if (value && size >= sizeof(size_t)) memcpy(value, &blobSize, sizeof(size_t));
   } else if (info == CL_PROGRAM_BINARIES) {
     if (sizeRet) *sizeRet = sizeof(unsigned char*);
     if (value && size >= sizeof(unsigned char*)) {
       auto* const* ptrs = (unsigned char**)value;
-      if (ptrs[0]) memcpy(ptrs[0], prog->ptx.data(), prog->ptx.size());
+      if (ptrs[0]) {
+        string const blob = cacheBlob(prog);
+        memcpy(ptrs[0], blob.data(), blob.size());
+      }
     }
   }
   return CL_SUCCESS;
