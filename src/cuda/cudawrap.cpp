@@ -446,6 +446,12 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
 std::string NvrtcProgram::compile(const std::string& source, const std::string& name,
                                    const std::vector<std::string>& options,
                                    const std::vector<std::pair<std::string, std::string>>& headers) {
+  return compileImages(source, name, options, headers).ptx;
+}
+
+NvrtcProgram::Images NvrtcProgram::compileImages(const std::string& source, const std::string& name,
+                                                 const std::vector<std::string>& options,
+                                                 const std::vector<std::pair<std::string, std::string>>& headers) {
   // Prepare header arrays
   std::vector<const char*> headerSources, headerNames;
   for (auto& [hName, hSource] : headers) {
@@ -482,14 +488,24 @@ for (auto& o : options) opts.push_back(o.c_str());
     throw std::runtime_error("NVRTC compilation failed for " + name);
   }
 
-  // Get PTX
+  Images images;
   size_t ptxSize;
   NVRTC_CHECK(nvrtcGetPTXSize(prog, &ptxSize));
-  std::string ptx(ptxSize, '\0');
-  NVRTC_CHECK(nvrtcGetPTX(prog, ptx.data()));
+  images.ptx.assign(ptxSize, '\0');
+  NVRTC_CHECK(nvrtcGetPTX(prog, images.ptx.data()));
+
+#if CUDA_VERSION >= 11010
+  // The CUBIN exists only when the architecture was a real sm_XY (not
+  // compute_XY); a zero size means NVRTC has none to give, not an error.
+  size_t cubinSize = 0;
+  if (nvrtcGetCUBINSize(prog, &cubinSize) == NVRTC_SUCCESS && cubinSize > 0) {
+    images.cubin.assign(cubinSize, '\0');
+    if (nvrtcGetCUBIN(prog, images.cubin.data()) != NVRTC_SUCCESS) { images.cubin.clear(); }
+  }
+#endif
 
   nvrtcDestroyProgram(&prog);
-  return ptx;
+  return images;
 }
 
 // ---- Kernel launcher ----
