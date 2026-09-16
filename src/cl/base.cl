@@ -282,35 +282,34 @@ ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2)
 
 #define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
 
-
 // For reasons unknown, loading trig values into nVidia's constant cache has terrible performance
 #if AMDGPU
-typedef constant const T2* Trig;
-typedef constant const T* TrigSingle;
-typedef constant const F2* TrigFP32;
-typedef constant const F* TrigSingleFP32;
-typedef constant const GF31* TrigGF31;
-typedef constant const GF61* TrigGF61;
+typedef constant const T2* restrict Trig;
+typedef constant const T* restrict TrigSingle;
+typedef constant const F2* restrict TrigFP32;
+typedef constant const F* restrict TrigSingleFP32;
+typedef constant const GF31* restrict TrigGF31;
+typedef constant const GF61* restrict TrigGF61;
 #else
-typedef global const T2* Trig;
-typedef global const T* TrigSingle;
-typedef global const F2* TrigFP32;
-typedef global const F* TrigSingleFP32;
-typedef global const GF31* TrigGF31;
-typedef global const GF61* TrigGF61;
+typedef global const T2* restrict Trig;
+typedef global const T* restrict TrigSingle;
+typedef global const F2* restrict TrigFP32;
+typedef global const F* restrict TrigSingleFP32;
+typedef global const GF31* restrict TrigGF31;
+typedef global const GF61* restrict TrigGF61;
 #endif
 // However, caching weights in nVidia's constant cache improves performance.
 // Even better is to not pollute the constant cache with weights that are used only once.
 // This requires two typedefs depending on how we want to use the BigTab pointer.
 // For AMD we can declare BigTab as constant or global - it doesn't really matter.
-typedef constant const double2* ConstBigTab;
-typedef constant const float2* ConstBigTabFP32;
+typedef constant const double2* restrict ConstBigTab;
+typedef constant const float2* restrict ConstBigTabFP32;
 #if AMDGPU
-typedef constant const double2* BigTab;
-typedef constant const float2* BigTabFP32;
+typedef constant const double2* restrict BigTab;
+typedef constant const float2* restrict BigTabFP32;
 #else
-typedef global const double2* BigTab;
-typedef global const float2* BigTabFP32;
+typedef global const double2* restrict BigTab;
+typedef global const float2* restrict BigTabFP32;
 #endif
 
 //
