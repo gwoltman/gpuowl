@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 #include <map>
+#include <mutex>
+#include <atomic>
 #include <algorithm>
 #include <sstream>
 #include <unordered_set>
@@ -52,22 +54,35 @@ static void ensureContextCurrent() {
 // device memory grows unbounded and eventually cuLaunchKernel fails with
 // CUDA_ERROR_OUT_OF_MEMORY.
 //
-// Loading is single-threaded (KernelCompiler's async path is disabled), so a
-// plain map without locking is sufficient.
+// KernelCompiler compiles kernels on parallel threads under CUDA, each
+// loading its module and creating its kernel, so the map is shared: one
+// mutex around every access (the counts are the only state the compile
+// threads share; the CUDA context is per-thread current, see
+// ensureContextCurrent).
 static std::map<CUmodule, int> g_moduleRefCount;
+static std::mutex g_moduleRefMutex;
 
 static void moduleRetain(CUmodule m) {
-  if (m) { ++g_moduleRefCount[m]; }
+  if (!m) return;
+  std::lock_guard<std::mutex> lock(g_moduleRefMutex);
+  ++g_moduleRefCount[m];
 }
 
 static void moduleRelease(CUmodule m) {
   if (!m) return;
-  auto it = g_moduleRefCount.find(m);
-  if (it == g_moduleRefCount.end()) return;   // untracked module — leave as-is
-  if (--it->second <= 0) {
+  bool unload = false;
+  {
+    std::lock_guard<std::mutex> lock(g_moduleRefMutex);
+    auto it = g_moduleRefCount.find(m);
+    if (it == g_moduleRefCount.end()) return;   // untracked module — leave as-is
+    if (--it->second <= 0) {
+      g_moduleRefCount.erase(it);
+      unload = true;
+    }
+  }
+  if (unload) {
     ensureContextCurrent();
     cuModuleUnload(m);
-    g_moduleRefCount.erase(it);
   }
 }
 
@@ -269,8 +284,6 @@ cl_program clCreateProgramWithBinary(cl_context ctx, unsigned  /*nDevices*/, con
   return prog;
 }
 
-// Build log storage (per-program)
-static string g_lastBuildLog;
 
 int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id* devices, const char* options,
                      unsigned numHeaders, const cl_program* headers, const char* const* headerNames,
@@ -419,9 +432,8 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   // Debug: dump NVRTC options when dumping PTX
   {
     static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    static bool dumpedOnce = false;
-    if (dumpPrefix && !dumpedOnce) {
-      dumpedOnce = true;
+    static std::atomic<bool> dumpedOnce{false};
+    if (dumpPrefix && !dumpedOnce.exchange(true)) {
       fprintf(stderr, "NVRTC options (%zu):\n", nvrtcOpts.size());
       for (auto& o : nvrtcOpts) fprintf(stderr, "  %s\n", o.c_str());
     }
@@ -434,15 +446,15 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     static const bool ptxOnly = getenv("PRPLL_PTX_ONLY") != nullptr;
     prog->cubin = ptxOnly ? string{} : std::move(images.cubin);
     prog->compiled = true;
-    g_lastBuildLog.clear();
+    prog->buildLog.clear();
   } catch (const exception& e) {
-    g_lastBuildLog = e.what();
+    prog->buildLog = e.what();
     prog->compiled = false;
     fprintf(stderr, "NVRTC COMPILE FAILED: %s\n", e.what());
     // Dump the full preprocessed source for debugging
     {
       char fname[64];
-      static int failCount = 0;
+      static std::atomic<int> failCount{0};
       snprintf(fname, sizeof(fname), "prpll_fail_%d.cu", failCount++);
       FILE* f = fopen(fname, "w");
       if (f) {
@@ -575,13 +587,16 @@ int clBuildProgram(cl_program prog, unsigned nDevices, const cl_device_id* devic
   return CL_SUCCESS;
 }
 
-int clGetProgramBuildInfo(cl_program  /*prog*/, cl_device_id, cl_program_build_info info,
+int clGetProgramBuildInfo(cl_program prog, cl_device_id, cl_program_build_info info,
                            size_t size, void* value, size_t* sizeRet) {
+  if (!prog) return CL_INVALID_PROGRAM;
   if (info == CL_PROGRAM_BUILD_LOG) {
-    size_t const len = g_lastBuildLog.size() + 1;
+    // This program's own log — a process-wide "last log" would report the
+    // diagnostics of whichever compile finished last on another thread.
+    size_t const len = prog->buildLog.size() + 1;
     if (sizeRet) *sizeRet = len;
     if (value && size >= len) {
-      memcpy(value, g_lastBuildLog.c_str(), len);
+      memcpy(value, prog->buildLog.c_str(), len);
     }
   }
   return CL_SUCCESS;
