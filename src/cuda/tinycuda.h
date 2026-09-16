@@ -62,6 +62,7 @@ struct _cl_kernel {
   CUfunction func{};
   std::string name;
   CUmodule parentModule{};  // Keep reference so module isn't unloaded
+  bool pdl{false};          // Its PTX waits on the predecessor (griddepcontrol.wait): launch with programmatic stream serialization
   int numArgs{0};
   int reqWorkGroupSize{0};   // From __launch_bounds__(N) in source, matches OpenCL reqd_work_group_size
 

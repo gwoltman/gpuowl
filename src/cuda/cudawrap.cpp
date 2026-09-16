@@ -511,7 +511,7 @@ for (auto& o : options) opts.push_back(o.c_str());
 // ---- Kernel launcher ----
 
 void CudaKernelLauncher::launch(CUstream stream, u32 gridSize, void** args, u32 sharedMem) {
-#if CUDA_VERSION >= 12000 && ENABLE_PDL
+#if CUDA_VERSION >= 12000 && defined(ENABLE_PDL) && ENABLE_PDL
    // enable pdl in kernel launch attributes
    CUlaunchAttribute attrs[1];
    attrs[0].id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;

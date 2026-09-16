@@ -689,8 +689,8 @@ if (getenv("TRY_LDS_CARVEOUT"))
     string const entryPattern = ".entry " + string(name) + "(";
     size_t const pos = ptx.find(entryPattern);
     if (pos != string::npos) {
-      // Found the kernel entry. Now find .maxntid before the next .entry or opening brace
-      size_t searchEnd = ptx.find(".entry ", pos + 1);
+      // Found the kernel entry. Its text runs to the next .entry or .func.
+      size_t searchEnd = min(ptx.find(".entry ", pos + 1), ptx.find(".func ", pos + 1));
       if (searchEnd == string::npos) searchEnd = ptx.size();
       string const maxntidPattern = ".maxntid ";
       size_t const mpos = ptx.find(maxntidPattern, pos);
@@ -700,6 +700,15 @@ if (getenv("TRY_LDS_CARVEOUT"))
           k->reqWorkGroupSize = val;
         }
       }
+      // A kernel that waits for its predecessor (griddepcontrol.wait —
+      // compiled in by -use PDL=1 on sm_90+) is launched with programmatic
+      // stream serialization: it may begin while the predecessor's tail
+      // still runs, and its wait holds every read until the predecessor
+      // has completed. A kernel without the wait keeps an ordinary launch:
+      // it may follow one that triggered early, and nothing else would
+      // order the two. Read from the compiled code, this holds for a
+      // cached program as much as a fresh one.
+      k->pdl = ptx.find("griddepcontrol.wait", pos) < searchEnd;
     }
   }
 
@@ -803,6 +812,38 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
 
 // ---- Enqueue operations ----
 
+// One launch for the three paths below. For a kernel whose code waits on
+// its predecessor (k->pdl, see clCreateKernel; CUDA 12+, where
+// cuLaunchKernelEx exists), the launch carries
+// CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION: this kernel may
+// begin once the previous one in the stream signals
+// griddepcontrol.launch_dependents (that one's tail overlapping this one's
+// prologue), and this kernel's griddepcontrol.wait holds its reads until
+// the previous one has completed. Every other kernel is launched as before.
+static CUresult launchKernel(cl_kernel k, unsigned numBlocksX, unsigned numBlocksY, unsigned lsX, unsigned lsY,
+                             CUstream stream, void** argPtrs) {
+#if CUDA_VERSION >= 12000
+  if (k->pdl) {
+    CUlaunchAttribute attr{};
+    attr.id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;
+    attr.value.programmaticStreamSerializationAllowed = 1;
+    CUlaunchConfig config{};
+    config.gridDimX = numBlocksX;
+    config.gridDimY = numBlocksY;
+    config.gridDimZ = 1;
+    config.blockDimX = lsX;
+    config.blockDimY = lsY;
+    config.blockDimZ = 1;
+    config.sharedMemBytes = 0;
+    config.hStream = stream;
+    config.attrs = &attr;
+    config.numAttrs = 1;
+    return cuLaunchKernelEx(&config, k->func, argPtrs, nullptr);
+  }
+#endif
+  return cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, stream, argPtrs, nullptr);
+}
+
 int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
                             const size_t*  /*globalOffset*/, const size_t* globalSize,
                             const size_t* localSize, unsigned  /*nWaits*/,
@@ -832,7 +873,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     ev->hasTimings = true;
     ev->commandType = CL_COMMAND_NDRANGE_KERNEL;
     cuEventRecord(ev->start, q->stream);
-    CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult const r = launchKernel(k, numBlocksX, numBlocksY, lsX, lsY, q->stream, argPtrs);
     cuEventRecord(ev->end, q->stream);
     *event = ev;
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
@@ -847,7 +888,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     if (!pStart) { cuEventCreate(&pStart, CU_EVENT_DEFAULT); cuEventCreate(&pEnd, CU_EVENT_DEFAULT); }
 
     cuEventRecord(pStart, q->stream);
-    CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
+    CUresult const r = launchKernel(k, numBlocksX, numBlocksY, lsX, lsY, q->stream, argPtrs);
     cuEventRecord(pEnd, q->stream);
     cuEventSynchronize(pEnd);
     float ms = 0;
@@ -879,7 +920,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
   }
 
-  CUresult const r = cuLaunchKernel(k->func, numBlocksX, numBlocksY, 1, lsX, lsY, 1, 0, q->stream, argPtrs, nullptr);
+  CUresult const r = launchKernel(k, numBlocksX, numBlocksY, lsX, lsY, q->stream, argPtrs);
   if (r != CUDA_SUCCESS) {
     const char* errName = nullptr;
     cuGetErrorName(r, &errName);
