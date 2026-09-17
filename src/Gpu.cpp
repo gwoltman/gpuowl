@@ -2833,22 +2833,34 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
 // AutoPrimenet.py does not add the cert entry to worktodo.txt until it has successfully downloaded the .cert file.
 
-  { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
+  // Resume from a checkpoint if there is one for this assignment; otherwise start from the .cert file.
+  Saver<CERTState> saver{E, 1000, args.nSavefiles};
+  CERTState state = saver.load();
+  if (!state.data.empty() && state.squarings != task.squarings) {
+    log("CERT checkpoint is for %" PRIu64 " squarings, assignment says %u; starting over\n", state.squarings, task.squarings);
+    state = CERTState{.exponent=E, .k=0, .squarings=0, .data={}, .elapsed=0};
+  }
+
+  if (!state.data.empty()) {
+    writeIn(bufData, state.data);
+    log("CERT loaded @ %" PRIu64 "\n", state.k);
+  } else { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
     File fi = File::openReadThrow(fname);
     u32 const nBytes = u32((E - 1) / 8 + 1);
     Words const B = fi.readBytesLE(nBytes);
     writeIn(bufData, B);
   }
 
+  double const elapsedBefore = state.elapsed;
   Timer elapsedTimer;
 
   elapsedTimer.reset();
 
-  u32 const startK = 0;
+  u32 const startK = u32(state.k);
 
   IterationTimer iterationTimer{startK};
 
-  u32 k = 0;
+  u32 k = startK;
   u32 const kEnd = task.squarings;
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
@@ -2861,7 +2873,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
       log("Stopping, please wait..\n");
     }
 
-    bool const doLog = (k % 100'000 == 0) || doStop;
+    bool const doLog = (k % args.logStep == 0) || doStop;   // same cadence as LL; every log point is also a checkpoint
     enum LEAD_TYPE const leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     squareCERT(bufData, leadIn, leadOut);
@@ -2879,8 +2891,11 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
     if (k >= kEnd) {
       fs::remove (fname);
+      Saver<CERTState>::clear(E);
       return std::move(SHA3{}.update(data.data(), u32((E-1)/8+1))).finish();
     }
+
+    saver.save({.exponent=E, .k=k, .squarings=kEnd, .data=std::move(data), .elapsed=elapsedBefore + elapsedTimer.at()});
 
     if (doStop) { throw "stop requested"; }
   }
