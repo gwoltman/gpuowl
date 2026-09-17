@@ -251,7 +251,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = false, tail_single_kernel = true;         // Default tailSquare is double-wide in one kernel
-  in_place = 0;                                         // Default is not in-place
+  in_place = isNvidiaGpu(id) ? 1 : 0;                   // Default is in-place for nVidia, not in-place for others (must match base.cl)
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
