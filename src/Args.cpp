@@ -271,7 +271,10 @@ void Args::parse(const string& line) {
     // conditional defines predicated on a FFT
     char fftBuf[32];
     char configBuf[256];
-    sscanf(line.c_str(), "! %31s %255s", fftBuf, configBuf);
+    if (sscanf(line.c_str(), "! %31s %255s", fftBuf, configBuf) != 2) {   // otherwise the buffers are uninitialised
+      log("config line ignored (expected \"! <fft> <use-flags>\"): \"%s\"\n", line.c_str());
+      return;
+    }
     string const fft = fftBuf;
     string const config = configBuf;
     perFftConfig[fft] = splitUses(config);
@@ -372,7 +375,10 @@ void Args::parse(const string& line) {
       }
     }
     else if (key == "-maxAlloc" || key == "-maxalloc") {
-      assert(!s.empty());
+      if (s.empty()) {                                 // s.back() below would be undefined
+        log("-maxAlloc expects a value, e.g. -maxAlloc 4G\n");
+        throw "-maxAlloc <size>";
+      }
       u32 multiple = (s.back() == 'G') ? (1u << 30) : (1u << 20);
       maxAlloc = size_t(stod(s) * multiple + .5);
     }
@@ -402,8 +408,8 @@ void Args::parse(const string& line) {
       }
     } else if (key == "-log") {
       logStep = stoi(s);
-      if (logStep % 1000 != 0) {
-        log("-log must be a multiple of 1000\n");
+      if (logStep == 0 || logStep % 1000 != 0) {       // 0 would divide by zero in the PRP loop
+        log("-log must be a positive multiple of 1000\n");
         throw "invalid log size";
       }
     } else if (key == "-use") {
@@ -417,7 +423,12 @@ void Args::parse(const string& line) {
     } else if (key == "-unsafeMath") {
       safeMath = false;
     } else if (key == "-save") {
-      nSavefiles = stoi(s);      
+      int const n = stoi(s);
+      if (n < 1) {                                     // 0 makes Saver::trimFiles index v[-1]
+        log("-save must be at least 1\n");
+        throw "invalid -save value";
+      }
+      nSavefiles = n;
     } else {
       log("Argument '%s' '%s' not understood\n", key.c_str(), s.c_str());
       throw "args";
