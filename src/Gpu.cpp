@@ -350,6 +350,22 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
       args.flags["L2_STRIPING"] = to_string(fft.shape.width/128);
       log("Max L2_STRIPING when MULTI_Q=1 exceeded.  Changing to L2_STRIPING=%u.\n", fft.shape.width/128);
     }
+
+    // The striped launches split the WIDTH/16 stripes into groups of L2_STRIPING and pair group i with its
+    // Hermitian partner WIDTH - L2_STRIPING*16 - base_lo, so the number of groups must be even (a multiple of
+    // four with MULTI_Q, which further splits them across two queues).  Otherwise whole stripes are never
+    // transformed and others are squared twice.  WIDTH/16 is a power of two, so round down to one that divides.
+    l2_striping = args.value("L2_STRIPING", 0);
+    if (l2_striping) {
+      u32 const groupsNeeded = multi_q ? 4 : 2;
+      u32 valid = l2_striping;
+      while (valid && (fft.shape.width / 16) % (groupsNeeded * valid)) { --valid; }
+      if (valid != l2_striping) {
+        config["L2_STRIPING"] = to_string(valid);
+        args.flags["L2_STRIPING"] = to_string(valid);
+        log("L2_STRIPING must divide WIDTH/%u.  Changing to L2_STRIPING=%u.\n", 16 * groupsNeeded, valid);
+      }
+    }
   }
 
   string defines = toDefine(config);
