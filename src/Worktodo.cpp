@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cinttypes>
 #include <filesystem>
+#include <mutex>
 
 namespace {
 
@@ -145,6 +146,11 @@ optional<Task> getWork(Args& args, i32 instance) {
        7. remove the task from the local worktodo (undo the local task add)
        8. start again (from step 1)
   */
+
+  // The size heuristic below guards against other processes.  Within this process the workers start together and
+  // would all read the same file and pick the same task, so serialize the claim itself.
+  static std::mutex claimMutex;
+  std::lock_guard<std::mutex> const claimLock(claimMutex);
 
   for (int retry = 0; retry < 2; ++retry) {
     u64 const initialSize = fileSize(worktodo);
