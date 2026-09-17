@@ -161,14 +161,18 @@ void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *b
   // CUDA graphs don't allow arguments to change.  Thus, calculating posROE and storing it in bufROE works better.
   if (me < num_threads) {
     posROE = bufROE[0];
-    atomic_max(bufROE + posROE + 2, u32RoundMax);
+    // The buffer holds STATS_SIZE samples.  The host resets the position only when it reads the samples, and the LL and
+    // CERT loops never read the carry statistics, so once the buffer is full stop recording rather than write past it.
+    if (posROE < STATS_SIZE) {
+      atomic_max(bufROE + posROE + 2, u32RoundMax);
 
-    // The second bufRoe entry is a count of the number atomic_maxes performed.  When the last atomic_max is done, increment posROE and clear the counter.
-    if (me == 0) {
-      u32 old_value = atomic_add(bufROE + 1, 1);
-      if (old_value == num_blocks - 1) {
-        bufROE[0] = posROE + 1;
-        bufROE[1] = 0;
+      // The second bufRoe entry is a count of the number atomic_maxes performed.  When the last atomic_max is done, increment posROE and clear the counter.
+      if (me == 0) {
+        u32 old_value = atomic_add(bufROE + 1, 1);
+        if (old_value == num_blocks - 1) {
+          bufROE[0] = posROE + 1;
+          bufROE[1] = 0;
+        }
       }
     }
   }

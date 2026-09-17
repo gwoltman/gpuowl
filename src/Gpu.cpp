@@ -233,6 +233,12 @@ constexpr bool isInList(const string& s, initializer_list<string> list) {
   return false;
 }
 
+// Capacity of the ROE and carry statistics sample buffers; passed to the kernels as STATS_SIZE so they stop recording when full.
+enum {
+ROE_SIZE = 100000,
+CARRY_SIZE = 100000
+};
+
 string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul) {
   map<string, string> config;
@@ -377,6 +383,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   u32 const N = fft.shape.size();
   defines += toDefine("FFT_VARIANT", fft.variant);
   defines += toDefine("MAXBPW", (u32)(fft.maxBpw() * 100.0f));
+  defines += toDefine("STATS_SIZE", u32(std::min<u32>(ROE_SIZE, CARRY_SIZE)));
 
   if (fft.FFT_FP64 || fft.FFT_FP32) {
     defines += toDefine("WEIGHT_STEP", weightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
@@ -776,10 +783,6 @@ string Gpu::kernelDefines(enum WHICH_KERNEL_TYPE which_kernel) {
   return defines + " ";
 }
 
-enum {
-ROE_SIZE = 100000,
-CARRY_SIZE = 100000
-};
 
 Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
   shared(s),
