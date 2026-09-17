@@ -829,10 +829,12 @@ void OVERLOAD bar(const u32 WG) {
 #endif
 }
 
-// Create a barrier across a subset of threads.  Substituting a barrier on all threads is not permitted.
+// Create a barrier across a subset of threads.  Substituting a barrier on all threads is not permitted, so this is only
+// defined where the hardware can do it (PTX bar.sync with a thread count, sm_20 or higher).  On any other GPU a call to
+// barsync() fails to compile at the call site instead of the whole of base.cl failing whether or not it is used.
+#if HAS_PTX >= 200
 void OVERLOAD barsync(const u32 numWG, const u32 WG) {
   if (WG <= WAVEFRONT) return;
-#if HAS_PTX >= 200         // bar.sync with thread count requires sm_20 support or higher.
 #if USE_REGISTER_BARSYNC   // bar.sync with a register is horribly slow on an RTX 5070Ti.
   __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
 #else                      // WARNING, WARNING, WARNING: On TitanV using CUDA 12.9 tools and driver 580, this branch does not work in openCL (but works in CUDA build).
@@ -843,10 +845,8 @@ void OVERLOAD barsync(const u32 numWG, const u32 WG) {
     }
   }
 #endif
-#else
-  #error - GPU not capable of barrier on a subset of threads
-#endif
 }
+#endif
 
 // nVidia GPUs (Hopper architecture sm 9.0 and later) support Programatic Dependent Launch where the tail end execution of one kernel can overlap
 // with the beginning of the next kernel.  This requires a special launch kernel command that is only available in CUDA 12.0 and later.
