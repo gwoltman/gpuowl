@@ -454,7 +454,6 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe
 // Shufl two or more fft_WIDTHs or fft_HEIGHTs operating on 64-bit values using LDS_BYTES of LDS memory.  An fft2 is also performed.
 void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe) {
   assert(RADIX == 8);
-  assert(SBMUL(numWG) * SHUFL_BYTES >= 8);
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
@@ -547,30 +546,38 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
   // NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS!!
   else if (SBMUL(numWG) * SHUFL_BYTES == 4) {
 
-// NEEDS WORK!!!
-
     // Lower LDS requirements may let the optimizer use fewer VGPRs and increase occupancy for WIDTHs >= 1024.
     // Alas, the increased occupancy does not offset extra code needed for shufl_int (the assembly
     // code generated is not pretty).  This might not be true for nVidia or future ROCm optimizers.
     local int* lds = (local int*)LDSsharing_ptr(lds2, numWG);
 
+    // The fft2 has to add and subtract whole 64-bit values, so first gather all four 32-bit pieces of val1 and val2
+    // (same LDS locations as the 16- and 8-byte paths above), then combine.  u[] stays intact as the source of the
+    // four write passes.
+    int4 v1[RADIX], v2[RADIX];
     LDStx_start(lds2, numWG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).x; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { v1[i].x = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].x = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).y; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { v1[i].y = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].y = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).z; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { v1[i].z = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].z = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).w; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
+    for (u32 i = 0; i < RADIX; ++i) { v1[i].w = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].w = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDStx_end(lds2, numWG);
+    for (u32 i = 0; i < RADIX; ++i) {
+      T2_GF61 val1 = as_T2_GF61(v1[i]);
+      T2_GF61 val2 = as_T2_GF61(v2[i]);
+      if (lowMe < WG / 2) u[i] = addq(val1, val2);
+      else u[i] = subq(val1, val2);
+    }
     return;
   }
 }
