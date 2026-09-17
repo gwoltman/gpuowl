@@ -30,7 +30,10 @@ static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%
 // Push version number to sync it with PRP.
 static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
 
-struct BadHeaderError { string name; };
+struct BadHeaderError : std::runtime_error {
+  string name;
+  explicit BadHeaderError(string n) : std::runtime_error("bad savefile header: " + n), name(std::move(n)) {}
+};
 
 bool startsWith(const string& s, const string& prefix) {
   return s.starts_with(prefix);
