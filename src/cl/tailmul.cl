@@ -79,7 +79,9 @@ void OVERLOAD pairMul(u32 N, T2 *u, T2 *v, T2 *p, T2 *q, T2 base_squared, bool s
 }
 
 KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
-  local T2 lds[LDS_BYTES / sizeof(T2)];
+  local T2 lds[LDS_BYTES(1) / sizeof(T2)];
+  LDSinit(lds, 1);
+
   const u32 H = ND / SMALL_HEIGHT;
 
   T2 u[NH], v[NH];
@@ -193,7 +195,9 @@ void OVERLOAD pairMul(u32 N, F2 *u, F2 *v, F2 *p, F2 *q, F2 base_squared, bool s
 }
 
 KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
-  local F2 lds[LDS_BYTES / sizeof(F2)];
+  local F2 lds[LDS_BYTES(1) / sizeof(F2)];
+  LDSinit(lds, 1);
+
   const u32 H = ND / SMALL_HEIGHT;
 
   CP(F2) inF2 = (CP(F2)) in;
@@ -303,7 +307,9 @@ void OVERLOAD pairMul(u32 N, GF31 *u, GF31 *v, GF31 *p, GF31 *q, GF31 base_squar
 }
 
 KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
-  local GF31 lds[LDS_BYTES / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
+  LDSinit(lds, 1);
+
   const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
@@ -432,7 +438,9 @@ void OVERLOAD pairMul(u32 N, GF61 *u, GF61 *v, GF61 *p, GF61 *q, GF61 base_squar
 }
 
 KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
-  local GF61 lds[LDS_BYTES / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
+  LDSinit(lds, 1);
+
   const u32 H = ND / SMALL_HEIGHT;
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);

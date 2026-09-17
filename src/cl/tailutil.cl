@@ -137,34 +137,34 @@ void OVERLOAD reverse2(local T2_GF61 *lds2, T2_GF61 *u) {
   u32 me = get_local_id(0);
   u32 lowMe = me % WG;
 
-  if (SHUFL_BYTES_H >= 8) {
-    local T2_GF61 *lds = lds2;
-    if (me >= WG) lds += LDS_BYTES / sizeof(T2_GF61);
+  if (SBMUL(2) * SHUFL_BYTES_H >= 8) {
+    local T2_GF61 *lds = LDSsharing_ptr(lds2, 2);
     // For NH=8, u[0] to u[3] are left unchanged.  Write to lds:
     //  u[7]rev   u[6]rev   u[5]rev   u[4]rev
     //  v[7]rev   v[6]rev   v[5]rev   v[4]rev
-    bar(WG);
+    LDStx_start(lds2, 2);
     for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i]; }
     // For NH=8, read from lds into u[i]:
     //  u[4] =   u[7]rev   v[7]rev
     //  u[5] =   u[6]rev   v[6]rev
     //  u[6] =   u[5]rev   v[5]rev
     //  u[7] =   u[4]rev   v[4]rev
-    bar(WG);
+    LDSbar(2);
     for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i] = lds[i * WG + lowMe]; }
+    LDStx_end(lds2, 2);
   }
 
-  else if (SHUFL_BYTES_H == 4) {
-    local T_Z61 *lds = (local T_Z61 *) lds2;
-    if (me >= WG) lds += LDS_BYTES / sizeof(T_Z61);
-    bar(WG);
+  else if (SBMUL(2) * SHUFL_BYTES_H == 4) {
+    local T_Z61 *lds = LDSsharing_ptr((local T_Z61 *)lds2, 2);
+    LDStx_start(lds2, 2);
     for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i].x; }
-    bar(WG);
+    LDSbar(2);
     for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i].x = lds[i * WG + lowMe]; }
-    bar(WG);
+    LDSbar(2);
     for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i].y; }
-    bar(WG);
+    LDSbar(2);
     for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i].y = lds[i * WG + lowMe]; }
+    LDStx_end(lds2, 2);
   }
 }
 
@@ -177,19 +177,21 @@ void OVERLOAD revCrossLine(local T2_GF61 *lds2, T2_GF61 *u) {
   if (SHUFL_BYTES_H >= 8) {
     local T2_GF61 *ldsOut = lds2;
     local T2_GF61 *ldsIn = lds2;
-    if (me < WG) ldsOut += LDS_BYTES / sizeof(T2_GF61); // Crossing LDS halves
-    else ldsIn += LDS_BYTES / sizeof(T2_GF61);          // Staying within LDS halves (just like shufl)
+    if (me < WG) ldsOut += LDS_SHUFL_BYTES(2) / sizeof(T2_GF61); // Crossing LDS halves
+    else ldsIn += LDS_SHUFL_BYTES(2) / sizeof(T2_GF61);          // Staying within LDS halves (just like shufl)
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
     for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[WG * i + lowMe]; }
+    // One last bar() is needed when sharing LDS memory.  This is because when sharing a workgroup will write to more than its own LDS area.
+    if (SHARING_LDS(2)) bar();
   }
 
   else if (SHUFL_BYTES_H == 4) {
     local T_Z61 *ldsOut = (local T_Z61 *) lds2;
     local T_Z61 *ldsIn = (local T_Z61 *) lds2;
-    if (me < WG) ldsOut += LDS_BYTES / sizeof(T_Z61);
-    else ldsIn += LDS_BYTES / sizeof(T_Z61);
+    if (me < WG) ldsOut += LDS_SHUFL_BYTES(2) / sizeof(T_Z61);
+    else ldsIn += LDS_SHUFL_BYTES(2) / sizeof(T_Z61);
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].x; }
     bar();   // we need a full bar because we just crossed halves
@@ -198,6 +200,8 @@ void OVERLOAD revCrossLine(local T2_GF61 *lds2, T2_GF61 *u) {
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2].y; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
     for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2].y = ldsIn[WG * i + lowMe]; }
+    // One last bar() is needed when sharing LDS memory.  This is because when sharing a workgroup will write to more than its own LDS area.
+    if (SHARING_LDS(2)) bar();
   }
 }
 
@@ -346,24 +350,25 @@ void OVERLOAD reverseLine(local F2_GF31 *lds, F2_GF31 *u) {
 // These versions are for the kernel(s) that use a double-wide workgroup (u in half the workgroup, v in the other half)
 //
 
-void OVERLOAD reverse2(local F2_GF31 *lds, F2_GF31 *u) {
+void OVERLOAD reverse2(local F2_GF31 *lds2, F2_GF31 *u) {
   u32 me = get_local_id(0);
   u32 lowMe = me % WG;
 
-  if (SHUFL_BYTES_H >= 4) {
-    if (me >= WG) lds += LDS_BYTES / sizeof(F2);
+  if (SBMUL(2) * SHUFL_BYTES_H >= 4) {
+    local F2_GF31 *lds = LDSsharing_ptr(lds2, 2);
     // For NH=8, u[0] to u[3] are left unchanged.  Write to lds:
     //  u[7]rev   u[6]rev   u[5]rev   u[4]rev
     //  v[7]rev   v[6]rev   v[5]rev   v[4]rev
-    bar(WG);
+    LDStx_start(lds2, 2);
     for (u32 i = 0; i < NH/2; ++i) { lds[((NH/2 - i) * WG - (me >= WG ? 1 : 0) - lowMe) % (NH/2 * WG)] = u[NH/2 + i]; }
     // For NH=8, read from lds into u[i]:
     //  u[4] =   u[7]rev   v[7]rev
     //  u[5] =   u[6]rev   v[6]rev
     //  u[6] =   u[5]rev   v[5]rev
     //  u[7] =   u[4]rev   v[4]rev
-    bar(WG);
+    LDSbar(2);
     for (u32 i = 0; i < NH/2; ++i) { u[NH/2 + i] = lds[i * WG + lowMe]; }
+    LDStx_end(lds2, 2);
   }
 }
 
@@ -376,12 +381,14 @@ void OVERLOAD revCrossLine(local F2_GF31 *lds2, F2_GF31 *u) {
   if (SHUFL_BYTES_H >= 4) {
     local F2_GF31 *ldsOut = lds2;
     local F2_GF31 *ldsIn = lds2;
-    if (me < WG) ldsOut += LDS_BYTES / sizeof(F2);
-    else ldsIn += LDS_BYTES / sizeof(F2);
+    if (me < WG) ldsOut += LDS_SHUFL_BYTES(2) / sizeof(F2);
+    else ldsIn += LDS_SHUFL_BYTES(2) / sizeof(F2);
     bar();   // we need a full bar because we're crossing halves
     for (u32 i = 0; i < NH/2; ++i) { ldsOut[WG * (NH/2 - 1 - i) + revLowMe] = u[i + NH/2]; }
     bar();   // we need a full bar because we just crossed halves.  LDS reads are compatible with future shufl calls.
     for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[WG * i + lowMe]; }
+    // One last bar() is needed when sharing LDS memory.  This is because when sharing a workgroup will write to more than its own LDS area.
+    if (SHARING_LDS(2)) bar();
   }
 }
 
