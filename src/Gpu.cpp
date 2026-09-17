@@ -1004,8 +1004,10 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     auxQueues.push_back(Queue{*shared.context, args.profile, true});
   }
 
-  // Set flag indicating we're going to use CUDA graphs
-  use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && args.value("GRAPHS", 1);
+  // Set flag indicating we're going to use CUDA graphs.  Not under -profile: a graph replays the four bottom-half
+  // kernels without per-kernel events, and the events recorded while capturing the graph never execute, so the
+  // profile would show those kernels -- most of an iteration -- as one call of ~0 ns.
+  use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && args.value("GRAPHS", 1) && !args.profile;
 
   // Set L1 cache configuration.  Really we should only do this once rather than once per worker.
   // However, the current way PRPLL is organized would then make this option hard to tune.
