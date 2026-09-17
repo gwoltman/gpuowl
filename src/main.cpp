@@ -144,6 +144,9 @@ int main(int argc, char **argv) {
   } catch (const string& mes) {
     log("Exiting because \"%s\"\n", mes.c_str());
     exitCode = isCleanExit(mes.c_str()) ? 0 : 1;
+  } catch (const std::exception& e) {
+    log("Exiting because of exception %s: %s\n", typeName(e), e.what());
+    exitCode = 1;
   }
 
   log("Bye\n");
