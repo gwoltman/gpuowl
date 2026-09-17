@@ -2628,8 +2628,11 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   assert(checkStep % blockSize == 0);
 
   u32 const power = getProofPower(k);
-  
-  ProofSet proofSet{E, power};
+
+  // power == 0 means "proof generation disabled" (no complete set of residues can be built from here on).  ProofSet does
+  // not accept 0, so only construct one when there is a proof to make.
+  std::optional<ProofSet> proofSet;
+  if (power) { proofSet.emplace(E, power); }
 
   bool isPrime = false;
 
@@ -2648,7 +2651,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
 
   bool skipNextCheckUpdate = false;
 
-  u64 persistK = proofSet.next(k);
+  u64 persistK = proofSet ? proofSet->next(k) : u64(-1);
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
   assert(k % blockSize == 0);
@@ -2691,7 +2694,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
         goto reload;
       }
       (*background)([=, E=this->E] { ProofSet::save(E, power, k, compactBits(rawData, E)); });
-      persistK = proofSet.next(k);
+      persistK = proofSet->next(k);
     }
 
     if (k == kEnd) {
@@ -2750,9 +2753,21 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
 
         if (k >= kEndEnd) {
-          fs::path const proofFile = saveProof(args, proofSet);
+          // The test is complete; nothing after this point may lose the result.  Make sure the final proof residue,
+          // written by the background thread at k == E, is on disk before computeProof reads it back, and if the proof
+          // cannot be generated report the result without one rather than throw it away.
+          fs::path proofFile;
+          if (proofSet) {
+            background->waitEmpty();
+            try {
+              proofFile = saveProof(args, *proofSet);
+            } catch (...) {
+              if (Signal::stopRequested()) { throw; }
+              log("Proof generation failed; reporting the result without a proof\n");
+            }
+          }
           return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048)};
-        }        
+        }
       } else {
         ++nErrors;
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
