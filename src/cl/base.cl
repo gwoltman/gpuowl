@@ -91,6 +91,16 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define OLD_FENCE 1
 #endif
 
+// The default is the in-place FFT data layout for nVidia GPUs, not in-place otherwise.
+// This must match the in_place default in clDefines() in Gpu.cpp.
+#if !defined(INPLACE)
+#if NVIDIAGPU
+#define INPLACE 1
+#else
+#define INPLACE 0
+#endif
+#endif
+
 // Nontemporal reads and writes might be a little bit faster on many GPUs by keeping more reusable data in the caches.
 // However, on those GPUs with large caches there should be a significant speed gain from keeping FFT data in the caches.
 // Default to the big win when caching is beneficial rather than the tiny gain when non-temporal is better.
