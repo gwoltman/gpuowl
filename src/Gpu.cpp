@@ -329,6 +329,21 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     }
   }
 
+  // MULTI_Q is not allowed when profiling with -time
+  if (args.profile && args.value("MULTI_Q", 0)) {
+    args.flags["MULTI_Q"] = to_string(0);
+    log("MULTI_Q is disabled when profiling with -time.\n");
+  }
+  // GRAPHS are not allowed when profiling with -time.  GRAPH replays the four bottom-half
+  // kernels without per-kernel events, and the events recorded while capturing the graph never execute, so the
+  // profile would show those kernels -- most of an iteration -- as one call of ~0 ns.
+  if (args.profile && args.value("GRAPHS", 1)) {
+    args.flags["GRAPHS"] = to_string(0);
+#if CUDA_BACKEND
+    log("GRAPHS are disabled when profiling with -time.\n");
+#endif
+  }
+
   // L2_STRIPING is not allowed if INPLACE=0.  Maximum L2_STRIPING is WIDTH/64 if MULTI_Q=0 and WIDTH/128 if MULTI_Q=1.
   // Technically, L2_STRIPING of WIDTH/32, MULTI_Q=0 could be allowed but that is just a more complicated way to implement L2_STRIPING=0.
   // Also, WIDTH/64, MULTI_Q=1 could be allowed with some marker/sync code changes but that is very similar to L2_STRIPING=0.
@@ -1004,10 +1019,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     auxQueues.push_back(Queue{*shared.context, args.profile, true});
   }
 
-  // Set flag indicating we're going to use CUDA graphs.  Not under -profile: a graph replays the four bottom-half
-  // kernels without per-kernel events, and the events recorded while capturing the graph never execute, so the
-  // profile would show those kernels -- most of an iteration -- as one call of ~0 ns.
-  use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && args.value("GRAPHS", 1) && !args.profile;
+  // Set flag indicating we're going to use CUDA graphs.
+  use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && args.value("GRAPHS", 1);
 
   // Set L1 cache configuration.  Really we should only do this once rather than once per worker.
   // However, the current way PRPLL is organized would then make this option hard to tune.
