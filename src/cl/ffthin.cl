@@ -14,13 +14,14 @@ u32 get_line_number(u32 base_lo) {
   // Old, simple L2 striping code
   // return g / (L2_STRIPING * 16) * WIDTH + base + g % (L2_STRIPING * 16);
 
-  // Process stripe group base_lo or base_hi
+  // Process stripe group base_lo or base_hi.  Unlike tailSquare, there is no Hermitian-pair readiness rule here:
+  // by the time fftHin runs for a block, fftMiddleIn has produced every line of both stripe groups.
+  u32 stripe_group_size = L2_STRIPING;
   u32 base_hi = WIDTH - stripe_group_size * 16 - base_lo;
   u32 linesInOneStripe = 16 * MIDDLE;
-  u32 stripe_group_size = L2_STRIPING;
   u32 linesInOneStripeGroup = stripe_group_size * linesInOneStripe;
   u32 base;
-  if (g  linesInOneStripeGroup) base = base_lo;
+  if (g < linesInOneStripeGroup) base = base_lo;
   else base = base_hi, g -= linesInOneStripeGroup;
   return g / (L2_STRIPING * 16) * WIDTH + base + g % (L2_STRIPING * 16);
 #else
