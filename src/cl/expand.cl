@@ -8,6 +8,7 @@
 #if FFT_FP64
 #define T_Z61 T
 #define T2_GF61 T2
+#define T_F_Z31_Z61 T
 #define T2_F2_GF31_GF61 T2
 #define as_T2_GF61 as_double2
 #include INCLUDE_FILE
@@ -20,6 +21,7 @@
 #if NTT_GF61
 #define T_Z61 Z61
 #define T2_GF61 GF61
+#define T_F_Z31_Z61 Z61
 #define T2_F2_GF31_GF61 GF61
 #define as_T2_GF61 as_ulong2
 #include INCLUDE_FILE
@@ -32,6 +34,7 @@
 #if FFT_FP32
 #define F_Z31 F
 #define F2_GF31 F2
+#define T_F_Z31_Z61 F
 #define T2_F2_GF31_GF61 F2
 #include INCLUDE_FILE
 #undef F_Z31
@@ -42,6 +45,7 @@
 #if NTT_GF31
 #define F_Z31 Z31
 #define F2_GF31 GF31
+#define T_F_Z31_Z61 Z31
 #define T2_F2_GF31_GF61 GF31
 #include INCLUDE_FILE
 #undef F_Z31

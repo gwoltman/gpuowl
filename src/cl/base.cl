@@ -156,6 +156,14 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define LDSPAD_H 1
 #endif
 
+// By default, LDS access is not shared among workgroups.
+#if !defined(LDSMUL_W)
+#define LDSMUL_W 1
+#endif
+#if !defined(LDSMUL_H)
+#define LDSMUL_H 1
+#endif
+
 #if !defined(TABMUL_CHAIN)
 #define TABMUL_CHAIN 0
 #endif

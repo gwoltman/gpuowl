@@ -11,7 +11,9 @@
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS) {
-  local T2 lds[LDS_BYTES / sizeof(T2)];
+  local T2 lds[LDS_BYTES(1) / sizeof(T2)];
+  LDSinit(lds, 1);
+
   T2 u[NW];
 
   u32 g = get_group_id(0);
@@ -42,7 +44,9 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local F2 lds[LDS_BYTES / sizeof(F2)];
+  local F2 lds[LDS_BYTES(1) / sizeof(F2)];
+  LDSinit(lds, 1);
+
   F2 u[NW];
 
   u32 g = get_group_id(0);
@@ -83,7 +87,9 @@ KERNEL(G_W) fftP(P(F2) out, CP(Word2) in, TrigFP32 smallTrig, BigTabFP32 THREAD_
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
-  local GF31 lds[LDS_BYTES / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
+  LDSinit(lds, 1);
+
   GF31 u[NW];
 
   u32 g = get_group_id(0);
@@ -138,7 +144,9 @@ KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(GF61) out, CP(Word2) in, TrigGF61 smallTrig) {
-  local GF61 lds[LDS_BYTES / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
+  LDSinit(lds, 1);
+
   GF61 u[NW];
 
   u32 g = get_group_id(0);
@@ -195,8 +203,10 @@ KERNEL(G_W) fftP(P(GF61) out, CP(Word2) in, TrigGF61 smallTrig) {
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS) {
-  local T2 lds[LDS_BYTES / sizeof(T2)];
+  local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   local GF31 *lds31 = (local GF31 *) lds;
+  LDSinit(lds, 1);
+
   T2 u[NW];
   GF31 u31[NW];
 
@@ -263,8 +273,10 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local F2 ldsF2[LDS_BYTES / sizeof(F2)];
+  local F2 ldsF2[LDS_BYTES(1) / sizeof(F2)];
   local GF31 *lds31 = (local GF31 *) ldsF2;
+  LDSinit(ldsF2, 1);
+
   F2 uF2[NW];
   GF31 u31[NW];
 
@@ -337,8 +349,10 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local GF61 lds61[LDS_BYTES / sizeof(GF61)];
+  local GF61 lds61[LDS_BYTES(1) / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
+  LDSinit(lds61, 1);
+
   F2 uF2[NW];
   GF61 u61[NW];
 
@@ -410,8 +424,10 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
-  local GF61 lds61[LDS_BYTES / sizeof(GF61)];
+  local GF61 lds61[LDS_BYTES(1) / sizeof(GF61)];
   local GF31 *lds31 = (local GF31 *) lds61;
+  LDSinit(lds61, 1);
+
   GF31 u31[NW];
   GF61 u61[NW];
 
@@ -493,9 +509,11 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
 
 // fftPremul: weight words with IBDWT weights followed by FFT-width.
 KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIGHTS) {
-  local GF61 lds61[LDS_BYTES / sizeof(GF61)];
+  local GF61 lds61[LDS_BYTES(1) / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
   local GF31 *lds31 = (local GF31 *) lds61;
+  LDSinit(lds61, 1);
+
   F2 uF2[NW];
   GF31 u31[NW];
   GF61 u61[NW];

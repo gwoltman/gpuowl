@@ -7,6 +7,7 @@
 #define LDSPAD        LDSPAD_H
 #define LDSSWIZ       LDSSWIZ_H
 #define SHUFL_BYTES   SHUFL_BYTES_H
+#define LDSMUL        LDSMUL_H
 #define UNROLL        UNROLL_H
 #define SAVE_ONE_MUL  1          // Radeon VII weirdness where saving one mul was slower (needs retesting!)
 #define DOING_HEIGHT  1          // Flags to work around any optimizer weirdness where common code performs better in fft_WIDTH and worse in fft_HEIGHT or vice versa

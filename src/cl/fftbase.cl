@@ -3,22 +3,145 @@
 #include "fft4.cl"
 #include "fft8.cl"
 
-// Calculate the LDS bytes used by shufl
-#if LDSPAD && SHUFL_BYTES == 16 && RADIX == 8
-#define LDS_BYTES     ((WG * RADIX + 7) * SHUFL_BYTES)
-#elif LDSPAD && SHUFL_BYTES == 16 && RADIX == 4
-#define LDS_BYTES     ((WG * RADIX + 12) * SHUFL_BYTES)
-#elif LDSPAD && SHUFL_BYTES == 8 && RADIX == 8
-#define LDS_BYTES     ((WG * RADIX + 56) * SHUFL_BYTES)
-#elif LDSPAD && SHUFL_BYTES == 8 && RADIX == 4
-#define LDS_BYTES     ((WG * RADIX + 12) * SHUFL_BYTES)
-#elif LDSPAD && SHUFL_BYTES == 4 && RADIX == 8
-#define LDS_BYTES     ((WG * RADIX + 56) * SHUFL_BYTES)
-#elif LDSPAD && SHUFL_BYTES == 4 && RADIX == 4
-#define LDS_BYTES     ((WG * RADIX + 12) * SHUFL_BYTES)
+// NOTE:  tailSquare, with its ability to optionally define tailSquareZero, does not allow us to know numWG at #include time.
+// Thus, we must define macros that take numWG as in input argument.  This could be rectified by making tailSquareZero obey the TAIL_KERNELS setting.
+
+// This section is not necessary.  On TitanV, CUDA 12.9, I see a 0.5% slowdown when not LDS sharing but compiled with the LDS sharing code.
+
+#if LDSMUL == 1      // Not sharing LDS memory, use simplified code.
+
+#define SHARING_LDS(numWG)        0
+#define SBMUL(numWG)              1
+#define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? 12 : SHUFL_BYTES >= 16 ? 7 : 56)
+#define LDS_SHUFL_BYTES(numWG)    ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
+#define LDS_BYTES(numWG)          (numWG * LDS_SHUFL_BYTES(numWG))
+
+void OVERLOAD LDSinit(void local *lds, const u32 numWG) {
+}
+
+local void * OVERLOAD LDSptr(local void *lds, const u32 numWG) {
+  return (local char *)lds + ((u32)get_local_id(0) / WG) * LDS_SHUFL_BYTES(numWG);
+}
+
+local void * OVERLOAD LDSsharing_ptr(local void *lds, const u32 numWG) {
+  return LDSptr(lds, numWG);
+}
+
+void OVERLOAD LDSbar(const u32 numWG) {
+  bar(WG);
+}
+
+void OVERLOAD LDStx_start(local void *lds, const u32 numWG) {
+  LDSbar(numWG);
+}
+
+void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
+}
+
+
+// This section handles both cases of sharing and not sharing LDS memory
+
 #else
-#define LDS_BYTES     (WG * RADIX * SHUFL_BYTES)
+
+// LDS access is shared if the kernel processes multiple independent workgroups, the user settable LDSMUL is more than one, and the GPU allows barriers on a subset of threads
+#define SHARING_LDS(numWG)        (numWG > 1 && LDSMUL > 1 && (NVIDIAGPU || WG <= WAVEFRONT))
+// If sharing LDS access, LDSMUL sets a limit on how many workgroups share the same LDS memory.  Sharing LDS allow shufl to use a multiple of SHUFL_BYTES.
+#define SBMUL(numWG)              (!SHARING_LDS(numWG) ? 1 : numWG >= LDSMUL ? LDSMUL : numWG)
+// Calculate the LDS padding used by shufl
+#define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? 12 : SBMUL(numWG) * SHUFL_BYTES >= 16 ? 7 : 56)
+// LDS_SHUFL_BYTES is the number of LDS bytes *allocated* for each workgroup (SBMUL > 1 means the workgroup can *access* some multiple of LDS_SHUFL_BYTES)
+#define LDS_SHUFL_BYTES(numWG)    ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
+// The total number of LDS_BYTES allocated by a kernel includes space for 4 semaphores to control workgroup access
+#define LDS_BYTES(numWG)          (numWG * LDS_SHUFL_BYTES(numWG) + (SHARING_LDS(numWG) ? 16 : 0))
+
+////   BUG BUG BUG
+///variant 2 partitioned_LDS is a nightmare  -- require variant 2 to be LDSMUL=1 until we can figure it out?
+
+// Initialize access to LDS memory.  It may be advantageous to have independent workgroups share access to LDS memory via a lock controlling a critical section.
+// This may let a kernel use less LDS memory, or have each workgroup use more LDS memory to perform fewer passes of writing and reading LDS memory.
+void OVERLOAD LDSinit(void local *lds, const u32 numWG) {
+  // Init semaphores to unlocked state
+  if (SHARING_LDS(numWG)) {
+    assert(numWG / SBMUL(numWG) <= 4);  // LDS_BYTES is hardwired to allocate 4 semaphores
+    if (get_local_id(0) == 0) {
+      volatile local int *semaphores = (volatile local int *)(((local char *) lds) + numWG * LDS_SHUFL_BYTES(numWG));
+      for (u32 i = 0; i < numWG / SBMUL(numWG); i++) semaphores[i] = 0;
+    }
+    bar();
+  }
+}
+
+// Return a pointer to the LDS memory allocated for this workgroup.  If SBMUL is greater than 1, workgroup may use additional memory by sharing
+// with other workgroups and using locks to control access.
+local void * OVERLOAD LDSptr(local void *lds, const u32 numWG) {
+  return (local char *)lds + ((u32)get_local_id(0) / WG) * LDS_SHUFL_BYTES(numWG);
+}
+
+// Return a pointer to the LDS memory this workgroup is allowed to access when sharing with other workgroups.
+local void * OVERLOAD LDSsharing_ptr(local void *lds, const u32 numWG) {
+  if (!SHARING_LDS(numWG)) return LDSptr(lds, numWG);
+  return (local char *)lds + ((u32)get_local_id(0) / WG / SBMUL(numWG)) * SBMUL(numWG) * LDS_SHUFL_BYTES(numWG);
+}
+
+// Wait for all of a workgroup's threads to arrive.
+// NOTE: A "workgroup" is an independent group of threads doing FFT work (see WMUL in carryFused or TAIL_KERNELS=2).
+void OVERLOAD LDSbar(const u32 numWG) {
+
+  if (WG <= WAVEFRONT) return;
+
+  // If were not using semaphores to share LDS access, perform a standard bar.  The standard bar is free to implement a full bar across
+  // all threads if that is more efficient than a bar across a subset of threads.
+  if (!SHARING_LDS(numWG)) {
+    bar(WG);
+    return;
+  }
+
+  // Barrier on a subset of threads.
+  barsync(numWG, WG);
+}
+
+// Start a new LDS access transaction.  This is required for sharing LDS memory with other workgroups.
+// Historically, each workgroup had its own LDS area, and shufl routines performed a bar(WG) at the start of accessing LDS but not at the end.
+// After calling shufl, a bar(WG) was required before next LDS memory usage.  All routines that use LDS memory OBEYED THIS PROTOCOL
+// of bar(WG) before LDS use (full bar() if writing outside the workgroup's LDS area) and no bar(WG) after last use (full bar() if reading from
+// outside the workgroup's LDS area).  If we're not sharing LDS access among multiple workgroups, maintain this historical implementation.
+// If sharing LDS we have NEW REQUIREMENTS.  LDStx_end performs an LDSbar because workgroups write to more than just their own LDS area.  The LDSbar
+// ensures the reads have completed before any future writes.  When accessing LDS memory without LDStx calls (see shufl_carries_up in carryFused and
+// reverseLines in tailutil) they too must perform a bar() after the last read from LDS.
+// NOTE: Pass in the original LDS pointer, not the pointer returned by LDSptr or LDSsharing_ptr.
+void OVERLOAD LDStx_start(local void *lds, const u32 numWG) {
+  // If each workgroup has its own LDS area, then no locks are needed to access shared memory.  Use the historical model of requiring a barrier before LDS access.
+  if (!SHARING_LDS(numWG)) {
+    LDSbar(numWG);
+    return;
+  }
+  // Have first thread in a workgroup lock the semaphore controlling access to LDS memory
+  if (get_local_id(0) % WG == 0) {
+    volatile local int *semaphores = (volatile local int *)(((local char *) lds) + numWG * LDS_SHUFL_BYTES(numWG));
+
+    // Lock semaphore (set to one) to gain access to critical section
+    while (atomic_cmpxchg(&semaphores[get_local_id(0) / WG / SBMUL(numWG)], 0, 1) == 1);
+  }
+  LDSbar(numWG);
+}
+
+// End an LDS access transaction
+// NOTE: Pass in the original LDS pointer, not the pointer returned by LDSptr or LDSsharing_ptr.
+void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
+  // Historically, no trailing LDSbar is required when not sharing LDS memory.
+  if (!SHARING_LDS(numWG)) return;
+
+  // Since we are sharing LDS areas among multiple workgroups, we must wait for all of a workgroup's threads to finish their LDS access.
+  LDSbar(numWG);
+  // Unlock the semaphore
+  if (get_local_id(0) % WG == 0) {
+    volatile local int *semaphores = (volatile local int *)(((local char *) lds) + numWG * LDS_SHUFL_BYTES(numWG));
+    semaphores[get_local_id(0) / WG / SBMUL(numWG)] = 0;
+  }
+}
+
 #endif
+
 
 #define INCLUDE_FILE "shufl.cl"
 #include "expand.cl"
@@ -263,7 +386,7 @@ void OVERLOAD tabMul8_4b(Trig trig, T2 *u, u32 f, u32 me) {
     u32 p = me & ~(f - 1);
     T2 w = TFLOAD(&trig[p]);
 
-//    u[1] = cmulFancy(u[1], w);				// GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
+//    u[1] = cmulFancy(u[1], w);                                // GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
 //    T2 w2 = csqTrigFancy(w);
 //    u[2] = cmulFancy(u[2], w2);
 //    T2 w3 = ccubeTrigFancy(w2, w);
@@ -275,7 +398,7 @@ void OVERLOAD tabMul8_4b(Trig trig, T2 *u, u32 f, u32 me) {
 //      base = cmulFancy(base, w);
 //    }
 
-    u[1] = cmul(u[1], w);				// GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
+    u[1] = cmul(u[1], w);                               // GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
     T2 w2 = csqTrig(w);
     u[2] = cmul(u[2], w2);
     T2 w3 = ccubeTrig(w2, w);
@@ -534,8 +657,7 @@ void finish_tabMul8_fft8(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
 void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 lowMe, int callnum) {
 
   // This line mimics shufl -- partition lds for variant 2
-  local T2* partitioned_lds = lds;
-  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(T2);
+  local T2* partitioned_lds = LDSptr(lds, numWG);
 
 // Variant 0 uses broadcast instructions.  Only available on AMD GPUs.
 
@@ -975,7 +1097,7 @@ void OVERLOAD tabMul8_4b(TrigFP32 trig, F2 *u, u32 f, u32 me) {
     u32 p = me & ~(f - 1);
     F2 w = TFLOAD(&trig[p]);
 
-//    u[1] = cmulFancy(u[1], w);				// GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
+//    u[1] = cmulFancy(u[1], w);                                // GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
 //    T2 w2 = csqTrigFancy(w);
 //    u[2] = cmulFancy(u[2], w2);
 //    T2 w3 = ccubeTrigFancy(w2, w);
@@ -987,7 +1109,7 @@ void OVERLOAD tabMul8_4b(TrigFP32 trig, F2 *u, u32 f, u32 me) {
 //      base = cmulFancy(base, w);
 //    }
 
-    u[1] = cmul(u[1], w);				// GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
+    u[1] = cmul(u[1], w);                               // GW: - this should use Fancy, but tabmul8_4a does not and it could for half of the data
     F2 w2 = csqTrig(w);
     u[2] = cmul(u[2], w2);
     F2 w3 = ccubeTrig(w2, w);
@@ -1256,8 +1378,7 @@ void finish_tabMul8_fft8(TrigFP32 trig, F *preloads, F2 *u, u32 f, u32 numWG, u3
 void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 lowMe, int callnum) {
 
   // This line mimics shufl -- partition lds
-  local F2* partitioned_lds = lds;
-  if (numWG > 1) partitioned_lds += ((u32) get_local_id(0) / WG) * LDS_BYTES / sizeof(F2);
+  local F2* partitioned_lds = LDSptr(lds, numWG);
 
 // Variant 2 code for SIZE=256, RADIX=4
 #if ENABLE_FP32_VARIANT_2 && WG == 64 && RADIX == 4 && VARIANT == 2
