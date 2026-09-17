@@ -12,6 +12,8 @@
 #include <string>
 #include <optional>
 #include <charconv>
+#include <cinttypes>
+#include <filesystem>
 
 namespace {
 
@@ -97,6 +99,12 @@ static std::optional<Task> bestTask(const fs::path& fileName, bool smallest) {
   optional<Task> best;
   for (const string& line : File::openRead(fileName)) {
     optional<Task> task = parse(line);
+    // A Cert line whose start-value file is not here cannot run: isCERT would throw and end the worker, and since
+    // Cert lines take priority over PRP/LL the worker would be wedged for good.  Skip the line until the file appears.
+    if (task && task->kind == Task::CERT && !std::filesystem::exists("M" + to_string(task->exponent) + ".cert")) {
+      log("Cert start file M%" PRIu64 ".cert not found; skipping that worktodo line for now\n", task->exponent);
+      continue;
+    }
     if (task && (!best
                  || (best->kind != Task::CERT && task->kind == Task::CERT)
                  || ((best->kind != Task::CERT || task->kind == Task::CERT) && smallest && task->exponent < best->exponent))) {
