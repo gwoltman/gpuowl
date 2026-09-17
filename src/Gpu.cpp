@@ -1673,6 +1673,7 @@ pair<RoeInfo, RoeInfo> Gpu::readROE() {
     mulRoePos.clear();
     return {roeStat(squareRoe), roeStat(mulRoe)};
   } else {
+    mulRoePos.clear();   // indices recorded while ROE sampling was off must not tag the next window
     return {};
   }
 }
@@ -1759,7 +1760,8 @@ void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, bool
   fftW(buf3, tmp1);
 
   // Register the current ROE pos as multiplication (vs. a squaring)
-  if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos + 2); }
+  // mulRoePos holds indices in the "+ 2" format of the raw bufROE vector, so compare in that format too.
+  if (mulRoePos.empty() || mulRoePos.back() != roePos + 2) { mulRoePos.push_back(roePos + 2); }
 
   if (mul3) { carryM(ioA, buf3); } else { carryA(ioA, buf3); }
   carryB(ioA);
