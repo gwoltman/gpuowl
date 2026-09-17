@@ -14,13 +14,14 @@ u32 get_line_number(u32 base_lo) {
   // Old, simple L2 striping code
   // return g / (L2_STRIPING * 16) * WIDTH + base + g % (L2_STRIPING * 16);
 
-  // Process stripe group base_lo or base_hi
+  // Process stripe group base_lo or base_hi.  Unlike tailSquare, there is no Hermitian-pair readiness rule here:
+  // by the time fftHin runs for a block, fftMiddleIn has produced every line of both stripe groups.
+  u32 stripe_group_size = L2_STRIPING;
   u32 base_hi = WIDTH - stripe_group_size * 16 - base_lo;
   u32 linesInOneStripe = 16 * MIDDLE;
-  u32 stripe_group_size = L2_STRIPING;
   u32 linesInOneStripeGroup = stripe_group_size * linesInOneStripe;
   u32 base;
-  if (g  linesInOneStripeGroup) base = base_lo;
+  if (g < linesInOneStripeGroup) base = base_lo;
   else base = base_hi, g -= linesInOneStripeGroup;
   return g / (L2_STRIPING * 16) * WIDTH + base + g % (L2_STRIPING * 16);
 #else
@@ -32,7 +33,9 @@ u32 get_line_number(u32 base_lo) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
-  local T2 lds[LDS_BYTES / sizeof(T2)];
+  local T2 lds[LDS_BYTES(1) / sizeof(T2)];
+  LDSinit(lds, 1);
+
   const u32 H = ND / SMALL_HEIGHT;
 
   T2 u[NH];
@@ -65,7 +68,9 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
-  local F2 lds[LDS_BYTES / sizeof(F2)];
+  local F2 lds[LDS_BYTES(1) / sizeof(F2)];
+  LDSinit(lds, 1);
+
   const u32 H = ND / SMALL_HEIGHT;
 
   CP(F2) inF2 = (CP(F2)) in;
@@ -102,7 +107,8 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
-  local GF31 lds[LDS_BYTES / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
+  LDSinit(lds, 1);
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
@@ -130,7 +136,8 @@ KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
 KERNEL(G_H) fftHinGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
-  local GF61 lds[LDS_BYTES / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
+  LDSinit(lds, 1);
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);

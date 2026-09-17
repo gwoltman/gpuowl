@@ -7,11 +7,14 @@
 #include "common.h"
 #include "Args.h"
 #include "fs.h"
+#include "Primes.h"
 
 #include <cassert>
 #include <string>
 #include <optional>
 #include <charconv>
+#include <cinttypes>
+#include <filesystem>
 
 namespace {
 
@@ -65,6 +68,13 @@ std::optional<Task> parse(const std::string& line) {
     u64 exp{};
     auto [ptr, _] = from_chars(s.c_str(), end, exp, 10);
     if (ptr != end) { exp = 0; }
+    // Task::execute silently retargets a composite exponent to the previous prime.  That is a convenience for
+    // "-prp <random>" timing runs; an assignment line with a composite exponent is a mistake, and running a
+    // different exponent under its AID would report the wrong result.  Ignore the line instead.
+    if (exp > 1000 && !Primes{}.isPrime(exp)) {
+      log("worktodo.txt line ignored, exponent %" PRIu64 " is not prime: \"%s\"\n", exp, rstripNewline(line).c_str());
+      return {};
+    }
     if (exp > 1000) { return {{.kind=isPRP ? Task::PRP : Task::LL, .exponent=exp, .AID=AID, .line=line, .squarings=0}}; }
   }
   if (isCERT) {
@@ -97,6 +107,12 @@ static std::optional<Task> bestTask(const fs::path& fileName, bool smallest) {
   optional<Task> best;
   for (const string& line : File::openRead(fileName)) {
     optional<Task> task = parse(line);
+    // A Cert line whose start-value file is not here cannot run: isCERT would throw and end the worker, and since
+    // Cert lines take priority over PRP/LL the worker would be wedged for good.  Skip the line until the file appears.
+    if (task && task->kind == Task::CERT && !std::filesystem::exists("M" + to_string(task->exponent) + ".cert")) {
+      log("Cert start file M%" PRIu64 ".cert not found; skipping that worktodo line for now\n", task->exponent);
+      continue;
+    }
     if (task && (!best
                  || (best->kind != Task::CERT && task->kind == Task::CERT)
                  || ((best->kind != Task::CERT || task->kind == Task::CERT) && smallest && task->exponent < best->exponent))) {

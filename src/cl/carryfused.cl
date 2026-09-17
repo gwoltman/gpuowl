@@ -38,7 +38,7 @@ void OVERLOAD shufl_carries_up(local void *lds2, i64 *carry, u32 me, u32 lowMe) 
   //if (WMUL == 1) return;
 #if WMUL > 1
 
-  const u32 lds_i64s = LDS_BYTES / sizeof(i64);                 // Number of i64s in LDS used by shufl for each WMUL line
+  const u32 lds_i64s = LDS_SHUFL_BYTES(WMUL) / sizeof(i64);         // Number of i64s in LDS used by shufl for each WMUL workgroup
   local i64 *lds = (local i64 *) lds2;
 
   // Handle nasty case where we are writing 8-byte quantities but SHUFL_BYTES_W is only 4 bytes
@@ -67,9 +67,11 @@ void OVERLOAD shufl_carries_up(local void *lds2, i64 *carry, u32 me, u32 lowMe) 
       // Write the other half of the carries
       bar();
       if (me < (WMUL-1) * G_W) for (i32 i = 0; i < NW/2; ++i) lds[lds_i64s + i * G_W] = carry[i + NW/2];
-      // Read carries from our WMUL workgroup LDS area.  Compatible with shufl, no trailing bar() needed.
+      // Read carries from our WMUL workgroup LDS area.  Compatible with shufl when no trailing bar() needed.
       bar();
       if (me >= G_W) for (i32 i = 0; i < NW/2; ++i) carry[i + NW/2] = lds[i * G_W];
+      // One last bar() is needed when sharing LDS memory.  This is because when sharing a workgroup will write to more than its own LDS area.
+      if (SHARING_LDS(WMUL)) bar();
     }
   }
 
@@ -81,8 +83,10 @@ void OVERLOAD shufl_carries_up(local void *lds2, i64 *carry, u32 me, u32 lowMe) 
     if (me < (WMUL-1) * G_W) for (i32 i = 0; i < NW; ++i) lds[lds_i64s + i * G_W] = carry[i];
     // Full barrier needed as we just moved data from one WMUL workgroup LDS area to the another WMUL workgroup's LDS area
     bar();
-    // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl and no trailing bar() is required.
+    // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl when no trailing bar() is required.
     if (me >= G_W) for (i32 i = 0; i < NW; ++i) carry[i] = lds[i * G_W];
+    // One last bar() is needed when sharing LDS memory.  This is because when sharing a workgroup will write to more than its own LDS area.
+    if (SHARING_LDS(WMUL)) bar();
   }
 
 #endif
@@ -95,7 +99,7 @@ void OVERLOAD shufl_carries_up(local void *lds2, i32 *carry, u32 me, u32 lowMe) 
   //if (WMUL == 1) return;
 #if WMUL > 1
 
-  const u32 lds_i32s = LDS_BYTES / sizeof(i32);                 // Number of i32s in LDS used by shufl for each WMUL line
+  const u32 lds_i32s = LDS_SHUFL_BYTES(WMUL) / sizeof(i32);     // Number of i32s in LDS used by shufl for each WMUL workgroup
   local i32 *lds = (local i32 *) lds2;
   lds += (me / G_W) * lds_i32s + lowMe;                         // This WMUL workgroup's LDS area
 
@@ -105,8 +109,10 @@ void OVERLOAD shufl_carries_up(local void *lds2, i32 *carry, u32 me, u32 lowMe) 
   if (me < (WMUL-1) * G_W) for (i32 i = 0; i < NW; ++i) lds[lds_i32s + i * G_W] = carry[i];
   // Full barrier needed as we just moved data from one WMUL workgroup LDS area to the another WMUL workgroup's LDS area
   bar();
-  // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl and no trailing bar() is required.
+  // Read carries from our WMUL workgroup's LDS area.  This is compatible with shufl when no trailing bar() is required.
   if (me >= G_W) for (i32 i = 0; i < NW; ++i) carry[i] = lds[i * G_W];
+  // One last bar() is needed when sharing LDS memory.  This is because when sharing a workgroup will write to more than its own LDS area.
+  if (SHARING_LDS(WMUL)) bar();
 
 #endif
 }
@@ -118,7 +124,8 @@ void OVERLOAD shufl_carries_up(local void *lds2, i32 *carry, u32 me, u32 lowMe) 
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
-  local T2 lds[WMUL * LDS_BYTES / sizeof(T2)];
+  local T2 lds[LDS_BYTES(WMUL) / sizeof(T2)];
+  LDSinit(lds, WMUL);
 
   T2 u[NW];
 
@@ -343,7 +350,8 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigFP32 smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-  local F2 lds[WMUL * LDS_BYTES / sizeof(F2)];
+  local F2 lds[LDS_BYTES(WMUL) / sizeof(F2)];
+  LDSinit(lds, WMUL);
 
   F2 u[NW];
 
@@ -570,7 +578,8 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF31 smallTrig, P(uint) bufROE) {
-  local GF31 lds[WMUL * LDS_BYTES / sizeof(GF31)];
+  local GF31 lds[LDS_BYTES(WMUL) / sizeof(GF31)];
+  LDSinit(lds, WMUL);
 
   GF31 u[NW];
 
@@ -805,7 +814,8 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF61 smallTrig, P(uint) bufROE) {
-  local GF61 lds[WMUL * LDS_BYTES / sizeof(GF61)];
+  local GF61 lds[LDS_BYTES(WMUL) / sizeof(GF61)];
+  LDSinit(lds, WMUL);
 
   GF61 u[NW];
 
@@ -1047,8 +1057,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
-  local T2 lds[WMUL * LDS_BYTES / sizeof(T2)];
+  local T2 lds[LDS_BYTES(WMUL) / sizeof(T2)];
   local GF31 *lds31 = (local GF31 *) lds;
+  LDSinit(lds, WMUL);
 
   T2 u[NW];
   GF31 u31[NW];
@@ -1315,8 +1326,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-  local F2 ldsF2[WMUL * LDS_BYTES / sizeof(F2)];
+  local F2 ldsF2[LDS_BYTES(WMUL) / sizeof(F2)];
   local GF31 *lds31 = (local GF31 *) ldsF2;
+  LDSinit(ldsF2, WMUL);
 
   F2 uF2[NW];
   GF31 u31[NW];
@@ -1592,8 +1604,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-  local GF61 lds61[WMUL * LDS_BYTES / sizeof(GF61)];
+  local GF61 lds61[LDS_BYTES(WMUL) / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
+  LDSinit(lds61, WMUL);
 
   F2 uF2[NW];
   GF61 u61[NW];
@@ -1870,8 +1883,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig, P(uint) bufROE) {
-  local GF61 lds61[WMUL * LDS_BYTES / sizeof(GF61)];
+  local GF61 lds61[LDS_BYTES(WMUL) / sizeof(GF61)];
   local GF31 *lds31 = (local GF31 *) lds61;
+  LDSinit(lds61, WMUL);
 
   GF31 u31[NW];
   GF61 u61[NW];
@@ -2146,9 +2160,10 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
 KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
-  local GF61 lds61[WMUL * LDS_BYTES / sizeof(GF61)];
+  local GF61 lds61[LDS_BYTES(WMUL) / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
   local GF31 *lds31 = (local GF31 *) lds61;
+  LDSinit(lds61, WMUL);
 
   F2 uF2[NW];
   GF31 u31[NW];

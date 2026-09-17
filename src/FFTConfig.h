@@ -94,7 +94,7 @@ public:
 
   [[nodiscard]] std::string spec() const;
   [[nodiscard]] u32 size() const { return shape.size(); }
-  [[nodiscard]] u64 maxExp() const { return shape.maxExp(); }
+  [[nodiscard]] u64 maxExp() const { return u64(maxBpw() * shape.size()); }   // this config's variant and carry, not the shape's best
 
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }
   [[nodiscard]] float maxBpw() const;

@@ -52,10 +52,12 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
 
   for (const string &spec : split(iniSpec, ',')) {
     enum FFT_TYPES fft_type = FFT64;
+    bool hasTypePrefix = false;
     auto parts = split(spec, ':');
     if (parseInt(parts[0]) < 60) {      // Look for a prefix specifying the FFT type
       fft_type = (enum FFT_TYPES) parseInt(parts[0]);
       parts = vector(next(parts.begin()), parts.end());
+      hasTypePrefix = true;
     }
     assert(parts.size() <= 3);
     if (parts.size() == 3) {
@@ -67,11 +69,14 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
     }
     assert(parts.size() == 1);
 
-    parts = split(spec, '-');
-    assert(!parts.empty() && parts.size() <= 2);
-    u32 const sizeFrom = parseInt(parts[0]);
-    u32 const sizeTo = parts.size() == 2 ? parseInt(parts[1]) : sizeFrom;
+    // Parse the size range from the part after the type prefix (splitting the whole spec would read "1:8M" as 1).
+    auto range = split(parts[0], '-');
+    assert(!range.empty() && range.size() <= 2);
+    u32 const sizeFrom = parseInt(range[0]);
+    u32 const sizeTo = range.size() == 2 ? parseInt(range[1]) : sizeFrom;
     auto shapes = allShapes(sizeFrom, sizeTo);
+    // allShapes() enumerates every FFT type; an explicit prefix asks for one of them.
+    if (hasTypePrefix) { std::erase_if(shapes, [fft_type](const FFTShape& sh) { return sh.fft_type != fft_type; }); }
     if (shapes.empty()) {
       log("Could not find a FFT config for '%s'\n", spec.c_str());
       throw "Invalid FFT spec";
@@ -132,6 +137,13 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
   // Un-initialized shape, don't set BPW
   if (w == 1 && m == 1 && h == 1) { return; }
 
+  // Same limits FFTConfig applies to a full spec.  Shapes can also arrive here from -tune / -info / size ranges, and a
+  // too-small one (e.g. 128:2:128) drives middle to 0 in the fallback below and then loops forever.
+  if ((w != 256 && w != 512 && w != 1024 && w != 4096) || m < 2 || m > 16 || (h != 256 && h != 512 && h != 1024)) {
+    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/4096, middle 2..16, height 256/512/1024)\n", w, m, h);
+    throw "Invalid FFT shape";
+  }
+
   string const s = spec();
   if (auto it = BPW.find(s); it != BPW.end()) {
     bpw = it->second;
@@ -147,7 +159,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
       while (w >= 4*h) { w /= 2; h *= 2; }
       while (w < h || w < 256 || w == 2048) { w *= 2; h /= 2; }
       while (h < 256) { h *= 2; m /= 2; }
-      if (m == 1) m = 2;
+      if (m < 2) m = 2;
 
       // Make up some defaults (should only happen for experimental FFT types (t >= 52)
       if (w == orig_w && m == orig_m && h == orig_h) {
@@ -247,7 +259,15 @@ FFTConfig::FFTConfig(const string& spec) {
   }
   
   if (v.size() == 1) {
-    *this = {FFTShape::multiSpec(spec).front(), LAST_VARIANT, CARRY_AUTO};
+    // A bare size ("8M") means an FFT of that size of the requested type -- FP64 unless a prefix says otherwise.
+    // multiSpec() returns every type for an unprefixed size, sorted without regard to type, so pick ours explicitly.
+    auto shapes = FFTShape::multiSpec(spec);
+    std::erase_if(shapes, [fft_type](const FFTShape& sh) { return sh.fft_type != fft_type; });
+    if (shapes.empty()) {
+      log("No FFT of type %d with size '%s'\n", int(fft_type), v[0].c_str());
+      throw "Invalid FFT spec";
+    }
+    *this = {shapes.front(), LAST_VARIANT, CARRY_AUTO};
   } else if (v.size() == 3) {
     *this = {FFTShape{fft_type, v[0], v[1], v[2]}, LAST_VARIANT, CARRY_AUTO};
   } else if (v.size() == 4) {
@@ -266,9 +286,12 @@ FFTConfig::FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry) :
   variant{variant},
   carry{carry}
 {
-  assert(variant_W(variant) < N_VARIANT_W);
-  assert(variant_M(variant) < N_VARIANT_M);
-  assert(variant_H(variant) < N_VARIANT_H);
+  // Checked at runtime, not only asserted: an out-of-range digit indexes past bpw[] in maxBpw() and selects kernel
+  // variants that do not exist (the shipped tune.txt predates this encoding and has such rows).
+  if (variant_W(variant) >= N_VARIANT_W || variant_M(variant) >= N_VARIANT_M || variant_H(variant) >= N_VARIANT_H) {
+    log("Invalid FFT variant %u for %s (digits must be < %u%u%u)\n", variant, shape.spec().c_str(), N_VARIANT_W, N_VARIANT_M, N_VARIANT_H);
+    throw "Invalid FFT variant";
+  }
 
   if      (shape.fft_type == FFT64)     FFT_FP64 = true, FFT_FP32 = false, NTT_GF31 = false, NTT_GF61 = false, WordSize = 4;
   else if (shape.fft_type == FFT3161)   FFT_FP64 = false, FFT_FP32 = false, NTT_GF31 = true, NTT_GF61 = true, WordSize = 8;

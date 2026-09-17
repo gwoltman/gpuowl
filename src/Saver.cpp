@@ -32,6 +32,14 @@ static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64
 
 struct BadHeaderError { string name; };
 
+// The header's exponent sizes the residue read that follows; a corrupt header must not be allowed to size it.
+void checkExponent(u64 got, u64 want, const string& header) {
+  if (got != want) {
+    log("savefile header exponent %" PRIu64 " does not match %" PRIu64 ": \"%s\"\n", got, want, rstripNewline(header).c_str());
+    throw BadHeaderError{header};
+  }
+}
+
 bool startsWith(const string& s, const string& prefix) {
   return s.starts_with(prefix);
 }
@@ -88,7 +96,7 @@ fs::path findLast(const fs::path& dir, const string& prefix, const string& kind)
   return path;
 }
 
-PRPState readState([[maybe_unused]] const PRPState& dummy, File fi) {
+PRPState readState(const PRPState& expected, File fi) {
   u64 exponent{}, k{};
   u32 blockSize{}, nErrors{};
   u64 res64{};
@@ -97,11 +105,13 @@ PRPState readState([[maybe_unused]] const PRPState& dummy, File fi) {
   string const header = fi.readLine();
 
   if (sscanf(header.c_str(), PRP_v13, &exponent, &k, &blockSize, &res64, &nErrors, &elapsed) == 6) {
+    checkExponent(exponent, expected.exponent, header);
     return {.exponent=exponent, .k=k, .blockSize=blockSize, .res64=res64, .check=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed};
   }
 
   u32 crc{};
   if (sscanf(header.c_str(), PRP_v12, &exponent, &k, &blockSize, &res64, &nErrors, &crc) == 6) {
+    checkExponent(exponent, expected.exponent, header);
     return {.exponent=exponent, .k=k, .blockSize=blockSize, .res64=res64, .check=fi.readWithCRC<u32>(nWords(exponent), crc), .nErrors=nErrors, .elapsed=0};
   }
 
@@ -109,18 +119,20 @@ PRPState readState([[maybe_unused]] const PRPState& dummy, File fi) {
   throw BadHeaderError{fi.name};
 }
 
-LLState readState([[maybe_unused]] const LLState& dummy, File fi) {
+LLState readState(const LLState& expected, File fi) {
   u64 exponent{}, k{};
   double elapsed{};
 
   string const header = fi.readLine();
 
   if (sscanf(header.c_str(), LL_v13, &exponent, &k, &elapsed) == 3) {
+    checkExponent(exponent, expected.exponent, header);
     return {.exponent=exponent, .k=k, .data=fi.readChecked<u32>(nWords(exponent)), .elapsed=elapsed};
   }
 
   u32 crc{};
   if (sscanf(header.c_str(), LL_v1, &exponent, &k, &crc) == 3) {
+    checkExponent(exponent, expected.exponent, header);
     return {.exponent=exponent, .k=k, .data=fi.readWithCRC<u32>(nWords(exponent), crc), .elapsed=0};
   }
 
@@ -226,7 +238,9 @@ State Saver<State>::load() {
 
     if (File fi{File::openRead(path)}; fi) {
       try {
-        State state = readState(State{}, std::move(fi));
+        State expected{};
+        expected.exponent = exponent;
+        State state = readState(expected, std::move(fi));
         assert(state.exponent == exponent);
         if (state.exponent == exponent) {
           return state;

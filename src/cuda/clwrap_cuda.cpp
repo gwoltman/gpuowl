@@ -27,7 +27,10 @@ using namespace std;
 // Track allocated cl_mem objects so clSetKernelArg can distinguish buffer args from scalars.
 // In OpenCL, buffer args are passed as &memobj where memobj is cl_mem (a pointer to _cl_mem).
 // We need to convert these to CUdeviceptr for CUDA kernel launch.
+// The set is shared by every worker thread (-workers N runs N Gpu instances against this one
+// process-wide context), so all access goes through g_allocatedBuffersMutex.
 static unordered_set<cl_mem> g_allocatedBuffers;
+static std::mutex g_allocatedBuffersMutex;
 
 // Global CUDA context — set once by clCreateContext, used to ensure current before CUDA calls
 static CUcontext g_cudaContext = nullptr;
@@ -733,10 +736,22 @@ int clSetKernelArg(cl_kernel k, unsigned pos, size_t size, const void* value) {
   // We need to store the CUdeviceptr (GPU address) instead of the cl_mem (host pointer).
   if (size == sizeof(cl_mem) && value) {
     cl_mem mem = *(cl_mem*)value;
-    if (mem && g_allocatedBuffers.contains(mem)) {
-      CUdeviceptr devPtr = mem->ptr;
-      k->setArg(pos, sizeof(CUdeviceptr), &devPtr);
-      return CL_SUCCESS;
+    if (mem) {
+      // Look the buffer up and copy its device pointer under the lock: another worker may be
+      // creating or releasing buffers concurrently, and a release deletes the _cl_mem.
+      CUdeviceptr devPtr = 0;
+      bool isBuffer = false;
+      {
+        std::lock_guard<std::mutex> lock(g_allocatedBuffersMutex);
+        if (g_allocatedBuffers.contains(mem)) {
+          isBuffer = true;
+          devPtr = mem->ptr;
+        }
+      }
+      if (isBuffer) {
+        k->setArg(pos, sizeof(CUdeviceptr), &devPtr);
+        return CL_SUCCESS;
+      }
     }
     // NULL cl_mem → pass a null device pointer
     if (!mem) {
@@ -766,7 +781,10 @@ cl_mem clCreateBuffer(cl_context  /*ctx*/, cl_mem_flags flags, size_t size, void
   if ((flags & CL_MEM_COPY_HOST_PTR) && hostPtr) {
     cuMemcpyHtoD(buf->ptr, hostPtr, size);
   }
-  g_allocatedBuffers.insert(buf);
+  {
+    std::lock_guard<std::mutex> lock(g_allocatedBuffersMutex);
+    g_allocatedBuffers.insert(buf);
+  }
   if (err) *err = CL_SUCCESS;
   return buf;
 }
@@ -774,7 +792,10 @@ cl_mem clCreateBuffer(cl_context  /*ctx*/, cl_mem_flags flags, size_t size, void
 int clReleaseMemObject(cl_mem buf) {
   if (buf) {
     ensureContextCurrent();
-    g_allocatedBuffers.erase(buf);
+    {
+      std::lock_guard<std::mutex> lock(g_allocatedBuffersMutex);
+      g_allocatedBuffers.erase(buf);
+    }
     cuMemFree(buf->ptr);
     delete buf;
   }

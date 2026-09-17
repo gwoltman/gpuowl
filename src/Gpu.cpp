@@ -251,7 +251,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = false, tail_single_kernel = true;         // Default tailSquare is double-wide in one kernel
-  in_place = 0;                                         // Default is not in-place
+  in_place = isNvidiaGpu(id) ? 1 : 0;                   // Default is in-place for nVidia, not in-place for others (must match base.cl)
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
@@ -329,6 +329,21 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     }
   }
 
+  // MULTI_Q is not allowed when profiling with -time
+  if (args.profile && args.value("MULTI_Q", 0)) {
+    args.flags["MULTI_Q"] = to_string(0);
+    log("MULTI_Q is disabled when profiling with -time.\n");
+  }
+  // GRAPHS are not allowed when profiling with -time.  GRAPH replays the four bottom-half
+  // kernels without per-kernel events, and the events recorded while capturing the graph never execute, so the
+  // profile would show those kernels -- most of an iteration -- as one call of ~0 ns.
+  if (args.profile && args.value("GRAPHS", 1)) {
+    args.flags["GRAPHS"] = to_string(0);
+#if CUDA_BACKEND
+    log("GRAPHS are disabled when profiling with -time.\n");
+#endif
+  }
+
   // L2_STRIPING is not allowed if INPLACE=0.  Maximum L2_STRIPING is WIDTH/64 if MULTI_Q=0 and WIDTH/128 if MULTI_Q=1.
   // Technically, L2_STRIPING of WIDTH/32, MULTI_Q=0 could be allowed but that is just a more complicated way to implement L2_STRIPING=0.
   // Also, WIDTH/64, MULTI_Q=1 could be allowed with some marker/sync code changes but that is very similar to L2_STRIPING=0.
@@ -349,6 +364,22 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
       config["L2_STRIPING"] = to_string(fft.shape.width/128);
       args.flags["L2_STRIPING"] = to_string(fft.shape.width/128);
       log("Max L2_STRIPING when MULTI_Q=1 exceeded.  Changing to L2_STRIPING=%u.\n", fft.shape.width/128);
+    }
+
+    // The striped launches split the WIDTH/16 stripes into groups of L2_STRIPING and pair group i with its
+    // Hermitian partner WIDTH - L2_STRIPING*16 - base_lo, so the number of groups must be even (a multiple of
+    // four with MULTI_Q, which further splits them across two queues).  Otherwise whole stripes are never
+    // transformed and others are squared twice.  WIDTH/16 is a power of two, so round down to one that divides.
+    l2_striping = args.value("L2_STRIPING", 0);
+    if (l2_striping) {
+      u32 const groupsNeeded = multi_q ? 4 : 2;
+      u32 valid = l2_striping;
+      while (valid && (fft.shape.width / 16) % (groupsNeeded * valid)) { --valid; }
+      if (valid != l2_striping) {
+        config["L2_STRIPING"] = to_string(valid);
+        args.flags["L2_STRIPING"] = to_string(valid);
+        log("L2_STRIPING must divide WIDTH/%u.  Changing to L2_STRIPING=%u.\n", 16 * groupsNeeded, valid);
+      }
     }
   }
 
@@ -1004,7 +1035,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     auxQueues.push_back(Queue{*shared.context, args.profile, true});
   }
 
-  // Set flag indicating we're going to use CUDA graphs
+  // Set flag indicating we're going to use CUDA graphs.
   use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && args.value("GRAPHS", 1);
 
   // Set L1 cache configuration.  Really we should only do this once rather than once per worker.
@@ -1673,6 +1704,7 @@ pair<RoeInfo, RoeInfo> Gpu::readROE() {
     mulRoePos.clear();
     return {roeStat(squareRoe), roeStat(mulRoe)};
   } else {
+    mulRoePos.clear();   // indices recorded while ROE sampling was off must not tag the next window
     return {};
   }
 }
@@ -1759,7 +1791,8 @@ void Gpu::mul(Buffer<Word>& ioA, Buffer<double>& inB, Buffer<double>& tmp1, bool
   fftW(buf3, tmp1);
 
   // Register the current ROE pos as multiplication (vs. a squaring)
-  if (mulRoePos.empty() || mulRoePos.back() < roePos) { mulRoePos.push_back(roePos + 2); }
+  // mulRoePos holds indices in the "+ 2" format of the raw bufROE vector, so compare in that format too.
+  if (mulRoePos.empty() || mulRoePos.back() != roePos + 2) { mulRoePos.push_back(roePos + 2); }
 
   if (mul3) { carryM(ioA, buf3); } else { carryA(ioA, buf3); }
   carryB(ioA);
