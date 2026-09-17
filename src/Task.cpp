@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <cassert>
+#include <cstdio>
 #include <utility>
 
 namespace {
@@ -103,7 +104,17 @@ string json(const vector<string>& v) {
   return {isFirst ? ""s : (s + '}')};
 }
 
-string json(const string& s) { return '"' + s + '"'; }
+// JSON string literal: escape the quote, the backslash and control characters, so a user name or OS string
+// containing them cannot produce an unparseable results line.
+string json(const string& s) {
+  string out = "\"";
+  for (unsigned char c : s) {
+    if (c == '"' || c == '\\') { out += '\\'; out += char(c); }
+    else if (c < 0x20) { char buf[8]; snprintf(buf, sizeof(buf), "\\u%04x", c); out += buf; }
+    else { out += char(c); }
+  }
+  return out + '"';
+}
 string json(int x) { return to_string(x); }
 string json(u32 x) { return to_string(x); }
 string json(u64 x) { return to_string(x); }
