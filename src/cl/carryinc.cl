@@ -3,7 +3,7 @@
 // This file is included with different definitions for iCARRY
 
 Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
-  i32 tmpCarry;
+  iCARRY tmpCarry;
   u.x = carryStepSignedSloppy(u.x + inCarry, &tmpCarry, b1);
   u.y += tmpCarry;
   return u;
