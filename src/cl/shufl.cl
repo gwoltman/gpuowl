@@ -761,13 +761,20 @@ void OVERLOAD shufl(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 r, u32 numWG, u3
       LDStx_start(lds2, numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 7) * (WG + 1) + (lowMe / 32) * 32 + (lowMe & 3) * 8 + i] = u[i].x; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i / 4) * 32 + (i & 3) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64 + (lowMe / 256) * 32             + ((lowMe / 32) & 7) * (WG + 1) + (lowMe & 31)]; }
+      // Read back in the generic shufl's output order.  The write above stores (i', me') at
+      // ((me'/4)&7)*(WG+1) + (me'/32)*32 + (me'&3)*8 + i', and output (i, lowMe) needs i' = lowMe & 7,
+      // me' = i*WG/8 + lowMe/8; the per-WG forms below are that inverse with the constants folded.
+      if      (WG == 64)  for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i / 4) * 32 + (i & 3) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
+      else if (WG == 128) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i / 2) * 32 + (4 * (i & 1) + lowMe / 32) * (WG + 1) + (lowMe & 31)]; }
+      else if (WG == 512) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64 + (lowMe / 256) * 32             + ((lowMe / 32) & 7) * (WG + 1) + (lowMe & 31)]; }
+      else                for (u32 i = 0; i < RADIX; ++i) { u32 mep = i * (WG / 8) + lowMe / 8; u[i].x = lds[((mep / 4) & 7) * (WG + 1) + (mep / 32) * 32 + (mep & 3) * 8 + (lowMe & 7)]; }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 7) * (WG + 1) + (lowMe / 32) * 32 + (lowMe & 3) * 8 + i] = u[i].y; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i / 4) * 32 + (i & 3) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64 + (lowMe / 256) * 32             + ((lowMe / 32) & 7) * (WG + 1) + (lowMe & 31)]; }
+      if      (WG == 64)  for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i / 4) * 32 + (i & 3) * (2 * (WG + 1)) +  (lowMe / 32)      * (WG + 1) + (lowMe & 31)]; }
+      else if (WG == 128) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i / 2) * 32 + (4 * (i & 1) + lowMe / 32) * (WG + 1) + (lowMe & 31)]; }
+      else if (WG == 512) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64 + (lowMe / 256) * 32             + ((lowMe / 32) & 7) * (WG + 1) + (lowMe & 31)]; }
+      else                for (u32 i = 0; i < RADIX; ++i) { u32 mep = i * (WG / 8) + lowMe / 8; u[i].y = lds[((mep / 4) & 7) * (WG + 1) + (mep / 32) * 32 + (mep & 3) * 8 + (lowMe & 7)]; }
       LDStx_end(lds2, numWG);
       return;
     }
