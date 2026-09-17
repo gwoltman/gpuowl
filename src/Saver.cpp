@@ -29,6 +29,7 @@ static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%
 // Anticipated next version.
 // Push version number to sync it with PRP.
 static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
+static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
 
 struct BadHeaderError : std::runtime_error {
   string name;
@@ -151,6 +152,28 @@ void writeState(const File& fo, const PRPState& state) {
   fo.writeChecked(state.check);
 }
 
+CERTState readState([[maybe_unused]] const CERTState& dummy, File fi) {
+  u64 exponent{}, k{}, squarings{};
+  double elapsed{};
+
+  string const header = fi.readLine();
+
+  if (sscanf(header.c_str(), CERT_v1, &exponent, &k, &squarings, &elapsed) == 4) {
+    return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .elapsed=elapsed};
+  }
+
+  log("Loading CERT from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
+  throw BadHeaderError{fi.name};
+}
+
+void writeState(const File& fo, const CERTState& state) {
+  assert(state.data.size() == nWords(state.exponent));
+  if (fo.printf(CERT_v1, state.exponent, state.k, state.squarings, state.elapsed) <= 0) {
+    throw WriteError{fo.name};
+  }
+  fo.writeChecked(state.data);
+}
+
 void writeState(const File& fo, const LLState& state) {
   assert(state.data.size() == nWords(state.exponent));
   if (fo.printf(LL_v13, state.exponent, state.k, state.elapsed) <= 0) {
@@ -180,6 +203,10 @@ template<> PRPState Saver<PRPState>::initState() {
 
 template<> LLState Saver<LLState>::initState() {
   return {.exponent=exponent, .k=0, .data=makeWords(exponent, 4), .elapsed=0};
+}
+
+template<> CERTState Saver<CERTState>::initState() {
+  return {.exponent=exponent, .k=0, .squarings=0, .data={}, .elapsed=0};   // no checkpoint: caller starts from the .cert file
 }
 
 
@@ -314,3 +341,4 @@ void Saver<State>::dropMostRecent() {
 
 template class Saver<PRPState>;
 template class Saver<LLState>;
+template class Saver<CERTState>;

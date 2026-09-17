@@ -31,6 +31,18 @@ struct LLState {
   double elapsed{};
 };
 
+// A CERT (certification) in progress: the current residue after k of `squarings` squarings.  An empty `data`
+// means "no checkpoint": start from the M<E>.cert file.
+struct CERTState {
+  static const constexpr char* KIND = "cert";
+
+  u64 exponent;
+  u64 k;
+  u64 squarings;
+  vector<u32> data;
+  double elapsed{};
+};
+
 template<typename State>
 class Saver {
   u64 exponent;
