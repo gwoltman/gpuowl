@@ -60,6 +60,7 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
     double cost{};
     if (sscanf(line.c_str(), "%lf %31s", &cost, specBuf) < 2) {
       log("tune.txt line '%s' ignored\n", line.c_str());
+      continue;   // otherwise specBuf below is uninitialised
     }
     FFTConfig const fft{specBuf};
     assert(cost >= prevCost && fft.maxExp() > prevMaxExp);
