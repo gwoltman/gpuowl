@@ -556,7 +556,7 @@ F2 OVERLOAD NCLOAD(TrigFP32 mem) {
 }
 F OVERLOAD NCLOAD(TrigSingleFP32 mem) {
   F retval;
-  __asm("ld.global.nc.f32  %0}, [%1];" : "=f"(retval) : "l"(mem));
+  __asm("ld.global.nc.f32  %0, [%1];" : "=f"(retval) : "l"(mem));
   return retval;
 }
 i64 OVERLOAD NCLOAD(i64 *mem) {
