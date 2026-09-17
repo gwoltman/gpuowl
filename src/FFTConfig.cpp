@@ -52,10 +52,12 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
 
   for (const string &spec : split(iniSpec, ',')) {
     enum FFT_TYPES fft_type = FFT64;
+    bool hasTypePrefix = false;
     auto parts = split(spec, ':');
     if (parseInt(parts[0]) < 60) {      // Look for a prefix specifying the FFT type
       fft_type = (enum FFT_TYPES) parseInt(parts[0]);
       parts = vector(next(parts.begin()), parts.end());
+      hasTypePrefix = true;
     }
     assert(parts.size() <= 3);
     if (parts.size() == 3) {
@@ -67,11 +69,14 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
     }
     assert(parts.size() == 1);
 
-    parts = split(spec, '-');
-    assert(!parts.empty() && parts.size() <= 2);
-    u32 const sizeFrom = parseInt(parts[0]);
-    u32 const sizeTo = parts.size() == 2 ? parseInt(parts[1]) : sizeFrom;
+    // Parse the size range from the part after the type prefix (splitting the whole spec would read "1:8M" as 1).
+    auto range = split(parts[0], '-');
+    assert(!range.empty() && range.size() <= 2);
+    u32 const sizeFrom = parseInt(range[0]);
+    u32 const sizeTo = range.size() == 2 ? parseInt(range[1]) : sizeFrom;
     auto shapes = allShapes(sizeFrom, sizeTo);
+    // allShapes() enumerates every FFT type; an explicit prefix asks for one of them.
+    if (hasTypePrefix) { std::erase_if(shapes, [fft_type](const FFTShape& sh) { return sh.fft_type != fft_type; }); }
     if (shapes.empty()) {
       log("Could not find a FFT config for '%s'\n", spec.c_str());
       throw "Invalid FFT spec";
@@ -247,7 +252,15 @@ FFTConfig::FFTConfig(const string& spec) {
   }
   
   if (v.size() == 1) {
-    *this = {FFTShape::multiSpec(spec).front(), LAST_VARIANT, CARRY_AUTO};
+    // A bare size ("8M") means an FFT of that size of the requested type -- FP64 unless a prefix says otherwise.
+    // multiSpec() returns every type for an unprefixed size, sorted without regard to type, so pick ours explicitly.
+    auto shapes = FFTShape::multiSpec(spec);
+    std::erase_if(shapes, [fft_type](const FFTShape& sh) { return sh.fft_type != fft_type; });
+    if (shapes.empty()) {
+      log("No FFT of type %d with size '%s'\n", int(fft_type), v[0].c_str());
+      throw "Invalid FFT spec";
+    }
+    *this = {shapes.front(), LAST_VARIANT, CARRY_AUTO};
   } else if (v.size() == 3) {
     *this = {FFTShape{fft_type, v[0], v[1], v[2]}, LAST_VARIANT, CARRY_AUTO};
   } else if (v.size() == 4) {
