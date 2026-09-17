@@ -58,8 +58,10 @@ std::optional<Task> parse(const std::string& line) {
       parts.erase(parts.begin());
     }
 
-    string const s = (parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && (parts[3] == "-1" || parts[3] == "-1\n")) ? parts[2]
-      : (!parts.empty() ? parts[0] : "");
+    // PRP lines are "k,b,n,c,..." and only k=1, b=2, c=-1 is a Mersenne number; anything else (k*2^n-1, 2^n+1, base 3)
+    // is not ours and must not be run as exponent k.  The bare "E,..." form is only used by Test=/DoubleCheck= lines.
+    bool const mersenne = parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && (parts[3] == "-1" || parts[3] == "-1\n");
+    string const s = mersenne ? parts[2] : ((isLL && !parts.empty()) ? parts[0] : "");
 
     const char *end = s.c_str() + s.size();
     u64 exp{};
