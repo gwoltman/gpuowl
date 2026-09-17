@@ -7,6 +7,7 @@
 #include "common.h"
 #include "Args.h"
 #include "fs.h"
+#include "Primes.h"
 
 #include <cassert>
 #include <string>
@@ -67,6 +68,13 @@ std::optional<Task> parse(const std::string& line) {
     u64 exp{};
     auto [ptr, _] = from_chars(s.c_str(), end, exp, 10);
     if (ptr != end) { exp = 0; }
+    // Task::execute silently retargets a composite exponent to the previous prime.  That is a convenience for
+    // "-prp <random>" timing runs; an assignment line with a composite exponent is a mistake, and running a
+    // different exponent under its AID would report the wrong result.  Ignore the line instead.
+    if (exp > 1000 && !Primes{}.isPrime(exp)) {
+      log("worktodo.txt line ignored, exponent %" PRIu64 " is not prime: \"%s\"\n", exp, rstripNewline(line).c_str());
+      return {};
+    }
     if (exp > 1000) { return {{.kind=isPRP ? Task::PRP : Task::LL, .exponent=exp, .AID=AID, .line=line, .squarings=0}}; }
   }
   if (isCERT) {
