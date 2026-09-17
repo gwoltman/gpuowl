@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <exception>
+
 #include "File.h"
 #include <filesystem>
 
@@ -21,4 +23,8 @@ public:
 
   // Cancel the rename
   void reset();
+
+  // Exceptions in flight when this object was created; if more are in flight when it is destroyed, the write
+  // is being unwound (e.g. disk full) and the partial .new file must not replace the previous good file.
+  int uncaughtAtStart = std::uncaught_exceptions();
 };
