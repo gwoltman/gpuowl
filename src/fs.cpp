@@ -63,7 +63,11 @@ bool deleteLine(const fs::path& path, const string& targetLine, u64 initialSize)
 
   fs::path const tmp = path + ("-"s + toString(this_thread::get_id()));
 
-  if (!copyWithout(targetLine, path, tmp) || !sizeMatches(path, initialSize)) { return false; }
+  if (!copyWithout(targetLine, path, tmp) || !sizeMatches(path, initialSize)) {
+    error_code ec;
+    fs::remove(tmp, ec);   // do not leave "<path>-<threadid>" behind on every failed attempt
+    return false;
+  }
 
   fancyRename(tmp, path);
   return true;

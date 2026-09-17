@@ -264,6 +264,7 @@ public:
 
   string readAll() {
     u64 const sz = size();
+    if (sz == 0) { return {}; }   // fread of 0 bytes would be reported as a ReadError
     return {read<char>(sz).data(), sz};
   }
 };
