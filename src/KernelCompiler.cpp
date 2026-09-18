@@ -27,16 +27,36 @@ static_assert(sizeof(Program) == sizeof(cl_program));
 // * -fno-bin-llvmir
 // * various: -fno-bin-source -fno-bin-amdil
 
+// Does the device's compiler accept this -cl-std?  Compiles an empty kernel with just that option.
+static bool acceptsClStd(cl_context context, cl_device_id deviceId, const string& clStd) {
+  Program probe = loadSource(context, "kernel void probe() {}\n");
+  if (!probe) { return false; }
+  string const opts = "-cl-std=" + clStd;
+  return clCompileProgram(probe.get(), 1, &deviceId, opts.c_str(), 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
+}
+
 KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs) :
   cacheDir{args.cacheDir.string()},
   context{context->get()},
-  linkArgs{"-cl-finite-math-only " },
-  baseArgs{linkArgs + "-cl-std=CL2.0 " + clArgs},
+  linkArgs{},   // no compile-only options here: clLinkProgram accepts only linker options (POCL enforces it)
+  baseArgs{},
   dump{args.dump},
   useCache{args.useCache},
   verbose{args.verbose},
   deviceId{context->deviceId()}
 {
+
+  // Every GPU driver we run on accepts -cl-std=CL2.0.  Some OpenCL 3.0 implementations (POCL; likely Mesa rusticl)
+  // offer no OpenCL C 2.0 at all and reject the option, but do offer OpenCL C 3.0, whose optional features cover what
+  // the kernels use from 2.0 (generic address space, memory-order atomics).  Probe once and fall back.
+  string clStd = "CL2.0";
+#ifndef CUDA_BACKEND
+  if (!acceptsClStd(context->get(), deviceId, "CL2.0") && acceptsClStd(context->get(), deviceId, "CL3.0")) {
+    clStd = "CL3.0";
+    log("OpenCL C 2.0 is not available on this device; compiling the kernels as OpenCL C 3.0\n");
+  }
+#endif
+  baseArgs = "-cl-finite-math-only -cl-std=" + clStd + ' ' + clArgs;
 
   string const hw = getDriverVersion(deviceId) + ':' + getDeviceName(deviceId);
   if (args.verbose) { log("OpenCL: %s, args %s\n", hw.c_str(), baseArgs.c_str()); }

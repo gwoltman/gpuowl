@@ -6,7 +6,36 @@ on:
   schedule:
     - cron: '0 0 1 * *'
 
+# A new push to the same branch or PR cancels the previous run instead of paying for both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  Kernel-Smoke:
+    name: Kernel compile + Gerbicz check (POCL CPU)
+    # The kernels in src/cl are compiled at first use, on the device, so the build jobs below never see them.
+    # This compiles the FP64 kernel set on POCL's CPU device -- a non-NVIDIA OpenCL target -- and ends in a
+    # Gerbicz check.  One runner, on purpose: the cost is kernel compilation, and it need only happen once.
+    # The integer-NTT types are left out (far too slow on a CPU device); aarch64 POCL is not tried yet.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+    - uses: actions/checkout@v7
+    - name: Install
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y ocl-icd-opencl-dev pocl-opencl-icd
+    - name: Build
+      run: make -O -j "$(nproc)"
+    - name: Compile the kernels and pass a Gerbicz check
+      run: |
+        cd build-release
+        ./prpll -h
+        timeout 20m ./prpll -device 0 -prp 5000011 -fft 256:2:256 -block 200 -iters 400
+        cat gpuowl-0.log
+        grep -q "OK  *400 " gpuowl-0.log
+
   Linux-OpenCL:
     name: Linux OpenCL
 
