@@ -1104,6 +1104,28 @@ void Tune::tune() {
       args->flags["GRAPHS"] = to_string(best_graphs);
     }
 
+    // Find best PDL setting.  Programmatic dependent launch requires compute capability 9.0 or later;
+    // below that dependentLaunch/dependentLaunchWait compile to nothing and there is nothing to time.
+    // Require a clear advantage before turning PDL on.
+    if (getNvidiaComputeCapability(shared.context->deviceId()) >= 900) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_pdl = 0;
+      u32 current_pdl = args->value("PDL", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 pdl : {0, 1}) {
+        args->flags["PDL"] = to_string(pdl);
+        double cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
+        log("Time for %12s using PDL=%u is %6.1f\n", fft.spec().c_str(), pdl, cost);
+        if (pdl == current_pdl) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_pdl = pdl; }
+      }
+      log("Best PDL is %u.  Default PDL is 0.\n", best_pdl);
+      configsUpdate(current_cost, best_cost, 0.003, "PDL", best_pdl, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["PDL"] = to_string(best_pdl);
+    }
+
     // See if disabling the default register usage makes sense
     if (true) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
