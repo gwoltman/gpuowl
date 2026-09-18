@@ -573,7 +573,7 @@ void Tune::tune() {
       u32 best_inplace = 0;
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 const inplace : {0, 1}) {
+      for (u32 const inplace : {0, 1, 2}) {
         args->flags["INPLACE"] = to_string(inplace);
         double const cost = Gpu::make(exponent, shared, fft, {}, false)->timePRP(quick);
         log("Time for %12s using INPLACE=%u is %6.1f\n", fft.spec().c_str(), inplace, cost);
