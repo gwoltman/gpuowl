@@ -6,34 +6,65 @@ on:
   schedule:
     - cron: '0 0 1 * *'
 
-# A new push to the same branch or PR cancels the previous run instead of paying for both.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   Kernel-Smoke:
-    name: Kernel compile + Gerbicz check (POCL CPU)
+    name: Kernel compile + Gerbicz check (POCL CPU, ${{ matrix.os }})
     # The kernels in src/cl are compiled at first use, on the device, so the build jobs below never see them.
     # This compiles the FP64 kernel set on POCL's CPU device -- a non-NVIDIA OpenCL target -- and ends in a
     # Gerbicz check.  One runner, on purpose: the cost is kernel compilation, and it need only happen once.
-    # The integer-NTT types are left out (far too slow on a CPU device); aarch64 POCL is not tried yet.
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Debug build so the runtime asserts are exercised too.  The integer-NTT types are left out (far too slow
+    # on a CPU device); aarch64 POCL is not tried yet.
+    #
+    # POCL_WORK_GROUP_METHOD=loops: with the default (vectorizing) work-group method POCL spends 15-25 minutes
+    # compiling these kernels on the AVX-512 runner CPUs; with "loops" and POCL 7.2 the whole check takes about
+    # 10 seconds.  Ubuntu's own POCL packages (5.0 on 24.04, 6.0 on 26.04) are slow even with "loops" and the
+    # conda-forge 7.1 build computes wrong results, so POCL 7.2 is built from source against the distro LLVM
+    # and cached; a cache hit costs seconds.
+    # The arm64 entry runs the same kernels through LLVM's AArch64 backend and the host code on arm64,
+    # which the build-only arm jobs above never do.  Same commands: 26.04-arm has the same LLVM 21.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, ubuntu-26.04-arm]
+    env:
+      POCL_WORK_GROUP_METHOD: loops
+      POCL_VERSION: "7.2"
     steps:
     - uses: actions/checkout@v7
     - name: Install
+      # The LLVM packages are needed at run time too (the cached libpocl links against them), not only to build POCL.
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y ocl-icd-opencl-dev pocl-opencl-icd
-    - name: Build
-      run: make -O -j "$(nproc)"
-    - name: Compile the kernels and pass a Gerbicz check
+        sudo apt-get install -y ocl-icd-opencl-dev cmake ninja-build llvm-21-dev libclang-21-dev libclang-cpp21-dev clang-21 libhwloc-dev
+    - name: Restore POCL
+      id: pocl-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/pocl
+        key: pocl-${{ env.POCL_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-llvm21
+    - name: Build POCL
+      if: steps.pocl-cache.outputs.cache-hit != 'true'
       run: |
-        cd build-release
+        curl -Ls "https://api.github.com/repos/pocl/pocl/tarball/v$POCL_VERSION" | tar -xz
+        cmake -G Ninja -S pocl-pocl-* -B pocl-build -DCMAKE_BUILD_TYPE=Release -DWITH_LLVM_CONFIG=/usr/bin/llvm-config-21 \
+              -DENABLE_ICD=ON -DENABLE_TESTS=OFF -DENABLE_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX="$HOME/pocl" -DPOCL_INSTALL_ICD_VENDORDIR="$HOME/pocl/etc/OpenCL/vendors"
+        ninja -C pocl-build install
+    - name: Use POCL
+      run: echo "OCL_ICD_VENDORS=$HOME/pocl/etc/OpenCL/vendors" >> "$GITHUB_ENV"
+    - name: Build
+      run: make DEBUG=1 -O -j "$(nproc)"
+    - name: Compile the kernels and pass a Gerbicz check
+      # Step-level bound (not job-level, so a slow apt mirror cannot fail the job): a correct run takes
+      # well under a minute.  prpll ignores SIGTERM while inside an OpenCL compile, hence -s KILL.
+      timeout-minutes: 12
+      run: |
+        cd build-debug
         ./prpll -h
-        timeout 20m ./prpll -device 0 -prp 5000011 -fft 256:2:256 -block 200 -iters 400
+        # Dump the log whatever happened, so a timeout or crash still shows how far the kernels got.
+        timeout -s KILL 10m ./prpll -device 0 -prp 5000011 -fft 256:2:256 -block 200 -iters 400; rc=$?
         cat gpuowl-0.log
+        test "$rc" -eq 0
         grep -q "OK  *400 " gpuowl-0.log
 
   Linux-OpenCL:
