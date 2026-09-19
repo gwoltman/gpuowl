@@ -224,7 +224,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -236,9 +236,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -271,7 +271,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -282,7 +282,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -455,7 +455,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) { 
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -467,9 +467,9 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -494,7 +494,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -505,7 +505,7 @@ KERNEL(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShut
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -691,7 +691,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -703,9 +703,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -731,7 +731,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -742,7 +742,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carry
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -932,7 +932,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -944,9 +944,9 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -972,7 +972,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -983,7 +983,7 @@ KERNEL(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carry
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -1189,7 +1189,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -1201,9 +1201,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -1236,7 +1236,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -1247,7 +1247,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -1472,7 +1472,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -1484,9 +1484,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -1511,7 +1511,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -1522,7 +1522,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -1751,7 +1751,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -1763,9 +1763,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -1790,7 +1790,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -1801,7 +1801,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -2024,7 +2024,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -2036,9 +2036,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -2064,7 +2064,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -2075,7 +2075,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -2331,7 +2331,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % WAVEFRONT == 0) {
       u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
-      atomic_store((atomic_uint *) &ready[pos], 1);
+      atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
   }
@@ -2343,9 +2343,9 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
 #endif
   }
 #endif
@@ -2370,7 +2370,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
   bar();
 #endif
   if (me < G_W) {
@@ -2381,7 +2381,7 @@ KERNEL(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShut
 #else
     u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
     if (me % WAVEFRONT == 0) {
-      do { spin(); } while(atomic_load_explicit((atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
