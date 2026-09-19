@@ -472,9 +472,13 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     return CL_COMPILE_PROGRAM_FAILURE;
   }
 
-  // NVRTC applies --maxrregcount when it runs ptxas itself, i.e. in the CUBIN.
-  // PTX carries no register cap and the driver JIT never sees the option, so
-  // the PTX fallback gets a .maxnreg directive spliced in ahead of every entry.
+  // --maxrregcount is supposed to be applied by NVRTC's own ptxas when it builds the CUBIN, with the PTX
+  // fallback getting a spliced-in .maxnreg directive for the driver JIT path instead. In practice (verified
+  // against this toolkit/driver: CUDA 13.0, NVRTC accepts --maxrregcount without warning but the resulting
+  // CUBIN's register usage is unaffected by it -- e.g. requesting 24 regs for carryFused still yields 64).
+  // The .maxnreg-spliced PTX + driver JIT does honor the cap correctly. So for any kernel that asked for a
+  // register cap, drop the (silently non-compliant) CUBIN and force the PTX path, which is known to work.
+  // Kernels with no cap requested keep using the CUBIN fast path this shim was added for.
 
   if (maxregcount) {
     string const maxntidPattern = ".maxntid ";
@@ -485,6 +489,7 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
       prog->ptx.insert(pos, maxnregPattern);
       startpos = pos + 20;
     }
+    prog->cubin.clear();
   }
 
   return CL_SUCCESS;
