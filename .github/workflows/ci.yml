@@ -74,6 +74,27 @@ jobs:
         test "$rc" -eq 0
         grep -q "OK  *400 " gpuowl-0.log
 
+    - name: Verify a proof under every FFT type
+      # The Gerbicz check above never reaches tailMulLow: that kernel is used only when a proof is built,
+      # so it can be wrong while everything above stays green.  That is not hypothetical -- the double-wide
+      # tailMul read a whole line with the wrong lane and no test here noticed, because a PRP run and its
+      # Gerbicz check are both perfectly happy without it.
+      #
+      # Verifying a known-good proof closes that hole cheaply: it runs tailSquare and tailMulLow for a few
+      # thousand iterations, once per FFT type, and the six here are the ones allShapes() enumerates, so
+      # every number type (FP64, FP32, GF31, GF61) and every hybrid of them gets exercised.  The proof is
+      # type-agnostic: it is a list of residues, so one file checks all six.
+      timeout-minutes: 30
+      run: |
+        cd build-debug
+        for t in 0 1 2 3 4 51; do
+          rm -rf gpuowl-0.log 786433
+          rc=0
+          timeout -s KILL 10m ./prpll -device 0 -verify ../test/786433-10.proof -fft "$t:256:2:256" || rc=$?
+          cat gpuowl-0.log || true
+          test "$rc" -eq 0
+        done
+
   Linux-OpenCL:
     name: Linux OpenCL
 
