@@ -421,20 +421,24 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // code generated is not pretty).  This might not be true for nVidia or future ROCm optimizers.
     local int* lds = (local int*)LDSsharing_ptr(lds2, numWG);
 
+    // Use the same write index as the 8- and 16-byte paths: it honours r, which is smaller than RADIX when
+    // the caller has done only a partial fft_RADIX step (fft8_4 on the SIZE=256/RADIX=8 path).  For r == RADIX
+    // this is identical to the i * f + (lowMe & ~mask) * RADIX + (lowMe & mask) it replaces.
+
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).x; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[i / (RADIX / r) * f + i % (RADIX / r) * WG * r + (lowMe & ~mask) * r + (lowMe & mask)] = as_int4(u[i]).x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).y; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[i / (RADIX / r) * f + i % (RADIX / r) * WG * r + (lowMe & ~mask) * r + (lowMe & mask)] = as_int4(u[i]).y; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).z; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[i / (RADIX / r) * f + i % (RADIX / r) * WG * r + (lowMe & ~mask) * r + (lowMe & mask)] = as_int4(u[i]).z; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).w; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[i / (RADIX / r) * f + i % (RADIX / r) * WG * r + (lowMe & ~mask) * r + (lowMe & mask)] = as_int4(u[i]).w; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
     LDStx_end(lds2, numWG);
