@@ -338,6 +338,10 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   // MULTI_Q is not allowed when profiling with -time
   if (args.profile && args.value("MULTI_Q", 0)) {
     args.flags["MULTI_Q"] = to_string(0);
+    // config was copied out of args.flags above, so it needs the same treatment: it is what the kernels are
+    // compiled from, and the L2_STRIPING limit a few lines below reads args.  Leaving config alone builds
+    // kernels that still believe in the second queue, with an L2_STRIPING allowed only without it.
+    config["MULTI_Q"] = to_string(0);
     log("MULTI_Q is disabled when profiling with -time.\n");
   }
   // GRAPHS are not allowed when profiling with -time.  GRAPH replays the four bottom-half
