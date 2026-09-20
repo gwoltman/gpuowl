@@ -16,11 +16,18 @@
 #include "Gpu.h"
 #include "tune.h"
 
+#include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <thread>
 #include <utility>
 // #include <format> from GCC-13 onwards
+
+// Set when a worker dies on an exception, so that main() can report the failure through the exit code
+// even though the other workers (and the process) carry on to a normal end.
+static std::atomic<bool> workerFailed{false};
+
+static bool isCleanExit(const char* reason);
 
 static void gpuWorker(GpuCommon shared, i32 instance) {
   // LogContext context{(instance ? shared.args->tailDir() : ""s) + to_string(instance) + ' '};
@@ -34,10 +41,13 @@ static void gpuWorker(GpuCommon shared, i32 instance) {
     while (auto task = Worktodo::getTask(*shared.args, instance)) { task->execute(shared, instance); }
   } catch (const char *mes) {
     log("Exception \"%s\"\n", mes);
+    if (!isCleanExit(mes)) { workerFailed = true; }
   } catch (const string& mes) {
     log("Exception \"%s\"\n", mes.c_str());
+    if (!isCleanExit(mes.c_str())) { workerFailed = true; }
   } catch (const std::exception& e) {
     log("Exception %s: %s\n", typeName(e), e.what());
+    workerFailed = true;
   }
 }
 
@@ -148,6 +158,8 @@ int main(int argc, char **argv) {
     log("Exiting because of exception %s: %s\n", typeName(e), e.what());
     exitCode = 1;
   }
+
+  if (workerFailed && exitCode == 0) { exitCode = 1; }
 
   log("Bye\n");
   return exitCode;
