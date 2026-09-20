@@ -815,7 +815,21 @@ void OVERLOAD bar(void) {
 
 // Create a barrier across a subset of threads OR across all threads if that is faster.
 void OVERLOAD bar(const u32 WG) {
-  if (WG <= WAVEFRONT) return;
+  // A group no larger than a wavefront can skip the barrier only where the hardware really does run a whole
+  // wavefront in lock-step.  AMD GCN does, and so did nVidia before Volta.  Volta and later do not:
+  // Independent Thread Scheduling lets the threads of a warp drift apart, and every caller of bar(WG)
+  // exchanges data through LDS right afterwards, so the warp has to be reconverged and its LDS traffic
+  // ordered -- which is what sync() plus the fence do, for a fraction of the cost of a barrier.  Anything
+  // else (Intel, a CPU device under POCL) offers no lock-step guarantee at all: use a real barrier there.
+  if (WG <= WAVEFRONT) {
+#if HAS_PTX >= 600         // bar.warp.sync requires sm_60 or higher; ITS arrived in sm_70
+    sync();
+    mem_fence(CLK_LOCAL_MEM_FENCE);
+    return;
+#elif AMDGPU || HAS_PTX >= 200
+    return;
+#endif
+  }
 #if ENABLE_BARSYNC && HAS_PTX >= 200         // bar.sync with thread count requires sm_20 support or higher.  Slower on TitanV, need to try on later nVidia GPUs.
   __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
 // The above is GROSSLY slow on an RTX 5070Ti.  The code below is much faster (may need to be expanded to handle more than four named barriers).
@@ -834,7 +848,15 @@ void OVERLOAD bar(const u32 WG) {
 // barsync() fails to compile at the call site instead of the whole of base.cl failing whether or not it is used.
 #if HAS_PTX >= 200
 void OVERLOAD barsync(const u32 numWG, const u32 WG) {
-  if (WG <= WAVEFRONT) return;
+  // As in bar(WG) above, except that substituting a barrier over all threads is not allowed here, so on
+  // Volta and later the warp-wide sync is the only option.  (This routine is nVidia-only to begin with.)
+  if (WG <= WAVEFRONT) {
+#if HAS_PTX >= 600
+    sync();
+    mem_fence(CLK_LOCAL_MEM_FENCE);
+#endif
+    return;
+  }
 #if USE_REGISTER_BARSYNC   // bar.sync with a register is horribly slow on an RTX 5070Ti.
   __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
 #else                      // WARNING, WARNING, WARNING: On TitanV using CUDA 12.9 tools and driver 580, this branch does not work in openCL (but works in CUDA build).
