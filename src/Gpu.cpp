@@ -842,9 +842,19 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(KFP) + numCudaRegisters(TAIL)),    // Single-wide tailSquare with one kernel
-  K(ktailMul,              "tailmul.cl", "tailMul", hN / nH / 2, kernelDefines(KFP)),
-  K(ktailMulLow,           "tailmul.cl", "tailMul", hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),
+                                               hN / nH / 2, kernelDefines(KFP) + numCudaRegisters(TAIL)),              // Single-wide tailSquare with one kernel
+  K(ktailMulZero,          "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP)),
+  K(ktailMulLowZero,       "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP) + "-DMUL_LOW=1"),
+  K(ktailMul,              "tailmul.cl", "tailMul",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(KFP)),                                       // Single-wide tailMul with one kernel
+  K(ktailMulLow,           "tailmul.cl", "tailMul",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numCudaRegisters(MIDOUT)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
@@ -855,9 +865,19 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(K31) + numCudaRegisters(TAIL31)),  // Single-wide tailSquare with one kernel
-  K(ktailMulGF31,          "tailmul.cl", "tailMulGF31", hN / nH / 2, kernelDefines(K31)),
-  K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31", hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),
+                                               hN / nH / 2, kernelDefines(K31) + numCudaRegisters(TAIL31)),            // Single-wide tailSquare with one kernel
+  K(ktailMulZeroGF31,      "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
+  K(ktailMulLowZeroGF31,   "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31) + "-DMUL_LOW=1"),
+  K(ktailMulGF31,          "tailmul.cl", "tailMulGF31",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K31)),                                       // Single-wide tailMul with one kernel
+  K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numCudaRegisters(MIDOUT31)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
@@ -868,9 +888,19 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(K61) + numCudaRegisters(TAIL61)),  // Single-wide tailSquare with one kernel
-  K(ktailMulGF61,          "tailmul.cl", "tailMulGF61", hN / nH / 2, kernelDefines(K61)),
-  K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61", hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),
+                                               hN / nH / 2, kernelDefines(K61) + numCudaRegisters(TAIL61)),            // Single-wide tailSquare with one kernel
+  K(ktailMulZeroGF61,      "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
+  K(ktailMulLowZeroGF61,   "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61) + "-DMUL_LOW=1"),
+  K(ktailMulGF61,          "tailmul.cl", "tailMulGF61",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K61)),                                       // Single-wide tailMul with one kernel
+  K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numCudaRegisters(MIDOUT61)),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW, kernelDefines(K61)),
 
@@ -970,6 +1000,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     kfftHin.setFixedArgs(3, bufTrigH);
     ktailSquareZero.setFixedArgs(2, bufTrigH);
     ktailSquare.setFixedArgs(3, bufTrigH);
+    ktailMulZero.setFixedArgs(3, bufTrigH);
+    ktailMulLowZero.setFixedArgs(3, bufTrigH);
     ktailMulLow.setFixedArgs(4, bufTrigH);
     ktailMul.setFixedArgs(4, bufTrigH);
     kfftMidOut.setFixedArgs(3, bufTrigM);
@@ -981,6 +1013,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     kfftHinGF31.setFixedArgs(3, bufTrigH);
     ktailSquareZeroGF31.setFixedArgs(2, bufTrigH);
     ktailSquareGF31.setFixedArgs(3, bufTrigH);
+    ktailMulZeroGF31.setFixedArgs(3, bufTrigH);
+    ktailMulLowZeroGF31.setFixedArgs(3, bufTrigH);
     ktailMulLowGF31.setFixedArgs(4, bufTrigH);
     ktailMulGF31.setFixedArgs(4, bufTrigH);
     kfftMidOutGF31.setFixedArgs(3, bufTrigM);
@@ -992,6 +1026,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     kfftHinGF61.setFixedArgs(3, bufTrigH);
     ktailSquareZeroGF61.setFixedArgs(2, bufTrigH);
     ktailSquareGF61.setFixedArgs(3, bufTrigH);
+    ktailMulZeroGF61.setFixedArgs(3, bufTrigH);
+    ktailMulLowZeroGF61.setFixedArgs(3, bufTrigH);
     ktailMulLowGF61.setFixedArgs(4, bufTrigH);
     ktailMulGF61.setFixedArgs(4, bufTrigH);
     kfftMidOutGF61.setFixedArgs(3, bufTrigM);
@@ -1501,6 +1537,12 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     // If not in place, the output is to the scratch buffer
     Buffer<double> const *in1 = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
+    if (!tail_single_kernel && base == 0) {
+      if (cache_group == 1) { ktailMulZero.setQueue(q); ktailMulZero(*out, *in1, *in2); }
+      if (cache_group == 2) { ktailMulZeroGF31.setQueue(q); ktailMulZeroGF31(*out, *in1, *in2); }
+      if (cache_group == 3) { ktailMulZeroGF61.setQueue(q); ktailMulZeroGF61(*out, *in1, *in2); }
+      if (kernelsToExecuteX) kernelsToExecuteX--;
+    }
     if (cache_group == 1) { ktailMul.setQueue(q); ktailMul.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMul(*out, *in1, *in2, base); }
     if (cache_group == 2) { ktailMulGF31.setQueue(q); ktailMulGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF31(*out, *in1, *in2, base); }
     if (cache_group == 3) { ktailMulGF61.setQueue(q); ktailMulGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF61(*out, *in1, *in2, base); }
@@ -1512,6 +1554,12 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     // If not in place, the output is to the scratch buffer
     Buffer<double> const *in1 = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
+    if (!tail_single_kernel && base == 0) {
+      if (cache_group == 1) { ktailMulLowZero.setQueue(q); ktailMulLowZero(*out, *in1, *in2); }
+      if (cache_group == 2) { ktailMulLowZeroGF31.setQueue(q); ktailMulLowZeroGF31(*out, *in1, *in2); }
+      if (cache_group == 3) { ktailMulLowZeroGF61.setQueue(q); ktailMulLowZeroGF61(*out, *in1, *in2); }
+      if (kernelsToExecuteX) kernelsToExecuteX--;
+    }
     if (cache_group == 1) { ktailMulLow.setQueue(q); ktailMulLow.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLow(*out, *in1, *in2, base); }
     if (cache_group == 2) { ktailMulLowGF31.setQueue(q); ktailMulLowGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF31(*out, *in1, *in2, base); }
     if (cache_group == 3) { ktailMulLowGF61.setQueue(q); ktailMulLowGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF61(*out, *in1, *in2, base); }

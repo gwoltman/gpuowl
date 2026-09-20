@@ -116,6 +116,8 @@ private:
   Kernel kfftHin;
   Kernel ktailSquareZero;
   Kernel ktailSquare;
+  Kernel ktailMulZero;
+  Kernel ktailMulLowZero;
   Kernel ktailMul;
   Kernel ktailMulLow;
   Kernel kfftMidOut;
@@ -126,6 +128,8 @@ private:
   Kernel kfftHinGF31;
   Kernel ktailSquareZeroGF31;
   Kernel ktailSquareGF31;
+  Kernel ktailMulZeroGF31;
+  Kernel ktailMulLowZeroGF31;
   Kernel ktailMulGF31;
   Kernel ktailMulLowGF31;
   Kernel kfftMidOutGF31;
@@ -136,6 +140,8 @@ private:
   Kernel kfftHinGF61;
   Kernel ktailSquareZeroGF61;
   Kernel ktailSquareGF61;
+  Kernel ktailMulZeroGF61;
+  Kernel ktailMulLowZeroGF61;
   Kernel ktailMulGF61;
   Kernel ktailMulLowGF61;
   Kernel kfftMidOutGF61;
