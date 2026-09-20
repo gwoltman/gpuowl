@@ -382,7 +382,7 @@ void Args::parse(const string& line) {
       u32 multiple = (s.back() == 'G') ? (1u << 30) : (1u << 20);
       maxAlloc = size_t(stod(s) * multiple + .5);
     }
-    else if (key == "-iters") { iters = stoi(s); assert(iters && (iters % 10000 == 0)); }
+    else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
     else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
     else if (key == "-smallest") { smallest = true; }
