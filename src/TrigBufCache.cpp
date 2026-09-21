@@ -1046,7 +1046,14 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
 /*        Code to manage a cache of trigBuffers         */
 /********************************************************/
 
-#define make_key_part(b,tt,b31,tt31,b32,tt32,b61,tt61,tk) ((((((((((b)+(tt)) << 2) + (b31)+(tt31)) << 2) + (b32)+(tt32)) << 2) + (b61)+(tt61)) << 2) + (tk))
+// Each field of the key is one "is this number type in use" flag and that type's TAIL_TRIGS setting.  They
+// need separate bits: added together, as they used to be, a type in use with TAIL_TRIGS=n is indistinguishable
+// from that type unused with TAIL_TRIGS=n+1, and a TAIL_TRIGS of 3 or more carries into the neighbouring
+// field.  Two Gpus in one process can then share a cached table generated for the other one's number type,
+// which is silently wrong twiddles -- caught, if at all, only by the Gerbicz check.
+#define make_key_field(b, tt) (((((b) != 0) << 3) | ((tt) & 7)))
+#define make_key_part(b,tt,b31,tt31,b32,tt32,b61,tt61,tk) \
+  ((((((((make_key_field(b, tt) << 4) | make_key_field(b31, tt31)) << 4) | make_key_field(b32, tt32)) << 4) | make_key_field(b61, tt61)) << 1) | ((tk) != 0))
 
 TrigBufCache::~TrigBufCache() = default;
 
