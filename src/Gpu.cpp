@@ -648,12 +648,14 @@ Gpu::~Gpu() {
 // If kernel threads=256, register crossovers are at 128, 80, 64, 48, 40
 // If kernel threads=128, register crossovers are at 128, 96, 80, 72, 64, 56, 48, 40
 // If kernel threads=64,  register crossovers are at 128, 112, 96, 88, 80, 72, 64, 56, 48, 40
-string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
+string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
   [[maybe_unused]] int regs = 0;         // Default CUDA maximum register count (the AMD path only uses the override value)
   const char *use_override = "";
-  // Allow command line to prefer the CUDA compiler's default number of registers
+  // Allow command line to prefer the compiler's default number of registers
   if (args.value("NOREG", 0)) return string("");
-  // Determine a kernel specific default maximum number of GPU registers (values set to -1 have not been tuned for best default value)
+  // Determine a CUDA kernel specific default maximum number of GPU registers (values set to -1 have not been tuned for best default value).
+  // This switch also selects which REGxxxx option applies to the kernel, and that selection is needed on AMD too (see amdRegisterOption),
+  // so it must not be compiled out for non-CUDA backends.  The default register counts below are only used by CUDA.
   switch (which_kernel) {
   case CARRYFUSED:         // Register usage depends on NW, the FFT/NTT type, and perhaps the long carry setting
     switch (fft.shape.fft_type) {
@@ -875,14 +877,14 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
-  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numCudaRegisters(MIDIN)),
+  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDIN)),
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP)),
   K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2, kernelDefines(KFP)),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(KFP) + numCudaRegisters(TAIL)),              // Single-wide tailSquare with one kernel
+                                               hN / nH / 2, kernelDefines(KFP) + numRegisters(TAIL)),              // Single-wide tailSquare with one kernel
   K(ktailMulZero,          "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP)),
   K(ktailMulLowZero,       "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP) + "-DMUL_LOW=1"),
   K(ktailMul,              "tailmul.cl", "tailMul",
@@ -895,17 +897,17 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numCudaRegisters(MIDOUT)),
+  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDOUT)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
-  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), kernelDefines(K31) + numCudaRegisters(MIDIN31)),
+  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDIN31)),
   K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH, kernelDefines(K31)),
   K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
   K(ktailSquareGF31,       "tailsquare.cl", "tailSquareGF31",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(K31) + numCudaRegisters(TAIL31)),            // Single-wide tailSquare with one kernel
+                                               hN / nH / 2, kernelDefines(K31) + numRegisters(TAIL31)),            // Single-wide tailSquare with one kernel
   K(ktailMulZeroGF31,      "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
   K(ktailMulLowZeroGF31,   "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31) + "-DMUL_LOW=1"),
   K(ktailMulGF31,          "tailmul.cl", "tailMulGF31",
@@ -918,17 +920,17 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numCudaRegisters(MIDOUT31)),
+  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDOUT31)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
-  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), kernelDefines(K61) + numCudaRegisters(MIDIN61)),
+  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDIN61)),
   K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH, kernelDefines(K61)),
   K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
   K(ktailSquareGF61,       "tailsquare.cl", "tailSquareGF61",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(K61) + numCudaRegisters(TAIL61)),            // Single-wide tailSquare with one kernel
+                                               hN / nH / 2, kernelDefines(K61) + numRegisters(TAIL61)),            // Single-wide tailSquare with one kernel
   K(ktailMulZeroGF61,      "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
   K(ktailMulLowZeroGF61,   "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61) + "-DMUL_LOW=1"),
   K(ktailMulGF61,          "tailmul.cl", "tailMulGF61",
@@ -941,7 +943,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numCudaRegisters(MIDOUT61)),
+  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDOUT61)),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW, kernelDefines(K61)),
 
   K(kfftP,                 "fftp.cl", "fftP", hN / nW, kernelDefines(KALL)),
@@ -950,11 +952,11 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   K(kCarryM,               "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DMUL3=1"),
   K(kCarryMROE,            "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DMUL3=1 -DROE=1"),
   K(kCarryLL,              "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DLL=1"),
-  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED)),
-  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DROE=1"),
-  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1"),
-  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1 -DROE=1"),
-  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DLL=1"),
+  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED)),
+  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DROE=1"),
+  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DMUL3=1"),
+  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DMUL3=1 -DROE=1"),
+  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DLL=1"),
 
   K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN, kernelDefines(KALL)),
 
