@@ -1,6 +1,28 @@
 // Copyright (C) Mihai Preda
 
 
+// The LDSSWIZ swizzle masks below are sized for a workgroup of at least 64: at WG 32 the XOR patterns
+// (lowMe & 7), (lowMe & 15), ((lowMe / 8) & 15) and friends fold several rows onto each other, and five
+// of the cases then return the wrong data -- 64 to 192 elements of 256, depending on the case.  No
+// dispatch reaches them there today (the WG == 32 branch of fft_common asks for f=1,r=4 at RADIX 8 and
+// f=4,r=8, and no swizzle case matches either), so like the padded cases above this is a constraint to
+// record rather than code to rewrite.
+#if LDSSWIZ && WG < 64
+#error LDSSWIZ needs a workgroup of at least 64: its swizzle masks fold rows together below that
+#endif
+
+// The LDSPAD RADIX == 4 reads in this file choose between a WG == 64 form and an else arm whose
+// i * 64 and (lowMe / 64) * 16 terms only balance at WG == 256.  Both workgroup sizes RADIX 4 can
+// have today are therefore handled -- a 256-wide/high shape gives WG 64, and a 1024 one would give
+// WG 256 if the commented-out clause in FFTConfig::nW()/nH() were re-enabled -- so the code is
+// correct as it stands, and generalising it would add index arithmetic for no present benefit.
+// Any other WG would read slots that were never written, silently and with the wrong residue as the
+// only symptom, so refuse to build it instead.  Generalising is easy when it is needed: i * (WG / 4)
+// in place of i * 64 is index-identical at both 64 and 256.
+#if LDSPAD && RADIX == 4 && WG != 64 && WG != 256
+#error RADIX == 4 with this workgroup size needs the LDSPAD reads in shufl.cl generalised first (they assume WG is 64 or 256)
+#endif
+
 // Strongly typed versions of LDSptr and LDSsharing_ptr.  On TitanV, CUDA 12.9, this is 1% faster.
 local T_F_Z31_Z61 * OVERLOAD LDSptr(local T_F_Z31_Z61 *lds, const u32 numWG) {
   return lds + ((u32)get_local_id(0) / WG) * LDS_SHUFL_BYTES(numWG) / sizeof(T_F_Z31_Z61);
@@ -198,6 +220,10 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // Read from LDS in output order.  In the example:  u[0] = 0, 64, ... 448, 8, 72...   u[1] = +1
     if (f == 8 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
+    // One expression for every WG.  The old pair of arms laid the data out as exactly eight padded rows,
+    // which only inverts when WG/64 == 8, and read a row of 64 regardless of WG: correct at WG 64 and 512,
+    // wrong everywhere between (896 of 1024 elements at WG 128, 1792 of 2048 at WG 256, some of them
+    // reading slots nothing had written).  This is the form the 64-bit sibling above already uses.
       for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = u[i].x; }
       LDSbar(numWG);
       if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * (WG / 64) * 8                    +  (lowMe / 8)      * (WG + 8) + (lowMe & 7)]; }
@@ -626,11 +652,13 @@ void OVERLOAD shufl(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 r, u32 numWG, u3
     // Pad 8 values after every 64 values to eliminate bank conflicts.
     if (1 && f == 8 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { lds[ (lowMe / 8)      * (WG + 8)                     + i * 8 + (lowMe & 7)] = u[i]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 7) * (WG + 8) + (lowMe / 64) * 64 + i * 8 + (lowMe & 7)] = u[i]; }
+    // One expression for every WG.  The old pair of arms laid the data out as exactly eight padded rows,
+    // which only inverts when WG/64 == 8, and read a row of 64 regardless of WG: correct at WG 64 and 512,
+    // wrong everywhere between (896 of 1024 elements at WG 128, 1792 of 2048 at WG 256, some of them
+    // reading slots nothing had written).  This is the form the 64-bit sibling above already uses.
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = u[i]; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * (WG + 8) + lowMe]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * 64 + lowMe / 64 * (WG + 8) + (lowMe & 63)]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)]; }
       LDStx_end(lds2, numWG);
       return;
     }
@@ -791,17 +819,17 @@ void OVERLOAD shufl(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 r, u32 numWG, u3
     // Pad 8 values after every 64 values to eliminate bank conflicts.
     if (f == 8 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { lds[ (lowMe / 8)      * (WG + 8)                     + i * 8 + (lowMe & 7)] = u[i].x; }
-      else          for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 7) * (WG + 8) + (lowMe / 64) * 64 + i * 8 + (lowMe & 7)] = u[i].x; }
+    // One expression for every WG.  The old pair of arms laid the data out as exactly eight padded rows,
+    // which only inverts when WG/64 == 8, and read a row of 64 regardless of WG: correct at WG 64 and 512,
+    // wrong everywhere between (896 of 1024 elements at WG 128, 1792 of 2048 at WG 256, some of them
+    // reading slots nothing had written).  This is the form the 64-bit sibling above already uses.
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = u[i].x; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * (WG + 8) + lowMe]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64 + lowMe / 64 * (WG + 8) + (lowMe & 63)]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)]; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { lds[ (lowMe / 8)      * (WG + 8)                     + i * 8 + (lowMe & 7)] = u[i].y; }
-      else          for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 8) & 7) * (WG + 8) + (lowMe / 64) * 64 + i * 8 + (lowMe & 7)] = u[i].y; }
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = u[i].y; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * (WG + 8) + lowMe]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64 + lowMe / 64 * (WG + 8) + (lowMe & 63)]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)]; }
       LDStx_end(lds2, numWG);
       return;
     }
