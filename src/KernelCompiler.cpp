@@ -107,7 +107,10 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
   
   Program p2{clLinkProgram(context, 1, &deviceId, linkArgs.c_str(),
                            1, (cl_program *) &p1, nullptr, nullptr, &err)};
-  if (string const mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }
+  // The linker's diagnostics live on the linked program.  Asking p1 again instead says nothing about the link
+  // -- and repeats the compile log that was already printed above.  A failed clLinkProgram may hand back no
+  // program at all, and then there is nothing to query.
+  if (p2) { if (string const mes = getBuildLog(p2.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); } }
   if (err != CL_SUCCESS) {
     log("Linking '%s' error %s (args %s)\n", fileName.c_str(), errMes(err).c_str(), linkArgs.c_str());
   }
