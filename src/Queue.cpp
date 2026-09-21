@@ -110,7 +110,13 @@ void Queue::waitForMarkerEvent() {
   if (!markerQueued) return;
   // By default, nVidia finish causes a CPU busy wait.  Instead, sleep for a while.  Since we know how many items are enqueued after the marker we can make an
   // educated guess of how long to sleep to keep CPU overhead low.
-  while (getEventInfo(markerEvent.get()) != CL_COMPLETE) {
+  while (true) {
+    int const status = getEventInfo(markerEvent.get());
+    if (status == CL_COMPLETE) { break; }
+    // A negative status is the error code of a command that terminated abnormally.  It is terminal:
+    // waiting for it to reach CL_COMPLETE would sleep for ever.  Report it like any other CL error,
+    // so the worker fails instead of going quiet with the GPU idle.
+    if (status < 0) { CHECK1(status); }
     // There are usually 4, 7, or 10 kernels per squaring.  Use a rolling average to create a very accurate kernel count.
     // Don't overestimate sleep time.  Divide by much more than the number of kernels.
     std::this_thread::sleep_for(std::chrono::microseconds((squareCount + 1) * squareTime / 2));

@@ -412,8 +412,8 @@ std::string getKernelArgName(cl_kernel k, int pos) {
   return buf;
 }
 
-u32 getEventInfo(cl_event event) {
-  u32 status = -1;
+int getEventInfo(cl_event event) {
+  int status = -1;
   CHECK1(clGetEventInfo(event, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(status), &status, nullptr));
   return status;
 }

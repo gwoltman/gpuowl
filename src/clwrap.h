@@ -128,7 +128,10 @@ cl_device_id getDevice(u32 argsDevId);
 // Returns the 3 intervals: queued, submit, run
 std::array<i64, 3> getEventNanos(cl_event event);
 
-u32 getEventInfo(cl_event event);
+// The command execution status: a state (CL_QUEUED..CL_COMPLETE), or, when the command terminated
+// abnormally, the negative error code that terminated it.  Signed: as u32 an error compares equal to
+// nothing and a waiter polling for CL_COMPLETE never stops.
+int getEventInfo(cl_event event);
 
 cl_context getQueueContext(cl_command_queue q);
 
