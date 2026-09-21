@@ -811,7 +811,12 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 // the carry from bits [nBits, nBits+32).  That window must stay strictly below the RNDVAL bit 51, so
 // nBits <= 19; a big word has nBits = EXP / NWORDS + 1.  The host is supposed to select CARRY64 before this
 // point (FFTShape::needsLargeCarry); fail loudly rather than compute wrong carries if it ever does not.
-#if !CARRY64 && FFT_TYPE == FFT64 && EXP / NWORDS >= 19
+//
+// The bound is the host's own, and the host does not make it depend on the FFT type: needsLargeCarry()
+// returns true for every type at EXP / NWORDS >= 19, so CARRY_AUTO can never reach here.  Only an explicit
+// 32-bit carry in the FFT spec ("-fft 3:256:2:256:212:0") can, and the NTT types need the check as much as
+// FP64 does -- a GF61 carry at 25 bpw does not fit in i32 either, and nothing else would report it.
+#if !CARRY64 && EXP / NWORDS >= 19
 #error "CARRY32 requires EXP / NWORDS <= 18; this exponent needs CARRY64 (-carry long)"
 #endif
 #define iCARRY i32
