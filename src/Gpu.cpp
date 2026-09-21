@@ -643,14 +643,13 @@ Gpu::~Gpu() {
 
 // Part of GPU initialization is to compute the default number of registers each kernel should target during compilation.
 // Kernel register usage is critical for maximizing GPU occupancy.  The default values can be overrriden with command line arguments.
-// This feature currently only works for the CUDA compiler.  AMD GPUs have a similar (waves-per-SIMD) control, see amdWavesPerEu below.
+// On CUDA this sets --maxrregcount (or launch bounds).  On AMD the same REGxxxx options select waves per SIMD or a VGPR count, see amdRegisterOption below.
 // Most kernels have occupancy limited by register usage.  For reference, the following guidelines dictate where an "uptick" in occupancy occurs.
 // If kernel threads=256, register crossovers are at 128, 80, 64, 48, 40
 // If kernel threads=128, register crossovers are at 128, 96, 80, 72, 64, 56, 48, 40
 // If kernel threads=64,  register crossovers are at 128, 112, 96, 88, 80, 72, 64, 56, 48, 40
-string Gpu::numCudaRegisters([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
-#if CUDA_BACKEND
-  int regs = 0;
+string Gpu::numCudaRegisters(enum WHICH_KERNEL which_kernel) {
+  [[maybe_unused]] int regs = 0;         // Default CUDA maximum register count (the AMD path only uses the override value)
   const char *use_override = "";
   // Allow command line to prefer the CUDA compiler's default number of registers
   if (args.value("NOREG", 0)) return string("");
@@ -784,6 +783,7 @@ string Gpu::numCudaRegisters([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
   }
   // Get the optional override register count
   int const override_regs = args.value(use_override, 0);
+#if CUDA_BACKEND
   // If a specified override is small, use the count as a CUDA launch_bounds rather than a maximum register count
   if (override_regs && (override_regs > 0 && override_regs <= 16)) return string("-DCUDA_MIN_BLOCKS=") + to_string(override_regs) + " ";
   // If specified, override the default maximum register count
@@ -793,34 +793,31 @@ string Gpu::numCudaRegisters([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
   // Format an explicit register count setting
   return string("--maxrregcount=") + to_string(regs) + " ";
 #else
-  return amdWavesPerEu(which_kernel);
+  return amdRegisterOption(which_kernel, override_regs);
 #endif
 }
 
-// AMD analog of the CUDA register cap: an optional minimum number of waves per SIMD for a kernel, which caps its VGPR usage.
-// On gfx9 (256 VGPRs per lane, allocated in units of 4) the occupancy crossovers are: 128 VGPRs for 2 waves, 84 for 3, 64 for 4, 48 for 5.
-// A kernel a few VGPRs above the 128 boundary runs with one wave per SIMD; capping it costs a few spills but doubles occupancy.
-// Only that one-wave cliff is worth a default: on a Radeon VII / MI50 the in-place fftMiddleIn / fftMiddleOut kernels use 133 VGPRs, and requiring
-// 2 waves per SIMD recovers most of their slowdown.  Capping to reach 3 or more waves, or capping tailSquare / carryFused, was measured slower.
-// The defaults can be overridden with -use WPE_MIDIN=n, WPE_MIDOUT=n, WPE_TAIL=n, WPE_CARRY=n (0 = compiler default).
-string Gpu::amdWavesPerEu([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
+// AMD analog of the CUDA register cap, driven by the same REGxxxx options.  override_regs is the value of the kernel's option:
+//    0 = not specified (use the default below),  -1 = compiler default (no cap),
+//    1..10 = minimum waves per SIMD (like CUDA's launch bounds; 10 is the GCN maximum), more than 10 = explicit VGPR count.
+// A minimum-waves request caps VGPR usage.  On gfx9 (256 VGPRs per lane, allocated in units of 4) the occupancy crossovers are:
+// 128 VGPRs for 2 waves, 84 for 3, 64 for 4, 48 for 5.  A kernel a few VGPRs above the 128 boundary runs with one wave per SIMD;
+// capping it costs a few spills but doubles occupancy.  Only that one-wave cliff is worth a default: on a Radeon VII / MI50 the in-place
+// fftMiddleIn / fftMiddleOut kernels use 133 VGPRs, and requiring 2 waves per SIMD recovers most of their slowdown.  Capping to reach 3 or more
+// waves, or capping tailSquare / carryFused, was measured slower.  An explicit VGPR count makes rocm generate its usual code and then spill to fit.
+string Gpu::amdRegisterOption([[maybe_unused]] enum WHICH_KERNEL which_kernel, int override_regs) {
   cl_device_id const id = shared.context->deviceId();
   if (!isAmdGpu(id)) return string("");
-  const char *use_override = "";
-  bool is_middle = false;
-  switch (which_kernel) {
-  case CARRYFUSED:                                     use_override = "WPE_CARRY"; break;
-  case MIDIN:  case MIDIN31:  case MIDIN61:            use_override = "WPE_MIDIN";  is_middle = true; break;
-  case MIDOUT: case MIDOUT31: case MIDOUT61:           use_override = "WPE_MIDOUT"; is_middle = true; break;
-  case TAIL:   case TAIL31:   case TAIL61:             use_override = "WPE_TAIL"; break;
-  }
-  // Default: in-place middle kernels on Vega class GPUs (gfx900/902/904/906/909/90c: 256 VGPRs per lane, 64 KB LDS).  Other architectures are untested.
+  if (override_regs < 0) return string("");
+  if (override_regs > 10) return string("-DAMD_NUM_VGPR=") + to_string(override_regs) + " ";
+  if (override_regs > 0) return string("-DAMD_WAVES_PER_EU=") + to_string(override_regs) + " ";
+  // Default: 2 waves per SIMD for the in-place middle kernels on Vega class GPUs (gfx900/902/904/906/909/90c: 256 VGPRs per lane).
+  // Other architectures are untested.
+  bool const is_middle = which_kernel == MIDIN || which_kernel == MIDIN31 || which_kernel == MIDIN61 ||
+                         which_kernel == MIDOUT || which_kernel == MIDOUT31 || which_kernel == MIDOUT61;
   string const name = getDeviceName(id);
   bool const vega = name.rfind("gfx90", 0) == 0 && name.size() > 5 && string("02469c").find(name[5]) != string::npos;
-  int waves = (in_place && is_middle && vega) ? 2 : 0;
-  int const override_waves = args.value(use_override, -1);   // -1 = not specified
-  if (override_waves >= 0) waves = override_waves;
-  return waves > 0 ? string("-DAMD_WAVES_PER_EU=") + to_string(waves) + " " : string("");
+  return (in_place && is_middle && vega) ? string("-DAMD_WAVES_PER_EU=2 ") : string("");
 }
 
 // Kernels are compiled one at a time, but OpenCL source files contain multiple kernels.  This routine set the #defines necessary so that only one kernel is compiled.
