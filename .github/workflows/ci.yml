@@ -25,7 +25,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, ubuntu-26.04-arm]
+        include:
+          # The target CPU POCL is built for, pinned: see the "Restore POCL" step.
+          - {os: ubuntu-26.04,     cpu: x86-64-v3}
+          - {os: ubuntu-26.04-arm, cpu: neoverse-n1}
     env:
       POCL_WORK_GROUP_METHOD: loops
       POCL_VERSION: "7.2"
@@ -41,17 +44,21 @@ jobs:
         sudo apt-get install -y ocl-icd-opencl-dev cmake ninja-build llvm-21-dev libclang-21-dev libclang-cpp21-dev clang-21 libhwloc-dev
     - name: Restore POCL
       id: pocl-cache
+      # The cache key carries the pinned target CPU: a POCL bakes its target in at build time, and the
+      # x64 runner pool is not uniform, so a cache entry built on one CPU must never be restored on
+      # another that cannot run its code.  Bump the CPU (or the key) to discard existing entries.
       uses: actions/cache@v4
       with:
         path: ~/pocl
-        key: pocl-${{ env.POCL_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-llvm21
+        key: pocl-${{ env.POCL_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-llvm21-${{ matrix.cpu }}
     - name: Build POCL
       if: steps.pocl-cache.outputs.cache-hit != 'true'
       run: |
         curl -sSLf "https://github.com/pocl/pocl/archive/refs/tags/v$POCL_VERSION.tar.gz" -o pocl.tar.gz
         tar -xzf pocl.tar.gz
         cmake -G Ninja -S "pocl-$POCL_VERSION" -B pocl-build -DCMAKE_BUILD_TYPE=Release -DWITH_LLVM_CONFIG=/usr/bin/llvm-config-21 \
-              -DENABLE_ICD=ON -DENABLE_TESTS=OFF -DENABLE_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX="$HOME/pocl" -DPOCL_INSTALL_ICD_VENDORDIR="$HOME/pocl/etc/OpenCL/vendors"
+              -DENABLE_ICD=ON -DENABLE_TESTS=OFF -DENABLE_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX="$HOME/pocl" -DPOCL_INSTALL_ICD_VENDORDIR="$HOME/pocl/etc/OpenCL/vendors" \
+              -DLLC_HOST_CPU="${{ matrix.cpu }}"
         ninja -C pocl-build install
     - name: Use POCL
       run: echo "OCL_ICD_VENDORS=$HOME/pocl/etc/OpenCL/vendors" >> "$GITHUB_ENV"
