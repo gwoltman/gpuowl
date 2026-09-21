@@ -344,6 +344,19 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     config["MULTI_Q"] = to_string(0);
     log("MULTI_Q is disabled when profiling with -time.\n");
   }
+  // The !OLD_FENCE carry hand-off in carryFused coordinates the lanes of a wavefront with sync() and nothing
+  // else, from inside a divergent branch, so a workgroup barrier is not a substitute.  sync() is bar.warp.sync
+  // on nVidia and free on AMD, where a wavefront really does advance in lock-step.  Anywhere else it compiles
+  // to nothing, the hand-off races, and the result is silently wrong: on an Intel iGPU -use OLD_FENCE=0
+  // returns a wrong residue inside 400 iterations.  base.cl already defaults OLD_FENCE to 1 off AMD; make
+  // that hold when it is asked for explicitly too.
+  if (!isAmdGpu(id) && !isNvidiaGpu(id)) {
+    if (auto it = config.find("OLD_FENCE"); it != config.end() && atoi(it->second.c_str()) == 0) {
+      it->second = to_string(1);
+      log("OLD_FENCE=0 needs an AMD or nVidia device; using OLD_FENCE=1.\n");
+    }
+  }
+
   // GRAPHS are not allowed when profiling with -time.  GRAPH replays the four bottom-half
   // kernels without per-kernel events, and the events recorded while capturing the graph never execute, so the
   // profile would show those kernels -- most of an iteration -- as one call of ~0 ns.
