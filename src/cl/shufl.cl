@@ -119,12 +119,14 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
     // No swizzle of LDS blocks is needed to eliminate bank conflicts.  The first 8 threads written to LDS (multiples of 64) and
     // the first 8 threads read from LDS (multiples of 64) are already in separate LDS banks.
+    // The read index must be the inverse of the natural write for every WG, not just WG == 64; at WG == 64 it
+    // reduces to lowMe / 8 * 64 + i * 8 + (lowMe & 7).
     // We can however save a bar() by writing to same locations that previous shufl wrote to.
     if (f == 8 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);             //GRRR.... LDStx_start will do the bar we are trying to save
       for (u32 i = 0; i < RADIX; ++i) { lds[i * WG + lowMe] = u[i]; }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[lowMe / 8 * 64 + i * 8 + (lowMe & 7)]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[((lowMe / 8) & 7) * WG + i * (WG / 8) + (lowMe / 64) * 8 + (lowMe & 7)]; }
       LDStx_end(lds2, numWG);
       return;
     }
