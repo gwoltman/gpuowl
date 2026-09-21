@@ -300,6 +300,14 @@ ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2)
 
 #define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
 
+// AMD only: Gpu.cpp can pass -DAMD_WAVES_PER_EU=n to ask for at least n waves per SIMD, which caps the kernel's VGPR usage.
+// This avoids the one-wave-per-SIMD occupancy cliff (more than 128 VGPRs on gfx9).  See Gpu::amdWavesPerEu.
+#if AMDGPU && defined(AMD_WAVES_PER_EU)
+#define KERNEL_CAP(x) kernel __attribute__((reqd_work_group_size(x, 1, 1), amdgpu_waves_per_eu(AMD_WAVES_PER_EU))) void
+#else
+#define KERNEL_CAP(x) KERNEL(x)
+#endif
+
 // ENABLE_RESTRICT=1 marks the trig and weight table pointers below as restrict.  That lets the compiler hoist their loads (on nVidia they become ld.global.nc),
 // which is sometimes faster but can cost many more registers.  Off by default.
 #ifndef ENABLE_RESTRICT

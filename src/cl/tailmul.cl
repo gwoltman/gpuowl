@@ -88,7 +88,7 @@ void OVERLOAD pairMul(u32 N, T2 *u, T2 *v, T2 *p, T2 *q, T2 base_squared, bool s
 #if !SINGLE_KERNEL
 // The kernel tailMulZero handles the special cases in tailMul, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   LDSinit(lds, 1);
 
@@ -139,7 +139,7 @@ KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   LDSinit(lds, 1);
 
@@ -237,7 +237,7 @@ void OVERLOAD pairMul2_special(T2 *u, T2 *p, T2 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES(2) / sizeof(T2)];
   LDSinit(lds, 2);
 
@@ -357,7 +357,7 @@ void OVERLOAD pairMul(u32 N, F2 *u, F2 *v, F2 *p, F2 *q, F2 base_squared, bool s
 #if !SINGLE_KERNEL
 // The kernel tailMulZero handles the special cases in tailMul, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   local F2 lds[LDS_BYTES(1) / sizeof(F2)];
   LDSinit(lds, 1);
 
@@ -405,7 +405,7 @@ KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES(1) / sizeof(F2)];
   LDSinit(lds, 1);
 
@@ -500,7 +500,7 @@ void OVERLOAD pairMul2_special(F2 *u, F2 *p, F2 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES(2) / sizeof(F2)];
   LDSinit(lds, 2);
 
@@ -616,7 +616,7 @@ void OVERLOAD pairMul(u32 N, GF31 *u, GF31 *v, GF31 *p, GF31 *q, GF31 base_squar
 #if !SINGLE_KERNEL
 // The kernel tailMulZeroGF31 handles the special cases in tailMulGF31, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailMulZeroGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMulZeroGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
   LDSinit(lds, 1);
 
@@ -681,7 +681,7 @@ KERNEL(G_H) tailMulZeroGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
   LDSinit(lds, 1);
 
@@ -784,7 +784,7 @@ void OVERLOAD pairMul2_special(GF31 *u, GF31 *p, GF31 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(2) / sizeof(GF31)];
   LDSinit(lds, 2);
 
@@ -911,7 +911,7 @@ void OVERLOAD pairMul(u32 N, GF61 *u, GF61 *v, GF61 *p, GF61 *q, GF61 base_squar
 #if !SINGLE_KERNEL
 // The kernel tailMulZeroGF61 handles the special cases in tailMulGF61, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
   LDSinit(lds, 1);
 
@@ -976,7 +976,7 @@ KERNEL(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
   LDSinit(lds, 1);
 
@@ -1079,7 +1079,7 @@ void OVERLOAD pairMul2_special(GF61 *u, GF61 *p, GF61 base_squared) {
   }
 }
 
-KERNEL(G_H * 2) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(2) / sizeof(GF61)];
   LDSinit(lds, 2);
 
