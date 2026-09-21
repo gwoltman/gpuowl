@@ -51,6 +51,15 @@ file(
   GLOB CL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cl/*.cl
   )
 
+# The CUDA compatibility header must come first in the bundle, as it does in the
+# Makefile: KernelCompiler passes the bundle's files to the OpenCL compiler as
+# headers and skips the first one, which it expects to be opencl_compat.cuh.
+# Without it the first *.cl file is dropped instead and no kernel can compile.
+file(
+  GLOB CUH_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cuda/*.cuh
+  )
+set(CL_SOURCES ${CUH_SOURCES} ${CL_SOURCES})
+
 add_custom_command(
   OUTPUT bundle.cpp
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
