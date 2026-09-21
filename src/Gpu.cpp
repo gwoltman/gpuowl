@@ -240,7 +240,8 @@ CARRY_SIZE = 100000
 };
 
 string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
-                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul) {
+                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
+                 u32 &l2_striping, u32 &multi_q) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -254,6 +255,14 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     // log("Found %s\n", fft.shape.spec().c_str());
     config.insert(it->second.begin(), it->second.end());
   }
+
+  // The kernels are compiled from config, so anything the host must agree with the kernels about has to be
+  // read from config too.  args.value() sees only args.flags, i.e. only -use on the command line: a per-FFT
+  // "! <shape> ..." line in config.txt and a -ctune candidate (passed as extraConf) never reach it.
+  auto configValue = [&config](const string& key, u32 deflt) {
+    auto const it = config.find(key);
+    return (it == config.end()) ? deflt : u32(atoi(it->second.c_str()));
+  };
 
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = false, tail_single_kernel = true;         // Default tailSquare is double-wide in one kernel
@@ -367,7 +376,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   // carryFused's workgroup is G_W * WMUL threads, which must not exceed the device's maximum workgroup size.  WMUL must be at
   // least 1, and must divide BIG_HEIGHT as carryFused is launched with BIG_HEIGHT / WMUL + 1 workgroups.
   {
-    u32 const shufl_bytes_w = config.contains("SHUFL_BYTES_W") ? atoi(config["SHUFL_BYTES_W"].c_str()) : 8;
+    u32 const shufl_bytes_w = configValue("SHUFL_BYTES_W", 8);
     u32 const lds_limit = u32(std::min<u64>(32768, getLocalMemSize(id)));
     u32 const big_h = fft.shape.height * fft.shape.middle;
     if (fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) {
@@ -395,7 +404,9 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   }
 
   // MULTI_Q is not allowed when profiling with -time
-  if (args.profile && args.value("MULTI_Q", 0)) {
+  multi_q = configValue("MULTI_Q", 0);
+  if (args.profile && multi_q) {
+    multi_q = 0;
     args.flags["MULTI_Q"] = to_string(0);
     // config was copied out of args.flags above, so it needs the same treatment: it is what the kernels are
     // compiled from, and the L2_STRIPING limit a few lines below reads args.  Leaving config alone builds
@@ -431,19 +442,21 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   // Technically, L2_STRIPING of WIDTH/32, MULTI_Q=0 could be allowed but that is just a more complicated way to implement L2_STRIPING=0.
   // Also, WIDTH/64, MULTI_Q=1 could be allowed with some marker/sync code changes but that is very similar to L2_STRIPING=0.
   {
-    u32 l2_striping = args.value("L2_STRIPING", 0);
-    u32 multi_q = args.value("MULTI_Q", 0);
+    l2_striping = configValue("L2_STRIPING", 0);
     if (l2_striping && !in_place) {
+      l2_striping = 0;
       config["L2_STRIPING"] = to_string(0);
       args.flags["L2_STRIPING"] = to_string(0);
       log("L2_STRIPING is only allowed if INPLACE=1.  Changing to L2_STRIPING=0.\n");
     }
     else if (multi_q == 0 && l2_striping > fft.shape.width/64) {
+      l2_striping = fft.shape.width/64;
       config["L2_STRIPING"] = to_string(fft.shape.width/64);
       args.flags["L2_STRIPING"] = to_string(fft.shape.width/64);
       log("Max L2_STRIPING when MULTI_Q=0 exceeded.  Changing to L2_STRIPING=%u.\n", fft.shape.width/64);
     }
     else if (multi_q > 0 && l2_striping > fft.shape.width/128) {
+      l2_striping = fft.shape.width/128;
       config["L2_STRIPING"] = to_string(fft.shape.width/128);
       args.flags["L2_STRIPING"] = to_string(fft.shape.width/128);
       log("Max L2_STRIPING when MULTI_Q=1 exceeded.  Changing to L2_STRIPING=%u.\n", fft.shape.width/128);
@@ -453,12 +466,12 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     // Hermitian partner WIDTH - L2_STRIPING*16 - base_lo, so the number of groups must be even (a multiple of
     // four with MULTI_Q, which further splits them across two queues).  Otherwise whole stripes are never
     // transformed and others are squared twice.  WIDTH/16 is a power of two, so round down to one that divides.
-    l2_striping = args.value("L2_STRIPING", 0);
     if (l2_striping) {
       u32 const groupsNeeded = multi_q ? 4 : 2;
       u32 valid = l2_striping;
       while (valid && (fft.shape.width / 16) % (groupsNeeded * valid)) { --valid; }
       if (valid != l2_striping) {
+        l2_striping = valid;
         config["L2_STRIPING"] = to_string(valid);
         args.flags["L2_STRIPING"] = to_string(valid);
         log("L2_STRIPING must divide WIDTH/%u.  Changing to L2_STRIPING=%u.\n", 16 * groupsNeeded, valid);
@@ -958,7 +971,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   useLongCarry{args.carry == CARRY_64},
   queue{*shared.context, args.profile},
       
-  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
+  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul, l2_striping, multi_q)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
@@ -1197,7 +1210,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   }
 
   // Create aux queues.  For now, we only have one auxiliary queue.  We could do more.
-  if (args.value("MULTI_Q", 0)) {
+  if (multi_q) {
     auxQueues.push_back(Queue{*shared.context, args.profile, true});
   }
 
@@ -1267,9 +1280,7 @@ void Gpu::replay() {
   // If there are no recorded kernels to replay, we're done
   if (recorded_kernels.size() == 0) return;
 
-  // Get MULTI_Q and L2_STRIPING settings
-  bool multi_q = args.value("MULTI_Q", 0);
-  int l2_striping = args.value("L2_STRIPING", 0);
+  // MULTI_Q and L2_STRIPING as clDefines() resolved them, which is what the kernels were built with.
 
   // In the simplest case, we use one command queue and process one data type at a time.  By processing one data type at a time, we reduce maximum L2 cache used.
   // For example, a 4M GF61+GF31 NTT needs just 32MB L2 cache during GF61 processing of fftMiddleIn, tailSquare, and fftMiddleOut (and only 16MB duing GF31 processing).
