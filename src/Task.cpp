@@ -251,6 +251,10 @@ void Task::execute(GpuCommon shared, u32 instance) {
     assert(proof.E == exponent);
     bool const ok = proof.verify(gpu.get());
     log("proof '%s' %s\n", verifyPath.c_str(), ok ? "verified" : "failed");
+    // -verify is a one-shot job (VERIFY tasks come only from the command line), so a proof that does not
+    // check out is a failed run and has to be visible as one: without this the process exits 0 and a
+    // caller cannot tell a good proof from a bad one except by reading the log.
+    if (!ok) { throw "proof verification failed"; }
 
   } else if (kind == PRP || kind == LL) {
     bool isPrime;

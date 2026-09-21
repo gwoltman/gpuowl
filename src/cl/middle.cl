@@ -42,6 +42,13 @@ void OVERLOAD read(u32 WG_SZ, u32 N, T2_F2_GF31_GF61 *u, const global T2_F2_GF31
   for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG_SZ]); }
 }
 
+// Same, but for a kernel whose workgroup spans more than one line: get_local_id(0) is then not the lane
+// within the line, and the caller has to say which lane it means.
+void OVERLOAD read(u32 WG_SZ, u32 N, T2_F2_GF31_GF61 *u, const global T2_F2_GF31_GF61 *in, u32 base, u32 lane) {
+  in += base + lane;
+  for (u32 i = 0; i < N; ++i) { u[i] = FFTLOAD(&in[i * WG_SZ]); }
+}
+
 void OVERLOAD write(u32 WG_SZ, u32 N, T2_F2_GF31_GF61 *u, global T2_F2_GF31_GF61 *out, u32 base) {
   out += base + (u32) get_local_id(0);
   for (u32 i = 0; i < N; ++i) { FFTSTORE(&out[i * WG_SZ], u[i]); }
