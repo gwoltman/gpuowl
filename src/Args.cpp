@@ -174,7 +174,7 @@ named "config.txt" in the prpll run directory.
                      may not work on Nvidia GPUs or on RDNA AMD GPUs where it produces errors
                      (which are nevertheless detected).
   -use NO_ASM      : do not use __asm() blocks (inline assembly)
-  -use TAIL_KERNELS=<val> : change how tailSquare operates according to <val>:
+  -use TAIL_KERNELS=<val> : change how tailSquare and tailMul operate according to <val>:
                      0 = single wide, single kernel
                      1 = single wide, two kernels
                      2 = double wide, single kernel
