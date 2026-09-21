@@ -92,7 +92,7 @@ void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special) {
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL_CAP(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   LDSinit(lds, 1);
 
@@ -375,7 +375,7 @@ void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special) {
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL_CAP(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   local F2 lds[LDS_BYTES(1) / sizeof(F2)];
   LDSinit(lds, 1);
 
@@ -650,7 +650,7 @@ void OVERLOAD pairSq(u32 N, GF31 *u, GF31 *v, GF31 base_squared, bool special) {
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL_CAP(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
   LDSinit(lds, 1);
 
@@ -992,7 +992,7 @@ void OVERLOAD pairSq(u32 N, GF61 *u, GF61 *v, GF61 base_squared, bool special) {
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL_CAP(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
   LDSinit(lds, 1);
 
