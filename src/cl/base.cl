@@ -300,34 +300,45 @@ ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2)
 
 #define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
 
+// ENABLE_RESTRICT=1 marks the trig and weight table pointers below as restrict.  That lets the compiler hoist their loads (on nVidia they become ld.global.nc),
+// which is sometimes faster but can cost many more registers.  Off by default.
+#ifndef ENABLE_RESTRICT
+#define ENABLE_RESTRICT 0
+#endif
+#if ENABLE_RESTRICT
+#define TABLE_RESTRICT restrict
+#else
+#define TABLE_RESTRICT
+#endif
+
 // For reasons unknown, loading trig values into nVidia's constant cache has terrible performance
 #if AMDGPU
-typedef constant const T2* restrict Trig;
-typedef constant const T* restrict TrigSingle;
-typedef constant const F2* restrict TrigFP32;
-typedef constant const F* restrict TrigSingleFP32;
-typedef constant const GF31* restrict TrigGF31;
-typedef constant const GF61* restrict TrigGF61;
+typedef constant const T2* TABLE_RESTRICT Trig;
+typedef constant const T* TABLE_RESTRICT TrigSingle;
+typedef constant const F2* TABLE_RESTRICT TrigFP32;
+typedef constant const F* TABLE_RESTRICT TrigSingleFP32;
+typedef constant const GF31* TABLE_RESTRICT TrigGF31;
+typedef constant const GF61* TABLE_RESTRICT TrigGF61;
 #else
-typedef global const T2* restrict Trig;
-typedef global const T* restrict TrigSingle;
-typedef global const F2* restrict TrigFP32;
-typedef global const F* restrict TrigSingleFP32;
-typedef global const GF31* restrict TrigGF31;
-typedef global const GF61* restrict TrigGF61;
+typedef global const T2* TABLE_RESTRICT Trig;
+typedef global const T* TABLE_RESTRICT TrigSingle;
+typedef global const F2* TABLE_RESTRICT TrigFP32;
+typedef global const F* TABLE_RESTRICT TrigSingleFP32;
+typedef global const GF31* TABLE_RESTRICT TrigGF31;
+typedef global const GF61* TABLE_RESTRICT TrigGF61;
 #endif
 // However, caching weights in nVidia's constant cache improves performance.
 // Even better is to not pollute the constant cache with weights that are used only once.
 // This requires two typedefs depending on how we want to use the BigTab pointer.
 // For AMD we can declare BigTab as constant or global - it doesn't really matter.
-typedef constant const double2* restrict ConstBigTab;
-typedef constant const float2* restrict ConstBigTabFP32;
+typedef constant const double2* TABLE_RESTRICT ConstBigTab;
+typedef constant const float2* TABLE_RESTRICT ConstBigTabFP32;
 #if AMDGPU
-typedef constant const double2* restrict BigTab;
-typedef constant const float2* restrict BigTabFP32;
+typedef constant const double2* TABLE_RESTRICT BigTab;
+typedef constant const float2* TABLE_RESTRICT BigTabFP32;
 #else
-typedef global const double2* restrict BigTab;
-typedef global const float2* restrict BigTabFP32;
+typedef global const double2* TABLE_RESTRICT BigTab;
+typedef global const float2* TABLE_RESTRICT BigTabFP32;
 #endif
 
 //
