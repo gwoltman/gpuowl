@@ -145,9 +145,14 @@ void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *b
   // (see https://github.com/mahmoudmaftah/MaxReduction-Cuda/blob/main/code/reduction_benchmarks.cu)
   while (num_threads > 8) {
     // Write roundMax for high half of threads to local memory.  Ignore threads not participating in the reduction.
-    if (num_threads > WAVEFRONT) bar();
+    // bar(num_threads) rather than a hand-rolled "only if it is wider than a wavefront": that test assumes a
+    // wavefront advances in lock-step, which holds on AMD but not on nVidia Volta and later, and nowhere else
+    // at all.  bar() decides that by what the hardware guarantees, and with G_W == 64 and a 32-lane wavefront
+    // two of the three reduction steps here were running with no barrier and no fence.  num_threads is a
+    // compile-time workgroup size, so every thread makes the same number of passes and reaches both calls.
+    bar(num_threads);
     if (me >= num_threads / 2 && me < num_threads) lds[me - num_threads / 2] = u32RoundMax;
-    if (num_threads > WAVEFRONT) bar();
+    bar(num_threads);
     // Low half of threads do a max
     if (me < num_threads / 2) {
       u32 highHalfMax = lds[me];
