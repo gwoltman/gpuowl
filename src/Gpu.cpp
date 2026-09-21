@@ -295,7 +295,6 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "MODM31",
                               "LOADS","STORES",
                               "NOREG",                  // CUDA - experimental
-                              "ENABLE_RESTRICT",        // Experimental - restrict on the trig and weight table pointers
                               "WMUL",
                               "MULTI_Q",
                               "GRAPHS",
