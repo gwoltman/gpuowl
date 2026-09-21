@@ -59,20 +59,40 @@ jobs:
       run: make DEBUG=1 -O -j "$(nproc)"
     - name: Compile the kernels and pass a Gerbicz check
       # Step-level bound (not job-level, so a slow apt mirror cannot fail the job): a correct run takes
-      # well under a minute.  prpll ignores SIGTERM while inside an OpenCL compile, hence -s KILL.
-      timeout-minutes: 12
+      # well under a minute each.  prpll ignores SIGTERM while inside an OpenCL compile, hence -s KILL.
+      #
+      # The same check runs under a few -use settings and the residues must all agree.  A -use knob is a
+      # performance setting, so it cannot change the answer: after a fixed number of iterations the residue
+      # depends only on the exponent.  That makes a one-line invariant out of the failure this code is most
+      # prone to -- a kernel that is correct in the shipped configuration and computes the wrong thing in
+      # another -- which a single-configuration run cannot see at all.  TAIL_KERNELS=0 swaps the double-wide
+      # tail kernels for single-wide ones, and WMUL=1 changes how carryFused partitions its workgroup.
+      timeout-minutes: 25
       run: |
         cd build-debug
         ./prpll -h
-        # Dump the log whatever happened, so a timeout or crash still shows how far the kernels got.
-        # Steps run under "bash -e", so the run has to be guarded: unguarded, a failing run ends the step
-        # right there and the dump never happens.  prpll's own stdout is block-buffered into the runner's
-        # pipe and is lost when it is killed, so the log file is the only record.
-        rc=0
-        timeout -s KILL 10m ./prpll -device 0 -prp 5000011 -fft 256:2:256 -block 200 -iters 400 || rc=$?
-        cat gpuowl-0.log || true
-        test "$rc" -eq 0
-        grep -q "OK  *400 " gpuowl-0.log
+        want=""
+        for cfg in "" "-use TAIL_KERNELS=0" "-use WMUL=1"; do
+          # Start each run from scratch: left alone, prpll would resume from the previous run's savefile.
+          rm -rf gpuowl-0.log 5000011
+          # Dump the log whatever happened, so a timeout or crash still shows how far the kernels got.
+          # Steps run under "bash -e", so the run has to be guarded: unguarded, a failing run ends the step
+          # right there and the dump never happens.  prpll's own stdout is block-buffered into the runner's
+          # pipe and is lost when it is killed, so the log file is the only record.
+          rc=0
+          timeout -s KILL 6m ./prpll -device 0 -prp 5000011 -fft 256:2:256 -block 200 -iters 400 $cfg || rc=$?
+          cat gpuowl-0.log || true
+          test "$rc" -eq 0
+          res=$(grep -aoE 'OK +400 +[0-9a-f]{16}' gpuowl-0.log | grep -oE '[0-9a-f]{16}$')
+          test -n "$res"
+          echo "residue with '${cfg:-defaults}': $res"
+          if [ -z "$want" ]; then
+            want=$res
+          elif [ "$res" != "$want" ]; then
+            echo "::error::-use changed the residue: '$cfg' gives $res, defaults give $want"
+            exit 1
+          fi
+        done
 
     - name: Verify a proof under every FFT type
       # The Gerbicz check above never reaches tailMulLow: that kernel is used only when a proof is built,
