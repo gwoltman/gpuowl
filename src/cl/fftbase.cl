@@ -87,7 +87,9 @@ local void * OVERLOAD LDSsharing_ptr(local void *lds, const u32 numWG) {
 // NOTE: A "workgroup" is an independent group of threads doing FFT work (see WMUL in carryFused or TAIL_KERNELS=2).
 void OVERLOAD LDSbar(const u32 numWG) {
 
-  if (WG <= WAVEFRONT) return;
+  // No early return for WG <= WAVEFRONT here: bar(WG) and barsync() below both decide that for themselves,
+  // by what the hardware guarantees rather than by size alone, and returning early would skip the warp
+  // reconvergence and LDS fence they do on hardware that is not in lock-step.
 
   // If were not using semaphores to share LDS access, perform a standard bar.  The standard bar is free to implement a full bar across
   // all threads if that is more efficient than a bar across a subset of threads.
