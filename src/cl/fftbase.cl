@@ -51,21 +51,45 @@ void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
 #define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? 12 : SBMUL(numWG) * SHUFL_BYTES >= 16 ? 7 : 56)
 // LDS_SHUFL_BYTES is the number of LDS bytes *allocated* for each workgroup (SBMUL > 1 means the workgroup can *access* some multiple of LDS_SHUFL_BYTES)
 #define LDS_SHUFL_BYTES(numWG)    ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
-// The total number of LDS_BYTES allocated by a kernel includes space for 4 semaphores to control workgroup access
-#define LDS_BYTES(numWG)          (numWG * LDS_SHUFL_BYTES(numWG) + (SHARING_LDS(numWG) ? 16 : 0))
+// The workgroups are partitioned into groups of SBMUL that share one LDS region and one semaphore.
+// SBMUL need not divide numWG, so round up: the last group is short but still spans SBMUL regions and
+// owns a semaphore of its own.  Allocating only numWG regions, and only ever four semaphores, is not
+// enough then -- LDSsharing_ptr hands out a region past the end of the array and LDSinit leaves the
+// last semaphore uninitialised.  With SBMUL == 1, which is every configuration that does not opt into
+// sharing, all of this is numWG regions and no semaphores, exactly as before.
+#define LDS_GROUPS(numWG)         ((numWG + SBMUL(numWG) - 1) / SBMUL(numWG))
+#define LDS_REGIONS(numWG)        (LDS_GROUPS(numWG) * SBMUL(numWG))
+#define LDS_SEM_OFFSET(numWG)     (LDS_REGIONS(numWG) * LDS_SHUFL_BYTES(numWG))
+#define LDS_BYTES(numWG)          (LDS_SEM_OFFSET(numWG) + (SHARING_LDS(numWG) ? LDS_GROUPS(numWG) * 4 : 0))
 
-////   BUG BUG BUG
-///variant 2 partitioned_LDS is a nightmare  -- require variant 2 to be LDSMUL=1 until we can figure it out?
+// Variant 2 keeps its own pointer into the shared region (partitioned_lds) and both reads and writes it
+// in partial_tabMul4/8 outside the LDStx lock, with only a bar(WG) that does not cover the other
+// workgroups sharing that memory.  That is what the "partitioned_LDS is a nightmare" note was about, so
+// refuse the combination rather than corrupt quietly.  This also keeps LDSptr's truncating divide out of
+// reach: it is only inexact when sharing rounds LDS_SHUFL_BYTES off a 16-byte boundary, and variant 2 is
+// its only caller.
+#if VARIANT == 2
+#error LDSMUL > 1 is not supported with FFT variant 2 (partial_tabMul touches the shared LDS region outside the lock)
+#endif
+
+// shufl dispatches on SBMUL * SHUFL_BYTES with branches for >= 16, == 8 and == 4 and no fallback, so a
+// product of 12 would return with the data unexchanged and no diagnostic.  Only SBMUL == 3 can produce
+// it.  Rejecting on LDSMUL is slightly stronger than necessary -- a call with numWG < 3 would have come
+// out at SBMUL < 3 -- but numWG is a runtime argument, and a build error beats silently wrong results.
+#if LDSMUL >= 3 && SHUFL_BYTES == 4
+#error LDSMUL >= 3 with SHUFL_BYTES == 4 gives SBMUL * SHUFL_BYTES == 12, which no shufl branch handles
+#endif
 
 // Initialize access to LDS memory.  It may be advantageous to have independent workgroups share access to LDS memory via a lock controlling a critical section.
 // This may let a kernel use less LDS memory, or have each workgroup use more LDS memory to perform fewer passes of writing and reading LDS memory.
 void OVERLOAD LDSinit(void local *lds, const u32 numWG) {
   // Init semaphores to unlocked state
   if (SHARING_LDS(numWG)) {
-    assert(numWG / SBMUL(numWG) <= 4);  // LDS_BYTES is hardwired to allocate 4 semaphores
     if (get_local_id(0) == 0) {
-      volatile local int *semaphores = (volatile local int *)(((local char *) lds) + numWG * LDS_SHUFL_BYTES(numWG));
-      for (u32 i = 0; i < numWG / SBMUL(numWG); i++) semaphores[i] = 0;
+      volatile local int *semaphores = (volatile local int *)(((local char *) lds) + LDS_SEM_OFFSET(numWG));
+      // One per sharing group, and every group that exists: the highest index in use is
+      // (numWG - 1) / SBMUL, which the old numWG / SBMUL bound missed whenever SBMUL did not divide numWG.
+      for (u32 i = 0; i < LDS_GROUPS(numWG); i++) semaphores[i] = 0;
     }
     bar();
   }
@@ -119,10 +143,13 @@ void OVERLOAD LDStx_start(local void *lds, const u32 numWG) {
   }
   // Have first thread in a workgroup lock the semaphore controlling access to LDS memory
   if (get_local_id(0) % WG == 0) {
-    volatile local int *semaphores = (volatile local int *)(((local char *) lds) + numWG * LDS_SHUFL_BYTES(numWG));
+    volatile local int *semaphores = (volatile local int *)(((local char *) lds) + LDS_SEM_OFFSET(numWG));
 
     // Lock semaphore (set to one) to gain access to critical section
-    while (atomic_cmpxchg(&semaphores[get_local_id(0) / WG / SBMUL(numWG)], 0, 1) == 1);
+    // Spin until the semaphore was observed unlocked: cmpxchg returns the old value, so anything other
+    // than 0 means the lock was not taken.  Testing for 1 alone would let any other value through here
+    // without the lock, and LDStx_end would then clear a semaphore this workgroup never owned.
+    while (atomic_cmpxchg(&semaphores[get_local_id(0) / WG / SBMUL(numWG)], 0, 1) != 0);
   }
   LDSbar(numWG);
 }
@@ -137,7 +164,7 @@ void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
   LDSbar(numWG);
   // Unlock the semaphore
   if (get_local_id(0) % WG == 0) {
-    volatile local int *semaphores = (volatile local int *)(((local char *) lds) + numWG * LDS_SHUFL_BYTES(numWG));
+    volatile local int *semaphores = (volatile local int *)(((local char *) lds) + LDS_SEM_OFFSET(numWG));
     semaphores[get_local_id(0) / WG / SBMUL(numWG)] = 0;
   }
 }
