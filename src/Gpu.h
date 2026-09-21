@@ -182,6 +182,8 @@ private:
   u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly.
   u32 wmul;                             // Number of workgroups carryFused kernel should process ("width multiplier").
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
+  u32 in_wg, in_sizex;                  // IN_WG, IN_SIZEX: fftMiddleIn's workgroup size and how many x values it handles.
+  u32 out_wg, out_sizex;                // OUT_WG, OUT_SIZEX: the same for fftMiddleOut.  All four change the data layout.
 
   // Twiddles: trigonometry constant buffers, used in FFTs.
   // The twiddles depend only on FFT config and do not depend on the exponent.
@@ -361,17 +363,22 @@ private:
   string numCudaRegisters(enum WHICH_KERNEL which_kernel);
   enum WHICH_KERNEL_TYPE {KFP=0, K31=1, K61=2, KALL=3};
   string kernelDefines(enum WHICH_KERNEL_TYPE which_kernel);
+
+  // Number of FFT elements the data buffers must hold, for this shape and this set of -use layout options.
+  u32 dataElements() const;
 };
 
 // Compute the size of an FFT/NTT data buffer depending on the FFT/NTT float/prime.  Size is returned in units of sizeof(double).
-// Data buffers require extra space for padding.  We can probably tighten up the amount of extra memory allocated.
-// The worst case seems to be !INPLACE, MIDDLE=4, PAD_SIZE=512.
+//
+// The element count comes from Gpu::dataElements(), i.e. from middleDataElements() in Gpu.cpp: the number of
+// FFT elements -- one T2, F2, GF31 or GF61 value each -- that the data layouts in middle.cl can address.  The
+// padded layouts do not grow by a fixed fraction of N: the padding fftMiddleIn/fftMiddleOut insert depends on
+// IN_WG/IN_SIZEX and OUT_WG/OUT_SIZEX as well as on PAD and MIDDLE.  Derivation in Gpu.cpp.
 
-#define MID_ADJUST(size,M,pad)                  (((pad) == 0 || (M) != 4) ? (size) : (size) * 5/4)
-#define PAD_ADJUST(N,M,inplace,pad)             ((inplace) ? 3*(N)/2 : MID_ADJUST((pad) == 0 ? (N) : (pad) <= 128 ? 9*(N)/8 : (pad) <= 256 ? 5*(N)/4 : 3*(N)/2, M, pad))
-#define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad)
-#define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(float) / sizeof(double)
-#define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(uint) / sizeof(double)
-#define GF61_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(ulong) / sizeof(double)
-#define TOTAL_DATA_SIZE(fft,W,M,H,inplace,pad)  ((int)(fft).FFT_FP64 * FP64_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).FFT_FP32 * FP32_DATA_SIZE(W,M,H,inplace,pad) + \
-                                                (int)(fft).NTT_GF31 * GF31_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).NTT_GF61 * GF61_DATA_SIZE(W,M,H,inplace,pad))
+// Turn a count of FFT elements into a buffer size in units of sizeof(double), per element type.
+#define FP64_DATA_SIZE(elems)       ((elems) * 2)       // T2   is a double2, 16 bytes
+#define FP32_DATA_SIZE(elems)       ((elems) * 1)       // F2   is a float2,   8 bytes
+#define GF31_DATA_SIZE(elems)       ((elems) * 1)       // GF31 is a uint2,    8 bytes
+#define GF61_DATA_SIZE(elems)       ((elems) * 2)       // GF61 is a ulong2,  16 bytes
+#define TOTAL_DATA_SIZE(fft,elems)  ((int)(fft).FFT_FP64 * FP64_DATA_SIZE(elems) + (int)(fft).FFT_FP32 * FP32_DATA_SIZE(elems) + \
+                                     (int)(fft).NTT_GF31 * GF31_DATA_SIZE(elems) + (int)(fft).NTT_GF61 * GF61_DATA_SIZE(elems))

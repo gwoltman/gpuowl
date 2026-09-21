@@ -239,8 +239,83 @@ ROE_SIZE = 100000,
 CARRY_SIZE = 100000
 };
 
+// Highest element index + 1 that the fftMiddleIn / fftMiddleOut chunked layout can touch.  Both
+// writeMiddleInLine and writeMiddleOutLine (middle.cl) lay a line out as
+//      chunk_y * (MIDDLE * WG + PAD_SIZE) + chunk_x * (ny * (MIDDLE * WG + PAD_SIZE) + BIG_PAD_SIZE) + i * WG + me
+// with chunk_x < nx, chunk_y < ny, i < MIDDLE and me < WG, so the last element written is
+//      nx * ny * (MIDDLE * WG + PAD_SIZE) - PAD_SIZE + (nx - 1) * BIG_PAD_SIZE - 1.
+// For fftMiddleIn nx = WIDTH/IN_SIZEX and ny = SMALL_HEIGHT/(IN_WG/IN_SIZEX); for fftMiddleOut
+// nx = SMALL_HEIGHT/OUT_SIZEX and ny = WIDTH/(OUT_WG/OUT_SIZEX).  Either way nx*ny*WG == WIDTH*SMALL_HEIGHT.
+static u64 chunkedLayoutSize(u32 M, u64 padSize, u64 bigPad, u64 nx, u64 ny, u64 wg) {
+  return nx * ny * (u64(M) * wg + padSize) - padSize + (nx - 1) * bigPad;
+}
+
+// Number of FFT elements (one T2, F2, GF31 or GF61 value each) that the data layouts in middle.cl can
+// address.  The FFT data buffers hold, at different points of one iteration, four different layouts, and the
+// allocation has to cover the largest of them:
+//
+//   1. writeCarryFusedLine / readMiddleInLine (also fftP and fftW):
+//      line * (WIDTH + PAD_SIZE) + line/SMALL_HEIGHT * BIG_PAD_SIZE + x, line < MIDDLE*SMALL_HEIGHT, x < WIDTH.
+//   2. writeMiddleInLine / readTailFusedLine: the chunked layout above, with IN_WG and IN_SIZEX.
+//   3. writeTailFusedLine / readMiddleOutLine:
+//      line * (SMALL_HEIGHT + PAD_SIZE) + (MIDDLE is 4, 8 or 16 ? line/MIDDLE * BIG_PAD_SIZE : 0) + x,
+//      line < MIDDLE*WIDTH, x < SMALL_HEIGHT.
+//   4. writeMiddleOutLine / readCarryFusedLine: the chunked layout above, with OUT_WG and OUT_SIZEX.
+//
+// Layouts 2 and 4 depend on IN_WG/IN_SIZEX and OUT_WG/OUT_SIZEX, which the old fixed ratio table ignored.
+// With MIDDLE=2, PAD=512, IN_WG=64 and IN_SIZEX=4 layout 2 needs 1 + PAD_SIZE/(MIDDLE*IN_WG)
+// + BIG_PAD_SIZE/(MIDDLE*SMALL_HEIGHT*IN_SIZEX) = 1.5156 times N while the table granted 1.5 times N, i.e.
+// fftMiddleIn wrote past the end of the buffer (for -fft 256:2:256, 1472 elements past a 196608 element
+// allocation).  On the multi-prime FFTs that is not a wild write but silent corruption of the next prime's
+// data, which shares the allocation at an offset derived from these same sizes.
+//
+// The old ratio table is kept as a floor so that no configuration that was already large enough shrinks here.
+u32 middleDataElements(u32 W, u32 M, u32 H, u32 inplace, u32 pad, u32 in_wg, u32 in_sizex, u32 out_wg, u32 out_sizex) {
+  u64 const N = u64(W) * M * H;
+  u64 need = N;
+
+  if (inplace) {
+    // INPLACE layouts: (x/16)*SIZEW + middle*SIZEM + (y%16)*SIZEBLK + SWIZ(y%16, y/16)*16 + (x%16),
+    // with x < WIDTH, y < SMALL_HEIGHT, middle < MIDDLE and SWIZ() a permutation of 0..SMALL_HEIGHT/16-1.
+    u64 const sizeBlk = H;
+    u64 const sizeW = 16 * sizeBlk + 16;
+    u64 const sizeM = u64(W / 16) * sizeW + (inplace == 1 ? 16 : 0);       // INPLACE=1 pads, INPLACE=2 does not
+    need = (M - 1) * sizeM + u64(W / 16 - 1) * sizeW + 15 * sizeBlk + u64(H / 16 - 1) * 16 + 16;
+  } else if (pad) {
+    u64 const padSize = pad / 16;                                          // PAD_SIZE in middle.cl
+    u64 const bigPad = (padSize / 2 + 1) * padSize;                        // BIG_PAD_SIZE in middle.cl
+
+    need = u64(M) * H * (W + padSize) - padSize + u64(M - 1) * bigPad;     // layout 1
+
+    u64 l3 = u64(M) * W * (H + padSize) - padSize;                         // layout 3
+    if (M == 4 || M == 8 || M == 16) { l3 += u64(W - 1) * bigPad; }
+    need = max(need, l3);
+
+    // Layouts 2 and 4.  Skipped, rather than dividing by zero, for -use values outside the documented
+    // IN_WG/OUT_WG of 64/128/256 and IN_SIZEX/OUT_SIZEX of 4/8/16/32; middle.cl #errors on those.
+    if (in_sizex && in_wg >= in_sizex && in_wg % in_sizex == 0 && in_wg / in_sizex <= H && W >= in_sizex) {
+      need = max(need, chunkedLayoutSize(M, padSize, bigPad, W / in_sizex, H / (in_wg / in_sizex), in_wg));
+    }
+    if (out_sizex && out_wg >= out_sizex && out_wg % out_sizex == 0 && out_wg / out_sizex <= W && H >= out_sizex) {
+      need = max(need, chunkedLayoutSize(M, padSize, bigPad, H / out_sizex, W / (out_wg / out_sizex), out_wg));
+    }
+  }
+
+  // The historical ratio table, retained as a lower bound only so that this computation cannot shrink an
+  // allocation that was already large enough.
+  u64 legacy = inplace      ? 3 * N / 2
+               : pad == 0   ? N
+               : pad <= 128 ? 9 * N / 8
+               : pad <= 256 ? 5 * N / 4
+               :              3 * N / 2;
+  if (!inplace && pad && M == 4) { legacy = legacy * 5 / 4; }   // MID_ADJUST()
+
+  return u32(max(need, legacy));
+}
+
 string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
-                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul) {
+                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
+                 u32 &in_wg, u32 &in_sizex, u32 &out_wg, u32 &out_sizex) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -260,6 +335,8 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   in_place = isNvidiaGpu(id) ? 1 : 0;                   // Default is in-place for nVidia, not in-place for others (must match base.cl)
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
+  in_wg = out_wg = 128;                                 // Defaults must match middle.cl
+  in_sizex = out_sizex = 16;
 
   // Validate -use options
   for (const auto& [k, v] : config) {
@@ -315,7 +392,20 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
     if (k == "PAD") pad_size = atoi(v.c_str());
+    // IN_WG/IN_SIZEX and OUT_WG/OUT_SIZEX change the fftMiddleIn/fftMiddleOut data layout, so the size of
+    // the FFT data buffers depends on them too.
+    if (k == "IN_WG") in_wg = atoi(v.c_str());
+    if (k == "IN_SIZEX") in_sizex = atoi(v.c_str());
+    if (k == "OUT_WG") out_wg = atoi(v.c_str());
+    if (k == "OUT_SIZEX") out_sizex = atoi(v.c_str());
   }
+
+  // middle.cl substitutes its default for a zero IN_WG/IN_SIZEX/OUT_WG/OUT_SIZEX; match that here so the
+  // buffer size is computed for the layout the kernels actually use.
+  if (!in_wg) { in_wg = 128; }
+  if (!out_wg) { out_wg = 128; }
+  if (!in_sizex) { in_sizex = 16; }
+  if (!out_sizex) { out_sizex = 16; }
 
   // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W).  If using the 32KB maximum, LDS padding must be disabled.
   // Furthermore, I've seen the CUDA compiler refuse to create a kernel with 1024 threads.  Thus, we limit WMUL to 2 for a 1K width and to 1 for a 4K width.
@@ -457,9 +547,12 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
   // When using multiple NTT primes or hybrid FFT/NTT, each FFT/NTT prime's data buffer and trig values are combined into one buffer.
   // The openCL code needs to know the offset to the data and trig values.  Distances are in "number of double2 values".
+  // These offsets must use the same size the data buffers are allocated with, see Gpu::dataElements().
+  u32 const nDataElements = middleDataElements(fft.shape.width, fft.shape.middle, fft.shape.height,
+                                               in_place, pad_size, in_wg, in_sizex, out_wg, out_sizex);
   if (fft.FFT_FP64 && fft.NTT_GF31) {
     // GF31 data is located after the FP64 data.  Compute size of the FP64 data and trigs.
-    defines += toDefine("DISTGF31",      FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF31",      FP64_DATA_SIZE(nDataElements) / 2);
     defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
@@ -467,25 +560,25 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   else if (fft.FFT_FP32 && fft.NTT_GF31 && fft.NTT_GF61) {
     // GF31 and GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
     u32 sz1, sz2, sz3, sz4;
-    defines += toDefine("DISTGF31",      sz1 = FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF31",      sz1 = FP32_DATA_SIZE(nDataElements) / 2);
     defines += toDefine("DISTWTRIGGF31", sz2 = SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF31", sz3 = MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", sz4 = SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
-    defines += toDefine("DISTGF61",      sz1 + GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF61",      sz1 + GF31_DATA_SIZE(nDataElements) / 2);
     defines += toDefine("DISTWTRIGGF61", sz2 + SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF61", sz3 + MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", sz4 + SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF31) {
     // GF31 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-    defines += toDefine("DISTGF31",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF31",      FP32_DATA_SIZE(nDataElements) / 2);
     defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF61) {
     // GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-    defines += toDefine("DISTGF61",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF61",      FP32_DATA_SIZE(nDataElements) / 2);
     defines += toDefine("DISTWTRIGGF61", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
@@ -496,7 +589,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     defines += toDefine("DISTMTRIGGF31", 0);
     defines += toDefine("DISTHTRIGGF31", 0);
     // GF61 data is located after the GF31 data.  Compute size of the GF31 data and trigs.
-    defines += toDefine("DISTGF61",      GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF61",      GF31_DATA_SIZE(nDataElements) / 2);
     defines += toDefine("DISTWTRIGGF61", SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
@@ -831,6 +924,11 @@ string Gpu::kernelDefines(enum WHICH_KERNEL_TYPE which_kernel) {
   return defines + " ";
 }
 
+// The -use layout options are read out of clDefines(), which runs as part of initializing "compiler", i.e.
+// before the data buffers are constructed.
+u32 Gpu::dataElements() const {
+  return middleDataElements(WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size, in_wg, in_sizex, out_wg, out_sizex);
+}
 
 Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
   shared(s),
@@ -848,7 +946,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   useLongCarry{args.carry == CARRY_64},
   queue{*shared.context, args.profile},
       
-  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul)},
+  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
+                                                    in_wg, in_sizex, out_wg, out_sizex)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
@@ -978,9 +1077,9 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   BUF(bufROE, ROE_SIZE + 2),
   BUF(bufStatsCarry, CARRY_SIZE + 2),
 
-  BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
-  BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
-  BUF(buf3, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
+  BUF(buf1, TOTAL_DATA_SIZE(fft, dataElements())),
+  BUF(buf2, TOTAL_DATA_SIZE(fft, dataElements())),
+  BUF(buf3, TOTAL_DATA_SIZE(fft, dataElements())),
 #undef BUF
 
   statsBits{u32(args.value("STATS", 0))},

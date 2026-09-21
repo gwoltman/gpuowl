@@ -26,6 +26,26 @@
 #endif
 #define PAD_SIZE (PAD/16)          // Convert padding amount from bytes to number of T2 values
 
+// fftMiddleIn walks WIDTH/IN_SIZEX chunks of SMALL_HEIGHT/(IN_WG/IN_SIZEX) chunks of IN_WG threads, and
+// fftMiddleOut the mirror image, so those divisions have to be exact.  They are for the documented values
+// (IN_WG/OUT_WG 64, 128 or 256 and IN_SIZEX/OUT_SIZEX 4, 8, 16 or 32) with every legal FFT shape.  Anything
+// else silently drops or doubles up data, and makes the host's FFT buffer size (Gpu.cpp middleDataElements())
+// wrong as well, so reject it here.  middle.cl is included once per data type; only check the first time.
+#ifndef MIDDLE_LAYOUT_CHECKED
+#define MIDDLE_LAYOUT_CHECKED 1
+#if !INPLACE
+#if IN_WG <= 0 || IN_SIZEX <= 0 || OUT_WG <= 0 || OUT_SIZEX <= 0
+#error IN_WG, IN_SIZEX, OUT_WG and OUT_SIZEX must all be positive
+#elif (IN_WG % IN_SIZEX) != 0 || (OUT_WG % OUT_SIZEX) != 0
+#error IN_SIZEX must divide IN_WG, and OUT_SIZEX must divide OUT_WG
+#elif (WIDTH % IN_SIZEX) != 0 || (SMALL_HEIGHT % (IN_WG / IN_SIZEX)) != 0
+#error IN_SIZEX must divide WIDTH, and IN_WG/IN_SIZEX must divide SMALL_HEIGHT
+#elif (SMALL_HEIGHT % OUT_SIZEX) != 0 || (WIDTH % (OUT_WG / OUT_SIZEX)) != 0
+#error OUT_SIZEX must divide SMALL_HEIGHT, and OUT_WG/OUT_SIZEX must divide WIDTH
+#endif
+#endif
+#endif
+
 // The default setting for LDS transpose is on.  Only Intel battlemage is reported as faster without LDS transpose.
 #if !defined(MIDDLE_IN_LDS_TRANSPOSE)
 #define MIDDLE_IN_LDS_TRANSPOSE  1
