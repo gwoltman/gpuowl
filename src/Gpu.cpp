@@ -645,9 +645,25 @@ Gpu::~Gpu() {
 // Kernel register usage is critical for maximizing GPU occupancy.  The default values can be overrriden with command line arguments.
 // On CUDA this sets --maxrregcount (or launch bounds).  On AMD the same REGxxxx options select waves per SIMD or a VGPR count, see amdRegisterOption below.
 // Most kernels have occupancy limited by register usage.  For reference, the following guidelines dictate where an "uptick" in occupancy occurs.
-// If kernel threads=256, register crossovers are at 128, 80, 64, 48, 40
-// If kernel threads=128, register crossovers are at 128, 96, 80, 72, 64, 56, 48, 40
-// If kernel threads=64,  register crossovers are at 128, 112, 96, 88, 80, 72, 64, 56, 48, 40
+//
+// CUDA: the register file is 65536 32-bit regs/SM, split into 4 independent 16384-reg partitions (true from Volta through at least
+// Ada/Hopper).  Crossovers below are verified on TITAN V (Volta, sm_70), later architectures should match but not verified.
+//   If kernel threads=256, register crossovers are at 128, 80, 64, 48, 40
+//   If kernel threads=128 or 64, register crossovers are at 128, 96, 80, 72, 64, 56, 48, 40
+//   How far up this list is actually reachable depends on the chip's max warps/SM (below that many registers, occupancy is capped
+//   by warp slots, not by the register file, so lower entries do nothing).
+//     sm_70/80/90  (Volta, Ampere-A100, Hopper): 64 warps/SM, full list applies
+//     sm_86/89     (Ampere-consumer, Ada):       48 warps/SM, full list applies
+//     sm_75        (Turing):                     32 warps/SM, list truncates below 64
+//
+// AMD GCN (gfx803 Fiji/GCN3 through gfx906 Vega/GCN5): 256 VGPRs/lane, 4-register allocation granule, max 10 wavefronts/SIMD.
+// This does NOT depend on kernel thread count (a workgroup just spans SIMDs, there's no per-block partitioning like on CUDA), so
+// there is a single table, unlike CUDA's three.
+//   max VGPRs for 1..10 waves/SIMD = 256, 128, 84, 64, 48, 40, 36, 32, 28, 24
+//
+// AMD CDNA2 (MI200, gfx90a): 4 EUs/CU, max 8 wavefronts/EU (32/CU total, vs GCN's 10/SIMD).
+// Table taken from AMD's own article (rocm.blogs.amd.com/software-tools-optimization/register-pressure):
+//   max VGPRs for 1..8 waves/EU = 512, 256, 168, 128, 96, 80, 72, 64
 string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
   [[maybe_unused]] int regs = 0;         // Default CUDA maximum register count (the AMD path only uses the override value)
   const char *use_override = "";
