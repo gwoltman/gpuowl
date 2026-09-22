@@ -969,6 +969,34 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 #endif
 }
 
+// EXPERIMENTAL (FUSE_WEIGHT_BUTTERFLY): fft_WIDTH2 but for callers that have already performed fft8's stage-1
+// butterfly themselves (fusing the forward weight multiply into it via FMA, see carryfused.cl). Only written
+// for the WIDTH=512 (WG=64, RADIX=8, VARIANT=2) config this was tested with; mirrors that branch of fft_common
+// verbatim except for the first fft8(u) -> fft8_skip1(u).
+#if WG == 64 && RADIX == 8 && VARIANT == 2
+void OVERLOAD fft_WIDTH2fused(local T2 *lds, T2 *u, Trig trig, u32 numWG, u32 lowMe) {
+  local T2* partitioned_lds = LDSptr(lds, numWG);
+
+  T preloads[10];
+  trig += WG*8 + SAVE_ONE_MUL*2*WG*8;
+
+  preload_tabMul8_trig(trig, preloads, 1, numWG, lowMe);
+
+  // Stage-1 butterfly already done by the caller; go straight to stage 2+.
+  fft8_skip1(u);
+  partial_tabMul8(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
+  shufl(lds, u, 1, numWG, lowMe);
+
+  finish_tabMul8_fft8(trig, preloads, u, 1, numWG, lowMe, SAVE_ONE_MUL);
+  partial_tabMul8(partitioned_lds, trig, preloads, u, 8, numWG, lowMe);
+  shufl(lds, u, 8, numWG, lowMe);
+
+  finish_tabMul8_fft8(trig, preloads, u, 8, numWG, lowMe, SAVE_ONE_MUL);
+}
+#elif FUSE_WEIGHT_BUTTERFLY
+#error FUSE_WEIGHT_BUTTERFLY only implemented for WIDTH=512 (WG=64, RADIX=8, VARIANT=2)
+#endif
+
 #endif
 
 
