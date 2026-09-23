@@ -30,10 +30,8 @@ void OVERLOAD fft8(T2 *u) {
   SWAP(u[3], u[6]);
 }
 
-// EXPERIMENTAL (FUSE_WEIGHT_BUTTERFLY): same as fft8Core, but the caller has already performed the stage-1
-// X2(u[i], u[i+4]) adds/subs itself (fusing a forward weight multiply into them via FMA, see carryfused.cl).
-// The per-pair post-rotations (u[5]/u[7] delayed by M_SQRT1_2, u[6] by mul_t4) are still fft8's own business,
-// so they stay here rather than leaking into carryFused.
+// For FUSE_WEIGHT_BUTTERFLY.  Same as fft8Core, but the caller has already performed the first butterfly's add/subs (fusing the forward weight multiply
+// via FMA, see carryfused.cl).  The per-pair post-rotations (u[5]/u[7] delayed by M_SQRT1_2, u[6] by mul_t4) have not been done, so they are done here.
 void OVERLOAD fft8Core_skip1(T2 *u) {
   u[5] = mul_t8_delayed(u[5]);
   u[6] = mul_t4(u[6]);

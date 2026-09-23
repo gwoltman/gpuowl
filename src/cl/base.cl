@@ -108,6 +108,7 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define NONTEMPORAL 0
 #endif
 
+
 // FFT variant is in 3 parts.  One digit for WIDTH, one digit for MIDDLE, one digit for HEIGHT.
 // For WIDTH and HEIGHT there are 3 variants:
 // 0   compute one trig, bcast, chainmul                                        previously was :even/:odd BCAST=1
@@ -271,6 +272,19 @@ typedef ulong2 GF61;        // A complex value using two Z61s.  For a GF(M61^2) 
 #if FFT_TYPE < 0 || (FFT_TYPE > 4 && FFT_TYPE < 50) || FFT_TYPE > 53
 #error - unsupported FFT/NTT
 #endif
+
+// The FP64 FFT can save a few FP64 ops by applying some of the weights using FMA.  nVidia compilers are clever enough to do this automatically.
+// AMD's rocm compiler needs us to do this explicitly (see carryfused.cl's precompute and fft_common's use of it below).  Only wired up
+// for FFT_TYPE==FFT64 with fft_WIDTH's RADIX 4 or 8 (fft4_skip1 / fft8_skip1 in fft4.cl / fft8.cl); not the 32-thread
+// WIDTH=256 special case (WIDTH==256, NW==8, fft8_4-based, see fft_common).
+#if !defined(FUSE_WEIGHT_BUTTERFLY)
+#if AMDGPU && FFT_TYPE == FFT64 && !(WIDTH == 256 && NW == 8)
+#define FUSE_WEIGHT_BUTTERFLY 1
+#else
+#define FUSE_WEIGHT_BUTTERFLY 0
+#endif
+#endif
+
 // Word and Word2 define the data type for FFT integers passed between the CPU and GPU.
 #if WordSize == 8
 typedef i64 Word;

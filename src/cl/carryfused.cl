@@ -8,16 +8,6 @@
 #define INCLUDE_FILE "middle.cl"
 #include "expand.cl"
 
-// The FP64 FFT can save a few FP64 ops by applying some of the weights using FMA.  nVidia compilers are clever enough to do this automatically.
-// AMD's rocm compiler needs us to do this explicitly.
-#ifndef FUSE_WEIGHT_BUTTERFLY
-#ifdef AMDGPU
-#define FUSE_WEIGHT_BUTTERFLY 1
-#else
-#define FUSE_WEIGHT_BUTTERFLY 0
-#endif
-#endif
-
 void spin() {
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_s_sleep)
   __builtin_amdgcn_s_sleep(0);
@@ -353,11 +343,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP64
 
-  if (FUSE_WEIGHT_BUTTERFLY)
-    fft_WIDTH2fused(lds, u, smallTrig, WMUL, lowMe);
-  else
-    fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
-
+  // fft_WIDTH2 itself knows (via its callnum) to skip the first radix butterfly when FUSE_WEIGHT_BUTTERFLY is set.
+  fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   writeCarryFusedLine(u, out, line, lowMe);
 }
 

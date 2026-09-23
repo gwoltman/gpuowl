@@ -62,6 +62,18 @@ void OVERLOAD fft4by(T2 *u, u32 base, u32 step, u32 M) {
 
 void OVERLOAD fft4(T2 *u) { fft4by(u, 0, 1, 4); }
 
+// For FUSE_WEIGHT_BUTTERFLY.  Same as fft4/fft4by(u,0,1,4), but the caller has already performed the first butterfly adds/subs (see carryfused.cl);
+// u[3] still needs the mul_t4 that X2_mul_t4 would have applied to it.   Mirrors fft4Core's second butterfly plus fft4by's own output swap.
+void OVERLOAD fft4Core_skip1(T2 *u) {
+  u[3] = mul_t4(u[3]);
+  X2(u[0], u[1]);
+  X2(u[2], u[3]);
+}
+void OVERLOAD fft4_skip1(T2 *u) {
+  fft4Core_skip1(u);
+  SWAP(u[1], u[2]);
+}
+
 #endif
 
 
