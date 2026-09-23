@@ -533,7 +533,8 @@ T2 mul_t8_delayed(T2 a) { return U2(a.x - a.y, a.x + a.y); }            // Apply
 T2 mul_3t8_delayed(T2 a) { return U2(-(a.x + a.y), a.x - a.y); }        // Apply mul by M_SQRT1_2 later.  Alternatively, use mul_t8_delayed and mul by i*M_SQRT1_2 later.
 
 // Compute a + d * b and a - d * b
-void X2ad_internal(T2 *a, T2 *b, T d) { T2 t = *a; a->x = fma(b->x, d, a->x); a->y = fma(b->y, d, a->y); b->x = fma(-d, b->x, t.x); b->y = fma(-d, b->y, t.y); }
+void OVERLOAD X2ad_internal(T2 *a, T2 *b, T d) { T2 t = *a; a->x = fma(d, b->x, a->x); a->y = fma(d, b->y, a->y); b->x = fma(-d, b->x, t.x); b->y = fma(-d, b->y, t.y); }
+void OVERLOAD X2ad_internal(T2 *a, T2 *b, T2 d) { T2 t = *a; a->x = fma(d.x, b->x, a->x); a->y = fma(d.y, b->y, a->y); b->x = fma(-d.x, b->x, t.x); b->y = fma(-d.y, b->y, t.y); }
 void X2t4ad_internal(T2 *a, T2 *b, T d) { T bx = b->x; b->x = fma(d, b->y, a->x); a->x = fma(b->y, -d, a->x); b->y = fma(-d, bx, a->y); a->y = fma(bx, d, a->y); }
 void X2ad_mul_t4_internal(T2 *a, T2 *b, T d) { T by = b->y; b->y = fma(-d, b->x, a->x); a->x = fma(b->x, d, a->x); b->x = -fma(-d, by, a->y); a->y = fma(by, d, a->y); }
 
@@ -681,7 +682,8 @@ F2 mul_t8_delayed(F2 a) { return U2(a.x - a.y, a.x + a.y); }            // Apply
 F2 mul_3t8_delayed(F2 a) { return U2(-(a.x + a.y), a.x - a.y); }        // Apply mul by M_SQRT1_2 later.  Alternatively, use mul_t8_delayed and mul by i*M_SQRT1_2 later.
 
 // Compute a + d * b and a - d * b
-void X2ad_internal(F2 *a, F2 *b, F d) { F2 t = *a; a->x = fma(b->x, d, a->x); a->y = fma(b->y, d, a->y); b->x = fma(-d, b->x, t.x); b->y = fma(-d, b->y, t.y); }
+void OVERLOAD X2ad_internal(F2 *a, F2 *b, F d) { F2 t = *a; a->x = fma(d, b->x, a->x); a->y = fma(d, b->y, a->y); b->x = fma(-d, b->x, t.x); b->y = fma(-d, b->y, t.y); }
+void OVERLOAD X2ad_internal(F2 *a, F2 *b, F2 d) { F2 t = *a; a->x = fma(d.x, b->x, a->x); a->y = fma(d.y, b->y, a->y); b->x = fma(-d.x, b->x, t.x); b->y = fma(-d.y, b->y, t.y); }
 void X2t4ad_internal(F2 *a, F2 *b, F d) { F bx = b->x; b->x = fma(d, b->y, a->x); a->x = fma(b->y, -d, a->x); b->y = fma(-d, bx, a->y); a->y = fma(bx, d, a->y); }
 void X2ad_mul_t4_internal(F2 *a, F2 *b, F d) { F by = b->y; b->y = fma(-d, b->x, a->x); a->x = fma(b->x, d, a->x); b->x = -fma(-d, by, a->y); a->y = fma(by, d, a->y); }
 

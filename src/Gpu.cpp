@@ -643,18 +643,35 @@ Gpu::~Gpu() {
 
 // Part of GPU initialization is to compute the default number of registers each kernel should target during compilation.
 // Kernel register usage is critical for maximizing GPU occupancy.  The default values can be overrriden with command line arguments.
-// This feature currently only works for the CUDA compiler.
+// On CUDA this sets --maxrregcount (or launch bounds).  On AMD the same REGxxxx options select waves per SIMD or a VGPR count, see amdRegisterOption below.
 // Most kernels have occupancy limited by register usage.  For reference, the following guidelines dictate where an "uptick" in occupancy occurs.
-// If kernel threads=256, register crossovers are at 128, 80, 64, 48, 40
-// If kernel threads=128, register crossovers are at 128, 96, 80, 72, 64, 56, 48, 40
-// If kernel threads=64,  register crossovers are at 128, 112, 96, 88, 80, 72, 64, 56, 48, 40
-string Gpu::numCudaRegisters([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
-#if CUDA_BACKEND
-  int regs = 0;
+//
+// CUDA: the register file is 65536 32-bit regs/SM, split into 4 independent 16384-reg partitions (true from Volta through at least
+// Ada/Hopper).  Crossovers below are verified on TITAN V (Volta, sm_70), later architectures should match but not verified.
+//   If kernel threads=256, register crossovers are at 128, 80, 64, 48, 40
+//   If kernel threads=128 or 64, register crossovers are at 128, 96, 80, 72, 64, 56, 48, 40
+//   How far up this list is actually reachable depends on the chip's max warps/SM (below that many registers, occupancy is capped
+//   by warp slots, not by the register file, so lower entries do nothing).
+//     sm_70/80/90  (Volta, Ampere-A100, Hopper): 64 warps/SM, full list applies
+//     sm_86/89     (Ampere-consumer, Ada):       48 warps/SM, full list applies
+//     sm_75        (Turing):                     32 warps/SM, list truncates below 64
+//
+// AMD GCN (gfx803 Fiji/GCN3 through gfx906 Vega/GCN5): 256 VGPRs/lane, 4-register allocation granule, max 10 wavefronts/SIMD.
+// This does NOT depend on kernel thread count (a workgroup just spans SIMDs, there's no per-block partitioning like on CUDA), so
+// there is a single table, unlike CUDA's three.
+//   max VGPRs for 1..10 waves/SIMD = 256, 128, 84, 64, 48, 40, 36, 32, 28, 24
+//
+// AMD CDNA2 (MI200, gfx90a): 4 EUs/CU, max 8 wavefronts/EU (32/CU total, vs GCN's 10/SIMD).
+// Table taken from AMD's own article (rocm.blogs.amd.com/software-tools-optimization/register-pressure):
+//   max VGPRs for 1..8 waves/EU = 512, 256, 168, 128, 96, 80, 72, 64
+string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
+  [[maybe_unused]] int regs = 0;         // Default CUDA maximum register count (the AMD path only uses the override value)
   const char *use_override = "";
-  // Allow command line to prefer the CUDA compiler's default number of registers
+  // Allow command line to prefer the compiler's default number of registers
   if (args.value("NOREG", 0)) return string("");
-  // Determine a kernel specific default maximum number of GPU registers (values set to -1 have not been tuned for best default value)
+  // Determine a CUDA kernel specific default maximum number of GPU registers (values set to -1 have not been tuned for best default value).
+  // This switch also selects which REGxxxx option applies to the kernel, and that selection is needed on AMD too (see amdRegisterOption),
+  // so it must not be compiled out for non-CUDA backends.  The default register counts below are only used by CUDA.
   switch (which_kernel) {
   case CARRYFUSED:         // Register usage depends on NW, the FFT/NTT type, and perhaps the long carry setting
     switch (fft.shape.fft_type) {
@@ -784,6 +801,7 @@ string Gpu::numCudaRegisters([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
   }
   // Get the optional override register count
   int const override_regs = args.value(use_override, 0);
+#if CUDA_BACKEND
   // If a specified override is small, use the count as a CUDA launch_bounds rather than a maximum register count
   if (override_regs && (override_regs > 0 && override_regs <= 16)) return string("-DCUDA_MIN_BLOCKS=") + to_string(override_regs) + " ";
   // If specified, override the default maximum register count
@@ -793,8 +811,31 @@ string Gpu::numCudaRegisters([[maybe_unused]] enum WHICH_KERNEL which_kernel) {
   // Format an explicit register count setting
   return string("--maxrregcount=") + to_string(regs) + " ";
 #else
-  return string("");
+  return amdRegisterOption(which_kernel, override_regs);
 #endif
+}
+
+// AMD analog of the CUDA register cap, driven by the same REGxxxx options.  override_regs is the value of the kernel's option:
+//    0 = not specified (use the default below),  -1 = compiler default (no cap),
+//    1..10 = minimum waves per SIMD (like CUDA's launch bounds; 10 is the GCN maximum), more than 10 = explicit VGPR count.
+// A minimum-waves request caps VGPR usage.  On gfx9 (256 VGPRs per lane, allocated in units of 4) the occupancy crossovers are:
+// 128 VGPRs for 2 waves, 84 for 3, 64 for 4, 48 for 5.  A kernel a few VGPRs above the 128 boundary runs with one wave per SIMD;
+// capping it costs a few spills but doubles occupancy.  Only that one-wave cliff is worth a default: on a Radeon VII / MI50 the in-place
+// fftMiddleIn / fftMiddleOut kernels use 133 VGPRs, and requiring 2 waves per SIMD recovers most of their slowdown.  Capping to reach 3 or more
+// waves, or capping tailSquare / carryFused, was measured slower.  An explicit VGPR count makes rocm generate its usual code and then spill to fit.
+string Gpu::amdRegisterOption([[maybe_unused]] enum WHICH_KERNEL which_kernel, int override_regs) {
+  cl_device_id const id = shared.context->deviceId();
+  if (!isAmdGpu(id)) return string("");
+  if (override_regs < 0) return string("");
+  if (override_regs > 10) return string("-DAMD_NUM_VGPR=") + to_string(override_regs) + " ";
+  if (override_regs > 0) return string("-DAMD_WAVES_PER_EU=") + to_string(override_regs) + " ";
+  // Default: 2 waves per SIMD for the in-place middle kernels on Vega class GPUs (gfx900/902/904/906/909/90c: 256 VGPRs per lane).
+  // Other architectures are untested.
+  bool const is_middle = which_kernel == MIDIN || which_kernel == MIDIN31 || which_kernel == MIDIN61 ||
+                         which_kernel == MIDOUT || which_kernel == MIDOUT31 || which_kernel == MIDOUT61;
+  string const name = getDeviceName(id);
+  bool const vega = name.rfind("gfx90", 0) == 0 && name.size() > 5 && string("02469c").find(name[5]) != string::npos;
+  return (in_place && is_middle && vega) ? string("-DAMD_WAVES_PER_EU=2 ") : string("");
 }
 
 // Kernels are compiled one at a time, but OpenCL source files contain multiple kernels.  This routine set the #defines necessary so that only one kernel is compiled.
@@ -852,14 +893,14 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
-  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numCudaRegisters(MIDIN)),
+  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDIN)),
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP)),
   K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2, kernelDefines(KFP)),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(KFP) + numCudaRegisters(TAIL)),              // Single-wide tailSquare with one kernel
+                                               hN / nH / 2, kernelDefines(KFP) + numRegisters(TAIL)),              // Single-wide tailSquare with one kernel
   K(ktailMulZero,          "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP)),
   K(ktailMulLowZero,       "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP) + "-DMUL_LOW=1"),
   K(ktailMul,              "tailmul.cl", "tailMul",
@@ -872,17 +913,17 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numCudaRegisters(MIDOUT)),
+  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDOUT)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
-  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), kernelDefines(K31) + numCudaRegisters(MIDIN31)),
+  K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDIN31)),
   K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH, kernelDefines(K31)),
   K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
   K(ktailSquareGF31,       "tailsquare.cl", "tailSquareGF31",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(K31) + numCudaRegisters(TAIL31)),            // Single-wide tailSquare with one kernel
+                                               hN / nH / 2, kernelDefines(K31) + numRegisters(TAIL31)),            // Single-wide tailSquare with one kernel
   K(ktailMulZeroGF31,      "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
   K(ktailMulLowZeroGF31,   "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31) + "-DMUL_LOW=1"),
   K(ktailMulGF31,          "tailmul.cl", "tailMulGF31",
@@ -895,17 +936,17 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numCudaRegisters(MIDOUT31)),
+  K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDOUT31)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
-  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), kernelDefines(K61) + numCudaRegisters(MIDIN61)),
+  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDIN61)),
   K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH, kernelDefines(K61)),
   K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
   K(ktailSquareGF61,       "tailsquare.cl", "tailSquareGF61",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
-                                               hN / nH / 2, kernelDefines(K61) + numCudaRegisters(TAIL61)),            // Single-wide tailSquare with one kernel
+                                               hN / nH / 2, kernelDefines(K61) + numRegisters(TAIL61)),            // Single-wide tailSquare with one kernel
   K(ktailMulZeroGF61,      "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
   K(ktailMulLowZeroGF61,   "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61) + "-DMUL_LOW=1"),
   K(ktailMulGF61,          "tailmul.cl", "tailMulGF61",
@@ -918,7 +959,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numCudaRegisters(MIDOUT61)),
+  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDOUT61)),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW, kernelDefines(K61)),
 
   K(kfftP,                 "fftp.cl", "fftP", hN / nW, kernelDefines(KALL)),
@@ -927,11 +968,11 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   K(kCarryM,               "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DMUL3=1"),
   K(kCarryMROE,            "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DMUL3=1 -DROE=1"),
   K(kCarryLL,              "carry.cl", "carry", hN / CARRY_LEN, kernelDefines(KALL) + "-DLL=1"),
-  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED)),
-  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DROE=1"),
-  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1"),
-  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DMUL3=1 -DROE=1"),
-  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numCudaRegisters(CARRYFUSED) + "-DLL=1"),
+  K(kCarryFused,           "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED)),
+  K(kCarryFusedROE,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DROE=1"),
+  K(kCarryFusedMul,        "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DMUL3=1"),
+  K(kCarryFusedMulROE,     "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DMUL3=1 -DROE=1"),
+  K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DLL=1"),
 
   K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN, kernelDefines(KALL)),
 
