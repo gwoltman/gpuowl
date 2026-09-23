@@ -1209,8 +1209,8 @@ GF61 OVERLOAD mul2(GF61 a) { return U2(mul2(a.x), mul2(a.y)); }
 GF61 OVERLOAD conjugate(GF61 a) { return U2(a.x, neg(a.y)); }
 
 // Complex square. Uses (a + i*b)^2 == ((a+b)*(a-b) + i*2*a*b).
-GF61 OVERLOAD csqq(GF61 a, const u32 x_m61_count, const u32 y_m61_count) {
-  if (x_m61_count + y_m61_count >= 9) return csqq(modM61(a), 2, 2);
+GF61 OVERLOAD csqq(GF61 a, u32 x_m61_count, u32 y_m61_count) {
+  if (x_m61_count + y_m61_count >= 9) { a = modM61(a), x_m61_count = 2, y_m61_count = 2; }  // This used to be a recursive call to csqq, but then CUDA compiler won't inline
   Z61 re = weakMul(a.x + a.y, a.x + neg(a.y, y_m61_count), x_m61_count + y_m61_count - 1, x_m61_count + y_m61_count);
   Z61 im = (x_m61_count <= y_m61_count) ? weakMul(a.x + a.x, a.y, x_m61_count + x_m61_count - 1, y_m61_count) :
                                           weakMul(a.x, a.y + a.y, x_m61_count, y_m61_count + y_m61_count - 1);
@@ -1222,8 +1222,8 @@ GF61 OVERLOAD csq(GF61 a, const u32 m61_count) { return csq(a, m61_count, m61_co
 GF61 OVERLOAD csq(GF61 a) { return csq(a, 2); }
 
 // a^2 + c
-GF61 OVERLOAD csqaq(GF61 a, GF61 c, const u32 x_m61_count, const u32 y_m61_count) {
-  if (x_m61_count + y_m61_count >= 9) return csqaq(modM61(a), c, 2, 2);
+GF61 OVERLOAD csqaq(GF61 a, GF61 c, u32 x_m61_count, u32 y_m61_count) {
+  if (x_m61_count + y_m61_count >= 9) { a = modM61(a), x_m61_count = 2, y_m61_count = 2; }  // This used to be a recursive call to csqaq, but then CUDA compiler won't inline
   Z61 re = weakMulAdd(a.x + a.y, a.x + neg(a.y, y_m61_count), c.x, x_m61_count + y_m61_count - 1, x_m61_count + y_m61_count);
   Z61 im = (x_m61_count <= y_m61_count) ? weakMulAdd(a.x + a.x, a.y, c.y, x_m61_count + x_m61_count - 1, y_m61_count) :
                                           weakMulAdd(a.x, a.y + a.y, c.y, x_m61_count, y_m61_count + y_m61_count - 1);
