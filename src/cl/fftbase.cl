@@ -815,6 +815,33 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   // Finish fourth tabMul and perform final fft4.
   finish_tabMul4_fft4(trig, preloads, u, 64, numWG, lowMe, 1);
 
+// Variant 2 code for SIZE=1024, RADIX=8, threads=128.  Same 8*8*16 structure as the plain version below,
+// but the first radix-8 stage (and its tabMul) is done with the FMA-based partial/finish tabMul8 machinery.
+// The second radix-8 stage keeps the plain tabMul since shufl_and_fft2 (a combined shuffle + radix-2 fft)
+// isn't twiddle-aware -- it works the same regardless of how the preceding tabMul applied its twiddles --
+// and the final fft8_16a/fft8_16b already has its own separate FMA-style twiddle handling.
+#elif WG == 128 && RADIX == 8 && VARIANT == 2
+
+  T preloads[10];               // Place to store preloaded trig values.  We want F64 ops to hide load latencies without creating register pressure.
+  Trig trig2 = trig + WG*8;     // Skip past old FFT_width trig values to the !save_one_more_mul trig values.  Keep trig unmodified for the second stage's plain tabMul.
+
+  // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
+  preload_tabMul8_trig(trig2, preloads, 1, numWG, lowMe);
+
+  // Do first fft8, partial tabMul, and shufl.
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
+  partial_tabMul8(partitioned_lds, trig2, preloads, u, 1, numWG, lowMe);
+  shufl(lds, u, 1, numWG, lowMe);
+
+  // Finish the first tabMul and perform second fft8.
+  finish_tabMul8_fft8(trig2, preloads, u, 1, numWG, lowMe, 0);
+
+  // Second radix-8 stage stays plain -- shufl_and_fft2 doesn't care how the twiddle was applied.
+  tabMul(trig, u, 8, lowMe);
+  shufl_and_fft2(lds, u, 8, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+
 // Custom code for SIZE=4K, RADIX=8
 #elif WG == 512 && RADIX == 8 && VARIANT == 2
 
