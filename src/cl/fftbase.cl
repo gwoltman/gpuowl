@@ -721,30 +721,6 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 #endif
 #endif
 
-// SIZE=1024, RADIX=8 is 8 * 8 * 16, not a power of RADIX.  Same steps as the variant 1 code below, with broadcast trig values.
-#if WG == 128 && RADIX == 8
-
-  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
-  chainMul(u, w);
-  shufl(lds, u, 1, numWG, lowMe);
-
-  fft8(u);
-  w = bcast(w, 8);
-  chainMul(u, w);
-  shufl_and_fft2(lds, u, 8, numWG, lowMe);
-
-  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
-
-#else
-
-  for (u32 s = 1; s < WG; s *= RADIX) {
-    if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2 && s == 1) fft_RADIX_skip1(u); else fft_RADIX(u);
-    w = bcast(w, s);
-    chainMul(u, w);
-    shufl(lds, u, s, numWG, lowMe);
-  }
-  fft_RADIX(u);
-
 #endif
 
 // Variant 2 uses more FMA instructions than the original FFT code.
@@ -753,7 +729,7 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 // The downside is sine/cosine cannot be computed with chained multiplies.
 
 // Variant 2 code for SIZE=256, RADIX=4
-#elif WG == 64 && RADIX == 4 && VARIANT == 2
+#if WG == 64 && RADIX == 4 && VARIANT == 2
 
   T preloads[6];              // Place to store preloaded trig values.  We want F64 ops to hide load latencies without creating register pressure.
   trig += WG*4 + 2*WG*4;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
@@ -860,7 +836,7 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
-// Custom code for SIZE=4K, RADIX=8
+// Variant 2 code for SIZE=4K, RADIX=8
 #elif WG == 512 && RADIX == 8 && VARIANT == 2
 
   T preloads[10];             // Place to store preloaded trig values.  We want F64 ops to hide load latencies without creating register pressure.
@@ -937,7 +913,10 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 #elif WG == 32 && NW == 8
 
 #if FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH
-#error FUSE_WEIGHT_BUTTERFLY not implemented for this fft8_4-based 32-thread path (carryfused.cl's default excludes it; this only fires on an explicit override)
+#error FUSE_WEIGHT_BUTTERFLY not implemented for SIZE=256, RADIX=8
+#endif
+#if VARIANT == 0
+#error Variant 0 not implemented for SIZE=256, RADIX=8
 #endif
 
   fft8_4(u);
@@ -1004,11 +983,13 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 #elif WG == 128 && RADIX == 8
 
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
-  tabMul(trig, u, 1, lowMe);
+  if (VARIANT == 0) chainMul(u, w);
+  else tabMul(trig, u, 1, lowMe);
   shufl(lds, u, 1, numWG, lowMe);
 
   fft8(u);
-  tabMul(trig, u, 8, lowMe);
+  if (VARIANT == 0) chainMul(u, w = bcast(w, 8));
+  else tabMul(trig, u, 8, lowMe);
   shufl_and_fft2(lds, u, 8, numWG, lowMe);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
@@ -1022,7 +1003,8 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
     if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2 && s == 1) fft_RADIX_skip1(u); else fft_RADIX(u);
-    tabMul(trig, u, s, lowMe);
+    if (VARIANT == 0) chainMul(u, w = bcast(w, s));
+    else tabMul(trig, u, s, lowMe);
     shufl(lds, u, s, numWG, lowMe);
   }
   fft_RADIX(u);
