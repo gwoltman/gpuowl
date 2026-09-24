@@ -374,7 +374,14 @@ private:
 // this macro's "N" double-equivalent units by the same *2 the unpadded size itself uses) is N + 2*M*(W+16).
 // Verified as a safe upper bound (and within ~0.2-0.4% of the true requirement) by brute-force simulating
 // every read/write address middle.cl computes, across several W/M/H/NW/NH combinations including M=1.
-#define PAD_ADJUST(N,W,M,inplace,pad)           ((inplace) ? (N) + 2*(M)*((W)+16) : MID_ADJUST((pad) == 0 ? (N) : (pad) <= 128 ? 9*(N)/8 : (pad) <= 256 ? 5*(N)/4 : 3*(N)/2, M, pad))
+// PAD_ADJUST() when INPLACE=0 sizes buf1/buf2/buf3 from a table of fixed fractions of N keyed only on PAD,
+// MIDDLE and INPLACE.  But the layout fftMiddleIn and fftMiddleOut write also depends on
+// IN_WG/IN_SIZEX and OUT_WG/OUT_SIZEX: writeMiddleInLine lays down WIDTH/IN_SIZEX columns of
+// SMALL_HEIGHT/(IN_WG/IN_SIZEX) chunks of MIDDLE*IN_WG elements, with a PAD_SIZE pad after every
+// chunk and a BIG_PAD_SIZE pad after every column, so it needs
+//    1 + PAD_SIZE/(MIDDLE*IN_WG) + BIG_PAD_SIZE/(MIDDLE*SMALL_HEIGHT*IN_SIZEX)
+// times N, and writeMiddleOutLine the mirror image.  With MIDDLE=2, PAD=512, IN_WG=64 and IN_SIZEX=4 that is 1.5156
+#define PAD_ADJUST(N,W,M,inplace,pad)           ((inplace) ? (N) + 2*(M)*((W)+16) : MID_ADJUST((pad) == 0 ? (N) : (pad) <= 128 ? 9*(N)/8 : (pad) <= 256 ? 5*(N)/4 : 16*(N)/10, M, pad))
 #define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad)
 #define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(float) / sizeof(double)
 #define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(uint) / sizeof(double)
