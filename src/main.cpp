@@ -56,10 +56,12 @@ static void gpuWorker(GpuCommon shared, i32 instance) {
 extern int putenv(char *);
 #endif
 
-// The exceptions that end a run on purpose: the user's stop, and the two
-// flags that only print. Everything else thrown to main() is a failure.
+// The exceptions that end a run on purpose: the user's stop, and the
+// flags that only print (-h, -info, -version). Everything else thrown
+// to main() is a failure.
 static bool isCleanExit(const char *reason) {
-  return !strcmp(reason, "stop requested") || !strcmp(reason, "help") || !strcmp(reason, "version");
+  return !strcmp(reason, "stop requested") || !strcmp(reason, "help")
+      || !strcmp(reason, "info") || !strcmp(reason, "version");
 }
 
 int main(int argc, char **argv) {
@@ -149,6 +151,11 @@ int main(int argc, char **argv) {
       // log("No more work. Add work to worktodo.txt , see -h for details.\n");
     }
   } catch (const char *mes) {
+    // -version already printed its one plain line to stdout (Args::parse);
+    // exit immediately without the log timestamp/"Bye" chatter that would
+    // otherwise follow, so a launcher capturing the output sees only the
+    // version.
+    if (!strcmp(mes, "version")) { return 0; }
     log("Exiting because \"%s\"\n", mes);
     exitCode = isCleanExit(mes) ? 0 : 1;
   } catch (const string& mes) {
