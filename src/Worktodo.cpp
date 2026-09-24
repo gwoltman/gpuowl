@@ -33,7 +33,8 @@ bool isHex(const string& s) {
 std::optional<Task> parse(const std::string& line) {
   if (line.empty() || line[0] == '#') { return {}; }
 
-  vector<string> topParts = split(line, '=');
+  // The line keeps its "\n" (or "\r\n"); strip it so that a last field such as the exponent parses.
+  vector<string> topParts = split(rstripNewline(line), '=');
 
   bool isPRP = false;
   bool isLL = false;
@@ -63,9 +64,11 @@ std::optional<Task> parse(const std::string& line) {
     }
 
     // PRP lines are "k,b,n,c,..." and only k=1, b=2, c=-1 is a Mersenne number; anything else (k*2^n-1, 2^n+1, base 3)
-    // is not ours and must not be run as exponent k.  The bare "E,..." form is only used by Test=/DoubleCheck= lines.
-    bool const mersenne = parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && (parts[3] == "-1" || parts[3] == "-1\n");
-    string const s = mersenne ? parts[2] : ((isLL && !parts.empty()) ? parts[0] : "");
+    // is not ours and must not be run as exponent k.  The bare "E,..." form is used by Test=/DoubleCheck= lines;
+    // a PRP line may also give just the exponent ("PRP=118063003", the form the help documents).
+    bool const mersenne = parts.size() >= 4 && parts[0] == "1" && parts[1] == "2" && parts[3] == "-1";
+    bool const bare = isLL ? !parts.empty() : parts.size() == 1;
+    string const s = mersenne ? parts[2] : (bare ? parts[0] : "");
 
     const char *end = s.c_str() + s.size();
     u64 exp{};
