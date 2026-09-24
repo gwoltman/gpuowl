@@ -2832,7 +2832,13 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
         ++nErrors;
         goto reload;
       }
-      (*background)([=, E=this->E] { ProofSet::save(E, power, k, compactBits(rawData, E)); });
+      (*background)([=, this] {
+        try {
+          ProofSet::save(E, power, k, compactBits(rawData, E));
+        } catch (const FileError&) {
+          proofSaveFailed = true;
+        }
+      });
       persistK = proofSet->next(k);
     }
 
@@ -2861,8 +2867,13 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
       goto reload;
     }
 
+    // Once a proof residue could not be written, no checkpoint may be written past it (the background thread runs
+    // the queued saves in order, so this is checked when each save runs) and the test stops.
+    if (proofSaveFailed) { throw "proof residue write failed"; }
+
     if (!doCheck) {
       (*background)([=, this] {
+        if (proofSaveFailed) { return; }
         getSaver()->saveUnverified({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors,
                                     .elapsed=elapsedBefore + elapsedTimer.at()});
       });
@@ -2885,6 +2896,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
 
         if (k < kEnd) {
           (*background)([=, this, rawCheck = std::move(rawCheck)] {
+            if (proofSaveFailed) { return; }
             getSaver()->save({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
           });
         }
@@ -2898,6 +2910,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
           fs::path proofFile;
           if (proofSet) {
             background->waitEmpty();
+            if (proofSaveFailed) { throw "proof residue write failed"; }
             try {
               proofFile = saveProof(args, *proofSet);
             } catch (...) {
