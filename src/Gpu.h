@@ -369,10 +369,15 @@ private:
 // The worst case seems to be !INPLACE, MIDDLE=4, PAD_SIZE=512.
 
 #define MID_ADJUST(size,M,pad)                  (((pad) == 0 || (M) != 4) ? (size) : (size) * 5/4)
-#define PAD_ADJUST(N,M,inplace,pad)             ((inplace) ? 3*(N)/2 : MID_ADJUST((pad) == 0 ? (N) : (pad) <= 128 ? 9*(N)/8 : (pad) <= 256 ? 5*(N)/4 : 3*(N)/2, M, pad))
-#define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad)
-#define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(float) / sizeof(double)
-#define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(uint) / sizeof(double)
-#define GF61_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, M, inplace, pad) * sizeof(ulong) / sizeof(double)
+// INPLACE=1's middle.cl layout (SIZEBLK/SIZEW/SIZEM, 16-row swizzled blocks) needs only a hair over the
+// unpadded size, not the flat 3*(N)/2 below -- MIDDLE * SIZEM (in native complex-pair units, converted to
+// this macro's "N" double-equivalent units by the same *2 the unpadded size itself uses) is N + 2*M*(W+16).
+// Verified as a safe upper bound (and within ~0.2-0.4% of the true requirement) by brute-force simulating
+// every read/write address middle.cl computes, across several W/M/H/NW/NH combinations including M=1.
+#define PAD_ADJUST(N,W,M,inplace,pad)           ((inplace) ? (N) + 2*(M)*((W)+16) : MID_ADJUST((pad) == 0 ? (N) : (pad) <= 128 ? 9*(N)/8 : (pad) <= 256 ? 5*(N)/4 : 3*(N)/2, M, pad))
+#define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad)
+#define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(float) / sizeof(double)
+#define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(uint) / sizeof(double)
+#define GF61_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(ulong) / sizeof(double)
 #define TOTAL_DATA_SIZE(fft,W,M,H,inplace,pad)  ((int)(fft).FFT_FP64 * FP64_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).FFT_FP32 * FP32_DATA_SIZE(W,M,H,inplace,pad) + \
                                                 (int)(fft).NTT_GF31 * GF31_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).NTT_GF61 * GF61_DATA_SIZE(W,M,H,inplace,pad))
