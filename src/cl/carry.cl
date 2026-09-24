@@ -227,7 +227,8 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF61) in, u32 posROE, P(CarryABM) carryOut, P
 #define combo_counter   combo.b
 
   const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
-  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
+  // word_index spans the whole FFT here (up to NWORDS-2), so reduce it mod 61 first: word_index * shift could exceed 2^32 and wrap.
+  combo_counter = comboFracBits(word_index) + make_u64(word_index % 61 * bigword_weight_shift_minus1, 0xFFFFFFFF);
 
   // We also adjust shift amount for the fact that NTT returns results multiplied by 2*NWORDS.
   const u32 log2_NWORDS = (WIDTH == 256 ? 8 : WIDTH == 512 ? 9 : WIDTH == 1024 ? 10 : 12) +
@@ -474,7 +475,8 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 #define combo_counter   combo.b
 
   const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
-  combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
+  // word_index spans the whole FFT here (up to NWORDS-2), so reduce it mod 61 first: word_index * shift could exceed 2^32 and wrap.
+  combo_counter = comboFracBits(word_index) + make_u64(word_index % 61 * bigword_weight_shift_minus1, 0xFFFFFFFF);
 
   // We also adjust shift amount for the fact that NTT returns results multiplied by 2*NWORDS.
   const u32 log2_NWORDS = (WIDTH == 256 ? 8 : WIDTH == 512 ? 9 : WIDTH == 1024 ? 10 : 12) +
@@ -561,7 +563,8 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
   const u64 m31_combo_step = make_u64(m31_bigword_weight_shift_minus1, FRAC_BPW_HI);
   m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   const u64 m61_combo_step = make_u64(m61_bigword_weight_shift_minus1, FRAC_BPW_HI);
-  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
+  // word_index spans the whole FFT here (up to NWORDS-2), so reduce it mod 61 first: word_index * shift could exceed 2^32 and wrap.
+  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index % 61 * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
 
   // We also adjust shift amount for the fact that NTT returns results multiplied by 2*NWORDS.
   const u32 log2_NWORDS = (WIDTH == 256 ? 8 : WIDTH == 512 ? 9 : WIDTH == 1024 ? 10 : 12) +
@@ -661,7 +664,8 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   const u64 m31_combo_step = ((u64) m31_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
   m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   const u64 m61_combo_step = ((u64) m61_bigword_weight_shift_minus1 << 32) + FRAC_BPW_HI;
-  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
+  // word_index spans the whole FFT here (up to NWORDS-2), so reduce it mod 61 first: word_index * shift could exceed 2^32 and wrap.
+  m61_combo_counter = comboFracBits(word_index) + make_u64(word_index % 61 * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
 
   // We also adjust shift amount for the fact that NTT returns results multiplied by 2*NWORDS.
   const u32 log2_NWORDS = (WIDTH == 256 ? 8 : WIDTH == 512 ? 9 : WIDTH == 1024 ? 10 : 12) +
