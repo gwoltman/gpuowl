@@ -1343,7 +1343,7 @@ void cudaSetL1Config(int x) {
 // window with hitRatio sized so that only the actual buffer bytes get persisting treatment,
 // not the gaps between non-contiguous allocations.
 #if CUDA_VERSION >= 11000
-[[maybe_unused]] static void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers) {
+void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers) {
   if (!q) return;
 
   // Find address span and total data size
@@ -1395,6 +1395,8 @@ void cudaSetL1Config(int x) {
             buffers.size());
   }
 }
+#else
+void cudaSetL2Persistent(cl_command_queue, const std::vector<cl_mem>&) {}
 #endif
 
 

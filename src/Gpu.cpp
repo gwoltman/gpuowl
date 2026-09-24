@@ -299,6 +299,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "MULTI_Q",
                               "GRAPHS",
                               "L1CUDA",
+                              "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
                               "PDL"                     // CUDA, sm_90+: programmatic dependent launch
                             });
     if (!isValid) {
@@ -1139,6 +1140,16 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   // However, the current way PRPLL is organized would then make this option hard to tune.
 #if CUDA_BACKEND
     cudaSetL1Config(args.value("L1CUDA", 0));
+
+    // Optionally mark some "hot" buffers for persisting L2 treatment (Volta+, needs CUDA_VERSION >= 11000).
+    // Bitmask: 1=buf1 (the hot middle/tail buffer), 2=trig tables, 4=carryShuttle (bufCarry+bufReady).
+    if (u32 const l2persist = args.value("L2PERSIST", 0)) {
+      std::vector<cl_mem> l2bufs;
+      if (l2persist & 1) { l2bufs.push_back(buf1.get()); }
+      if (l2persist & 2) { l2bufs.push_back(bufTrigH->get()); l2bufs.push_back(bufTrigM->get()); l2bufs.push_back(bufTrigW->get()); }
+      if (l2persist & 4) { l2bufs.push_back(bufCarry.get()); l2bufs.push_back(bufReady.get()); }
+      cudaSetL2Persistent(queue.get(), l2bufs);
+    }
 #endif
 
   // Process the queue.  I don't know if this is really needed.
