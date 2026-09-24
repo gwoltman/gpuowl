@@ -566,6 +566,13 @@ void Args::parse(const string& line) {
     else if (key == "-carry") {
       if (s == "short" || s == "long") {
         carry = s == "short" ? CARRY_32 : CARRY_64;
+        // parse() runs once per source (command line, config.txt, ...), so warn only the first time
+        static bool warnedCarryShort = false;
+        if (s == "short" && !warnedCarryShort) {
+          warnedCarryShort = true;
+          log("-carry short has no effect: PRPLL already uses short carry whenever it is safe, and always "
+              "switches to long carry below 10 bits/word regardless of -carry, to avoid incorrect results\n");
+        }
       } else {
         log("-carry expects short|long\n");
         throw "-carry expects short|long";
