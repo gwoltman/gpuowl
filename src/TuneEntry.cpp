@@ -62,11 +62,16 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
       log("tune.txt line '%s' ignored\n", line.c_str());
       continue;   // otherwise specBuf below is uninitialised
     }
-    FFTConfig const fft{specBuf};
-    assert(cost >= prevCost && fft.maxExp() > prevMaxExp);
-    prevCost = cost;
-    prevMaxExp = fft.maxExp();
-    results.push_back({cost, fft});
+    try {
+      FFTConfig const fft{specBuf};
+      assert(cost >= prevCost && fft.maxExp() > prevMaxExp);
+      prevCost = cost;
+      prevMaxExp = fft.maxExp();
+      results.push_back({cost, fft});
+    } catch (const char*) {
+      // e.g. a row from an older build whose variant encoding is no longer valid: skip it, keep the other rows
+      log("tune.txt line '%s' ignored\n", rstripNewline(line).c_str());
+    }
   }
   if (args.verbose && !results.empty()) { log("Read %u entries from %s\n", u32(results.size()), tuneFile.string().c_str()); }
   return results;
