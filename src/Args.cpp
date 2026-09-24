@@ -426,8 +426,10 @@ void Args::parse(const string& line) {
         }
         flags[key] = val;
       }
-    } else if (key == "-unsafeMath") {
-      safeMath = false;
+    } else if (key == "-unsafeMath") {                                  // DEPRECATED, not in -help.  The flag has not reached the compiler since 424a54e,
+      safeMath = false;                                                 // and measured on gfx1100 -cl-unsafe-math-optimizations gives no speedup and a lower
+                                                                        // roundoff margin (reassoc folds fancyMul's fma).  Parsing left in place so previous
+                                                                        // users do not get an error; safeMath kept in case a developer wants to try it again.
     } else if (key == "-save") {
       int const n = stoi(s);
       if (n < 1) {                                     // 0 makes Saver::trimFiles index v[-1]
