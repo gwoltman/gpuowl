@@ -267,8 +267,20 @@ void ProofSet::save(u64 E, [[maybe_unused]] u32 power, u64 k, const Words& words
   assert(k && k <= E);
   assert(isInPoints(E, power, k));
 
-  File::openWrite(proofPath(E) / to_string(k)).writeChecked(words);
-  assert(load(E, power, k) == words);
+  fs::path const path = proofPath(E) / to_string(k);
+  File::openWrite(path).writeChecked(words);
+
+  // Read the point back, in release builds too: a write can fail after fwrite() returned (e.g. the disk
+  // fills up when the buffer is flushed on close), and a bad point would otherwise only show at proof time.
+  bool ok = false;
+  try {
+    ok = (load(E, power, k) == words);
+  } catch (const FileError&) {
+  } catch (const fs::filesystem_error&) {}
+  if (!ok) {
+    log("Proof point %" PRIu64 " of %" PRIu64 " failed to read back from '%s'\n", k, E, path.string().c_str());
+    throw WriteError{path.string()};
+  }
 }
 
 Words ProofSet::load(u64 E, [[maybe_unused]] u32 power, u64 k) {
