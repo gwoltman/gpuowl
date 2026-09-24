@@ -308,10 +308,15 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
     // Some -use options are needed in both OpenCL code and C++ initialization code
     if (k == "TAIL_KERNELS") {
-      if (atoi(v.c_str()) == 0) tail_single_wide = true, tail_single_kernel = true;
-      if (atoi(v.c_str()) == 1) tail_single_wide = true, tail_single_kernel = false;
-      if (atoi(v.c_str()) == 2) tail_single_wide = false, tail_single_kernel = true;
-      if (atoi(v.c_str()) == 3) tail_single_wide = false, tail_single_kernel = false;
+      int const tailKernels = atoi(v.c_str());
+      if (tailKernels < 0 || tailKernels > 3) {
+        log("Invalid TAIL_KERNELS=%d, must be 0..3\n", tailKernels);
+        throw "invalid TAIL_KERNELS";
+      }
+      if (tailKernels == 0) tail_single_wide = true, tail_single_kernel = true;
+      if (tailKernels == 1) tail_single_wide = true, tail_single_kernel = false;
+      if (tailKernels == 2) tail_single_wide = false, tail_single_kernel = true;
+      if (tailKernels == 3) tail_single_wide = false, tail_single_kernel = false;
     }
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
