@@ -8,12 +8,14 @@
 #include "Args.h"
 #include "fs.h"
 #include "Primes.h"
+#include "FFTConfig.h"
 
 #include <cassert>
 #include <string>
 #include <optional>
 #include <charconv>
 #include <cinttypes>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 
@@ -105,8 +107,22 @@ std::optional<Task> parse(const std::string& line) {
   return {};
 }
 
+// Whether Task::execute can run exponent E: FFTConfig::bestFit throws "No FFT" when E is above every FFT's maxExp,
+// and the Gpu constructor throws "FFT size too large" when E gives fewer bits/word than the chosen FFT's minimum.
+static bool fftFits(const Args& args, u64 E) {
+  try {
+    FFTConfig const fft = FFTConfig::bestFit(args, E, args.fftSpec);
+    float const bitsPerWord = E / float(fft.size());
+    return !(bitsPerWord < fft.minBpw());
+  } catch (const char* mes) {
+    if (strcmp(mes, "No FFT")) { throw; }
+    return false;
+  }
+}
+
 // Among the valid tasks from fileName, return the "best" which means the smallest CERT, or otherwise the exponent PRP/LL
-static std::optional<Task> bestTask(const fs::path& fileName, bool smallest) {
+static std::optional<Task> bestTask(const Args& args, const fs::path& fileName) {
+  bool const smallest = args.smallest;
   optional<Task> best;
   for (const string& line : File::openRead(fileName)) {
     optional<Task> task = parse(line);
@@ -119,6 +135,12 @@ static std::optional<Task> bestTask(const fs::path& fileName, bool smallest) {
     if (task && (!best
                  || (best->kind != Task::CERT && task->kind == Task::CERT)
                  || ((best->kind != Task::CERT || task->kind == Task::CERT) && smallest && task->exponent < best->exponent))) {
+      // A PRP/LL exponent that no FFT can run would throw in Task::execute and end the worker; the line is never
+      // deleted, so every restart would pick it and die again, and the work behind it would never run.  Skip it.
+      if (task->kind != Task::CERT && !fftFits(args, task->exponent)) {
+        log("No FFT can run exponent %" PRIu64 "; skipping worktodo line \"%s\"\n", task->exponent, rstripNewline(task->line).c_str());
+        continue;
+      }
       best = task;
     }
   }
@@ -132,7 +154,7 @@ optional<Task> getWork(Args& args, i32 instance) {
   fs::path const localWork = filename;
 
   // Try to get a task from the local worktodo-<N> file.
-  if (optional<Task> task = bestTask(localWork, args.smallest)) { return task; }
+  if (optional<Task> task = bestTask(args, localWork)) { return task; }
 
   if (args.masterDir.empty()) { log("No work to do found.  Add work to %s.\n", filename.c_str()); return {}; }
 
@@ -166,7 +188,7 @@ optional<Task> getWork(Args& args, i32 instance) {
     u64 const initialSize = fileSize(worktodo);
     if (!initialSize) { return {}; }
 
-    optional<Task> task = bestTask(worktodo, args.smallest);
+    optional<Task> task = bestTask(args, worktodo);
     if (!task) { return {}; }
 
     string const workLine = task->line;
