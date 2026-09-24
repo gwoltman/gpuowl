@@ -269,11 +269,12 @@ Program loadBinary(cl_context context, cl_device_id id, string_view fileName) {
     log("Load binary %s : %s\n", string(fileName).c_str(), errMes(err).c_str());
     return {};
   }
+  Program holder{program};
   if ((err = clBuildProgram(program, 1, &id, nullptr, nullptr, nullptr))) {
     log("Build binary %s : %s\n", string(fileName).c_str(), errMes(err).c_str());
     return {};
   }
-  return Program{program};
+  return holder;
 }
 
 static string getBinary(cl_program program) {
