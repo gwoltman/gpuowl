@@ -19,15 +19,24 @@ bool Primes::isPrimeOdd(u64 n) const {
   assert(n % 2); // must be odd to call here
 
   if (n < 3) { return false; }
+  u64 lastP = 0;
   for (u32 k = 0; k < sieve.size(); ++k) {
     if (sieve[k]) {
       u32 const p = k * 2 + 3;
       if (u64(p) * u64(p) > n) { return true; }
       if (n % p == 0) { return false; }
+      lastP = p;
     }
   }
-  assert(false);
-  return false;
+
+  // n is beyond the sieve's fast-path bound (lastP^2): none of the sieved
+  // primes divide n, but we haven't reached sqrt(n) yet. This is rare (n
+  // above ~9.998e9) and not a hot path, so fall back to plain trial
+  // division by the remaining odd numbers instead of assuming n is prime.
+  for (u64 p = lastP + 2; p <= n / p; p += 2) {
+    if (n % p == 0) { return false; }
+  }
+  return true;
 }
 
 bool Primes::isPrime(u64 n) const {
