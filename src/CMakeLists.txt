@@ -43,7 +43,11 @@ target_include_directories(prpll PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 add_custom_command(
   OUTPUT version.inc
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  COMMAND git describe --tags --long --dirty --always --match ${CMAKE_SOURCE_DIR} | sed 's/.*/"&"/' > ${CMAKE_CURRENT_BINARY_DIR}/version.inc
+  # Matches the Makefile's VERSION recipe (Makefile:125): restrict to this
+  # project's own 'v/prpll/*' tags, then basename to drop the 'v/prpll/'
+  # directory part, so cmake and make builds of the same commit embed the
+  # same version string.
+  COMMAND git describe --tags --long --dirty --always --match 'v/prpll/*' | xargs basename | sed 's/.*/"&"/' > ${CMAKE_CURRENT_BINARY_DIR}/version.inc
   DEPENDS ${CMAKE_SOURCE_DIR}
   )
 
