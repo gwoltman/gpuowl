@@ -316,6 +316,12 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
     if (k == "PAD") pad_size = atoi(v.c_str());
+    // Read below as a divisor to size WMUL, so an empty, zero or non-numeric value would divide by zero.
+    // shufl handles only 4, 8 and 16 bytes.
+    if (k == "SHUFL_BYTES_W" && v != "4" && v != "8" && v != "16") {
+      log("Invalid -use SHUFL_BYTES_W=%s (must be 4, 8 or 16)\n", v.c_str());
+      throw "Invalid SHUFL_BYTES_W";
+    }
   }
 
   // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W).  If using the 32KB maximum, LDS padding must be disabled.
