@@ -143,6 +143,11 @@ void cudaSetL1Config(int x);
 // Computes the address span covering all buffers and sets a single access policy window.
 // Buffers that are nullptr or zero-size are skipped.
 void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers);
+
+// Reserve a fraction (0-100%) of the device's max persisting L2 cache size for the current context.
+// Without this call the driver uses its own (usually small) default, which limits how much of an
+// access-policy window's "persisting" hint actually takes effect.
+void cudaSetL2PersistLimit(int pct);
 #endif
 
 

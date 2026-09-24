@@ -300,6 +300,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "GRAPHS",
                               "L1CUDA",
                               "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
+                              "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
                               "PDL"                     // CUDA, sm_90+: programmatic dependent launch
                             });
     if (!isValid) {
@@ -1144,11 +1145,21 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     // Optionally mark some "hot" buffers for persisting L2 treatment (Volta+, needs CUDA_VERSION >= 11000).
     // Bitmask: 1=buf1 (the hot middle/tail buffer), 2=trig tables, 4=carryShuttle (bufCarry+bufReady).
     if (u32 const l2persist = args.value("L2PERSIST", 0)) {
+      // Reserve a fraction of the device's max persisting L2 cache size for this context; without
+      // this the driver's own (usually much smaller) default caps how much of the access-policy
+      // window below actually gets persisting treatment. Percent of max, default 100.
+      cudaSetL2PersistLimit(args.value("L2PERSISTPCT", 100));
+
       std::vector<cl_mem> l2bufs;
       if (l2persist & 1) { l2bufs.push_back(buf1.get()); }
       if (l2persist & 2) { l2bufs.push_back(bufTrigH->get()); l2bufs.push_back(bufTrigM->get()); l2bufs.push_back(bufTrigW->get()); }
       if (l2persist & 4) { l2bufs.push_back(bufCarry.get()); l2bufs.push_back(bufReady.get()); }
+
+      // The access-policy window is a per-STREAM setting. With MULTI_Q, GF61 work (the larger
+      // share of buf1's data) runs on auxQueues[0], a separate stream from the main queue -- so
+      // it must get the same window too, or its buf1 traffic gets no persisting treatment at all.
       cudaSetL2Persistent(queue.get(), l2bufs);
+      for (auto& auxQueue : auxQueues) { cudaSetL2Persistent(auxQueue.get(), l2bufs); }
     }
 #endif
 
