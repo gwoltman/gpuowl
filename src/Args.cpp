@@ -133,11 +133,12 @@ named "config.txt" in the prpll run directory.
 
 
 -h                 : print general help, list of FFTs, list of devices
--info <fft>        : print detailed information about the given FFT; e.g. -h 1K:13:256
--dir <folder>      : specify local work directory (containing worktodo.txt, results.txt, config.txt, gpuowl.log)
--pool <dir>        : specify a directory with the shared (pooled) worktodo.txt and results.txt
-                     Multiple PRPLL instances, each in its own directory, can share a pool of assignments and report
-                     the results back to the common pool.
+-info <fft>        : print detailed information about the given FFT; e.g. -info 1K:13:256
+-dir <folder>      : specify local work directory (containing worktodo-<N>.txt, results-<N>.txt, config.txt,
+                     gpuowl-<N>.log)
+-pool <dir>        : specify a directory with the shared (pooled) worktodo.txt and config.txt
+                     Multiple PRPLL instances, each in its own directory, can share a pool of assignments.
+                     Results are still written locally, to results-<N>.txt in each instance's own directory.
 -verbose           : print more log, useful for developers
 -version           : print only the version and exit
 -user <name>       : specify the mersenne.org user name (for result reporting)
@@ -166,11 +167,14 @@ named "config.txt" in the prpll run directory.
                      A lower power reduces disk space requirements but increases the verification cost.
                      A higher power increases disk usage a lot.
                      e.g. proof power 10 for a 120M exponent uses about %.0fGB of disk space.
--iters <N>         : run next PRP test for <N> iterations and exit. Multiple of 10000.
+-iters <N>         : run next PRP test for <N> iterations and exit.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune
 -roe               : measure the Round-Off Error (Z) for more iterations (slow)
+-time              : collect and print a per-kernel GPU timing profile
+-log <N>           : log progress and checkpoint every <N> iterations (positive multiple of 1000; default 20000)
+-maxAlloc <size>   : limit the largest single GPU memory allocation, e.g. -maxAlloc 4G or -maxAlloc 2000M
 
 -use <define>      : comma separated list of defines for configuring openCL code, such as:
   -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
@@ -365,7 +369,7 @@ void Args::parse(const string& line) {
       keepProof = true;
     } else if (key == "-verify") {
       if (s.empty()) {
-        log("-verify needs <proof-file> or <exponent>\n");
+        log("-verify needs <proof-file>\n");
         throw "-verify without proof-file";
       }
       verifyPath = s;
