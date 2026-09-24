@@ -249,12 +249,10 @@ static vector<double2> genSmallTrigFP64(u32 size, u32 radix) {
 }
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
-static vector<double2> genSmallTrigComboFP64(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+static vector<double2> genSmallTrigComboFP64(u32 tail_trigs, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   if (LOG_TRIG_ALLOC) { log("genSmallTrigComboFP64(%u, %u)\n", size, radix); }
 
   vector<double2> tab = genSmallTrigFP64(size, radix);
-
-  u32 const tail_trigs = args->value("TAIL_TRIGS", 2);                   // Default is calculating from scratch, no memory accesses
 
   // From tailSquare pre-calculate some or all of these:  T2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
   if (tail_trigs == 1) {          // Some trig values in memory, some are computed with a complex multiply.  Best option on a Radeon VII.
@@ -528,10 +526,8 @@ static vector<float2> genSmallTrigFP32(u32 size, u32 radix) {
 }
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
-static vector<float2> genSmallTrigComboFP32(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+static vector<float2> genSmallTrigComboFP32(u32 tail_trigs, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   vector<float2> tab = genSmallTrigFP32(size, radix);
-
-  u32 const tail_trigs = args->value("TAIL_TRIGS32", 2);          // Default is calculating from scratch, no memory accesses
 
   // From tailSquare pre-calculate some or all of these:  F2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
   if (tail_trigs == 1) {          // Some trig values in memory, some are computed with a complex multiply.
@@ -720,10 +716,9 @@ static vector<uint2> genSmallTrigGF31(u32 size, u32 radix) {
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
 
-static vector<uint2> genSmallTrigComboGF31(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+static vector<uint2> genSmallTrigComboGF31(u32 tail_trigs, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   vector<uint2> tab = genSmallTrigGF31(size, radix);
 
-  u32 const tail_trigs = args->value("TAIL_TRIGS31", 0);          // Default is reading all trigs from memory
 
   // PFA (MIDDLE = R * 2^k on an NTT), see genSmallTrigComboGF61
   if (middle & (middle - 1)) {
@@ -966,10 +961,9 @@ u64 pfaRootOfUnity(u32 q, u32 R) {
   return pfaPowMod(q, q == 61 ? 37 : 7, (p - 1) / R);
 }
 
-static vector<ulong2> genSmallTrigComboGF61(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+static vector<ulong2> genSmallTrigComboGF61(u32 tail_trigs, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   vector<ulong2> tab = genSmallTrigGF61(size, radix);
 
-  u32 const tail_trigs = args->value("TAIL_TRIGS61", 0);          // Default is reading all trigs from memory
 
   // PFA (MIDDLE = R * 2^k on an NTT, R = 3, 7, 9, 11): with TW = width * middle/R the tail line kx + TW*k3 holds the frequencies
   // (k3, kx + TW*ky) and t^2 = w^k3 * v^(kx + TW*ky), w the R-th root of unity of the radix-R and v a root of order TW*height.
@@ -1111,12 +1105,12 @@ static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u
   size_t tabsize;
 
   if (fft.FFT_FP64) {
-    tab = genSmallTrigComboFP64(args, width, middle, size, radix, tail_single_wide);
+    tab = genSmallTrigComboFP64(args->valueFor("TAIL_TRIGS", 2, fft.shape.spec()), width, middle, size, radix, tail_single_wide);
     tab.resize(SMALLTRIGCOMBO_FP64_SIZE(width, middle, size, radix));
   }
 
   if (fft.FFT_FP32) {
-    vector<float2> tab1 = genSmallTrigComboFP32(args, width, middle, size, radix, tail_single_wide);
+    vector<float2> tab1 = genSmallTrigComboFP32(args->valueFor("TAIL_TRIGS32", 2, fft.shape.spec()), width, middle, size, radix, tail_single_wide);
     tab1.resize(SMALLTRIGCOMBO_FP32_SIZE(width, middle, size, radix));
     // Append tab1 to tab
     tabsize = tab.size();
@@ -1125,7 +1119,7 @@ static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u
   }
 
   if (fft.NTT_GF31) {
-    vector<uint2> tab2 = genSmallTrigComboGF31(args, width, middle, size, radix, tail_single_wide);
+    vector<uint2> tab2 = genSmallTrigComboGF31(args->valueFor("TAIL_TRIGS31", 0, fft.shape.spec()), width, middle, size, radix, tail_single_wide);
     tab2.resize(SMALLTRIGCOMBO_GF31_SIZE(width, middle, size, radix));
     // Append tab2 to tab
     tabsize = tab.size();
@@ -1134,7 +1128,7 @@ static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u
   }
 
   if (fft.NTT_GF61) {
-    vector<ulong2> tab3 = genSmallTrigComboGF61(args, width, middle, size, radix, tail_single_wide);
+    vector<ulong2> tab3 = genSmallTrigComboGF61(args->valueFor("TAIL_TRIGS61", 0, fft.shape.spec()), width, middle, size, radix, tail_single_wide);
     tab3.resize(SMALLTRIGCOMBO_GF61_SIZE(width, middle, size, radix));
     // Append tab3 to tab
     tabsize = tab.size();
@@ -1221,10 +1215,10 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   auto& m = small;
   TrigPtr p{};
 
-  u32 const tail_trigs = args->value("TAIL_TRIGS", 2);                 // Default is calculating FP64 trigs from scratch, no memory accesses
-  u32 const tail_trigs31 = args->value("TAIL_TRIGS31", 2);             // Default is reading GF31 trigs from memory
-  u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
-  u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
+  u32 const tail_trigs = args->valueFor("TAIL_TRIGS", 2, fft.shape.spec());                 // Default is calculating FP64 trigs from scratch, no memory accesses
+  u32 const tail_trigs31 = args->valueFor("TAIL_TRIGS31", 2, fft.shape.spec());             // Default is reading GF31 trigs from memory
+  u32 const tail_trigs32 = args->valueFor("TAIL_TRIGS32", 2, fft.shape.spec());             // Default is calculating FP32 trigs from scratch, no memory accesses
+  u32 const tail_trigs61 = args->valueFor("TAIL_TRIGS61", 2, fft.shape.spec());             // Default is reading GF61 trigs from memory
   u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide);
 
   // See if there is an existing smallTrigCombo that we can return (using only a subset of the data)
@@ -1249,10 +1243,10 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
 }
 
 TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 middle, u32 height, u32 nH, bool tail_single_wide) {
-  u32 const tail_trigs = args->value("TAIL_TRIGS", 2);                 // Default is calculating FP64 trigs from scratch, no memory accesses
-  u32 const tail_trigs31 = args->value("TAIL_TRIGS31", 2);             // Default is reading GF31 trigs from memory
-  u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
-  u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
+  u32 const tail_trigs = args->valueFor("TAIL_TRIGS", 2, fft.shape.spec());                 // Default is calculating FP64 trigs from scratch, no memory accesses
+  u32 const tail_trigs31 = args->valueFor("TAIL_TRIGS31", 2, fft.shape.spec());             // Default is reading GF31 trigs from memory
+  u32 const tail_trigs32 = args->valueFor("TAIL_TRIGS32", 2, fft.shape.spec());             // Default is calculating FP32 trigs from scratch, no memory accesses
+  u32 const tail_trigs61 = args->valueFor("TAIL_TRIGS61", 2, fft.shape.spec());             // Default is reading GF61 trigs from memory
   u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide);
 
   // If there are no pre-computed trig values we might be able to share this trig table with fft_WIDTH
