@@ -13,6 +13,7 @@
 #include <cstring>
 #include <cassert>
 #include <cstdlib>
+#include <cctype>
 #include <iterator>
 #include <sstream>
 #include <algorithm>
@@ -50,7 +51,9 @@ vector<KeyVal> Args::splitArgLine(const string& inputLine) {
 
       prev = s;
     } else {
-      if (s[0] == '-') {
+      // A token such as "-5" is a negative value for the preceding option (e.g. -od -5), not a new option.
+      bool const isNegativeNumber = s[0] == '-' && s.size() > 1 && (isdigit((unsigned char) s[1]) || s[1] == '.');
+      if (s[0] == '-' && !isNegativeNumber) {
         ret.push_back({prev, {}});
         prev = s;
       } else {
