@@ -154,7 +154,8 @@ named "config.txt" in the prpll run directory.
                      extends the range by 1%% (and this would be quite too much WRT errors).
 
 -block <value>     : PRP block size, one of: 1000, 500, 200. Default 1000.
--carry long|short  : force carry type. Short carry may be faster, but requires high bits/word.
+-carry long|short  : -carry long forces long carry even where short carry would be safe and faster;
+                     -carry short has no effect (PRPLL already uses short carry whenever it is safe).
 -prp <exponent>    : run a single PRP test and exit, ignoring worktodo.txt
 -ll <exponent>     : run a single LL test and exit, ignoring worktodo.txt
 -verify <file>     : verify PRP-proof contained in <file>
@@ -396,6 +397,10 @@ void Args::parse(const string& line) {
     else if (key == "-carry") {
       if (s == "short" || s == "long") {
         carry = s == "short" ? CARRY_32 : CARRY_64;
+        if (s == "short") {
+          log("-carry short has no effect: PRPLL already uses short carry whenever it is safe, and always "
+              "switches to long carry below 10 bits/word regardless of -carry, to avoid incorrect results\n");
+        }
       } else {
         log("-carry expects short|long\n");
         throw "-carry expects short|long";
