@@ -27,6 +27,27 @@ PRPLL is an OpenCL (GPU) and CUDA program for primality testing Mersenne numbers
 
 Invoke `make` in the source directory.
 
+### Windows (MSVC)
+
+`PRPLL.sln`/`PRPLL.vcxproj` do not generate the two sources they need that
+are not checked into git (`src/bundle.cpp`, `src/version.inc`); building
+straight from a fresh clone fails until they exist. From a bash shell (e.g.
+Git Bash) in the repository root, before opening the solution or invoking
+`msbuild`, run the same commands the project's own CI uses to prepare a
+Windows build:
+
+```
+bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
+printf '"%s"\n' "$(basename "$(git describe --tags --long --always)")" > src/version.inc
+```
+
+Then build with `msbuild PRPLL.sln /p:Configuration=OpenCL-Release` (or
+`CUDA-Release`, `OpenCL-Debug`, `CUDA-Debug`), or open `PRPLL.sln` in Visual
+Studio and build the matching configuration. Neither generated file is
+regenerated automatically, so re-run both commands after switching branches,
+pulling new commits, or changing any kernel source under `src/cl/` or
+`src/cuda/`.
+
 
 ## Use
 See `prpll -h` for the command line options.
