@@ -321,7 +321,16 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     }
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
-    if (k == "PAD") pad_size = atoi(v.c_str());
+    if (k == "PAD") {
+      // The data buffers are sized from a table keyed on PAD (PAD_ADJUST in Gpu.h) that covers padding up to 512
+      // bytes; the padded layouts in middle.cl need more than the table grants beyond that.
+      int const pad = atoi(v.c_str());
+      if (pad < 0 || pad > 512) {
+        log("Invalid PAD=%d, must be 0..512\n", pad);
+        throw "invalid PAD";
+      }
+      pad_size = pad;
+    }
     // Read below as a divisor to size WMUL, so an empty, zero or non-numeric value would divide by zero.
     // shufl handles only 4, 8 and 16 bytes.
     if (k == "SHUFL_BYTES_W" && v != "4" && v != "8" && v != "16") {
