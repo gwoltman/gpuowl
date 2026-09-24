@@ -300,6 +300,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "GRAPHS",
                               "L1CUDA",
                               "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
+                              "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
                               "PDL"                     // CUDA, sm_90+: programmatic dependent launch
                             });
     if (!isValid) {
@@ -308,14 +309,25 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
     // Some -use options are needed in both OpenCL code and C++ initialization code
     if (k == "TAIL_KERNELS") {
-      if (atoi(v.c_str()) == 0) tail_single_wide = true, tail_single_kernel = true;
-      if (atoi(v.c_str()) == 1) tail_single_wide = true, tail_single_kernel = false;
-      if (atoi(v.c_str()) == 2) tail_single_wide = false, tail_single_kernel = true;
-      if (atoi(v.c_str()) == 3) tail_single_wide = false, tail_single_kernel = false;
+      int const tailKernels = atoi(v.c_str());
+      if (tailKernels < 0 || tailKernels > 3) {
+        log("Invalid TAIL_KERNELS=%d, must be 0..3\n", tailKernels);
+        throw "invalid TAIL_KERNELS";
+      }
+      if (tailKernels == 0) tail_single_wide = true, tail_single_kernel = true;
+      if (tailKernels == 1) tail_single_wide = true, tail_single_kernel = false;
+      if (tailKernels == 2) tail_single_wide = false, tail_single_kernel = true;
+      if (tailKernels == 3) tail_single_wide = false, tail_single_kernel = false;
     }
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
     if (k == "PAD") pad_size = atoi(v.c_str());
+    // Read below as a divisor to size WMUL, so an empty, zero or non-numeric value would divide by zero.
+    // shufl handles only 4, 8 and 16 bytes.
+    if (k == "SHUFL_BYTES_W" && v != "4" && v != "8" && v != "16") {
+      log("Invalid -use SHUFL_BYTES_W=%s (must be 4, 8 or 16)\n", v.c_str());
+      throw "Invalid SHUFL_BYTES_W";
+    }
   }
 
   // Maximum WMUL is 32KB / (WIDTH * SHUFL_BYTES_W).  If using the 32KB maximum, LDS padding must be disabled.
@@ -1144,11 +1156,21 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     // Optionally mark some "hot" buffers for persisting L2 treatment (Volta+, needs CUDA_VERSION >= 11000).
     // Bitmask: 1=buf1 (the hot middle/tail buffer), 2=trig tables, 4=carryShuttle (bufCarry+bufReady).
     if (u32 const l2persist = args.value("L2PERSIST", 0)) {
+      // Reserve a fraction of the device's max persisting L2 cache size for this context; without
+      // this the driver's own (usually much smaller) default caps how much of the access-policy
+      // window below actually gets persisting treatment. Percent of max, default 100.
+      cudaSetL2PersistLimit(args.value("L2PERSISTPCT", 100));
+
       std::vector<cl_mem> l2bufs;
       if (l2persist & 1) { l2bufs.push_back(buf1.get()); }
       if (l2persist & 2) { l2bufs.push_back(bufTrigH->get()); l2bufs.push_back(bufTrigM->get()); l2bufs.push_back(bufTrigW->get()); }
       if (l2persist & 4) { l2bufs.push_back(bufCarry.get()); l2bufs.push_back(bufReady.get()); }
+
+      // The access-policy window is a per-STREAM setting. With MULTI_Q, GF61 work (the larger
+      // share of buf1's data) runs on auxQueues[0], a separate stream from the main queue -- so
+      // it must get the same window too, or its buf1 traffic gets no persisting treatment at all.
       cudaSetL2Persistent(queue.get(), l2bufs);
+      for (auto& auxQueue : auxQueues) { cudaSetL2Persistent(auxQueue.get(), l2bufs); }
     }
 #endif
 

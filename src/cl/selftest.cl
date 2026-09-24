@@ -19,6 +19,17 @@
 #include "fft16.cl"
 
 // Measure instruction latency.
+// The clock is read with __builtin_readcyclecounter(), which is s_memtime up to gfx10 and s_getreg SHADER_CYCLES on
+// gfx11+ (where s_memtime no longer exists). The waits keep an s_memtime read from overlapping the timed loop.
+// gfx10+ renamed v_add_i32 to v_add_nc_i32, and in wave32 the carry-out of v_mad_u64_u32 can't be the 64-bit vcc.
+#if __GFX10__ || __GFX11__ || __GFX12__
+#define ADD_I32 "v_add_nc_i32"
+#define MAD_CARRY "null"
+#else
+#define ADD_I32 "v_add_i32"
+#define MAD_CARRY "vcc"
+#endif
+
 KERNEL(32) testTime(int what, global i64* io) {
 #if HAS_ASM
   i64 clock0, clock1;
@@ -27,95 +38,72 @@ KERNEL(32) testTime(int what, global i64* io) {
     u32 a = 2;
     u64 b = 3;
         
-    __asm (
-    "s_waitcnt lgkmcnt(0)\n\t"
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock0) : "v"(a), "v"(b));
+    __asm("s_waitcnt lgkmcnt(0)" : : "v"(a), "v"(b));
+    clock0 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
         
     for (int i = 0; i < 48; ++i) {
-      __asm("v_mad_u64_u32 %1, vcc, %0, %0, %1" : : "v"(a), "v"(b));
+      __asm("v_mad_u64_u32 %1, " MAD_CARRY ", %0, %0, %1" : : "v"(a), "v"(b));
     }
         
-    __asm(
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock1));
+    clock1 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
   } else if (what == 0) { // V_NOP
-    // clock0 = __builtin_readcyclecounter();
-    __asm (
-    "s_waitcnt lgkmcnt(0)\n\t"
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock0));
+    __asm("s_waitcnt lgkmcnt(0)");
+    clock0 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
     
     for (int i = 0; i < 48; ++i) {
       __asm("v_nop");
     }
     
-    __asm(
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock1) : );
+    clock1 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
   } else if (what == 1) { // V_ADD_I32
     int a = 2, b = 3;
     
-    __asm (
-    "s_waitcnt lgkmcnt(0)\n\t"
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock0) : "v"(a), "v"(b));
+    __asm("s_waitcnt lgkmcnt(0)" : : "v"(a), "v"(b));
+    clock0 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
     
     for (int i = 0; i < 48; ++i) {
-      __asm("v_add_i32 %0, %1, %0" : : "v"(a), "v"(b));
+      __asm(ADD_I32 " %0, %1, %0" : : "v"(a), "v"(b));
     }
     
-    __asm(
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock1));
+    clock1 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
   } else if (what == 2) { // V_FMA_F32
     float a = 2, b = 3;
     
-    __asm (
-    "s_waitcnt lgkmcnt(0)\n\t"
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock0) : "v"(a), "v"(b));
+    __asm("s_waitcnt lgkmcnt(0)" : : "v"(a), "v"(b));
+    clock0 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
     
     for (int i = 0; i < 48; ++i) {
       __asm("v_fma_f32 %0, %0, %1, %0" : : "v"(a), "v"(b));
     }
     
-    __asm(
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock1));    
+    clock1 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
   } else if (what == 3) { // V_ADD_F64
     double a = 2, b = 3;
     
-    __asm (
-    "s_waitcnt lgkmcnt(0)\n\t"
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock0) : "v"(a), "v"(b));
+    __asm("s_waitcnt lgkmcnt(0)" : : "v"(a), "v"(b));
+    clock0 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
     
     for (int i = 0; i < 48; ++i) {
       __asm("v_add_f64 %0, %0, %1" : : "v"(a), "v"(b));
     }
     
-    __asm(
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock1));    
+    clock1 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
   } else if (what == 4) { // V_FMA_F64
     double a = 2, b = 3, c = 4, d = 5;
     
-    __asm (
-    "s_waitcnt lgkmcnt(0)\n\t"
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock0) : "v"(a), "v"(b), "v"(c), "v"(d));
+    __asm("s_waitcnt lgkmcnt(0)" : : "v"(a), "v"(b), "v"(c), "v"(d));
+    clock0 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
     
     for (int i = 0; i < 24; ++i) {
       __asm(
@@ -124,27 +112,21 @@ KERNEL(32) testTime(int what, global i64* io) {
       : : "v"(a), "v"(b), "v"(c), "v"(d));
     }
     
-    __asm(
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock1));
+    clock1 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
   } else if (what == 5) { // V_MUL_F64
     double a = 2, b = 3;
     
-    __asm (
-    "s_waitcnt lgkmcnt(0)\n\t"
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock0) : "v"(a), "v"(b));
+    __asm("s_waitcnt lgkmcnt(0)" : : "v"(a), "v"(b));
+    clock0 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
     
     for (int i = 0; i < 48; ++i) {
       __asm("v_mul_f64 %0, %0, %1" : : "v"(a), "v"(b));
     }
     
-    __asm(
-    "s_memtime %0\n\t"
-    "s_waitcnt lgkmcnt(0)\n\t"
-    : "=s"(clock1));
+    clock1 = __builtin_readcyclecounter();
+    __asm("s_waitcnt lgkmcnt(0)");
   }
   
   if (get_local_id(0) == 0) {

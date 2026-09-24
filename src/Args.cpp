@@ -348,8 +348,8 @@ void Args::parse(const string& line) {
       clean = false;
     } else if (key == "-proof") {
       int power = 0;
-      if (s.empty() || (power = stoi(s)) < 1 || power > 12) {
-        log("-proof expects <power> 1-12 (found '%s')\n", s.c_str());
+      if (s.empty() || (power = stoi(s)) < 1 || power > 13) {
+        log("-proof expects <power> 1-13 (found '%s')\n", s.c_str());
         throw "-proof <power>";
       }
       proofPow = power;

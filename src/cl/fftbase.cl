@@ -721,6 +721,22 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 #endif
 #endif
 
+// SIZE=1024, RADIX=8 is 8 * 8 * 16, not a power of RADIX.  Same steps as the variant 1 code below, with broadcast trig values.
+#if WG == 128 && RADIX == 8
+
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
+  chainMul(u, w);
+  shufl(lds, u, 1, numWG, lowMe);
+
+  fft8(u);
+  w = bcast(w, 8);
+  chainMul(u, w);
+  shufl_and_fft2(lds, u, 8, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+
+#else
+
   for (u32 s = 1; s < WG; s *= RADIX) {
     if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2 && s == 1) fft_RADIX_skip1(u); else fft_RADIX(u);
     w = bcast(w, s);
@@ -728,6 +744,8 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
     shufl(lds, u, s, numWG, lowMe);
   }
   fft_RADIX(u);
+
+#endif
 
 // Variant 2 uses more FMA instructions than the original FFT code.
 // The tabMul after fft8 only does a partial complex multiply, saving a mul-by-cosine for the next fft8 using FMA instructions.

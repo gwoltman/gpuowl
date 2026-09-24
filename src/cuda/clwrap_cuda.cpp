@@ -1399,6 +1399,34 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 void cudaSetL2Persistent(cl_command_queue, const std::vector<cl_mem>&) {}
 #endif
 
+// Reserve a fraction of the device's max persisting L2 cache size for the current context.
+// The CU_STREAM_ATTRIBUTE_ACCESS_POLICY_WINDOW's CU_ACCESS_PROPERTY_PERSISTING hint only takes
+// effect up to whatever this context limit allows; without raising it the driver's own (usually
+// much smaller) default applies, silently capping how much of a "persisting" window actually
+// gets persisting treatment. pct is clamped to [0, 100].
+#if CUDA_VERSION >= 11000
+void cudaSetL2PersistLimit(int pct) {
+  ensureContextCurrent();
+
+  int maxPersist = 0;
+  cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, 0);
+  if (maxPersist <= 0) return;
+
+  pct = std::clamp(pct, 0, 100);
+  size_t const target = (size_t)maxPersist * pct / 100;
+
+  CUresult const r = cuCtxSetLimit(CU_LIMIT_PERSISTING_L2_CACHE_SIZE, target);
+  if (r != CUDA_SUCCESS) {
+    fprintf(stderr, "L2 persist limit: cuCtxSetLimit failed (%d)\n", (int)r);
+  } else {
+    fprintf(stderr, "L2 persist limit: reserved %zuMB of %dMB max (%d%%)\n",
+            target / (1024*1024), maxPersist / (1024*1024), pct);
+  }
+}
+#else
+void cudaSetL2PersistLimit(int) {}
+#endif
+
 
 // OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features
 

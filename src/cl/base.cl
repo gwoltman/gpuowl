@@ -285,6 +285,13 @@ typedef ulong2 GF61;        // A complex value using two Z61s.  For a GF(M61^2) 
 #endif
 #endif
 
+// The fused precompute above only exists in the FFT64 carryFused (see carryfused.cl).  An explicit
+// -use FUSE_WEIGHT_BUTTERFLY=1 override on any other FFT type would skip the first WIDTH butterfly
+// without ever applying its weight, silently corrupting the result.
+#if FUSE_WEIGHT_BUTTERFLY && FFT_TYPE != FFT64
+#error FUSE_WEIGHT_BUTTERFLY is only implemented for FFT_TYPE == FFT64
+#endif
+
 // Word and Word2 define the data type for FFT integers passed between the CPU and GPU.
 #if WordSize == 8
 typedef i64 Word;
