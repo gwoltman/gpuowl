@@ -301,6 +301,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "L1CUDA",
                               "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
                               "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
+                              "CSDISCARD",              // CUDA sm_80+: discard carryShuttle cache lines after CSLOAD instead of writing them back
                               "PDL"                     // CUDA, sm_90+: programmatic dependent launch
                             });
     if (!isValid) {

@@ -628,6 +628,24 @@ GF31 OVERLOAD NCLOAD(TrigGF31 mem) {
 #define NCLOAD    LOAD
 #endif
 
+// Discard one 128-byte-aligned cache line from L1/L2 without writing it back to memory, for data that is
+// genuinely dead (e.g. a carryShuttle entry that was just read for the only time it will ever be read).
+// Unlike the eviction *hints* above (.cs/.lu/etc), this is a guaranteed discard: any subsequent read of
+// this address before it is written again returns an undefined value. addr must be 128-byte aligned; the
+// PTX instruction hard-requires the size operand to be exactly 128. Requires sm_80 (Ampere) or higher --
+// ptxas rejects the 'discard' opcode below that. Off by default (-use CSDISCARD=1 to enable).
+#if !defined(CSDISCARD)
+#define CSDISCARD 0
+#endif
+
+#if CSDISCARD && HAS_PTX >= 800
+void CSDISCARD128(global void *addr) {
+  __asm("discard.global.L2 [%0], 128;" :: "l"(addr));
+}
+#else
+void CSDISCARD128(global void *addr) { (void) addr; }
+#endif
+
 // Routines for loading data from memory into the L1 and L2 caches.  This should be same as the default LOAD macro.
 
 #if HAS_PTX >= 200         // Cache hints requires sm_20 support or higher
