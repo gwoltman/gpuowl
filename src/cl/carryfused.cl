@@ -308,7 +308,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -541,7 +540,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -778,7 +776,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -1021,7 +1018,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -1286,7 +1282,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -1567,7 +1562,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -1847,7 +1841,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -2122,7 +2115,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
@@ -2429,7 +2421,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     if (gr < H / WMUL) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
-        if (CSDISCARD && me % 16 == 0) CSDISCARD128(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
