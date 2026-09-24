@@ -14,6 +14,8 @@
 #include <optional>
 #include <charconv>
 #include <cinttypes>
+#include <cerrno>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 
@@ -108,7 +110,14 @@ std::optional<Task> parse(const std::string& line) {
 // Among the valid tasks from fileName, return the "best" which means the smallest CERT, or otherwise the exponent PRP/LL
 static std::optional<Task> bestTask(const fs::path& fileName, bool smallest) {
   optional<Task> best;
-  for (const string& line : File::openRead(fileName)) {
+  File fi = File::openRead(fileName);
+  // A missing file means no work; any other failure to open it (permissions, I/O error) must not look like an empty
+  // queue, which ends the run with exit code 0 as if all the work were done.
+  if (!fi && errno != ENOENT) {
+    log("Can't read '%s': %s\n", fileName.string().c_str(), strerror(errno));
+    throw "worktodo file unreadable";
+  }
+  for (const string& line : fi) {
     optional<Task> task = parse(line);
     // A Cert line whose start-value file is not here cannot run: isCERT would throw and end the worker, and since
     // Cert lines take priority over PRP/LL the worker would be wedged for good.  Skip the line until the file appears.
