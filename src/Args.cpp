@@ -174,7 +174,6 @@ named "config.txt" in the prpll run directory.
 -roe               : measure the Round-Off Error (Z) for more iterations (slow)
 -time              : collect and print a per-kernel GPU timing profile
 -log <N>           : log progress and checkpoint every <N> iterations (positive multiple of 1000; default 20000)
--maxAlloc <size>   : limit the largest single GPU memory allocation, e.g. -maxAlloc 4G or -maxAlloc 2000M
 
 -use <define>      : comma separated list of defines for configuring openCL code, such as:
   -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
@@ -381,8 +380,8 @@ void Args::parse(const string& line) {
         throw("-pool <path> requires an absolute path");
       }
     }
-    else if (key == "-maxAlloc" || key == "-maxalloc") {
-      if (s.empty()) {                                 // s.back() below would be undefined
+    else if (key == "-maxAlloc" || key == "-maxalloc") {                // DEPRECATED, was only used for P-1 buffers.  Parsing left in place so previous users do not get an error.
+      if (s.empty()) {                                                  // s.back() below would be undefined
         log("-maxAlloc expects a value, e.g. -maxAlloc 4G\n");
         throw "-maxAlloc <size>";
       }
