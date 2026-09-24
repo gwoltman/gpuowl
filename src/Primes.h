@@ -6,7 +6,10 @@
 #include "common.h"
 
 class Primes {
-  std::bitset<50000> sieve;           // Allows for testing primes up to 10 billion
+  // Sieve of odd numbers 3..100001. The largest prime in it is 99991, so the
+  // sieve alone gives O(1) trial division for n <= 99991^2 == 9,998,200,081;
+  // isPrimeOdd() falls back to plain trial division beyond that bound.
+  std::bitset<50000> sieve;
   [[nodiscard]] bool isPrimeOdd(u64 n) const;
 
 public:
