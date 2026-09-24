@@ -113,6 +113,11 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
   if (p2) { if (string const mes = getBuildLog(p2.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); } }
   if (err != CL_SUCCESS) {
     log("Linking '%s' error %s (args %s)\n", fileName.c_str(), errMes(err).c_str(), linkArgs.c_str());
+    // clLinkProgram may still hand back a program object on failure (e.g. to hold the build log).
+    // Discard it: an unlinked/half-linked program has no executable, and returning it here would
+    // make the caller fail later with a bare CL_INVALID_PROGRAM_EXECUTABLE from clCreateKernel
+    // instead of the "Can't compile" path that a compile failure takes just above.
+    return {};
   }
   return p2;
 }
