@@ -2,6 +2,7 @@
 
 #include "File.h"
 #include "clwrap.h"
+#include "fs.h"
 
 #include <cmath>
 #include <cstdio>
@@ -11,6 +12,8 @@
 #include <memory>
 #include <vector>
 #include <array>
+#include <chrono>
+#include <random>
 #include <atomic>
 
 using namespace std;
@@ -308,7 +311,19 @@ static string getBinary(cl_program program) {
 }
 
 void saveBinary(cl_program program, string_view fileName) {
-  File::openWrite(fileName).write(getBinary(program));
+  // Write under a unique name in the same directory, then rename into place: another process (or worker)
+  // loading this kernel must never see a half-written binary, which some drivers crash on instead of rejecting.
+  u64 const salt = random_device{}() ^ chrono::steady_clock::now().time_since_epoch().count();
+  fs::path const tmp = string(fileName) + '-' + to_string(salt) + ".tmp";
+  File::openWrite(tmp).write(getBinary(program));
+  try {
+    fancyRename(tmp, fileName);
+  } catch (const fs::filesystem_error& e) {
+    // e.g. on Windows the target is open in another process; the cache is only an optimization.
+    log("Can't save binary %s : %s\n", string(fileName).c_str(), e.what());
+    error_code ec;
+    fs::remove(tmp, ec);
+  }
 }
 
 cl_kernel loadKernel(cl_program program, const char *name) {
