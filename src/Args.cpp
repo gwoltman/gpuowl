@@ -86,6 +86,7 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
 
 void Args::readConfig(const fs::path& path) {
   if (File file = File::openRead(path)) {
+    file.allowUnterminatedLastLine();
     for (string line : file) {
       line = rstripNewline(line);
       parse(line);
