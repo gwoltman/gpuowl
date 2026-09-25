@@ -339,18 +339,30 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
   }
 
   // No FFT-spec given, so choose from tune.txt the fastest FFT that can handle E
+  // An FFT too large for E (below minBpw) would make the Gpu constructor throw "FFT size too large", so skip those too.
+  auto const fits = [&](const FFTConfig& fft) { return E <= fft.maxExp() * args.fftOverdrive && !(E / float(fft.size()) < fft.minBpw()); };
+
   vector<TuneEntry> const tunes = TuneEntry::readTuneFile(args);
   for (const TuneEntry& e : tunes) {
     // The first acceptable is the best as they're sorted by cost
-    if (E <= e.fft.maxExp() * args.fftOverdrive) { return e.fft; }
+    if (fits(e.fft)) { return e.fft; }
   }
 
   log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);
 
-  // Take the first FFT that can handle E
-  for (const FFTShape& shape : FFTShape::allShapes()) {
+  // Take the smallest FFT that can handle E.  allShapes() sorts by size alone, which lets an FP32 hybrid (e.g. FP32+M31+M61) win
+  // without any timing, and some OpenCL compilers can't build the FP32 code (hence -tune nofp32).  Prefer FP64 and M31+M61
+  // (the two types -tune compares by default), FP64 at equal size, and use the other types only for an E beyond both.
+  auto const rank = [](const FFTShape& s) { return s.fft_type == FFT64 ? 0 : s.fft_type == FFT3161 ? 1 : 2; };
+  vector<FFTShape> shapes = FFTShape::allShapes();
+  std::ranges::stable_sort(shapes, [&](const FFTShape& a, const FFTShape& b) {
+    if ((rank(a) < 2) != (rank(b) < 2)) { return rank(a) < 2; }
+    if (a.size() != b.size()) { return a.size() < b.size(); }
+    return rank(a) < rank(b);
+  });
+  for (const FFTShape& shape : shapes) {
     for (u32 const v : {101, 202}) {
-      if (FFTConfig fft{shape, v, CARRY_AUTO}; fft.maxExp() * args.fftOverdrive >= E) { return fft; }
+      if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft)) { return fft; }
     }
   }
 
