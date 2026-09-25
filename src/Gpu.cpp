@@ -655,6 +655,15 @@ string formatSecsPerIter(float secsPerIter) {
 // --------
 
 unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize) {
+  // Without the builtins, base.cl compiles variant 0 as variant 1 (with a warning from every .cl file).  Make that switch
+  // here instead, with one log line, so that the FFT spec and its max exponent describe the FFT that actually runs.
+  u32 const v = fftConfig.variant;
+  if (fftConfig.FFT_FP64 && (variant_W(v) == 0 || variant_H(v) == 0) && isAmdGpu(shared.context->deviceId())
+      && !hasAmdBcastBuiltins(shared.context->get(), shared.context->deviceId())) {
+    FFTConfig const fallback{fftConfig.shape, variant_WMH(max(variant_W(v), 1u), variant_M(v), max(variant_H(v), 1u)), fftConfig.carry};
+    log("%s: this OpenCL compiler lacks the builtins FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
+    fftConfig = fallback;
+  }
   return make_unique<Gpu>(shared, fftConfig, E, extraConf, logFftSize);
 }
 

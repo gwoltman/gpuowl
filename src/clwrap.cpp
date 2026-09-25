@@ -246,6 +246,18 @@ Program loadSource(cl_context context, const string &source) {
   return Program{program};
 }
 
+// FFT variant 0 (BCAST) needs these amdgcn builtins, which not every AMD OpenCL compiler has (e.g. the Windows driver's).
+// base.cl checks for them the same way and falls back to variant 1 without them.
+bool hasAmdBcastBuiltins(cl_context context, cl_device_id deviceId) {
+  if (!isAmdGpu(deviceId)) { return false; }
+  Program probe = loadSource(context,
+    "#if !defined(__has_builtin) || !__has_builtin(__builtin_amdgcn_mov_dpp) || !__has_builtin(__builtin_amdgcn_ds_swizzle) || !__has_builtin(__builtin_amdgcn_readfirstlane)\n"
+    "#error missing builtins\n"
+    "#endif\n"
+    "kernel void probe() {}\n");
+  return probe && clCompileProgram(probe.get(), 1, &deviceId, "", 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
+}
+
 string getBuildLog(cl_program program, cl_device_id deviceId) {
   size_t logSize = 0;
   const size_t maxLogSize = 64 * 1024;
