@@ -331,7 +331,9 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     istringstream iss(options);
     string tok;
     while (iss >> tok) {
-      if (tok == "-cl-finite-math-only" || tok == "-cl-fast-relaxed-math") {
+      if (tok.starts_with("-D")) {
+        nvrtcOpts.push_back(tok);
+      } else if (tok == "-cl-finite-math-only" || tok == "-cl-fast-relaxed-math") {
         // FMA contraction already enabled above via --fmad=true.
         // Do NOT use -use_fast_math here — it enables flush-to-zero and
         // reduced-precision division/sqrt which breaks tailMul accuracy.
