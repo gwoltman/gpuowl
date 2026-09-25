@@ -4,6 +4,7 @@
 
 #include "tinycuda.h"
 #include "cudawrap.h"  // For NvrtcProgram::preprocessOpenCL and compile
+#include "../log.h"
 
 #include <cstdio>
 #include <cstring>
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <algorithm>
 #include <sstream>
+#include <fstream>
 #include <unordered_set>
 #ifdef __linux__
 #include <unistd.h>
@@ -324,18 +326,6 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   // errors — some PRPLL kernels use in-place operations where in/out buffers alias.
   // Do NOT enable globally. The compiler still auto-uses __ldg() for const pointers on sm_35+.
 
-  // Debug: dump full options string
-  {
-    static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    static bool dumpedOpts = false;
-    if (dumpPrefix && !dumpedOpts && options) {
-      dumpedOpts = true;
-      fprintf(stderr, "clCompileProgram options: [%s]\n", options);
-      FILE* optLog = fopen("kernel_regs.log", "a");
-      if (optLog) { fprintf(optLog, "clCompileProgram options: [%s]\n", options); fclose(optLog); }
-    }
-  }
-
   int maxregcount = 0;
   if (options) {
     istringstream iss(options);
@@ -385,18 +375,6 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     else if (headers[i] && headerNames[i]) {
       // Preprocess OpenCL source for CUDA compatibility
       string const processedSrc = NvrtcProgram::preprocessOpenCL(headers[i]->source);
-      // Debug: verify KERNEL macro replacement
-// I'm not sure what Sherpa was trying to print out here.  It prints out nothing useful.
-//      {
-//        static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-//        if (dumpPrefix && string(headerNames[i]) == "base.cl") {
-//          auto pos = processedSrc.find("KERNEL");
-//          if (pos != string::npos) {
-//            string ctx = processedSrc.substr(pos > 20 ? pos-20 : 0, 120);
-//            fprintf(stderr, "base.cl KERNEL context: [%s]\n", ctx.c_str());
-//          }
-//        }
-//      }
       nvrtcHeaders.emplace_back(headerNames[i], processedSrc);
     }
   }
@@ -409,37 +387,11 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     processedSource = "#include \"opencl_compat.cuh\"\n" + processedSource;
   }
 
-  // Debug: dump preprocessed source when PRPLL_DUMP_PTX is set
-  {
-    static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    if (dumpPrefix) {
-      static int srcCount = 0;
-      char fname[512];
-      snprintf(fname, sizeof(fname), "%s_src_%d.cu", dumpPrefix, srcCount++);
-      FILE* f = fopen(fname, "w");
-      if (f) {
-        fwrite(processedSource.c_str(), 1, processedSource.size(), f);
-        fclose(f);
-        fprintf(stderr, "Source dumped to %s (%zu bytes)\n", fname, processedSource.size());
-      }
-    }
-  }
-
   // Store preprocessed source for __launch_bounds__ parsing in clCreateKernel
   prog->preprocessedSource = processedSource;
   for (auto& [name, src] : nvrtcHeaders) {
     prog->preprocessedSource += "\n";
     prog->preprocessedSource += src;
-  }
-
-  // Debug: dump NVRTC options when dumping PTX
-  {
-    static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    static std::atomic<bool> dumpedOnce{false};
-    if (dumpPrefix && !dumpedOnce.exchange(true)) {
-      fprintf(stderr, "NVRTC options (%zu):\n", nvrtcOpts.size());
-      for (auto& o : nvrtcOpts) fprintf(stderr, "  %s\n", o.c_str());
-    }
   }
 
   try {
@@ -555,22 +507,8 @@ cl_program clLinkProgram(cl_context ctx, unsigned  /*nDevices*/, const cl_device
   linked->moduleLoaded = true;
   moduleRetain(linked->module);  // program owns one reference
 
-  // Dump PTX to file when PRPLL_DUMP_PTX is set (e.g., PRPLL_DUMP_PTX=kernel)
-  // Creates files like kernel_0.ptx, kernel_1.ptx, etc.
-  {
-    static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    if (dumpPrefix) {
-      static int ptxCount = 0;
-      char fname[512];
-      snprintf(fname, sizeof(fname), "%s_%d.ptx", dumpPrefix, ptxCount++);
-      FILE* f = fopen(fname, "w");
-      if (f) {
-        fwrite(linked->ptx.c_str(), 1, linked->ptx.size(), f);
-        fclose(f);
-        fprintf(stderr, "PTX dumped to %s (%zu bytes)\n", fname, linked->ptx.size());
-      }
-    }
-  }
+  // -v 10 per-kernel PTX + stats dump now happens in clCreateKernel, where the actual
+  // kernel name is known (a linked program's PTX can hold more than one kernel entry).
 
   if (err) *err = CL_SUCCESS;
   return linked;
@@ -671,34 +609,20 @@ if (getenv("TRY_LDS_CARVEOUT"))
     cuFuncSetAttribute(k->func, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT, carveout);
   }
 		  
-  // Log register and shared memory usage per kernel when PRPLL_DUMP_PTX is set
-  {
-    static const char* dumpPrefix = getenv("PRPLL_DUMP_PTX");
-    if (prpll_verbose || dumpPrefix) {
-      int numRegs = 0, shmem = 0, localmem = 0, maxThreads = 0;
-      cuFuncGetAttribute(&numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
-      cuFuncGetAttribute(&shmem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);
-      cuFuncGetAttribute(&localmem, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES , k->func);
-      cuFuncGetAttribute(&maxThreads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k->func);
-      fprintf(stderr, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads);
-      // Also write to file since WSL2+CUDA swallows stderr
-      if (dumpPrefix) {
-        FILE* regLog = fopen("kernel_regs.log", "a");
-        if (regLog) { fprintf(regLog, "  %-25s: %3d regs, %5d shmem, %d localmem, maxThreads=%d\n", name, numRegs, shmem, localmem, maxThreads); fclose(regLog); }
-      }
-    }
-  }
-
-  // Parse .maxntid from PTX to get __launch_bounds__ value.
-  // PTX pattern: .visible .entry <name>(...)\n.maxntid N, 1, 1
+  // Parse .maxntid from PTX to get __launch_bounds__ value, and -- at -v 10, gated the same
+  // way as the AMD side's assembly dump (see KernelCompiler::compile()) -- log register/shared/
+  // local-mem stats and save this kernel's own PTX slice to disk. PTX pattern:
+  // .visible .entry <name>(...)\n.maxntid N, 1, 1
   k->reqWorkGroupSize = 256; // fallback
   {
     const string& ptx = prog->ptx;
     string const entryPattern = ".entry " + string(name) + "(";
     size_t const pos = ptx.find(entryPattern);
+    // A linked program's PTX can hold more than one kernel entry; the block for this one
+    // runs from its ".entry" to the next ".entry"/".func" (or end of file).
+    size_t searchEnd = ptx.size();
     if (pos != string::npos) {
-      // Found the kernel entry. Its text runs to the next .entry or .func.
-      size_t searchEnd = min(ptx.find(".entry ", pos + 1), ptx.find(".func ", pos + 1));
+      searchEnd = min(ptx.find(".entry ", pos + 1), ptx.find(".func ", pos + 1));
       if (searchEnd == string::npos) searchEnd = ptx.size();
       string const maxntidPattern = ".maxntid ";
       size_t const mpos = ptx.find(maxntidPattern, pos);
@@ -717,6 +641,29 @@ if (getenv("TRY_LDS_CARVEOUT"))
       // order the two. Read from the compiled code, this holds for a
       // cached program as much as a fresh one.
       k->pdl = ptx.find("griddepcontrol.wait", pos) < searchEnd;
+    }
+
+    if (prpll_verbose >= 10) {
+      int numRegs = 0, shmem = 0, localmem = 0, maxThreads = 0;
+      cuFuncGetAttribute(&numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
+      cuFuncGetAttribute(&shmem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);
+      cuFuncGetAttribute(&localmem, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, k->func);
+      cuFuncGetAttribute(&maxThreads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k->func);
+      log("%s: %d regs, %d shmem, %d localmem, maxThreads=%d%s\n",
+          name, numRegs, shmem, localmem, maxThreads, localmem > 0 ? " (SPILLING)" : "");
+
+      // Some kernelNames are compiled more than once under the same exported name (e.g.
+      // "carryFused" plain/-DROE=1/-DMUL3=1/...): give each compile its own file rather than
+      // letting a later variant silently overwrite an earlier one's dump. KernelCompiler::load()
+      // runs CUDA compiles across up to 8 threads, all landing here, so this needs its own lock
+      // (unlike the AMD side, which is single-threaded on its backend).
+      static mutex dumpMutex;
+      static map<string, int> dumpCounts;
+      lock_guard<mutex> const lock(dumpMutex);
+      int const n = ++dumpCounts[name];
+      string const outName = string(name) + (n == 1 ? "" : "_" + to_string(n)) + ".ptx";
+      ofstream out(outName, ios::binary);
+      out << (pos != string::npos ? ptx.substr(pos, searchEnd - pos) : ptx);
     }
   }
 

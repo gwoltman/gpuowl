@@ -17,10 +17,15 @@
 #include "tune.h"
 
 #include <atomic>
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <thread>
 #include <utility>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 // #include <format> from GCC-13 onwards
 
 // Set when a worker dies on an exception, so that main() can report the failure through the exit code
@@ -116,6 +121,27 @@ int main(int argc, char **argv) {
     args.setDefaults();
 
     if (args.maxAlloc) { AllocTrac::setMaxAlloc(args.maxAlloc); }
+
+#if !defined(CUDA_BACKEND) && !defined(_WIN32)
+    // -v 10 wants per-kernel AMDGPU assembly (register/LDS/spill stats, kernelName.s files --
+    // see KernelCompiler::compile()). The comgr flag that makes this possible only takes effect
+    // when AMD_OCL_BUILD_OPTIONS_APPEND is already in the environment before the AMD OpenCL
+    // runtime is first touched: setting it from within this same process, no matter how early
+    // (even as the very first thing done, before any Context), was confirmed NOT to work. Re-exec
+    // ourselves once, with it set, before getDevice() below makes the first OpenCL call.
+    // PRPLL_ASM_REEXEC guards against looping if the re-exec itself lands back here.
+    // (comgr ignores whatever directory this value names -- confirmed empirically, it always
+    // writes into the process's current directory regardless -- so the value itself doesn't
+    // matter beyond being present; KernelCompiler::compile() picks the files up from there.)
+    if (args.verbose >= 10 && !getenv("PRPLL_ASM_REEXEC")) {
+      setenv("PRPLL_ASM_REEXEC", "1", 1);
+      setenv("AMD_OCL_BUILD_OPTIONS_APPEND", "-save-temps=x", 1);
+      execvp(argv[0], argv);
+      // execvp only returns on failure; fall through and run without assembly dumping.
+      log("Warning: could not re-exec for -v 10 assembly dump (%s), continuing without it\n", strerror(errno));
+      args.verbose = 1;
+    }
+#endif
 
     Context context(getDevice(args.device));
     Signal const signal;

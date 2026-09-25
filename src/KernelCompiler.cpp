@@ -6,14 +6,21 @@
 #include "Args.h"
 
 #include <cassert>
+#include <cctype>
 #include <cinttypes>
+#include <cstdlib>
+#include <cstring>
 #include <future>
 #include <semaphore>
 #include <thread>
 #include <algorithm>
 #include <utility>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 using namespace std;
+namespace fs = std::filesystem;
 
 // Implemented in bundle.cpp
 const std::vector<const char*>& getClFileNames();
@@ -27,6 +34,7 @@ static_assert(sizeof(Program) == sizeof(cl_program));
 // * -fno-bin-llvmir
 // * various: -fno-bin-source -fno-bin-amdil
 
+#ifndef CUDA_BACKEND
 // Does the device's compiler accept this -cl-std?  Compiles an empty kernel with just that option.
 static bool acceptsClStd(cl_context context, cl_device_id deviceId, const string& clStd) {
   Program probe = loadSource(context, "kernel void probe() {}\n");
@@ -34,6 +42,7 @@ static bool acceptsClStd(cl_context context, cl_device_id deviceId, const string
   string const opts = "-cl-std=" + clStd;
   return clCompileProgram(probe.get(), 1, &deviceId, opts.c_str(), 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
 }
+#endif
 
 KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs) :
   cacheDir{args.cacheDir.string()},
@@ -45,7 +54,6 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   verbose{args.verbose},
   deviceId{context->deviceId()}
 {
-
   // Every GPU driver we run on accepts -cl-std=CL2.0.  Some OpenCL 3.0 implementations (POCL; likely Mesa rusticl)
   // offer no OpenCL C 2.0 at all and reject the option, but do offer OpenCL C 3.0, whose optional features cover what
   // the kernels use from 2.0 (generic address space, memory-order atomics).  Probe once and fall back.
@@ -81,14 +89,59 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   // log("OpenCL %d files, hash %016" PRIx64 "\n", n, contextHash);
 }
 
-Program KernelCompiler::compile(const string& fileName, const string& extraArgs) const {
+#ifndef CUDA_BACKEND
+static string readWholeFile(const fs::path& p) {
+  ifstream f(p, ios::binary);
+  ostringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
+}
+
+// Resource-usage fields for one kernel, read out of its .amdhsa_kernel ... .end_amdhsa_kernel
+// block in the assembly (AMDGPU/ROCm only -- see reference_rocm_isa_dumping memory for details
+// on this format).  A CUDA-like -v report: registers, LDS, and whether it's spilling to scratch.
+struct KernelStats {
+  bool found = false;
+  long vgprs = -1, sgprs = -1, ldsBytes = -1, scratchBytes = -1, occupancy = -1;
+};
+
+static KernelStats parseKernelStats(const string& asmText, const string& kernelName) {
+  KernelStats st;
+  string const startMarker = ".amdhsa_kernel " + kernelName;
+  size_t const start = asmText.find(startMarker);
+  if (start == string::npos) { return st; }
+  size_t end = asmText.find(".end_amdhsa_kernel", start);
+  if (end == string::npos) { end = asmText.size(); }
+  string const block = asmText.substr(start, end - start);
+  st.found = true;
+
+  auto grab = [&](const char* key) -> long {
+    size_t const p = block.find(key);
+    return (p == string::npos) ? -1 : strtol(block.c_str() + p + strlen(key), nullptr, 10);
+  };
+  st.vgprs = grab(".amdhsa_next_free_vgpr");
+  st.sgprs = grab(".amdhsa_next_free_sgpr");
+  st.ldsBytes = grab(".amdhsa_group_segment_fixed_size");
+  st.scratchBytes = grab(".amdhsa_private_segment_fixed_size");
+
+  // The "; Occupancy: N" comment lands just after .end_amdhsa_kernel, outside the block
+  // scanned above -- search from there up to the next kernel (or end of file) for it.
+  size_t const nextKernel = asmText.find(".amdhsa_kernel", end);
+  size_t const tailEnd = (nextKernel == string::npos) ? asmText.size() : nextKernel;
+  size_t const occPos = asmText.find("; Occupancy:", end);
+  if (occPos != string::npos && occPos < tailEnd) {
+    st.occupancy = strtol(asmText.c_str() + occPos + strlen("; Occupancy:"), nullptr, 10);
+  }
+  return st;
+}
+#endif
+
+Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const string& kernelName, const string& extraArgs) const {
   Program p1 = loadSource(context, "#include \""s + fileName + "\"\n");
   assert(p1);
-  
+
   string args = baseArgs + ' ' + extraArgs;
-  if (!dump.empty()) {
-    args += " -save-temps="s + dump + "/" + fileName;
-  }
+
 #ifdef CUDA_BACKEND
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
                              u32(clSources.size()), (const cl_program*) (clSources.data()), getClFileNames().data(),
@@ -104,7 +157,7 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
     log("Compiling '%s' error %s (args %s)\n", fileName.c_str(), errMes(err).c_str(), args.c_str());
     return {};
   }
-  
+
   Program p2{clLinkProgram(context, 1, &deviceId, linkArgs.c_str(),
                            1, (cl_program *) &p1, nullptr, nullptr, &err)};
   // The linker's diagnostics live on the linked program.  Asking p1 again instead says nothing about the link
@@ -119,6 +172,59 @@ Program KernelCompiler::compile(const string& fileName, const string& extraArgs)
     // instead of the "Can't compile" path that a compile failure takes just above.
     return {};
   }
+
+#ifndef CUDA_BACKEND
+  // -v 10 (see main()'s re-exec) leaves comgr free to drop -save-temps output with a
+  // content-hashed name -- confirmed empirically to always land in the current directory,
+  // regardless of any path given in the -save-temps value itself. Besides the ".s" we want,
+  // comgr also drops its intermediate ".cl"/".i"/".so" (preprocessed source, etc) there --
+  // spurious clutter we don't want, so sweep up every hash-named file, not just ".s" ones.
+  // Compiles are serial on this backend (see load() below), so whatever shows up here belongs
+  // to this call.
+  if (verbose >= 10) {
+    // comgr names its own output purely from a content hash (e.g. "3949457118.s") -- never
+    // matching the digits-only stem is how we tell its temp file apart from a kernelName.s we
+    // saved on an earlier call in this same directory (which must NOT be picked up here: it's
+    // some other kernel's saved output, not a new artifact, and reprocessing it would overwrite
+    // *this* kernel's file with stale content and delete the original).
+    auto isHashStem = [](const fs::path& p) {
+      string const s = p.stem().string();
+      return !s.empty() && std::ranges::all_of(s, [](unsigned char c) { return isdigit(c); });
+    };
+    // Snapshot the listing before touching anything: our own output below is itself a ".s" file
+    // in this same directory, and modifying a directory mid-iteration is unspecified behavior.
+    vector<fs::path> found;
+    error_code ec;
+    for (auto const& entry : fs::directory_iterator(".", ec)) {
+      if (isHashStem(entry.path())) { found.push_back(entry.path()); }
+    }
+    for (fs::path const& p : found) {
+      if (p.extension() != ".s") {
+        // Some other comgr intermediate (.cl, .i, .so, ...) -- not wanted, just delete it.
+        fs::remove(p, ec);
+        continue;
+      }
+
+      string const asmText = readWholeFile(p);
+
+      KernelStats const st = parseKernelStats(asmText, kernelName);
+      if (st.found) {
+        log("%s: %ld vgprs, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy=%ld%s\n",
+            kernelName.c_str(), st.vgprs, st.sgprs, st.ldsBytes, st.scratchBytes, st.occupancy,
+            st.scratchBytes > 0 ? " (SPILLING)" : "");
+      }
+
+      // Some kernelNames are compiled more than once under the same exported name (e.g.
+      // "carryFused" plain/-DROE=1/-DMUL3=1/...): give each compile its own file rather than
+      // letting a later variant silently overwrite an earlier one's dump.
+      int const n = ++asmDumpCounts[kernelName];
+      string const outName = (n == 1) ? kernelName + ".s" : kernelName + '_' + to_string(n) + ".s";
+      { ofstream out(outName, ios::binary); out << asmText; }
+      fs::remove(p, ec);
+    }
+  }
+#endif
+
   return p2;
 }
 
@@ -143,7 +249,7 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
 
   if (!program) {
     fromCache = false;
-    program = compile(fileName, args);
+    program = compile(fileName, kernelName, args);
   }
 
   if (!program) {
