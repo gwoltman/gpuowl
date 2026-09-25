@@ -147,8 +147,10 @@ using cl_queue = cl_command_queue;
 
 #define CL_DEVICE_VENDOR_ID             0x1001
 #define CL_DEVICE_MAX_COMPUTE_UNITS     0x1002
+#define CL_DEVICE_MAX_WORK_GROUP_SIZE   0x1004
 #define CL_DEVICE_MAX_CLOCK_FREQUENCY   0x100C
 #define CL_DEVICE_GLOBAL_MEM_SIZE       0x101F
+#define CL_DEVICE_LOCAL_MEM_SIZE        0x1023
 #define CL_DEVICE_ERROR_CORRECTION_SUPPORT 0x1024
 #define CL_DEVICE_NAME          0x102B
 #define CL_DRIVER_VERSION       0x102D
@@ -209,6 +211,7 @@ using cl_queue = cl_command_queue;
 #define CL_KERNEL_NUM_ARGS       0x1191
 #define CL_KERNEL_ARG_NAME       0x119A
 #define CL_KERNEL_ATTRIBUTES     0x1195
+#define CL_KERNEL_WORK_GROUP_SIZE         0x11B0
 #define CL_KERNEL_COMPILE_WORK_GROUP_SIZE 0x11B1
 
 // nVidia
