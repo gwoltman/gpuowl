@@ -287,7 +287,7 @@ FFTConfig::FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry) :
   carry{carry}
 {
   // Checked at runtime, not only asserted: an out-of-range digit indexes past bpw[] in maxBpw() and selects kernel
-  // variants that do not exist (the shipped tune.txt predates this encoding and has such rows).
+  // variants that do not exist (a tune.txt written before the 3-digit variant encoding can have such rows).
   if (variant_W(variant) >= N_VARIANT_W || variant_M(variant) >= N_VARIANT_M || variant_H(variant) >= N_VARIANT_H) {
     log("Invalid FFT variant %u for %s (digits must be < %u%u%u)\n", variant, shape.spec().c_str(), N_VARIANT_W, N_VARIANT_M, N_VARIANT_H);
     throw "Invalid FFT variant";
