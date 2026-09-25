@@ -408,6 +408,16 @@ void Tune::tune() {
     throw "-tune minexp/maxexp range";
   }
 
+  // Devices without FP64 (e.g. Mesa rusticl on AMD) can only run the FFT types that have no FP64 data
+  if (!hasFP64(shared.context->deviceId())) {
+    log("This device does not support FP64.  Only FFT types without FP64 data will be tuned.\n");
+    std::erase_if(shapes, [](const FFTShape& sh) { return FFTConfig{sh, 202, CARRY_AUTO}.FFT_FP64; });
+    if (shapes.empty()) { log("No FFT without FP64 in '%s'\n", args->fftSpec.c_str()); throw "No FFT"; }
+    time_FFTs = false;
+    time_FFT6431 = false;
+    time_NTTs = true;
+  }
+
   // Look for best settings of various options.  Append best settings to config.txt.
   if (tune_config) {
     vector<pair<string,int>> newConfigKeyVals;

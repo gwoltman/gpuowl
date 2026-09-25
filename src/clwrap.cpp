@@ -181,6 +181,29 @@ bool isNvidiaGpu(cl_device_id id) {
   return pcieId == 0x10DE;
 }
 
+// Mesa rusticl on AMD, for example, does not offer cl_khr_fp64.
+bool hasFP64(cl_device_id id) {
+  try {
+    u64 fpConfig = 0;
+    GET_INFO(id, CL_DEVICE_DOUBLE_FP_CONFIG, fpConfig);
+    return fpConfig != 0;
+  } catch (const gpu_error& err) {
+    return true;    // The CUDA backend does not answer this query, and every CUDA device has FP64
+  }
+}
+
+bool isRusticl(cl_device_id id) {
+  try {
+    cl_platform_id platform{};
+    GET_INFO(id, CL_DEVICE_PLATFORM, platform);
+    char name[64] = {0};
+    CHECK2(clGetPlatformInfo(platform, CL_PLATFORM_NAME, sizeof(name) - 1, name, nullptr), "CL_PLATFORM_NAME");
+    return string(name) == "rusticl";
+  } catch (const gpu_error& err) {
+    return false;
+  }
+}
+
 u32 getNvidiaComputeCapability(cl_device_id id) {
   u32 major = 0;
   u32 minor = 0;
