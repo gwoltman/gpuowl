@@ -1074,6 +1074,23 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
     if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
     break;
   }
+  case CL_DEVICE_MAX_WORK_GROUP_SIZE: {
+    int threads = 0;
+    cuDeviceGetAttribute(&threads, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, dev->dev);
+    size_t val = threads;
+    if (sizeRet) *sizeRet = sizeof(val);
+    if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
+    break;
+  }
+  case CL_DEVICE_LOCAL_MEM_SIZE: {
+    // Kernels declare their shared memory statically, which is limited to this (48KB) without an opt-in
+    int shared = 0;
+    cuDeviceGetAttribute(&shared, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK, dev->dev);
+    u64 val = shared;
+    if (sizeRet) *sizeRet = sizeof(val);
+    if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
+    break;
+  }
   case CL_DEVICE_GLOBAL_MEM_SIZE: {
     size_t mem = 0;
     cuDeviceTotalMem(&mem, dev->dev);
@@ -1229,6 +1246,14 @@ int clGetKernelWorkGroupInfo(cl_kernel k, cl_device_id  /*dev*/, cl_kernel_work_
     size_t wgs[3] = { (size_t)wgSize, 1, 1 };
     if (sizeRet) *sizeRet = sizeof(wgs);
     if (value && size >= sizeof(wgs)) memcpy(value, wgs, sizeof(wgs));
+  } else if (info == CL_KERNEL_WORK_GROUP_SIZE) {
+    // The largest block the compiled kernel can be launched with.  Register use can make this smaller than
+    // the __launch_bounds__ value (e.g. 768 for a 1024-thread carryFused).
+    int maxThreads = 0;
+    cuFuncGetAttribute(&maxThreads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k->func);
+    size_t const val = maxThreads;
+    if (sizeRet) *sizeRet = sizeof(val);
+    if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
   }
   return CL_SUCCESS;
 }

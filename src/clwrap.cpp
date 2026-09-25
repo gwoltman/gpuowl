@@ -189,6 +189,18 @@ u32 getNvidiaComputeCapability(cl_device_id id) {
   return major * 100 + minor;
 }
 
+u32 getMaxWorkGroupSize(cl_device_id id) {
+  size_t size = 0;
+  GET_INFO(id, CL_DEVICE_MAX_WORK_GROUP_SIZE, size);
+  return u32(size);
+}
+
+u64 getLocalMemSize(cl_device_id id) {
+  u64 size = 0;
+  GET_INFO(id, CL_DEVICE_LOCAL_MEM_SIZE, size);
+  return size;
+}
+
 /*
 static string getFreq(cl_device_id device) {
   unsigned computeUnits, frequency;
@@ -438,6 +450,13 @@ int getWorkGroupSize(cl_kernel k, cl_device_id device, const char *name) {
   size_t size[3]{};
   CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_COMPILE_WORK_GROUP_SIZE, sizeof(size), &size, nullptr), name);
   return int(size[0]);
+}
+
+// The largest workgroup this compiled kernel can be launched with (it can be less than the device maximum).
+int getKernelMaxWorkGroupSize(cl_kernel k, cl_device_id device, const char *name) {
+  size_t size = 0;
+  CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size), &size, nullptr), name);
+  return int(size);
 }
 
 std::string getKernelArgName(cl_kernel k, int pos) {

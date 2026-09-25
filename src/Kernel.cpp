@@ -36,6 +36,13 @@ void Kernel::finishLoad() {
   groupSize = getWorkGroupSize(kernel.get(), deviceId, name.c_str());
   assert(groupSize);
   assert(workSizeX % groupSize == 0);
+  // The compiler may have produced code that cannot run as many threads as reqd_work_group_size asks for
+  // (e.g. too many registers).  Say so here rather than fail with INVALID_WORK_GROUP_SIZE at the first launch.
+  if (int maxSize = getKernelMaxWorkGroupSize(kernel.get(), deviceId, name.c_str()); maxSize > 0 && u32(maxSize) < groupSize) {
+    log("%s needs a workgroup of %u but the compiled kernel supports at most %d%s\n", name.c_str(), groupSize, maxSize,
+        name.starts_with("kCarryFused") ? "; try a lower -use WMUL" : "");
+    throw std::runtime_error("workgroup size too large for kernel "s + name);
+  }
 
   for (auto [pos, arg] : pendingArgs) { setArgs(pos, arg); }
 }
