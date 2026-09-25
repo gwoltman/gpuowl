@@ -122,7 +122,11 @@ src/version.cpp : src/version.inc
 # every result. Defaults to `git describe` of the checkout; a build from an
 # exported tree (no .git) or a packager that wants the upstream string passes
 # it explicitly: make VERSION=v8.0-57-g6cb4c12
-VERSION ?= $(shell basename `git describe --tags --long --dirty --always`)
+VERSION ?= $(notdir $(shell git describe --tags --long --dirty --always 2>/dev/null))
+ifeq ($(strip $(VERSION)),)
+$(warning No git checkout to take the version from, building as "unknown"; pass VERSION=... to set it)
+override VERSION := unknown
+endif
 
 src/version.inc: FORCE
 	echo \"$(VERSION)\" > $(BIN)/version.new
