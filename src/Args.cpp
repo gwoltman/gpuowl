@@ -176,19 +176,19 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    if (pos != string::npos && (key == "quick" || key == "fine" || key == "warmup" || isGroup)) {
+    if (pos != string::npos && (key == "quick" || key == "fine" || key == "warmup" || key == "workers" || isGroup)) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
       auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
       if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (isGroup && n > 2)
-          || (key == "fine" && (n < 1 || n > 50))) {
+          || (key == "fine" && (n < 1 || n > 50)) || (key == "workers" && (n < 1 || n > 4))) {
         log("-tune %s expects %s (found '%s')\n", key.c_str(),
-            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : key == "warmup" ? "a number of seconds" : "a percentage from 1 to 50", val.c_str());
+            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : key == "warmup" ? "a number of seconds" : key == "fine" ? "a percentage from 1 to 50" : "a value from 1 to 4", val.c_str());
         throw "-tune option value";
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, workers=<N>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -397,6 +397,8 @@ named "config.txt" in the prpll run directory.
                          fine         - (CUDA, AMD) Time FFTs as -tune does, but an FFT within 2%% of earning a tune.txt entry gets its register
                                         limits tuned, and is added if it then earns the entry.  config.txt settings are not tuned.
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
+                         workers=<N>  - Time config.txt settings with N workers running concurrently (as with -workers N), scoring their
+                                        combined throughput.  FFT timings for tune.txt still use one worker.
 -device <N>        : select the GPU at position N in the list of devices
 -device <P>:<D>    : select GPU D of OpenCL platform P (GPUs counted per platform)
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
