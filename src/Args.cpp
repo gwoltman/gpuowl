@@ -95,7 +95,7 @@ void Args::readConfig(const fs::path& path) {
 
 u32 Args::getProofPow(u64 exponent) const {
   if (proofPow == -1) { return ProofSet::bestPower(exponent); }
-  assert(proofPow >= 1);
+  assert(proofPow >= 0);  // 0 == proof generation disabled
   return proofPow;
 }
 
@@ -167,6 +167,7 @@ named "config.txt" in the prpll run directory.
                      A lower power reduces disk space requirements but increases the verification cost.
                      A higher power increases disk usage a lot.
                      e.g. proof power 10 for a 120M exponent uses about %.0fGB of disk space.
+                     -proof 0 disables proof generation: the PRP result is reported without a proof.
 -iters <N>         : run next PRP test for <N> iterations and exit.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
@@ -354,12 +355,12 @@ void Args::parse(const string& line) {
       clean = false;
     } else if (key == "-proof") {
       int power = 0;
-      if (s.empty() || (power = stoi(s)) < 1 || power > 13) {
-        log("-proof expects <power> 1-13 (found '%s')\n", s.c_str());
+      if (s.empty() || (power = stoi(s)) < 0 || power > 13) {
+        log("-proof expects <power> 0-13 (found '%s')\n", s.c_str());
         throw "-proof <power>";
       }
       proofPow = power;
-      assert(proofPow >= 1);
+      assert(proofPow >= 0);
     } else if (key == "-keep") {
       if (s != "proof") {
         log("-keep requires 'proof'\n");
