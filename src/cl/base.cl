@@ -814,8 +814,19 @@ void PREFETCHL2(const __global void *addr) {
 #endif
 }
 
+// FAST_BARRIER replaces barrier(CLK_LOCAL_MEM_FENCE) with barrier(0), a bare s_barrier on AMD.  That is only safe where the
+// compiler puts an "s_waitcnt lgkmcnt(0)" (wait for outstanding LDS accesses) in front of every s_barrier by itself: GCN up
+// to gfx908/gfx90c.  gfx90a, gfx94x/gfx95x and all of RDNA have a "back-off" barrier that does not wait, so there barrier(0)
+// lets a lane read LDS before another lane's store has landed and the Gerbicz check fails.  Ignore FAST_BARRIER on those.
+#if FAST_BARRIER && AMDGPU && !(defined(__GFX6__) || defined(__GFX7__) || defined(__GFX8__) || defined(__gfx900__) || \
+    defined(__gfx902__) || defined(__gfx904__) || defined(__gfx906__) || defined(__gfx908__) || defined(__gfx909__) || \
+    defined(__gfx90c__))
+#undef FAST_BARRIER
+#define FAST_BARRIER 0
+#endif
+
 // On "classic" AMD GCN GPUs such as Radeon VII, the wavefront size was always 64. On RDNA GPUs the wavefront can
-// be configured to be either 64 or 32. We use the FAST_BARRIER define as an indicator for GCN GPUs.
+// be configured to be either 64 or 32 (ROCm OpenCL uses 32). We use the FAST_BARRIER define as an indicator for GCN GPUs.
 // On Nvidia GPUs the wavefront size is 32.
 #if !WAVEFRONT
 #if FAST_BARRIER && AMDGPU
