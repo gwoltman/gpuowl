@@ -268,6 +268,33 @@ T2 bcast(T2 src, u32 span) {
   return as_double2(s);
 }
 
+#elif NVIDIAGPU && VARIANT == 0
+
+// CUDA warps are 32 lanes, so shfl.sync.idx (__shfl_sync) directly covers spans 4/8/16/32 -- the same
+// per-segment broadcast as AMD's mov_dpp/ds_swizzle -- but there is no single-instruction equivalent of
+// AMD's 64-wide readfirstlane (a CUDA warp cannot broadcast past its own 32 lanes).  Only reachable for
+// WG > 32; not needed for the WIDTH/SMALL_HEIGHT=512, NW/NH=8 (WG=64, spans 1 and 8 only) config this
+// was tested with -- trap loudly instead of silently returning the wrong (unbroadcast) value.
+int bcast64(int x) { __trap(); return x; }
+
+int bcastAux(int x, u32 span) {
+  return span == 4 ? __shfl_sync(0xffffffffu, x, 0, 4)
+       : span == 8 ? __shfl_sync(0xffffffffu, x, 0, 8)
+       : span == 16 ? __shfl_sync(0xffffffffu, x, 0, 16)
+       : span == 32 ? __shfl_sync(0xffffffffu, x, 0, 32)
+       : span == 64 ? bcast64(x)
+       : x;
+}
+
+T2 bcast(T2 src, u32 span) {
+  int4 s = as_int4(src);
+  // Unlike OpenCL's int4, CUDA's native int4 struct has no operator[]; index through
+  // a plain int* instead of s.x/.y/.z/.w so bcastAux can still be a loop over 0..3.
+  int* p = (int*)&s;
+  for (int i = 0; i < 4; ++i) { p[i] = bcastAux(p[i], span); }
+  return as_double2(s);
+}
+
 #endif
 
 void OVERLOAD fft_RADIX(T2 *u) {
@@ -694,15 +721,16 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   // This line mimics shufl -- partition lds for variant 2
   local T2* partitioned_lds = LDSptr(lds, numWG);
 
-// Variant 0 uses broadcast instructions.  Only available on AMD GPUs.
+// Variant 0 uses broadcast instructions.  Only available on AMD and NVIDIA GPUs.
 
 #if VARIANT == 0
 
 #if WG * RADIX > 1024
 #error VARIANT == 0 only supported for FFT size <= 1024
-#endif
-#if !AMDGPU
-#error VARIANT == 0 only supported by AMD GPUs
+#elif NVIDIAGPU && WG * RADIX == 1024 && RADIX == 4
+#error VARIANT == 0 not supported for radix-4, FFT size 1024 on nVidia GPUs
+#elif !AMDGPU && !NVIDIAGPU
+#error VARIANT == 0 only supported by AMD or NVIDIA GPUs
 #endif
 
 // There is a slight difference between fft_WIDTH and fft_HEIGHT.  Tail square computes the trig values

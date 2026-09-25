@@ -331,26 +331,7 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     istringstream iss(options);
     string tok;
     while (iss >> tok) {
-      if (tok.starts_with("-D")) {
-        // Fix AMD-only FFT variants for NVIDIA: variant_W=0 and variant_H=0 require
-        // AMD builtins (__builtin_amdgcn_ds_bpermute etc). Replace with variant 2.
-        // FFT_VARIANT is a 3-digit number WMH: e.g. 000, 101, 202
-        if (tok.find("FFT_VARIANT=") != string::npos) {
-          size_t const eqPos = tok.find('=');
-          string valStr = tok.substr(eqPos + 1);
-          // Strip trailing 'u' suffix
-          if (!valStr.empty() && valStr.back() == 'u') valStr.pop_back();
-          int const val = atoi(valStr.c_str());
-          int vW = val / 100;
-          int const vM = (val % 100) / 10;
-          int vH = val % 10;
-          if (vW == 0) vW = 2;  // AMD BCAST → NVIDIA generic
-          if (vH == 0) vH = 2;
-          int const newVal = vW * 100 + vM * 10 + vH;
-          tok = "-DFFT_VARIANT=" + to_string(newVal) + "u";
-        }
-        nvrtcOpts.push_back(tok);
-      } else if (tok == "-cl-finite-math-only" || tok == "-cl-fast-relaxed-math") {
+      if (tok == "-cl-finite-math-only" || tok == "-cl-fast-relaxed-math") {
         // FMA contraction already enabled above via --fmad=true.
         // Do NOT use -use_fast_math here — it enables flush-to-zero and
         // reduced-precision division/sqrt which breaks tailMul accuracy.

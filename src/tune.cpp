@@ -1225,14 +1225,16 @@ skip_1K_256 = false;
       if (variant != 202 && !FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) continue;
       if (shape.fft_type == FFT6431 && variant_M(variant) == 1) continue;
 
-      // Only AMD GPUs support variant zero (BCAST) and only if width <= 1024.  CLANG doesn't support builtins.  Let NO_ASM bypass variant zero.
+      // Only AMD GPUs profitably support variant zero (BCAST) and only if width <= 1024.  CLANG doesn't support builtins.  Have NO_ASM bypass variant zero.
+      // nVidia now supports variant zero, but is slower on TitanV
       if (variant_W(variant) == 0) {
         if (!AMDGPU) continue;
         if (shape.width > 1024) continue;
         if (args->value("NO_ASM", 0)) continue;
       }
 
-      // Only AMD GPUs support variant zero (BCAST) and only if height <= 1024.
+      // Only AMD GPUs profitably support variant zero (BCAST) and only if height <= 1024.
+      // nVidia now supports variant zero, but is slower on TitanV
       if (variant_H(variant) == 0) {
         if (!AMDGPU) continue;
         if (shape.height > 1024) continue;
