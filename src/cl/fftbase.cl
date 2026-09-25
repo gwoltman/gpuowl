@@ -194,13 +194,7 @@ void OVERLOAD chainMul4(T2 *u, T2 w) {
 void OVERLOAD chainMul8(T2 *u, T2 w) {
   u[1] = cmulFancy(u[1], w);
 
-  T2 w2;
-  // Rocm optimizer behaves weirdly. Using multiple mul2s instead of one mul2 in csqTrigFancy makes double-wide single-kernel variant 0 tailSquare inexplicably slower
-  if (DOING_WIDTH || VARIANT != 0) {
-    w2 = csqTrigFancy(w);
-  } else {
-    w2 = U2(mulminus2(w.y) * w.y, mul2(fma(w.x, w.y, w.y)));
-  }
+  T2 w2 = csqTrigFancy(w);
   u[2] = cmulFancy(u[2], w2);
 
   T2 w3;
