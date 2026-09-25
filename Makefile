@@ -122,7 +122,7 @@ src/version.cpp : src/version.inc
 # every result. Defaults to `git describe` of the checkout; a build from an
 # exported tree (no .git) or a packager that wants the upstream string passes
 # it explicitly: make VERSION=v8.0-57-g6cb4c12
-VERSION ?= $(shell basename `git describe --tags --long --dirty --always --match 'v/prpll/*'`)
+VERSION ?= $(shell basename `git describe --tags --long --dirty --always`)
 
 src/version.inc: FORCE
 	echo \"$(VERSION)\" > $(BIN)/version.new
