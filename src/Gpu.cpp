@@ -261,9 +261,18 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
-  // Validate -use options
+  // Validate -use options.  Keys that act only in the CUDA build are listed here rather than in the list below, so that the
+  // OpenCL build can say that they do nothing instead of silently ignoring them.
+  initializer_list<string> const cudaOnlyKeys = {
+                              "GRAPHS",
+                              "L1CUDA",
+                              "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
+                              "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
+                              "PDL"                     // CUDA, sm_90+: programmatic dependent launch
+                            };
   for (const auto& [k, v] : config) {
-    bool const isValid = isInList(k, {
+    bool const isCudaOnly = isInList(k, cudaOnlyKeys);
+    bool const isValid = isCudaOnly || isInList(k, {
                               "FAST_BARRIER",
                               "STATS",
                               "IN_SIZEX",
@@ -296,15 +305,29 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                               "LOADS","STORES",
                               "NOREG",                  // CUDA - experimental
                               "WMUL",
-                              "MULTI_Q",
-                              "GRAPHS",
-                              "L1CUDA",
-                              "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
-                              "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
-                              "PDL"                     // CUDA, sm_90+: programmatic dependent launch
+                              "MULTI_Q"
                             });
-    if (!isValid) {
+    if (k == "TRY_LDS_CARVEOUT") {
+      // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)
+#if CUDA_BACKEND
+      log("Warning: TRY_LDS_CARVEOUT is not a -use key; set it as an environment variable instead\n");
+#else
+      log("Warning: TRY_LDS_CARVEOUT is not a -use key; it is an environment variable of the CUDA build, and has no effect in this OpenCL build\n");
+#endif
+    } else if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
+    }
+#if !CUDA_BACKEND
+    if (isCudaOnly) { log("Note: -use %s has no effect in this OpenCL build (CUDA only)\n", k.c_str()); }
+#endif
+    // Load/store types 2 and up are PTX cache hints; elsewhere they compile to plain loads and stores (see base.cl, and tune.cpp
+    // which does not try them).
+    auto const noAsm = config.find("NO_ASM");
+    if ((k == "LOADS" || k == "STORES") && (!isNvidiaGpu(id) || (noAsm != config.end() && atoi(noAsm->second.c_str())))) {
+      bool hint = false;
+      for (char c : v) { hint |= c >= '2' && c <= '9'; }
+      if (hint) { log("Note: -use %s=%s: types 2 and up need nVidia PTX, so they are plain %s on this device\n",
+                      k.c_str(), v.c_str(), k == "LOADS" ? "loads" : "stores"); }
     }
 
     // Some -use options are needed in both OpenCL code and C++ initialization code
@@ -382,12 +405,13 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   // GRAPHS are not allowed when profiling with -time.  GRAPH replays the four bottom-half
   // kernels without per-kernel events, and the events recorded while capturing the graph never execute, so the
   // profile would show those kernels -- most of an iteration -- as one call of ~0 ns.
+  // (Only the CUDA build has graphs.  Leave the OpenCL build's flags alone, or the next Gpu would report GRAPHS as having no effect.)
+#if CUDA_BACKEND
   if (args.profile && args.value("GRAPHS", 1)) {
     args.flags["GRAPHS"] = to_string(0);
-#if CUDA_BACKEND
     log("GRAPHS are disabled when profiling with -time.\n");
-#endif
   }
+#endif
 
   // L2_STRIPING is not allowed if INPLACE=0.  Maximum L2_STRIPING is WIDTH/64 if MULTI_Q=0 and WIDTH/128 if MULTI_Q=1.
   // Technically, L2_STRIPING of WIDTH/32, MULTI_Q=0 could be allowed but that is just a more complicated way to implement L2_STRIPING=0.
