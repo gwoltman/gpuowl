@@ -133,9 +133,14 @@ int main(int argc, char **argv) {
     // (comgr ignores whatever directory this value names -- confirmed empirically, it always
     // writes into the process's current directory regardless -- so the value itself doesn't
     // matter beyond being present; KernelCompiler::compile() picks the files up from there.)
+    // Current ROCm (7.x) writes no assembly for that build option, only the preprocessed source; there the .s
+    // comes from -save-temps-all on the link step. Both are set: each runtime produces what it can. The link
+    // option is not forced over a value already in the environment, so that an older runtime which rejects it
+    // (clLinkProgram fails with CL_INVALID_LINKER_OPTIONS, see KernelCompiler) can be run with it set empty.
     if (args.verbose >= 10 && !getenv("PRPLL_ASM_REEXEC")) {
       setenv("PRPLL_ASM_REEXEC", "1", 1);
       setenv("AMD_OCL_BUILD_OPTIONS_APPEND", "-save-temps=x", 1);
+      setenv("AMD_OCL_LINK_OPTIONS_APPEND", "-save-temps-all", 0);
       execvp(argv[0], argv);
       // execvp only returns on failure; fall through and run without assembly dumping.
       log("Warning: could not re-exec for -v 10 assembly dump (%s), continuing without it\n", strerror(errno));

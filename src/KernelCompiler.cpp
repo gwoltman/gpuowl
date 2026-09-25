@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <map>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -44,6 +45,63 @@ static bool acceptsClStd(cl_context context, cl_device_id deviceId, const string
 }
 #endif
 
+#ifndef CUDA_BACKEND
+// -v 10 (see main()'s re-exec) makes the AMD OpenCL runtime write its -save-temps output into the current directory,
+// whatever path the option names, under names of its own:
+// * "<digits>.s/.cl/.i/.so" (e.g. "3949457118.s") from AMD_OCL_BUILD_OPTIONS_APPEND=-save-temps=x on older ROCm;
+// * "x_<N>_<gfx>.cl/.i" from that same option on current ROCm (7.x), which there yields no assembly;
+// * "_temp_<N>_<gfx>.s/.so" and "_temp_<N>_<gfx>_linked.bc" from AMD_OCL_LINK_OPTIONS_APPEND=-save-temps-all (current ROCm).
+// A name like "2026.log" or "42" may just as well be the user's own file, so a name is only taken for a compiler temp
+// file when it also appeared (or changed) during the compile at hand: see snapshotDir() and newCompilerTemps().
+static bool isCompilerTempName(const string& name) {
+  string const stem = name.substr(0, name.find('.'));
+  auto digitsEnd = [&stem](size_t pos) {
+    while (pos < stem.size() && isdigit((unsigned char) stem[pos])) { ++pos; }
+    return pos;
+  };
+  if (!stem.empty() && digitsEnd(0) == stem.size()) { return true; }
+  for (string const prefix : {"x_", "_temp_"}) {
+    if (stem.starts_with(prefix)) {
+      size_t const end = digitsEnd(prefix.size());
+      if (end > prefix.size() && stem.compare(end, 4, "_gfx") == 0) { return true; }
+    }
+  }
+  return false;
+}
+
+using DirSnapshot = map<string, fs::file_time_type>;
+
+// The entries of the current directory, with their modification times.
+static DirSnapshot snapshotDir() {
+  DirSnapshot snapshot;
+  error_code ec;
+  for (auto const& entry : fs::directory_iterator(".", ec)) {
+    snapshot[entry.path().filename().string()] = entry.last_write_time(ec);
+  }
+  return snapshot;
+}
+
+// The compiler temp files that are new, or were rewritten, since the snapshot "before". Everything else in the
+// directory -- the user's files, and the kernelName.s files saved by earlier compiles -- is left alone.
+static vector<fs::path> newCompilerTemps(const DirSnapshot& before) {
+  vector<fs::path> found;
+  error_code ec;
+  for (auto const& entry : fs::directory_iterator(".", ec)) {
+    string const name = entry.path().filename().string();
+    if (!entry.is_regular_file(ec) || !isCompilerTempName(name)) { continue; }
+    auto it = before.find(name);
+    if (it == before.end() || it->second != entry.last_write_time(ec)) { found.push_back(entry.path()); }
+  }
+  sort(found.begin(), found.end());
+  return found;
+}
+
+static void removeFiles(const vector<fs::path>& files) {
+  error_code ec;
+  for (const fs::path& p : files) { fs::remove(p, ec); }
+}
+#endif
+
 KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs) :
   cacheDir{args.cacheDir.string()},
   context{context->get()},
@@ -52,6 +110,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   dump{args.dump},
   useCache{args.useCache},
   verbose{args.verbose},
+  asmDump{args.verbose >= 10},
   deviceId{context->deviceId()}
 {
   // Every GPU driver we run on accepts -cl-std=CL2.0.  Some OpenCL 3.0 implementations (POCL; likely Mesa rusticl)
@@ -59,10 +118,13 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   // the kernels use from 2.0 (generic address space, memory-order atomics).  Probe once and fall back.
   string clStd = "CL2.0";
 #ifndef CUDA_BACKEND
+  // With -v 10 the probe compiles leave -save-temps files too; drop them.
+  DirSnapshot const before = asmDump ? snapshotDir() : DirSnapshot{};
   if (!acceptsClStd(context->get(), deviceId, "CL2.0") && acceptsClStd(context->get(), deviceId, "CL3.0")) {
     clStd = "CL3.0";
     log("OpenCL C 2.0 is not available on this device; compiling the kernels as OpenCL C 3.0\n");
   }
+  if (asmDump) { removeFiles(newCompilerTemps(before)); }
 #endif
   baseArgs = "-cl-finite-math-only -cl-std=" + clStd + ' ' + clArgs;
 
@@ -136,7 +198,7 @@ static KernelStats parseKernelStats(const string& asmText, const string& kernelN
 }
 #endif
 
-Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const string& kernelName, const string& extraArgs) const {
+Program KernelCompiler::build(const string& fileName, const string& extraArgs) const {
   Program p1 = loadSource(context, "#include \""s + fileName + "\"\n");
   assert(p1);
 
@@ -166,6 +228,15 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
   if (p2) { if (string const mes = getBuildLog(p2.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); } }
   if (err != CL_SUCCESS) {
     log("Linking '%s' error %s (args %s)\n", fileName.c_str(), errMes(err).c_str(), linkArgs.c_str());
+#ifndef CUDA_BACKEND
+    if (err == CL_INVALID_LINKER_OPTIONS && asmDump) {
+      // Most likely an older runtime rejecting the -save-temps-all that main() appends to every link for -v 10.
+      // The runtime reads AMD_OCL_LINK_OPTIONS_APPEND once, at startup, so it cannot be dropped from here on.
+      const char* const linkAppend = getenv("AMD_OCL_LINK_OPTIONS_APPEND");
+      log("-v 10: the OpenCL runtime rejected AMD_OCL_LINK_OPTIONS_APPEND=\"%s\"; run without -v 10, or set "
+          "AMD_OCL_LINK_OPTIONS_APPEND to an empty value to keep -v 10 without it\n", linkAppend ? linkAppend : "");
+    }
+#endif
     // clLinkProgram may still hand back a program object on failure (e.g. to hold the build log).
     // Discard it: an unlinked/half-linked program has no executable, and returning it here would
     // make the caller fail later with a bare CL_INVALID_PROGRAM_EXECUTABLE from clCreateKernel
@@ -173,46 +244,26 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
     return {};
   }
 
-#ifndef CUDA_BACKEND
-  // -v 10 (see main()'s re-exec) leaves comgr free to drop -save-temps output with a
-  // content-hashed name -- confirmed empirically to always land in the current directory,
-  // regardless of any path given in the -save-temps value itself. Besides the ".s" we want,
-  // comgr also drops its intermediate ".cl"/".i"/".so" (preprocessed source, etc) there --
-  // spurious clutter we don't want, so sweep up every hash-named file, not just ".s" ones.
-  // Compiles are serial on this backend (see load() below), so whatever shows up here belongs
-  // to this call.
-  if (verbose >= 10) {
-    // comgr names its own output purely from a content hash (e.g. "3949457118.s") -- never
-    // matching the digits-only stem is how we tell its temp file apart from a kernelName.s we
-    // saved on an earlier call in this same directory (which must NOT be picked up here: it's
-    // some other kernel's saved output, not a new artifact, and reprocessing it would overwrite
-    // *this* kernel's file with stale content and delete the original).
-    auto isHashStem = [](const fs::path& p) {
-      string const s = p.stem().string();
-      return !s.empty() && std::ranges::all_of(s, [](unsigned char c) { return isdigit(c); });
-    };
-    // Snapshot the listing before touching anything: our own output below is itself a ".s" file
-    // in this same directory, and modifying a directory mid-iteration is unspecified behavior.
-    vector<fs::path> found;
-    error_code ec;
-    for (auto const& entry : fs::directory_iterator(".", ec)) {
-      if (isHashStem(entry.path())) { found.push_back(entry.path()); }
-    }
-    for (fs::path const& p : found) {
-      if (p.extension() != ".s") {
-        // Some other comgr intermediate (.cl, .i, .so, ...) -- not wanted, just delete it.
-        fs::remove(p, ec);
-        continue;
-      }
+  return p2;
+}
 
+Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const string& kernelName, const string& extraArgs) const {
+#ifndef CUDA_BACKEND
+  if (asmDump) {
+    // Compiles are serial on this backend (see load() below), so what the compiler leaves in the directory
+    // during this call belongs to this kernel.
+    DirSnapshot const before = snapshotDir();
+    Program program = build(fileName, extraArgs);
+    vector<fs::path> const temps = newCompilerTemps(before);
+    for (const fs::path& p : temps) {
+      if (p.extension() != ".s") { continue; }
       string const asmText = readWholeFile(p);
 
       KernelStats const st = parseKernelStats(asmText, kernelName);
-      if (st.found) {
-        log("%s: %ld vgprs, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy=%ld%s\n",
-            kernelName.c_str(), st.vgprs, st.sgprs, st.ldsBytes, st.scratchBytes, st.occupancy,
-            st.scratchBytes > 0 ? " (SPILLING)" : "");
-      }
+      if (!st.found) { continue; }
+      log("%s: %ld vgprs, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy=%ld%s\n",
+          kernelName.c_str(), st.vgprs, st.sgprs, st.ldsBytes, st.scratchBytes, st.occupancy,
+          st.scratchBytes > 0 ? " (SPILLING)" : "");
 
       // Some kernelNames are compiled more than once under the same exported name (e.g.
       // "carryFused" plain/-DROE=1/-DMUL3=1/...): give each compile its own file rather than
@@ -220,12 +271,14 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
       int const n = ++asmDumpCounts[kernelName];
       string const outName = (n == 1) ? kernelName + ".s" : kernelName + '_' + to_string(n) + ".s";
       { ofstream out(outName, ios::binary); out << asmText; }
-      fs::remove(p, ec);
+      break;
     }
+    // The .s is copied out; its siblings (.cl, .i, .so, .bc) are of no use.
+    removeFiles(temps);
+    return program;
   }
 #endif
-
-  return p2;
+  return build(fileName, extraArgs);
 }
 
 static string to_hex(u64 d) {

@@ -20,6 +20,7 @@ class KernelCompiler {
   std::string dump;
   const bool useCache;
   const int verbose;
+  const bool asmDump;   // -v 10: pick up the compiler's assembly (AMD OpenCL)
 
   std::vector<Program> clSources;
   std::vector<std::pair<std::string, std::string>> files;
@@ -32,6 +33,7 @@ class KernelCompiler {
   // each later variant overwriting the previous one's dump.
   mutable std::map<std::string, int> asmDumpCounts;
 
+  [[nodiscard]] Program build(const string& fileName, const string& args) const;
   [[nodiscard]] Program compile(const string& fileName, const string& kernelName, const string& args) const;
   [[nodiscard]] KernelHolder loadAux(const string& fileName, const string& kernelName, const string& args) const;
 
