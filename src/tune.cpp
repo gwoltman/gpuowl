@@ -377,6 +377,17 @@ void Tune::tune() {
   quick = std::max(quick, 1);
   quick = std::min(quick, 10);
 
+  // Giving only one of minexp=/maxexp= leaves the other at its default (75M/350M), so e.g. "-tune maxexp=50000000"
+  // alone leaves min_exponent at 75M above it.  The FFT-selection loop below (fft.maxExp() < min_exponent /
+  // fft.maxExp() > 2*max_exponent) would then silently time nothing useful instead of the small-exponent FFTs the
+  // user asked for.  Fail loudly instead of leaving the user staring at an empty tune.txt.
+  if (min_exponent > max_exponent) {
+    log("-tune: minexp=%" PRIu64 " is greater than maxexp=%" PRIu64 "; give both minexp= and maxexp= to tune a "
+        "narrow range, e.g. -tune minexp=10000000,maxexp=20000000 for a small exponent such as PRP-CF at 18M\n",
+        min_exponent, max_exponent);
+    throw "-tune minexp/maxexp range";
+  }
+
   // Look for best settings of various options.  Append best settings to config.txt.
   if (tune_config) {
     vector<pair<string,int>> newConfigKeyVals;
