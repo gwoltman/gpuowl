@@ -75,7 +75,11 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define HAS_PTX 0
 #elif NVIDIAGPU
 #define HAS_ASM 0
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < CC
+#define HAS_PTX __CUDA_ARCH__     // The CUDA shim fell back to an older compute_XY than the GPU: the PTX must be valid for it
+#else
 #define HAS_PTX CC     // C code computed the nVidia GPU's compute capability
+#endif
 #else
 #define HAS_ASM 0
 #define HAS_PTX 0

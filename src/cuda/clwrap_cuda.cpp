@@ -290,6 +290,33 @@ cl_program clCreateProgramWithBinary(cl_context ctx, unsigned  /*nDevices*/, con
 }
 
 
+// The --gpu-architecture to compile for a GPU of compute capability cc (e.g. 61 for sm_61), given the architectures
+// this NVRTC accepts (empty: unknown, NVRTC < 11.2). Each toolkit supports only a window of them: CUDA 13 dropped
+// sm_50..sm_72 (Maxwell, Pascal, Volta), and an older toolkit does not know the newest GPUs. The GPU's own sm_XY
+// gives a CUBIN, loaded without a JIT. Otherwise take the newest compute_XY not above the GPU: PTX, which the
+// driver JIT-compiles for any GPU of at least that capability. Empty when NVRTC supports nothing that old.
+static string nvrtcArch(int cc, const vector<int>& archs) {
+  if (archs.empty() || ranges::find(archs, cc) != archs.end()) { return "sm_" + to_string(cc); }
+  int best = 0;
+  for (int a : archs) { if (a <= cc) { best = max(best, a); } }
+  return best ? "compute_" + to_string(best) : "";
+}
+
+static const vector<int>& nvrtcSupportedArchs() {
+  static const vector<int> archs = [] {
+    vector<int> v;
+#if CUDA_VERSION >= 11020
+    int n = 0;
+    if (nvrtcGetNumSupportedArchs(&n) == NVRTC_SUCCESS && n > 0) {
+      v.resize(n);
+      if (nvrtcGetSupportedArchs(v.data()) != NVRTC_SUCCESS) { v.clear(); }
+    }
+#endif
+    return v;
+  }();
+  return archs;
+}
+
 int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id* devices, const char* options,
                      unsigned numHeaders, const cl_program* headers, const char* const* headerNames,
                      void (*)(cl_program, void*), void*) {
@@ -301,8 +328,28 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev);
   cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev);
 
-  char archOpt[32];
-  snprintf(archOpt, sizeof(archOpt), "--gpu-architecture=sm_%d%d", major, minor);
+  int const cc = major * 10 + minor;
+  const vector<int>& archs = nvrtcSupportedArchs();
+  string const arch = nvrtcArch(cc, archs);
+  if (arch.empty() || !arch.starts_with("sm_")) {
+    int nvMajor = 0, nvMinor = 0;
+    nvrtcVersion(&nvMajor, &nvMinor);
+    if (arch.empty()) {
+      char mes[320];
+      snprintf(mes, sizeof(mes), "This GPU is sm_%d, but this build's NVRTC %d.%d supports only sm_%d and newer. "
+               "Use a PRPLL build made with an older CUDA toolkit (CUDA 13 dropped Maxwell, Pascal and Volta).",
+               cc, nvMajor, nvMinor, ranges::min(archs));
+      prog->buildLog = mes;
+      prog->compiled = false;
+      return CL_COMPILE_PROGRAM_FAILURE;
+    }
+    static std::once_flag logged;
+    std::call_once(logged, [&] {
+      log("NVRTC %d.%d does not support sm_%d; compiling for %s, which the driver JIT-compiles\n",
+          nvMajor, nvMinor, cc, arch.c_str());
+    });
+  }
+  string const archOpt = "--gpu-architecture=" + arch;
 
   // Parse OpenCL options string into NVRTC options
   // Convert OpenCL build options to NVRTC equivalents:
@@ -331,7 +378,9 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     istringstream iss(options);
     string tok;
     while (iss >> tok) {
-      if (tok == "-cl-finite-math-only" || tok == "-cl-fast-relaxed-math") {
+      if (tok.starts_with("-D")) {
+        nvrtcOpts.push_back(tok);
+      } else if (tok == "-cl-finite-math-only" || tok == "-cl-fast-relaxed-math") {
         // FMA contraction already enabled above via --fmad=true.
         // Do NOT use -use_fast_math here — it enables flush-to-zero and
         // reduced-precision division/sqrt which breaks tailMul accuracy.
@@ -1074,6 +1123,23 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
     if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
     break;
   }
+  case CL_DEVICE_MAX_WORK_GROUP_SIZE: {
+    int threads = 0;
+    cuDeviceGetAttribute(&threads, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, dev->dev);
+    size_t val = threads;
+    if (sizeRet) *sizeRet = sizeof(val);
+    if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
+    break;
+  }
+  case CL_DEVICE_LOCAL_MEM_SIZE: {
+    // Kernels declare their shared memory statically, which is limited to this (48KB) without an opt-in
+    int shared = 0;
+    cuDeviceGetAttribute(&shared, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK, dev->dev);
+    u64 val = shared;
+    if (sizeRet) *sizeRet = sizeof(val);
+    if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
+    break;
+  }
   case CL_DEVICE_GLOBAL_MEM_SIZE: {
     size_t mem = 0;
     cuDeviceTotalMem(&mem, dev->dev);
@@ -1229,6 +1295,14 @@ int clGetKernelWorkGroupInfo(cl_kernel k, cl_device_id  /*dev*/, cl_kernel_work_
     size_t wgs[3] = { (size_t)wgSize, 1, 1 };
     if (sizeRet) *sizeRet = sizeof(wgs);
     if (value && size >= sizeof(wgs)) memcpy(value, wgs, sizeof(wgs));
+  } else if (info == CL_KERNEL_WORK_GROUP_SIZE) {
+    // The largest block the compiled kernel can be launched with.  Register use can make this smaller than
+    // the __launch_bounds__ value (e.g. 768 for a 1024-thread carryFused).
+    int maxThreads = 0;
+    cuFuncGetAttribute(&maxThreads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, k->func);
+    size_t const val = maxThreads;
+    if (sizeRet) *sizeRet = sizeof(val);
+    if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
   }
   return CL_SUCCESS;
 }

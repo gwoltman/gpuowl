@@ -2,6 +2,7 @@
 
 #include "File.h"
 #include "clwrap.h"
+#include "fs.h"
 
 #include <cmath>
 #include <cstdio>
@@ -11,6 +12,9 @@
 #include <memory>
 #include <vector>
 #include <array>
+#include <chrono>
+#include <random>
+#include <atomic>
 
 using namespace std;
 
@@ -185,6 +189,18 @@ u32 getNvidiaComputeCapability(cl_device_id id) {
   return major * 100 + minor;
 }
 
+u32 getMaxWorkGroupSize(cl_device_id id) {
+  size_t size = 0;
+  GET_INFO(id, CL_DEVICE_MAX_WORK_GROUP_SIZE, size);
+  return u32(size);
+}
+
+u64 getLocalMemSize(cl_device_id id) {
+  u64 size = 0;
+  GET_INFO(id, CL_DEVICE_LOCAL_MEM_SIZE, size);
+  return size;
+}
+
 /*
 static string getFreq(cl_device_id device) {
   unsigned computeUnits, frequency;
@@ -220,13 +236,21 @@ cl_context createContext(cl_device_id id) {
 }
 
 
-void release(cl_context context) { CHECK1(clReleaseContext(context)); }
-void release(cl_program program) { CHECK1(clReleaseProgram(program)); }
-void release(cl_mem buf)         { CHECK1(clReleaseMemObject(buf)); }
-void release(cl_queue queue)     { CHECK1(clReleaseCommandQueue(queue)); }
-void release(cl_kernel k)        { CHECK1(clReleaseKernel(k)); }
-void release(cl_event event)     { CHECK1(clReleaseEvent(event)); }
-void release(cl_graph graph)     { CHECK1(clReleaseGraph(graph));}
+// The release()s run from the Holder deleters, i.e. from destructors, often while an earlier CL error is
+// unwinding the stack.  A throw there calls std::terminate, so log the error instead of throwing it.
+// Log only the first: on a lost device every remaining object fails the same way.
+static void releaseCheck(int err, const char *what) {
+  static std::atomic<bool> logged{false};
+  if (err != CL_SUCCESS && !logged.exchange(true)) { log("%s: %s\n", what, errMes(err).c_str()); }
+}
+
+void release(cl_context context) { releaseCheck(clReleaseContext(context), "clReleaseContext"); }
+void release(cl_program program) { releaseCheck(clReleaseProgram(program), "clReleaseProgram"); }
+void release(cl_mem buf)         { releaseCheck(clReleaseMemObject(buf), "clReleaseMemObject"); }
+void release(cl_queue queue)     { releaseCheck(clReleaseCommandQueue(queue), "clReleaseCommandQueue"); }
+void release(cl_kernel k)        { releaseCheck(clReleaseKernel(k), "clReleaseKernel"); }
+void release(cl_event event)     { releaseCheck(clReleaseEvent(event), "clReleaseEvent"); }
+void release(cl_graph graph)     { releaseCheck(clReleaseGraph(graph), "clReleaseGraph"); }
 
 Program loadSource(cl_context context, const string &source) {
   const char *ptr = source.c_str();
@@ -235,6 +259,18 @@ Program loadSource(cl_context context, const string &source) {
   cl_program program = clCreateProgramWithSource(context, 1, &ptr, &size, &err);
   CHECK2(err, "clCreateProgramWithSource");
   return Program{program};
+}
+
+// FFT variant 0 (BCAST) needs these amdgcn builtins, which not every AMD OpenCL compiler has (e.g. the Windows driver's).
+// base.cl checks for them the same way and falls back to variant 1 without them.
+bool hasAmdBcastBuiltins(cl_context context, cl_device_id deviceId) {
+  if (!isAmdGpu(deviceId)) { return false; }
+  Program probe = loadSource(context,
+    "#if !defined(__has_builtin) || !__has_builtin(__builtin_amdgcn_mov_dpp) || !__has_builtin(__builtin_amdgcn_ds_swizzle) || !__has_builtin(__builtin_amdgcn_readfirstlane)\n"
+    "#error missing builtins\n"
+    "#endif\n"
+    "kernel void probe() {}\n");
+  return probe && clCompileProgram(probe.get(), 1, &deviceId, "", 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
 }
 
 string getBuildLog(cl_program program, cl_device_id deviceId) {
@@ -287,7 +323,19 @@ static string getBinary(cl_program program) {
 }
 
 void saveBinary(cl_program program, string_view fileName) {
-  File::openWrite(fileName).write(getBinary(program));
+  // Write under a unique name in the same directory, then rename into place: another process (or worker)
+  // loading this kernel must never see a half-written binary, which some drivers crash on instead of rejecting.
+  u64 const salt = random_device{}() ^ chrono::steady_clock::now().time_since_epoch().count();
+  fs::path const tmp = string(fileName) + '-' + to_string(salt) + ".tmp";
+  File::openWrite(tmp).write(getBinary(program));
+  try {
+    fancyRename(tmp, fileName);
+  } catch (const fs::filesystem_error& e) {
+    // e.g. on Windows the target is open in another process; the cache is only an optimization.
+    log("Can't save binary %s : %s\n", string(fileName).c_str(), e.what());
+    error_code ec;
+    fs::remove(tmp, ec);
+  }
 }
 
 cl_kernel loadKernel(cl_program program, const char *name) {
@@ -402,6 +450,13 @@ int getWorkGroupSize(cl_kernel k, cl_device_id device, const char *name) {
   size_t size[3]{};
   CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_COMPILE_WORK_GROUP_SIZE, sizeof(size), &size, nullptr), name);
   return int(size[0]);
+}
+
+// The largest workgroup this compiled kernel can be launched with (it can be less than the device maximum).
+int getKernelMaxWorkGroupSize(cl_kernel k, cl_device_id device, const char *name) {
+  size_t size = 0;
+  CHECK2(clGetKernelWorkGroupInfo(k, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size), &size, nullptr), name);
+  return int(size);
 }
 
 std::string getKernelArgName(cl_kernel k, int pos) {
