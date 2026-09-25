@@ -295,6 +295,12 @@ T2 bcast(T2 src, u32 span) {
   return as_double2(s);
 }
 
+#else
+
+// Variants 1 and 2 never broadcast: fft_common selects chainMul(u, w = bcast(w, s)) with a runtime
+// `if (VARIANT == 0)`, so the call has to compile even though it is dead.  Return the input unchanged.
+T2 bcast(T2 src, u32 span) { return src; }
+
 #endif
 
 void OVERLOAD fft_RADIX(T2 *u) {
