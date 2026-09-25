@@ -69,6 +69,13 @@ vector<KeyVal> Args::splitArgLine(const string& inputLine) {
   return ret;
 }
 
+// Aliases for -use keys, accepted so a variant spelling doesn't silently do nothing. George has
+// repeatedly told users on the forum to "Try -use NOASM" (no underscore); keep that working by
+// mapping it to the real key NO_ASM before it reaches -use validation or the OpenCL -D defines.
+static const std::map<string, string> useKeyAliases = {
+  {"NOASM", "NO_ASM"},
+};
+
 // Splits a string of the form "Foo=bar,C,D=1" into key=value pairs, with value defaulting to "1".
 vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
   vector<KeyVal> ret;
@@ -77,8 +84,12 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
   vector<string> const uses{std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{}};
   for (const string &s : uses) {
     auto pos = s.find('=');
-    string const key = (pos == string::npos) ? s : s.substr(0, pos);
+    string key = (pos == string::npos) ? s : s.substr(0, pos);
     string const val = (pos == string::npos) ? "1"s : s.substr(pos+1);
+    if (auto it = useKeyAliases.find(key); it != useKeyAliases.end()) {
+      log("-use %s taken as %s\n", key.c_str(), it->second.c_str());
+      key = it->second;
+    }
     ret.emplace_back(key, val);
   }
   return ret;
@@ -179,7 +190,7 @@ named "config.txt" in the prpll run directory.
   -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
                      may not work on Nvidia GPUs or on RDNA AMD GPUs where it produces errors
                      (which are nevertheless detected).
-  -use NO_ASM      : do not use __asm() blocks (inline assembly)
+  -use NO_ASM      : do not use __asm() blocks (inline assembly); also accepted as NOASM
   -use TAIL_KERNELS=<val> : change how tailSquare and tailMul operate according to <val>:
                      0 = single wide, single kernel
                      1 = single wide, two kernels
