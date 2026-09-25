@@ -239,27 +239,30 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
            );
 
   }
-  printf("\nFFT Configurations (specify with -fft <type>:<width>:<middle>:<height> from the set below):\n"
-         " Size   MaxExp   BPW    FFT\n");
+  printf("\nFFT Configurations (specify with -fft <type>:<width>:<middle>:<height> from the set below):\n");
 
-  vector<FFTShape> configs = FFTShape::allShapes();
-  configs.push_back(configs.front()); // dummy guard for the loop below.
-  u32 activeSize = 0;
-  float maxBpw = 0;
-  string variants;
-  for (enum FFT_TYPES const type : {FFT64, FFT3161, FFT3261, FFT61}) {
-    for (auto c : configs) {
+  vector<FFTShape> const configs = FFTShape::allShapes();
+  for (auto [type, name] : {pair{FFT64, "FP64"}, {FFT3161, "M31+M61 NTT"}, {FFT3261, "FP32+M61"}, {FFT61, "M61 NTT"},
+                            {FFT323161, "FP32+M31+M61"}, {FFT6431, "FP64+M31"}}) {
+    printf("\nFFT type %d: %s\n"
+           " Size   MaxExp   BPW    FFT\n", type, name);
+    u32 activeSize = 0;
+    float maxBpw = 0;
+    string variants;
+    auto flush = [&]() {
+      if (variants.empty()) { return; }
+      printf("%5s  %7.2fM  %.2f  %s\n",
+             numberK(activeSize).c_str(),
+             // activeSize * FFTShape::MIN_BPW / 1'000'000,
+             activeSize * maxBpw / 1'000'000.0,
+             maxBpw,
+             variants.c_str());
+      variants.clear();
+    };
+    for (const FFTShape& c : configs) {
       if (c.fft_type != type) continue;
       if (c.size() != activeSize) {
-        if (!variants.empty()) {
-          printf("%5s  %7.2fM  %.2f  %s\n",
-                 numberK(activeSize).c_str(),
-                 // activeSize * FFTShape::MIN_BPW / 1'000'000,
-                 activeSize * maxBpw / 1'000'000.0,
-                 maxBpw,
-                 variants.c_str());
-          variants.clear();
-        }
+        flush();
         activeSize = c.size();
         maxBpw = 0;
       }
@@ -267,6 +270,7 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
       if (!variants.empty()) { variants.push_back(','); }
       variants += c.spec();
     }
+    flush();
   }
 }
 
