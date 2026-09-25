@@ -430,11 +430,63 @@ void Args::parse(const string& line) {
       u32 multiple = (s.back() == 'G') ? (1u << 30) : (1u << 20);
       maxAlloc = size_t(stod(s) * multiple + .5);
     }
+    // DEPRECATED options from old gpuowl config.txt files that no longer affect anything PRPLL does.
+    // Accepted (rather than "not understood") so migrated configs keep running; see forum #474/#480.
+    else if (key == "-yield") {          // was a work-around for Nvidia's CUDA busy-wait eating a CPU core; PRPLL has no such busy-wait to work around.
+      log("-yield is deprecated and ignored (CUDA busy-wait work-around no longer applies)\n");
+    }
+    else if (key == "-nospin") {         // used to silence the "-\\|/" progress spinner, which no longer exists.
+      log("-nospin is deprecated and ignored (there is no progress spinner to silence)\n");
+    }
+    else if (key == "-cpu") {            // used to label results with a machine name; PRPLL derives that label from the last segment of -dir instead.
+      log("-cpu is deprecated and ignored (results are now labeled from -dir instead)\n");
+    }
+    else if (key == "-results") {        // used to rename results.txt; PRPLL always writes results-<worker>.txt.
+      log("-results is deprecated and ignored (results are always written to results-<N>.txt)\n");
+    }
+    else if (key == "-autoverify") {     // used to self-verify proofs of at least the given power right after generating them.
+      log("-autoverify is deprecated and ignored (proofs are no longer auto-verified; use -verify)\n");
+    }
+    else if (key == "-tmpDir" || key == "-tmpdir") {   // used to redirect proof checkpoint scratch space.
+      log("-tmpDir is deprecated and ignored (proof checkpoints are always kept under -dir)\n");
+    }
+    else if (key == "-binary") {         // used to load a precompiled kernel binary from a given file.
+      log("-binary is deprecated and ignored; use -cache for a persistent kernel cache instead\n");
+    }
+    // DEPRECATED: P-1 factoring (and its second-stage mprime interop) was removed along with the GMP
+    // dependency, not for cost (see PR history). These options would silently change what gets tested,
+    // so unlike the no-ops above they must not be swallowed quietly.
+    else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2" || key == "-rB2" ||
+             key == "-pm1" || key == "-mprimeDir" || key == "-D") {
+      log("%s: P-1 factoring is no longer supported; remove it from config.txt\n", key.c_str());
+      throw "P-1 no longer supported";
+    }
+    else if (key == "-from") {           // used to resume at a specific iteration instead of the latest checkpoint.
+      log("-from is no longer supported; PRPLL always resumes from the most recent checkpoint in -dir\n");
+      throw "-from no longer supported";
+    }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
     else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
     else if (key == "-smallest") { smallest = true; }
-    else if (key == "-fft") { fftSpec = s; }
+    else if (key == "-fft") {
+      // Old gpuowl also accepted a "+N"/"-N" relative offset ("nudge the auto-selected FFT by N steps"),
+      // which PRPLL never implemented; passed through as a literal spec it hits FFTConfig's opaque
+      // "FFT spec" parse failure. "+0"/"-0" always meant "no change" regardless of version, so accept
+      // that one case as if -fft were not given; any other offset picks an unspecified FFT, so reject
+      // it with a clear message instead of that opaque failure.
+      bool const isOffset = s.size() >= 2 && (s[0] == '+' || s[0] == '-') &&
+        s.find_first_not_of("0123456789", 1) == string::npos;
+      if (isOffset && stoi(s) == 0) {
+        log("-fft %s ignored (relative FFT size offsets are not supported; auto-selecting FFT)\n", s.c_str());
+      } else if (isOffset) {
+        log("-fft %s not supported: relative FFT size offsets (+N/-N) no longer exist; "
+            "specify an explicit FFT size or spec (e.g. -fft 6.5M), or omit -fft to auto-select\n", s.c_str());
+        throw "-fft offset not supported";
+      } else {
+        fftSpec = s;
+      }
+    }
     else if (key == "-user") { user = s; }
     else if (key == "-device" || key == "-d") { device = stoi(s); }
     else if (key == "-uid") { device = getPosFromUid(s); }
