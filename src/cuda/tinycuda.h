@@ -155,8 +155,11 @@ using cl_queue = cl_command_queue;
 #define CL_DEVICE_NAME          0x102B
 #define CL_DRIVER_VERSION       0x102D
 #define CL_DEVICE_VERSION       0x102F
+#define CL_DEVICE_PLATFORM      0x1031
+#define CL_DEVICE_DOUBLE_FP_CONFIG 0x1032
 #define CL_DEVICE_BUILT_IN_KERNELS 0x103F
 #define CL_PLATFORM_VERSION     0x0901
+#define CL_PLATFORM_NAME        0x0902
 
 #define CL_PROGRAM_BINARY_SIZES 0x1165
 #define CL_PROGRAM_BINARIES     0x1166

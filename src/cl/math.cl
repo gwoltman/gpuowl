@@ -103,7 +103,7 @@ i96 OVERLOAD sub(i96 a, i32 b) { return sub(a, make_i96(b)); }
 #endif
 
 // A primitive partial implementation of an i128 and u128 integer type
-#if defined(__SIZEOF_INT128__)
+#if defined(__SIZEOF_INT128__) && !NO_INT128
 typedef struct { __int128 x; } i128;
 typedef struct { unsigned __int128 x; } u128;
 i128 OVERLOAD make_i128(i64 hi, u64 lo) { i128 val; val.x = ((__int128)hi << 64) | lo; return val; }

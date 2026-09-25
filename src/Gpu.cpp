@@ -482,6 +482,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   if (isAmdGpu(id)) { defines += toDefine("AMDGPU", 1); }
   if (isNvidiaGpu(id)) { defines += toDefine("NVIDIAGPU", 1); }
   if (isNvidiaGpu(id)) { defines += toDefine("CC", getNvidiaComputeCapability(id)); }
+  if (!hasFP64(id)) { defines += toDefine("NO_FP64", 1); }
 
   if ((fft.carry == CARRY_AUTO && fft.shape.needsLargeCarry(E)) || (fft.carry == CARRY_64)) {
     if (doLog) { log("Using CARRY64\n"); }
@@ -693,6 +694,10 @@ string formatSecsPerIter(float secsPerIter) {
 // --------
 
 unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize) {
+  if (fftConfig.FFT_FP64 && !hasFP64(shared.context->deviceId())) {
+    log("FFT %s needs FP64, which this device does not support.  Use an FFT type without FP64 (e.g. 1 = M31+M61).\n", fftConfig.spec().c_str());
+    throw "FP64 not supported";
+  }
   // Without the builtins, base.cl compiles variant 0 as variant 1 (with a warning from every .cl file).  Make that switch
   // here instead, with one log line, so that the FFT spec and its max exponent describe the FFT that actually runs.
   u32 const v = fftConfig.variant;

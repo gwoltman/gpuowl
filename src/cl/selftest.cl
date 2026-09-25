@@ -85,6 +85,7 @@ KERNEL(32) testTime(int what, global i64* io) {
     
     clock1 = __builtin_readcyclecounter();
     __asm("s_waitcnt lgkmcnt(0)");
+#if !NO_FP64
   } else if (what == 3) { // V_ADD_F64
     double a = 2, b = 3;
     
@@ -127,6 +128,7 @@ KERNEL(32) testTime(int what, global i64* io) {
     
     clock1 = __builtin_readcyclecounter();
     __asm("s_waitcnt lgkmcnt(0)");
+#endif
   }
   
   if (get_local_id(0) == 0) {

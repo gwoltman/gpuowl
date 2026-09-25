@@ -5,6 +5,7 @@
 #include "common.h"
 #include "log.h"
 #include "TuneEntry.h"
+#include "clwrap.h"
 
 #include <cmath>
 #include <cassert>
@@ -338,6 +339,9 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
     return fft;
   }
 
+  // Devices without FP64 can only use the FFT types that have no FP64 data
+  bool const fp64 = hasFP64(getDevice(args.device));
+
   // No FFT-spec given, so choose from tune.txt the fastest FFT that can handle E
   // An FFT too large for E (below minBpw) would make the Gpu constructor throw "FFT size too large", so skip those too.
   auto const fits = [&](const FFTConfig& fft) { return E <= fft.maxExp() * args.fftOverdrive && !(E / float(fft.size()) < fft.minBpw()); };
@@ -345,7 +349,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
   vector<TuneEntry> const tunes = TuneEntry::readTuneFile(args);
   for (const TuneEntry& e : tunes) {
     // The first acceptable is the best as they're sorted by cost
-    if (fits(e.fft)) { return e.fft; }
+    if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) { return e.fft; }
   }
 
   log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);
@@ -362,7 +366,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
   });
   for (const FFTShape& shape : shapes) {
     for (u32 const v : {101, 202}) {
-      if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft)) { return fft; }
+      if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft) && (fp64 || !fft.FFT_FP64)) { return fft; }
     }
   }
 
