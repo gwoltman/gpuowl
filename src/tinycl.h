@@ -107,14 +107,19 @@ int clSetKernelArgSVMPointer(cl_kernel, unsigned, const void *);
 #define CL_DEVICE_TYPE_GPU      (1 << 2)
 #define CL_DEVICE_TYPE_ALL      0xFFFFFFFF
 #define CL_PLATFORM_VERSION     0x0901
+#define CL_PLATFORM_NAME        0x0902
 #define CL_DEVICE_VENDOR_ID     0x1001
 #define CL_DEVICE_MAX_COMPUTE_UNITS 0x1002
+#define CL_DEVICE_MAX_WORK_GROUP_SIZE 0x1004
 #define CL_DEVICE_MAX_CLOCK_FREQUENCY 0x100C
 #define CL_DEVICE_GLOBAL_MEM_SIZE        0x101F
+#define CL_DEVICE_LOCAL_MEM_SIZE         0x1023
 #define CL_DEVICE_ERROR_CORRECTION_SUPPORT 0x1024
 #define CL_DEVICE_NAME          0x102B
 #define CL_DRIVER_VERSION       0x102D
 #define CL_DEVICE_VERSION       0x102F
+#define CL_DEVICE_PLATFORM      0x1031
+#define CL_DEVICE_DOUBLE_FP_CONFIG 0x1032
 #define CL_DEVICE_BUILT_IN_KERNELS 0x103F
 
 #define CL_PROGRAM_BINARY_SIZES 0x1165
@@ -205,6 +210,7 @@ int clSetKernelArgSVMPointer(cl_kernel, unsigned, const void *);
 #define CL_KERNEL_ARG_NAME        0x119A
 #define CL_KERNEL_ATTRIBUTES      0x1195
 
+#define CL_KERNEL_WORK_GROUP_SIZE         0x11B0
 #define CL_KERNEL_COMPILE_WORK_GROUP_SIZE 0x11B1
 
 // nVidia

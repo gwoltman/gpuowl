@@ -109,11 +109,6 @@ jobs:
     - name: Install OpenCL
       run: |
         vcpkg install opencl
-    - name: Before Script
-      shell: bash
-      run: |
-        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
-        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=OpenCL-Release /p:StaticRuntime=true /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
@@ -143,11 +138,6 @@ jobs:
       uses: N-Storm/cuda-toolkit@v0.2.34
       with:
         cuda: ${{ matrix.cuda }}
-    - name: Before Script
-      shell: bash
-      run: |
-        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
-        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=CUDA-Release /p:StaticRuntime=true /p:StaticCUDA=${{ matrix.cuda != '10.2.89' && 'true' || 'false' }}

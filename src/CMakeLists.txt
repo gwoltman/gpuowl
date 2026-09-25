@@ -20,7 +20,6 @@ add_executable(prpll
   tune.cpp
   TuneEntry.cpp
   fs.cpp
-  version.inc
   )
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -40,16 +39,14 @@ endif()
 
 target_include_directories(prpll PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
-add_custom_command(
-  OUTPUT version.inc
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  # Matches the Makefile's VERSION recipe (Makefile:125): restrict to this
-  # project's own 'v/prpll/*' tags, then basename to drop the 'v/prpll/'
-  # directory part, so cmake and make builds of the same commit embed the
-  # same version string.
-  COMMAND git describe --tags --long --dirty --always --match 'v/prpll/*' | xargs basename | sed 's/.*/"&"/' > ${CMAKE_CURRENT_BINARY_DIR}/version.inc
-  DEPENDS ${CMAKE_SOURCE_DIR}
+# Regenerated on every build (a commit changes the version without touching any source file) by version.cmake,
+# which only rewrites version.inc when the string changes.  -DPRPLL_VERSION=... sets it, as make VERSION=... does.
+add_custom_target(prpll_version
+  COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${CMAKE_CURRENT_BINARY_DIR}/version.inc
+          -DPRPLL_VERSION=${PRPLL_VERSION} -P ${CMAKE_CURRENT_SOURCE_DIR}/version.cmake
+  BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/version.inc
   )
+add_dependencies(prpll prpll_version)
 
 file(
   GLOB CL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cl/*.cl

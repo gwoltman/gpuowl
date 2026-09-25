@@ -75,7 +75,11 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define HAS_PTX 0
 #elif NVIDIAGPU
 #define HAS_ASM 0
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < CC
+#define HAS_PTX __CUDA_ARCH__     // The CUDA shim fell back to an older compute_XY than the GPU: the PTX must be valid for it
+#else
 #define HAS_PTX CC     // C code computed the nVidia GPU's compute capability
+#endif
 #else
 #define HAS_ASM 0
 #define HAS_PTX 0
@@ -247,9 +251,23 @@ typedef uint u32;
 typedef long i64;
 typedef ulong u64;
 
+// The host sets NO_FP64 for devices without cl_khr_fp64 (e.g. Mesa rusticl on AMD).  Such devices can still run the FFT types
+// that have no FP64 data (M31+M61, M61, and the FP32 hybrids).  All uses of double must then be compiled out.
+#if !defined(NO_FP64)
+#define NO_FP64 0
+#endif
+#if NO_FP64 && FFT_FP64
+#error FFT types with FP64 data need a device with cl_khr_fp64
+#endif
+
 // Data types for data stored in FFTs and NTTs during the transform
+#if !NO_FP64
 typedef double T;           // For historical reasons, classic FFTs using doubles call their data T and T2.
 typedef double2 T2;         // A complex value using doubles in a classic FFT.
+#else
+typedef ulong T;            // Kernels also use T2 pointers as untyped buffers (and trig tables) for NTT data.  Without FP64,
+typedef ulong2 T2;          // a same-size integer type stands in.
+#endif
 typedef float F;            // A classic FFT using floats.  Use typedefs F and F2.
 typedef float2 F2;
 typedef uint Z31;           // A value calculated mod M31.  For a GF(M31^2) NTT.
@@ -304,13 +322,17 @@ error - unsupported integer WordSize
 #endif
 
 // Routine to create a pair
+#if !NO_FP64
 double2 OVERLOAD U2(double a, double b) { return (double2) (a, b); }
+#endif
 float2 OVERLOAD U2(float a, float b) { return (float2) (a, b); }
 int2 OVERLOAD U2(int a, int b) { return (int2) (a, b); }
 long2 OVERLOAD U2(i64 a, i64 b) { return (long2) (a, b); }
 uint2 OVERLOAD U2(uint a, uint b) { return (uint2) (a, b); }
 ulong2 OVERLOAD U2(unsigned long a, unsigned long b) { return (ulong2) ((ulong)a, (ulong)b); }              // Two versions dealing with longs to handle TAILTGF61 constant
+#if !NO_INT128                // Without 128-bit integers (see KernelCompiler.cpp) there are no long long literals to handle
 ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2) ((ulong)a, (ulong)b); }
+#endif
 
 // Other handy macros
 #define RE(a) (a.x)
@@ -362,13 +384,19 @@ typedef global const GF61* TABLE_RESTRICT TrigGF61;
 // Even better is to not pollute the constant cache with weights that are used only once.
 // This requires two typedefs depending on how we want to use the BigTab pointer.
 // For AMD we can declare BigTab as constant or global - it doesn't really matter.
+#if !NO_FP64
 typedef constant const double2* TABLE_RESTRICT ConstBigTab;
+#endif
 typedef constant const float2* TABLE_RESTRICT ConstBigTabFP32;
 #if AMDGPU
+#if !NO_FP64
 typedef constant const double2* TABLE_RESTRICT BigTab;
+#endif
 typedef constant const float2* TABLE_RESTRICT BigTabFP32;
 #else
+#if !NO_FP64
 typedef global const double2* TABLE_RESTRICT BigTab;
+#endif
 typedef global const float2* TABLE_RESTRICT BigTabFP32;
 #endif
 
@@ -814,8 +842,19 @@ void PREFETCHL2(const __global void *addr) {
 #endif
 }
 
+// FAST_BARRIER replaces barrier(CLK_LOCAL_MEM_FENCE) with barrier(0), a bare s_barrier on AMD.  That is only safe where the
+// compiler puts an "s_waitcnt lgkmcnt(0)" (wait for outstanding LDS accesses) in front of every s_barrier by itself: GCN up
+// to gfx908/gfx90c.  gfx90a, gfx94x/gfx95x and all of RDNA have a "back-off" barrier that does not wait, so there barrier(0)
+// lets a lane read LDS before another lane's store has landed and the Gerbicz check fails.  Ignore FAST_BARRIER on those.
+#if FAST_BARRIER && AMDGPU && !(defined(__GFX6__) || defined(__GFX7__) || defined(__GFX8__) || defined(__gfx900__) || \
+    defined(__gfx902__) || defined(__gfx904__) || defined(__gfx906__) || defined(__gfx908__) || defined(__gfx909__) || \
+    defined(__gfx90c__))
+#undef FAST_BARRIER
+#define FAST_BARRIER 0
+#endif
+
 // On "classic" AMD GCN GPUs such as Radeon VII, the wavefront size was always 64. On RDNA GPUs the wavefront can
-// be configured to be either 64 or 32. We use the FAST_BARRIER define as an indicator for GCN GPUs.
+// be configured to be either 64 or 32 (ROCm OpenCL uses 32). We use the FAST_BARRIER define as an indicator for GCN GPUs.
 // On Nvidia GPUs the wavefront size is 32.
 #if !WAVEFRONT
 #if FAST_BARRIER && AMDGPU

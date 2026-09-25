@@ -167,7 +167,17 @@ optional<Task> getWork(Args& args, i32 instance) {
   // Try to get a task from the local worktodo-<N> file.
   if (optional<Task> task = bestTask(args, localWork)) { return task; }
 
-  if (args.masterDir.empty()) { log("No work to do found.  Add work to %s.\n", filename.c_str()); return {}; }
+  if (args.masterDir.empty()) {
+    // Users coming from gpuowl are used to a single "worktodo.txt".  Without -pool PRPLL only ever reads the
+    // per-instance "worktodo-N.txt", so a worktodo.txt sitting right next to it is silently ignored.  Point
+    // that out instead of leaving people to discover it the hard way (mersenneforum threads #173-177, #339).
+    if (fs::exists("worktodo.txt")) {
+      log("No work to do found.  Add work to %s.  Found worktodo.txt; PRPLL reads %s (rename it).\n", filename.c_str(), filename.c_str());
+    } else {
+      log("No work to do found.  Add work to %s.\n", filename.c_str());
+    }
+    return {};
+  }
 
   filename = "worktodo.txt";
   fs::path const worktodo = args.masterDir / filename;

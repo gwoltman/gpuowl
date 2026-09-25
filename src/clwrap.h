@@ -69,7 +69,11 @@ u64 getFreeMem(cl_device_id id);
 bool hasFreeMemInfo(cl_device_id id);
 bool isAmdGpu(cl_device_id id);
 bool isNvidiaGpu(cl_device_id id);
+bool hasFP64(cl_device_id id);
+bool isRusticl(cl_device_id id);
 u32 getNvidiaComputeCapability(cl_device_id id);
+u32 getMaxWorkGroupSize(cl_device_id id);
+u64 getLocalMemSize(cl_device_id id);
 string getDriverVersion(cl_device_id id);
 string getDriverVersionByPos(int pos);
 
@@ -81,6 +85,7 @@ string getBuildLog(cl_program program, cl_device_id deviceId);
 
 Program loadBinary(cl_context context, cl_device_id deviceId, string_view fileName);
 Program loadSource(cl_context context, const string& source);
+bool hasAmdBcastBuiltins(cl_context context, cl_device_id deviceId);
 cl_kernel loadKernel(cl_program program, const char *name);
 void saveBinary(cl_program program, string_view fileName);
 
@@ -121,6 +126,7 @@ void waitForEvents(vector<cl_event>&& waits);
 
 int getKernelNumArgs(cl_kernel k);
 int getWorkGroupSize(cl_kernel k, cl_device_id device, const char *name);
+int getKernelMaxWorkGroupSize(cl_kernel k, cl_device_id device, const char *name);
 std::string getKernelArgName(cl_kernel k, int pos);
 
 cl_device_id getDevice(u32 argsDevId);

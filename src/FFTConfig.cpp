@@ -5,6 +5,7 @@
 #include "common.h"
 #include "log.h"
 #include "TuneEntry.h"
+#include "clwrap.h"
 
 #include <cmath>
 #include <cassert>
@@ -287,7 +288,7 @@ FFTConfig::FFTConfig(FFTShape shape, u32 variant, enum CARRY_KIND carry) :
   carry{carry}
 {
   // Checked at runtime, not only asserted: an out-of-range digit indexes past bpw[] in maxBpw() and selects kernel
-  // variants that do not exist (the shipped tune.txt predates this encoding and has such rows).
+  // variants that do not exist (a tune.txt written before the 3-digit variant encoding can have such rows).
   if (variant_W(variant) >= N_VARIANT_W || variant_M(variant) >= N_VARIANT_M || variant_H(variant) >= N_VARIANT_H) {
     log("Invalid FFT variant %u for %s (digits must be < %u%u%u)\n", variant, shape.spec().c_str(), N_VARIANT_W, N_VARIANT_M, N_VARIANT_H);
     throw "Invalid FFT variant";
@@ -338,19 +339,34 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
     return fft;
   }
 
+  // Devices without FP64 can only use the FFT types that have no FP64 data
+  bool const fp64 = hasFP64(getDevice(args.device));
+
   // No FFT-spec given, so choose from tune.txt the fastest FFT that can handle E
+  // An FFT too large for E (below minBpw) would make the Gpu constructor throw "FFT size too large", so skip those too.
+  auto const fits = [&](const FFTConfig& fft) { return E <= fft.maxExp() * args.fftOverdrive && !(E / float(fft.size()) < fft.minBpw()); };
+
   vector<TuneEntry> const tunes = TuneEntry::readTuneFile(args);
   for (const TuneEntry& e : tunes) {
     // The first acceptable is the best as they're sorted by cost
-    if (E <= e.fft.maxExp() * args.fftOverdrive) { return e.fft; }
+    if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) { return e.fft; }
   }
 
   log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);
 
-  // Take the first FFT that can handle E
-  for (const FFTShape& shape : FFTShape::allShapes()) {
+  // Take the smallest FFT that can handle E.  allShapes() sorts by size alone, which lets an FP32 hybrid (e.g. FP32+M31+M61) win
+  // without any timing, and some OpenCL compilers can't build the FP32 code (hence -tune nofp32).  Prefer FP64 and M31+M61
+  // (the two types -tune compares by default), FP64 at equal size, and use the other types only for an E beyond both.
+  auto const rank = [](const FFTShape& s) { return s.fft_type == FFT64 ? 0 : s.fft_type == FFT3161 ? 1 : 2; };
+  vector<FFTShape> shapes = FFTShape::allShapes();
+  std::ranges::stable_sort(shapes, [&](const FFTShape& a, const FFTShape& b) {
+    if ((rank(a) < 2) != (rank(b) < 2)) { return rank(a) < 2; }
+    if (a.size() != b.size()) { return a.size() < b.size(); }
+    return rank(a) < rank(b);
+  });
+  for (const FFTShape& shape : shapes) {
     for (u32 const v : {101, 202}) {
-      if (FFTConfig fft{shape, v, CARRY_AUTO}; fft.maxExp() * args.fftOverdrive >= E) { return fft; }
+      if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft) && (fp64 || !fft.FFT_FP64)) { return fft; }
     }
   }
 

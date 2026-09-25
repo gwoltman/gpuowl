@@ -3,10 +3,12 @@
 #include "CycleFile.h"
 
 #include <cassert>
+#include <cmath>
 #include <cinttypes>
 
 // Returns whether *results* was updated.
 bool TuneEntry::update(vector<TuneEntry>& results) const {
+  if (!std::isfinite(cost)) { return false; }   // a failed timing (see Gpu::timePRP) must never be recorded
   u64 const maxExp = fft.maxExp();
   [[maybe_unused]] bool didErase = false;
 
@@ -51,6 +53,7 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
   vector<TuneEntry> results;
   File fi = File::openRead(tuneFile);
   if (!fi) { return {}; }
+  fi.allowUnterminatedLastLine();
 
   for (const string& line : fi) {
     char specBuf[32];

@@ -17,6 +17,7 @@
 #include <iterator>
 #include <sstream>
 #include <algorithm>
+#include <charconv>
 
 // This is a copy of the args.verbose level.  It allows the CUDA wrapper to access the value.
 int prpll_verbose = 0;
@@ -69,6 +70,13 @@ vector<KeyVal> Args::splitArgLine(const string& inputLine) {
   return ret;
 }
 
+// Aliases for -use keys, accepted so a variant spelling doesn't silently do nothing. George has
+// repeatedly told users on the forum to "Try -use NOASM" (no underscore); keep that working by
+// mapping it to the real key NO_ASM before it reaches -use validation or the OpenCL -D defines.
+static const std::map<string, string> useKeyAliases = {
+  {"NOASM", "NO_ASM"},
+};
+
 // Splits a string of the form "Foo=bar,C,D=1" into key=value pairs, with value defaulting to "1".
 vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
   vector<KeyVal> ret;
@@ -77,15 +85,42 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
   vector<string> const uses{std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{}};
   for (const string &s : uses) {
     auto pos = s.find('=');
-    string const key = (pos == string::npos) ? s : s.substr(0, pos);
+    string key = (pos == string::npos) ? s : s.substr(0, pos);
     string const val = (pos == string::npos) ? "1"s : s.substr(pos+1);
+    if (auto it = useKeyAliases.find(key); it != useKeyAliases.end()) {
+      log("-use %s taken as %s\n", key.c_str(), it->second.c_str());
+      key = it->second;
+    }
     ret.emplace_back(key, val);
   }
   return ret;
 }
 
+// Checks the comma separated -tune options up front: Tune::tune() silently skips anything it does not recognise,
+// so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
+static void checkTuneOptions(const string& options) {
+  for (const string& s : split(options, ',')) {
+    if (s.empty() || s == "noconfig" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace") { continue; }
+    auto pos = s.find('=');
+    string const key = s.substr(0, pos);
+    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp")) {
+      string const val = s.substr(pos + 1);
+      u64 n = 0;
+      auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
+      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10))) {
+        log("-tune %s expects %s (found '%s')\n", key.c_str(), key == "quick" ? "a value from 1 to 10" : "a whole number, e.g. 5000000000", val.c_str());
+        throw "-tune option value";
+      }
+      continue;
+    }
+    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    throw "-tune option";
+  }
+}
+
 void Args::readConfig(const fs::path& path) {
   if (File file = File::openRead(path)) {
+    file.allowUnterminatedLastLine();
     for (string line : file) {
       line = rstripNewline(line);
       parse(line);
@@ -95,7 +130,7 @@ void Args::readConfig(const fs::path& path) {
 
 u32 Args::getProofPow(u64 exponent) const {
   if (proofPow == -1) { return ProofSet::bestPower(exponent); }
-  assert(proofPow >= 1);
+  assert(proofPow >= 0);  // 0 == proof generation disabled
   return proofPow;
 }
 
@@ -167,6 +202,7 @@ named "config.txt" in the prpll run directory.
                      A lower power reduces disk space requirements but increases the verification cost.
                      A higher power increases disk usage a lot.
                      e.g. proof power 10 for a 120M exponent uses about %.0fGB of disk space.
+                     -proof 0 disables proof generation: the PRP result is reported without a proof.
 -iters <N>         : run next PRP test for <N> iterations and exit.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
@@ -177,9 +213,9 @@ named "config.txt" in the prpll run directory.
 
 -use <define>      : comma separated list of defines for configuring openCL code, such as:
   -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
-                     may not work on Nvidia GPUs or on RDNA AMD GPUs where it produces errors
-                     (which are nevertheless detected).
-  -use NO_ASM      : do not use __asm() blocks (inline assembly)
+                     may not work on Nvidia GPUs.  It is ignored on RDNA and on MI200 and later
+                     AMD GPUs, where the faster barrier gives wrong results.
+  -use NO_ASM      : do not use __asm() blocks (inline assembly); also accepted as NOASM
   -use TAIL_KERNELS=<val> : change how tailSquare and tailMul operate according to <val>:
                      0 = single wide, single kernel
                      1 = single wide, two kernels
@@ -210,8 +246,11 @@ named "config.txt" in the prpll run directory.
                          fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
                          ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
                          nofp32       - Do not tune for settings that affect FP32 FFTs.  Some openCL compilers have trouble with FP32.
-                         minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.
-                         maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.
+                         minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.  Default 75000000.
+                         maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.  Default 350000000.
+                                        Without an -fft <spec>, only FFTs in [minexp, maxexp] are timed, so tuning
+                                        for a small exponent (e.g. PRP-CF at 18M) needs both ends set low, e.g.
+                                        -tune minexp=10000000,maxexp=20000000
                          fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
 -device <N>        : select the GPU at position N in the list of devices
@@ -239,27 +278,30 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
            );
 
   }
-  printf("\nFFT Configurations (specify with -fft <type>:<width>:<middle>:<height> from the set below):\n"
-         " Size   MaxExp   BPW    FFT\n");
+  printf("\nFFT Configurations (specify with -fft <type>:<width>:<middle>:<height> from the set below):\n");
 
-  vector<FFTShape> configs = FFTShape::allShapes();
-  configs.push_back(configs.front()); // dummy guard for the loop below.
-  u32 activeSize = 0;
-  float maxBpw = 0;
-  string variants;
-  for (enum FFT_TYPES const type : {FFT64, FFT3161, FFT3261, FFT61}) {
-    for (auto c : configs) {
+  vector<FFTShape> const configs = FFTShape::allShapes();
+  for (auto [type, name] : {pair{FFT64, "FP64"}, {FFT3161, "M31+M61 NTT"}, {FFT3261, "FP32+M61"}, {FFT61, "M61 NTT"},
+                            {FFT323161, "FP32+M31+M61"}, {FFT6431, "FP64+M31"}}) {
+    printf("\nFFT type %d: %s\n"
+           " Size   MaxExp   BPW    FFT\n", type, name);
+    u32 activeSize = 0;
+    float maxBpw = 0;
+    string variants;
+    auto flush = [&]() {
+      if (variants.empty()) { return; }
+      printf("%5s  %7.2fM  %.2f  %s\n",
+             numberK(activeSize).c_str(),
+             // activeSize * FFTShape::MIN_BPW / 1'000'000,
+             activeSize * maxBpw / 1'000'000.0,
+             maxBpw,
+             variants.c_str());
+      variants.clear();
+    };
+    for (const FFTShape& c : configs) {
       if (c.fft_type != type) continue;
       if (c.size() != activeSize) {
-        if (!variants.empty()) {
-          printf("%5s  %7.2fM  %.2f  %s\n",
-                 numberK(activeSize).c_str(),
-                 // activeSize * FFTShape::MIN_BPW / 1'000'000,
-                 activeSize * maxBpw / 1'000'000.0,
-                 maxBpw,
-                 variants.c_str());
-          variants.clear();
-        }
+        flush();
         activeSize = c.size();
         maxBpw = 0;
       }
@@ -267,6 +309,7 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
       if (!variants.empty()) { variants.push_back(','); }
       variants += c.spec();
     }
+    flush();
   }
 }
 
@@ -325,7 +368,7 @@ void Args::parse(const string& line) {
       logROE = true;
     } else if (key == "-tune") {
       doTune = true;
-      if (!s.empty()) { tune = s; }
+      if (!s.empty()) { checkTuneOptions(s); tune = s; }
 //    } else if (key == "-ctune") {
 //      doCtune = true;
 //      if (!s.empty()) { ctune.push_back(s); }
@@ -354,12 +397,12 @@ void Args::parse(const string& line) {
       clean = false;
     } else if (key == "-proof") {
       int power = 0;
-      if (s.empty() || (power = stoi(s)) < 1 || power > 13) {
-        log("-proof expects <power> 1-13 (found '%s')\n", s.c_str());
+      if (s.empty() || (power = stoi(s)) < 0 || power > 13) {
+        log("-proof expects <power> 0-13 (found '%s')\n", s.c_str());
         throw "-proof <power>";
       }
       proofPow = power;
-      assert(proofPow >= 1);
+      assert(proofPow >= 0);
     } else if (key == "-keep") {
       if (s != "proof") {
         log("-keep requires 'proof'\n");
@@ -388,11 +431,63 @@ void Args::parse(const string& line) {
       u32 multiple = (s.back() == 'G') ? (1u << 30) : (1u << 20);
       maxAlloc = size_t(stod(s) * multiple + .5);
     }
+    // DEPRECATED options from old gpuowl config.txt files that no longer affect anything PRPLL does.
+    // Accepted (rather than "not understood") so migrated configs keep running; see forum #474/#480.
+    else if (key == "-yield") {          // was a work-around for Nvidia's CUDA busy-wait eating a CPU core; PRPLL has no such busy-wait to work around.
+      log("-yield is deprecated and ignored (CUDA busy-wait work-around no longer applies)\n");
+    }
+    else if (key == "-nospin") {         // used to silence the "-\\|/" progress spinner, which no longer exists.
+      log("-nospin is deprecated and ignored (there is no progress spinner to silence)\n");
+    }
+    else if (key == "-cpu") {            // used to label results with a machine name; PRPLL derives that label from the last segment of -dir instead.
+      log("-cpu is deprecated and ignored (results are now labeled from -dir instead)\n");
+    }
+    else if (key == "-results") {        // used to rename results.txt; PRPLL always writes results-<worker>.txt.
+      log("-results is deprecated and ignored (results are always written to results-<N>.txt)\n");
+    }
+    else if (key == "-autoverify") {     // used to self-verify proofs of at least the given power right after generating them.
+      log("-autoverify is deprecated and ignored (proofs are no longer auto-verified; use -verify)\n");
+    }
+    else if (key == "-tmpDir" || key == "-tmpdir") {   // used to redirect proof checkpoint scratch space.
+      log("-tmpDir is deprecated and ignored (proof checkpoints are always kept under -dir)\n");
+    }
+    else if (key == "-binary") {         // used to load a precompiled kernel binary from a given file.
+      log("-binary is deprecated and ignored; use -cache for a persistent kernel cache instead\n");
+    }
+    // DEPRECATED: P-1 factoring (and its second-stage mprime interop) was removed along with the GMP
+    // dependency, not for cost (see PR history). These options would silently change what gets tested,
+    // so unlike the no-ops above they must not be swallowed quietly.
+    else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2" || key == "-rB2" ||
+             key == "-pm1" || key == "-mprimeDir" || key == "-D") {
+      log("%s: P-1 factoring is no longer supported; remove it from config.txt\n", key.c_str());
+      throw "P-1 no longer supported";
+    }
+    else if (key == "-from") {           // used to resume at a specific iteration instead of the latest checkpoint.
+      log("-from is no longer supported; PRPLL always resumes from the most recent checkpoint in -dir\n");
+      throw "-from no longer supported";
+    }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
     else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
     else if (key == "-smallest") { smallest = true; }
-    else if (key == "-fft") { fftSpec = s; }
+    else if (key == "-fft") {
+      // Old gpuowl also accepted a "+N"/"-N" relative offset ("nudge the auto-selected FFT by N steps"),
+      // which PRPLL never implemented; passed through as a literal spec it hits FFTConfig's opaque
+      // "FFT spec" parse failure. "+0"/"-0" always meant "no change" regardless of version, so accept
+      // that one case as if -fft were not given; any other offset picks an unspecified FFT, so reject
+      // it with a clear message instead of that opaque failure.
+      bool const isOffset = s.size() >= 2 && (s[0] == '+' || s[0] == '-') &&
+        s.find_first_not_of("0123456789", 1) == string::npos;
+      if (isOffset && stoi(s) == 0) {
+        log("-fft %s ignored (relative FFT size offsets are not supported; auto-selecting FFT)\n", s.c_str());
+      } else if (isOffset) {
+        log("-fft %s not supported: relative FFT size offsets (+N/-N) no longer exist; "
+            "specify an explicit FFT size or spec (e.g. -fft 6.5M), or omit -fft to auto-select\n", s.c_str());
+        throw "-fft offset not supported";
+      } else {
+        fftSpec = s;
+      }
+    }
     else if (key == "-user") { user = s; }
     else if (key == "-device" || key == "-d") { device = stoi(s); }
     else if (key == "-uid") { device = getPosFromUid(s); }

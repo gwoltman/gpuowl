@@ -56,6 +56,7 @@ struct WriteError : FileError { explicit WriteError(std::string n) : FileError("
 class File {
   FILE* f = nullptr;
   const bool readOnly;
+  bool unterminatedLastLineOK = false;
   
   File(const fs::path &path, const string& mode, bool throwOnError);
 
@@ -103,7 +104,7 @@ public:
 
   File(FILE* f, string  name) : f{f}, readOnly{false}, name{std::move(name)} {}
   
-  File(File&& other)  noexcept : f{other.f}, readOnly{other.readOnly}, name{other.name} { other.f = nullptr; }
+  File(File&& other)  noexcept : f{other.f}, readOnly{other.readOnly}, unterminatedLastLineOK{other.unterminatedLastLineOK}, name{other.name} { other.f = nullptr; }
   
   File& operator=(File&& other) noexcept ;
 
@@ -201,6 +202,10 @@ public:
 
   bool empty() { return size() == 0; }
 
+  // For hand-edited files that PRPLL never appends to (config.txt, tune.txt): accept a last line with no newline.
+  // worktodo files keep the check, as lines are appended to them and deleted by exact match (see deleteLine()).
+  void allowUnterminatedLastLine() { unterminatedLastLineOK = true; }
+
   // Returns newline-ended line.
   std::string readLine() {
     char buf[1024];
@@ -209,6 +214,7 @@ public:
     if (!ok) { return ""; }  // EOF or error
     string line = buf;
     if (line.empty() || line.back() != '\n') {
+      if (unterminatedLastLineOK && feof(this->get())) { return line + '\n'; }
       log("%s : line \"%s\" does not end with a newline\n", name.c_str(), line.c_str());
       throw ReadError{name};
     }

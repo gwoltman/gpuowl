@@ -108,13 +108,14 @@ jobs:
       # Gerbicz check are both perfectly happy without it.
       #
       # Verifying a known-good proof closes that hole cheaply: it runs tailSquare and tailMulLow for a few
-      # thousand iterations, once per FFT type, and the six here are the ones allShapes() enumerates, so
-      # every number type (FP64, FP32, GF31, GF61) and every hybrid of them gets exercised.  The proof is
-      # type-agnostic: it is a list of residues, so one file checks all six.
+      # thousand iterations, once per FFT type.  The list is every type base.cl accepts, not just the six
+      # allShapes() enumerates -- 50, 52 and 53 are reachable only through an explicit -fft prefix -- so
+      # every number type (FP64, FP32, GF31, GF61) alone and in every hybrid gets exercised.  The proof is
+      # type-agnostic: it is a list of residues, so one file checks all nine.
       timeout-minutes: 30
       run: |
         cd build-debug
-        for t in 0 1 2 3 4 51; do
+        for t in 0 1 2 3 4 50 51 52 53; do
           rm -rf gpuowl-0.log 786433
           rc=0
           timeout -s KILL 10m ./prpll -device 0 -verify ../test/786433-10.proof -fft "$t:256:2:256" || rc=$?
@@ -269,11 +270,6 @@ jobs:
     - name: Install OpenCL
       run: |
         vcpkg install opencl
-    - name: Before Script
-      shell: bash
-      run: |
-        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
-        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=OpenCL-Debug /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
@@ -294,11 +290,6 @@ jobs:
     - uses: step-security/msvc-dev-cmd@v1
     - name: Install CUDA Toolkit
       uses: N-Storm/cuda-toolkit@v0.2.34
-    - name: Before Script
-      shell: bash
-      run: |
-        bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
-        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=CUDA-Debug

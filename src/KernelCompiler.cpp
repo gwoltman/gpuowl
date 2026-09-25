@@ -19,6 +19,7 @@
 #include <fstream>
 #include <sstream>
 #include <map>
+#include <regex>
 #include <set>
 
 using namespace std;
@@ -114,6 +115,16 @@ static void removeFiles(const vector<fs::path>& files) {
 }
 #endif
 
+// In OpenCL C long long is a 128-bit type, so every "ull" literal (in the kernels and in the host's -D values) makes the
+// arithmetic around it 128-bit.  Mesa rusticl translates the kernels to SPIR-V without optimizing that away, cannot handle
+// 128-bit integers, and aborts the whole process ("InvalidBitWidth: Invalid bit width in input: 128").  Every such literal
+// fits in 64 bits, so there the long long literals are narrowed to long, and base.cl/math.cl are told (NO_INT128) to avoid
+// their 128-bit types too.
+static string narrowLongLongLiterals(const string& s) {
+  static const regex longLongLiteral{R"(\b(0[xX][0-9a-fA-F]+|[0-9]+)([uU]?)[lL][lL]\b)"};
+  return regex_replace(s, longLongLiteral, "$1$2L");
+}
+
 KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs) :
   cacheDir{args.cacheDir.string()},
   context{context->get()},
@@ -139,6 +150,10 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   if (isAmdGpu(deviceId)) { maxWaves = maxWavesPerSimd(getDeviceName(deviceId)); }
 #endif
   baseArgs = "-cl-finite-math-only -cl-std=" + clStd + ' ' + clArgs;
+  // Rusticl is detected, other drivers with the same limitation can be handled with -use NO_INT128=1
+  bool const askedNoInt128 = clArgs.find("-DNO_INT128=1") != string::npos;
+  bool const noInt128 = askedNoInt128 || isRusticl(deviceId);
+  if (noInt128) { baseArgs = narrowLongLongLiterals(baseArgs) + (askedNoInt128 ? "" : " -DNO_INT128=1"); }
 
   string const hw = getDriverVersion(deviceId) + ':' + getDeviceName(deviceId);
   if (args.verbose) { log("OpenCL: %s, args %s\n", hw.c_str(), baseArgs.c_str()); }
@@ -152,7 +167,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   assert(clNames.size() == clFiles.size());
   int const n = int(clNames.size());
   for (int i = 0; i < n; ++i) {
-    auto &src = clFiles[i];
+    string const src = noInt128 ? narrowLongLongLiterals(clFiles[i]) : string(clFiles[i]);
     files.emplace_back(clNames[i], src);
     clSources.push_back(loadSource(context->get(), src));
 
