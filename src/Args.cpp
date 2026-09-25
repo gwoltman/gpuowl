@@ -17,6 +17,7 @@
 #include <iterator>
 #include <sstream>
 #include <algorithm>
+#include <charconv>
 
 // This is a copy of the args.verbose level.  It allows the CUDA wrapper to access the value.
 int prpll_verbose = 0;
@@ -82,6 +83,28 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
     ret.emplace_back(key, val);
   }
   return ret;
+}
+
+// Checks the comma separated -tune options up front: Tune::tune() silently skips anything it does not recognise,
+// so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
+static void checkTuneOptions(const string& options) {
+  for (const string& s : split(options, ',')) {
+    if (s.empty() || s == "noconfig" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace") { continue; }
+    auto pos = s.find('=');
+    string const key = s.substr(0, pos);
+    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp")) {
+      string const val = s.substr(pos + 1);
+      u64 n = 0;
+      auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
+      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10))) {
+        log("-tune %s expects %s (found '%s')\n", key.c_str(), key == "quick" ? "a value from 1 to 10" : "a whole number, e.g. 5000000000", val.c_str());
+        throw "-tune option value";
+      }
+      continue;
+    }
+    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    throw "-tune option";
+  }
 }
 
 void Args::readConfig(const fs::path& path) {
@@ -330,7 +353,7 @@ void Args::parse(const string& line) {
       logROE = true;
     } else if (key == "-tune") {
       doTune = true;
-      if (!s.empty()) { tune = s; }
+      if (!s.empty()) { checkTuneOptions(s); tune = s; }
 //    } else if (key == "-ctune") {
 //      doCtune = true;
 //      if (!s.empty()) { ctune.push_back(s); }
