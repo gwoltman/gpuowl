@@ -27,6 +27,10 @@ private:
   // Whether WMUL=1 made carryFused faster, by a key of what determines carryFused (see regTuneEntry), for the rest of the tune
   std::map<std::string, bool> wmul1Results;
 
+  int workers = 1;              // -tune workers=N: time -use options with N concurrent workers
+
+  double timeOption(u64 exponent, FFTConfig fft, int quick, u32* usedWmul = nullptr);
+
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
 
