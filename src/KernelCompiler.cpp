@@ -19,6 +19,7 @@
 #include <fstream>
 #include <sstream>
 #include <map>
+#include <set>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -67,6 +68,17 @@ static bool isCompilerTempName(const string& name) {
     }
   }
   return false;
+}
+
+// The most waves a SIMD can hold, as LLVM's AMDGPU backend has it, from the device name ("gfx1100", "gfx90a:xnack-").
+// 0 when not known.
+static int maxWavesPerSimd(const string& deviceName) {
+  if (!deviceName.starts_with("gfx")) { return 0; }
+  string const gfx = deviceName.substr(0, deviceName.find(':'));
+  if (gfx == "gfx90a" || gfx.starts_with("gfx94") || gfx.starts_with("gfx95")) { return 8; }   // CDNA2, CDNA3
+  if (gfx.size() <= 6) { return 10; }                                                          // GCN, Vega, CDNA1
+  if (gfx.starts_with("gfx101")) { return 20; }                                                // RDNA1
+  return 16;                                                                                   // RDNA2 and later
 }
 
 using DirSnapshot = map<string, fs::file_time_type>;
@@ -125,6 +137,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
     log("OpenCL C 2.0 is not available on this device; compiling the kernels as OpenCL C 3.0\n");
   }
   if (asmDump) { removeFiles(newCompilerTemps(before)); }
+  if (isAmdGpu(deviceId)) { maxWaves = maxWavesPerSimd(getDeviceName(deviceId)); }
 #endif
   baseArgs = "-cl-finite-math-only -cl-std=" + clStd + ' ' + clArgs;
 
@@ -161,40 +174,77 @@ static string readWholeFile(const fs::path& p) {
 
 // Resource-usage fields for one kernel, read out of its .amdhsa_kernel ... .end_amdhsa_kernel
 // block in the assembly (AMDGPU/ROCm only -- see reference_rocm_isa_dumping memory for details
-// on this format).  A CUDA-like -v report: registers, LDS, and whether it's spilling to scratch.
+// on this format), and out of the "; Name: value" comments that follow that block.
+// A CUDA-like -v report: registers, LDS, and whether it's spilling to scratch.
 struct KernelStats {
   bool found = false;
-  long vgprs = -1, sgprs = -1, ldsBytes = -1, scratchBytes = -1, occupancy = -1;
+  long vgprs = -1, vgprsAllocated = -1, sgprs = -1, ldsBytes = -1, scratchBytes = -1, occupancy = -1;
 };
 
 static KernelStats parseKernelStats(const string& asmText, const string& kernelName) {
   KernelStats st;
+  // The whole program is in the file, so e.g. "tailMulZero" may precede "tailMul": the name must end there.
   string const startMarker = ".amdhsa_kernel " + kernelName;
-  size_t const start = asmText.find(startMarker);
+  size_t start = asmText.find(startMarker);
+  while (start != string::npos && start + startMarker.size() < asmText.size()
+         && !isspace((unsigned char) asmText[start + startMarker.size()])) {
+    start = asmText.find(startMarker, start + 1);
+  }
   if (start == string::npos) { return st; }
   size_t end = asmText.find(".end_amdhsa_kernel", start);
   if (end == string::npos) { end = asmText.size(); }
   string const block = asmText.substr(start, end - start);
   st.found = true;
 
-  auto grab = [&](const char* key) -> long {
-    size_t const p = block.find(key);
-    return (p == string::npos) ? -1 : strtol(block.c_str() + p + strlen(key), nullptr, 10);
-  };
-  st.vgprs = grab(".amdhsa_next_free_vgpr");
-  st.sgprs = grab(".amdhsa_next_free_sgpr");
-  st.ldsBytes = grab(".amdhsa_group_segment_fixed_size");
-  st.scratchBytes = grab(".amdhsa_private_segment_fixed_size");
-
-  // The "; Occupancy: N" comment lands just after .end_amdhsa_kernel, outside the block
-  // scanned above -- search from there up to the next kernel (or end of file) for it.
+  // The comments land just after .end_amdhsa_kernel, outside the block above: take them from there
+  // up to the next kernel (or end of file).
   size_t const nextKernel = asmText.find(".amdhsa_kernel", end);
-  size_t const tailEnd = (nextKernel == string::npos) ? asmText.size() : nextKernel;
-  size_t const occPos = asmText.find("; Occupancy:", end);
-  if (occPos != string::npos && occPos < tailEnd) {
-    st.occupancy = strtol(asmText.c_str() + occPos + strlen("; Occupancy:"), nullptr, 10);
-  }
+  string const tail = asmText.substr(end, (nextKernel == string::npos) ? string::npos : nextKernel - end);
+
+  auto grab = [](const string& text, const char* key) -> long {
+    size_t const p = text.find(key);
+    return (p == string::npos) ? -1 : strtol(text.c_str() + p + strlen(key), nullptr, 10);
+  };
+  // .amdhsa_next_free_vgpr is the allocation, which the compiler pads up to what the occupancy allows
+  // (e.g. an LDS-bound kernel that uses 7 VGPRs gets 241); "; NumVgprs" is what the code uses.
+  st.vgprs = grab(tail, "; NumVgprs:");
+  st.vgprsAllocated = grab(block, ".amdhsa_next_free_vgpr");
+  // "; TotalNumSgprs" counts VCC etc. too, as the code object's .sgpr_count does; .amdhsa_next_free_sgpr does not.
+  st.sgprs = grab(tail, "; TotalNumSgprs:");
+  if (st.sgprs < 0) { st.sgprs = grab(block, ".amdhsa_next_free_sgpr"); }
+  st.ldsBytes = grab(block, ".amdhsa_group_segment_fixed_size");
+  st.scratchBytes = grab(block, ".amdhsa_private_segment_fixed_size");
+  st.occupancy = grab(tail, "; Occupancy:");
   return st;
+}
+
+// The options of args that are not common to all of siblings (the args of every kernel declared under the same
+// kernelName, see declare()), e.g. "-DROE=1" for that carryFused variant; empty for a kernelName declared once.
+static string distinguishingArgs(const string& args, const vector<string>& siblings) {
+  string ret;
+  istringstream in(args);
+  for (string word; in >> word;) {
+    bool const common = std::ranges::all_of(siblings, [&word](const string& other) {
+      istringstream otherIn(other);
+      for (string w; otherIn >> w;) { if (w == word) { return true; } }
+      return false;
+    });
+    if (!common) { ret += (ret.empty() ? "" : " ") + word; }
+  }
+  return ret;
+}
+
+// "-DMUL3=1 -DROE=1" -> "MUL3_ROE", for a file name.
+static string fileSuffix(const string& args) {
+  string ret;
+  istringstream in(args);
+  for (string word; in >> word;) {
+    if (word.starts_with("-D")) { word = word.substr(2); }
+    if (word.ends_with("=1")) { word.resize(word.size() - 2); }
+    for (char& c : word) { if (!isalnum((unsigned char) c) && c != '_') { c = '_'; } }
+    ret += (ret.empty() ? "" : "_") + word;
+  }
+  return ret;
 }
 #endif
 
@@ -255,23 +305,35 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
     DirSnapshot const before = snapshotDir();
     Program program = build(fileName, extraArgs);
     vector<fs::path> const temps = newCompilerTemps(before);
+    bool saved = false;
     for (const fs::path& p : temps) {
       if (p.extension() != ".s") { continue; }
       string const asmText = readWholeFile(p);
 
       KernelStats const st = parseKernelStats(asmText, kernelName);
       if (!st.found) { continue; }
-      log("%s: %ld vgprs, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy=%ld%s\n",
-          kernelName.c_str(), st.vgprs, st.sgprs, st.ldsBytes, st.scratchBytes, st.occupancy,
-          st.scratchBytes > 0 ? " (SPILLING)" : "");
 
-      // Some kernelNames are compiled more than once under the same exported name (e.g.
-      // "carryFused" plain/-DROE=1/-DMUL3=1/...): give each compile its own file rather than
-      // letting a later variant silently overwrite an earlier one's dump.
-      int const n = ++asmDumpCounts[kernelName];
-      string const outName = (n == 1) ? kernelName + ".s" : kernelName + '_' + to_string(n) + ".s";
+      // Some kernelNames are compiled more than once under the same exported name, with different defines (e.g.
+      // "carryFused" plain/-DROE=1/-DMUL3=1/...): tell them apart by those defines, in the log and in the file name.
+      auto it = declaredArgs.find(kernelName);
+      string const variant = (it == declaredArgs.end()) ? "" : distinguishingArgs(extraArgs, it->second);
+      string const base = variant.empty() ? kernelName : kernelName + '_' + fileSuffix(variant);
+      string outName = base + ".s";
+      for (int n = 2; !asmDumpNames.insert(outName).second; ++n) { outName = base + '_' + to_string(n) + ".s"; }
+
+      string const vgprs = st.vgprs < 0 ? to_string(st.vgprsAllocated) + " vgprs"
+                                        : to_string(st.vgprs) + " vgprs (" + to_string(st.vgprsAllocated) + " allocated)";
+      string const waves = to_string(st.occupancy) + (maxWaves ? "/" + to_string(maxWaves) : "") + " waves/SIMD";
+      log("%s%s%s: %s, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy %s%s -> %s\n",
+          kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, st.ldsBytes,
+          st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", outName.c_str());
       { ofstream out(outName, ios::binary); out << asmText; }
+      saved = true;
       break;
+    }
+    if (program && !saved && !asmMissingNoted) {
+      asmMissingNoted = true;
+      log("-v 10: the OpenCL compiler left no assembly for %s (nor, likely, for the other kernels)\n", kernelName.c_str());
     }
     // The .s is copied out; its siblings (.cl, .i, .so, .bc) are of no use.
     removeFiles(temps);
@@ -303,6 +365,10 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
   if (!program) {
     fromCache = false;
     program = compile(fileName, kernelName, args);
+  } else if (asmDump && !asmCacheNoted) {
+    asmCacheNoted = true;
+    log("-v 10: %s and possibly more kernels come from the cache '%s' and so have no assembly; "
+        "run with an empty cache, or without -cache, to see them\n", kernelName.c_str(), cacheDir.c_str());
   }
 
   if (!program) {
@@ -326,6 +392,8 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
 
   return ret;
 }
+
+void KernelCompiler::declare(const string& kernelName, const string& args) { declaredArgs[kernelName].push_back(args); }
 
 std::future<KernelHolder> KernelCompiler::load(const string& fileName, const string& kernelName, const string& args) const {
 #ifdef CUDA_BACKEND
