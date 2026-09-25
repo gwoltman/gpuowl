@@ -2,8 +2,11 @@
 
 #include "Event.h"
 #include "TimeInfo.h"
+#include "log.h"
 
+#include <atomic>
 #include <cassert>
+#include <exception>
 #include <utility>
 
 Event::Event(EventHolder&& e, TimeInfo* tInfo) :
@@ -14,8 +17,16 @@ Event::Event(EventHolder&& e, TimeInfo* tInfo) :
 }
 
 Event::~Event() {
-  [[maybe_unused]] bool const done = isComplete();
-  assert(done);
+  // A destructor must not throw (that is std::terminate): if the driver fails the status query here,
+  // log it and drop the event.  A failing GPU also fails the queue's next finish/read, which reports it.
+  try {
+    [[maybe_unused]] bool const done = isComplete();
+    assert(done);
+  } catch (const std::exception& e) {
+    // Log only the first: a lost device fails the query for every event still in the queue.
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true)) { log("Event: %s\n", e.what()); }
+  }
 }
 
 bool Event::isComplete() {
