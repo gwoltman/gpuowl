@@ -103,17 +103,18 @@ static void checkTuneOptions(const string& options) {
     if (s.empty() || s == "noconfig" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
-    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp")) {
+    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp" || key == "workers")) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
       auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
-      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10))) {
-        log("-tune %s expects %s (found '%s')\n", key.c_str(), key == "quick" ? "a value from 1 to 10" : "a whole number, e.g. 5000000000", val.c_str());
+      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (key == "workers" && (n < 1 || n > 4))) {
+        log("-tune %s expects %s (found '%s')\n", key.c_str(),
+            key == "quick" ? "a value from 1 to 10" : key == "workers" ? "a value from 1 to 4" : "a whole number, e.g. 5000000000", val.c_str());
         throw "-tune option value";
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, minexp=<val>, maxexp=<val>, quick=<val>, workers=<N>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -253,6 +254,8 @@ named "config.txt" in the prpll run directory.
                                         -tune minexp=10000000,maxexp=20000000
                          fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
+                         workers=<N>  - Time config.txt settings with N workers running concurrently (as with -workers N), scoring their
+                                        combined throughput.  FFT timings for tune.txt still use one worker.
 -device <N>        : select the GPU at position N in the list of devices
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
 -pci    <BDF>      : select the GPU with the given PCI BDF, e.g. "0c:00.0"
