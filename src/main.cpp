@@ -94,6 +94,9 @@ int main(int argc, char **argv) {
 
   try {
     string const mainLine = Args::mergeArgs(argc, argv);
+#if !defined(CUDA_BACKEND) && !defined(_WIN32)
+    fs::path const startDir = fs::current_path();
+#endif
     {
       Args args{true};
       args.parse(mainLine);
@@ -110,8 +113,57 @@ int main(int argc, char **argv) {
       poolDir = args.masterDir;
     }
 
+#if !defined(CUDA_BACKEND) && !defined(_WIN32)
+    string reexecError;
+    // -v 10 wants per-kernel AMDGPU assembly (register/LDS/spill stats, kernelName.s files --
+    // see KernelCompiler::compile()). The comgr flag that makes this possible only takes effect
+    // when AMD_OCL_BUILD_OPTIONS_APPEND is already in the environment before the AMD OpenCL
+    // runtime is first touched: setting it from within this same process, no matter how early
+    // (even as the very first thing done, before any Context), was confirmed NOT to work. Re-exec
+    // ourselves once, with it set, before the log is opened (so its header is written once).
+    // PRPLL_ASM_REEXEC guards against looping if the re-exec itself lands back here.
+    // (comgr ignores whatever directory this value names -- confirmed empirically, it always
+    // writes into the process's current directory regardless -- so the value itself doesn't
+    // matter beyond being present; KernelCompiler::compile() picks the files up from there.)
+    // Current ROCm (7.x) writes no assembly for that build option, only the preprocessed source; there the .s
+    // comes from -save-temps-all on the link step. Both are set: each runtime produces what it can. The link
+    // option is not forced over a value already in the environment, so that an older runtime which rejects it
+    // (clLinkProgram fails with CL_INVALID_LINKER_OPTIONS, see KernelCompiler) can be run with it set empty.
+    if (!getenv("PRPLL_ASM_REEXEC")) {
+      Args args{true};
+      if (!poolDir.empty()) { args.readConfig(poolDir / "config.txt"); }
+      args.readConfig("config.txt");
+      args.parse(mainLine);
+      // Only the AMD runtime has anything to show; elsewhere -v 10 is just -v.  (Querying the device here
+      // initializes the runtime, which is fine: the exec below starts over.)
+      if (args.verbose >= 10 && isAmdGpu(getDevice(args.device))) {
+        setenv("PRPLL_ASM_REEXEC", "1", 1);
+        setenv("AMD_OCL_BUILD_OPTIONS_APPEND", "-save-temps=x", 1);
+        setenv("AMD_OCL_LINK_OPTIONS_APPEND", "-save-temps-all", 0);
+        // The child parses the same command line, so it must start where we started, for a relative -dir
+        // (and a relative argv[0]) to mean the same thing.
+        fs::path const runDir = fs::current_path();
+        fs::current_path(startDir);
+        if (fs::exists("/proc/self/exe")) {
+          execv("/proc/self/exe", argv);
+        } else {
+          execvp(argv[0], argv);
+        }
+        // exec only returns on failure; carry on without assembly dumping (the flag tells KernelCompiler).
+        reexecError = strerror(errno);
+        unsetenv("PRPLL_ASM_REEXEC");
+        fs::current_path(runDir);
+      }
+    }
+#endif
+
     initLog("gpuowl-0.log");
     log("PRPLL %s starting\n", VERSION);
+#if !defined(CUDA_BACKEND) && !defined(_WIN32)
+    if (!reexecError.empty()) {
+      log("Warning: could not re-exec for -v 10 assembly dump (%s), continuing without it\n", reexecError.c_str());
+    }
+#endif
 
     Args args;
 
@@ -121,32 +173,6 @@ int main(int argc, char **argv) {
     args.setDefaults();
 
     if (args.maxAlloc) { AllocTrac::setMaxAlloc(args.maxAlloc); }
-
-#if !defined(CUDA_BACKEND) && !defined(_WIN32)
-    // -v 10 wants per-kernel AMDGPU assembly (register/LDS/spill stats, kernelName.s files --
-    // see KernelCompiler::compile()). The comgr flag that makes this possible only takes effect
-    // when AMD_OCL_BUILD_OPTIONS_APPEND is already in the environment before the AMD OpenCL
-    // runtime is first touched: setting it from within this same process, no matter how early
-    // (even as the very first thing done, before any Context), was confirmed NOT to work. Re-exec
-    // ourselves once, with it set, before getDevice() below makes the first OpenCL call.
-    // PRPLL_ASM_REEXEC guards against looping if the re-exec itself lands back here.
-    // (comgr ignores whatever directory this value names -- confirmed empirically, it always
-    // writes into the process's current directory regardless -- so the value itself doesn't
-    // matter beyond being present; KernelCompiler::compile() picks the files up from there.)
-    // Current ROCm (7.x) writes no assembly for that build option, only the preprocessed source; there the .s
-    // comes from -save-temps-all on the link step. Both are set: each runtime produces what it can. The link
-    // option is not forced over a value already in the environment, so that an older runtime which rejects it
-    // (clLinkProgram fails with CL_INVALID_LINKER_OPTIONS, see KernelCompiler) can be run with it set empty.
-    if (args.verbose >= 10 && !getenv("PRPLL_ASM_REEXEC")) {
-      setenv("PRPLL_ASM_REEXEC", "1", 1);
-      setenv("AMD_OCL_BUILD_OPTIONS_APPEND", "-save-temps=x", 1);
-      setenv("AMD_OCL_LINK_OPTIONS_APPEND", "-save-temps-all", 0);
-      execvp(argv[0], argv);
-      // execvp only returns on failure; fall through and run without assembly dumping.
-      log("Warning: could not re-exec for -v 10 assembly dump (%s), continuing without it\n", strerror(errno));
-      args.verbose = 1;
-    }
-#endif
 
     Context context(getDevice(args.device));
     Signal const signal;

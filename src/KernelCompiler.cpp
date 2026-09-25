@@ -110,7 +110,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   dump{args.dump},
   useCache{args.useCache},
   verbose{args.verbose},
-  asmDump{args.verbose >= 10},
+  asmDump{args.verbose >= 10 && getenv("PRPLL_ASM_REEXEC")},   // main() re-execs with the compiler options set only for AMD
   deviceId{context->deviceId()}
 {
   // Every GPU driver we run on accepts -cl-std=CL2.0.  Some OpenCL 3.0 implementations (POCL; likely Mesa rusticl)
