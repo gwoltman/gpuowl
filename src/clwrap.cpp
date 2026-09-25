@@ -11,6 +11,7 @@
 #include <memory>
 #include <vector>
 #include <array>
+#include <atomic>
 
 using namespace std;
 
@@ -220,13 +221,21 @@ cl_context createContext(cl_device_id id) {
 }
 
 
-void release(cl_context context) { CHECK1(clReleaseContext(context)); }
-void release(cl_program program) { CHECK1(clReleaseProgram(program)); }
-void release(cl_mem buf)         { CHECK1(clReleaseMemObject(buf)); }
-void release(cl_queue queue)     { CHECK1(clReleaseCommandQueue(queue)); }
-void release(cl_kernel k)        { CHECK1(clReleaseKernel(k)); }
-void release(cl_event event)     { CHECK1(clReleaseEvent(event)); }
-void release(cl_graph graph)     { CHECK1(clReleaseGraph(graph));}
+// The release()s run from the Holder deleters, i.e. from destructors, often while an earlier CL error is
+// unwinding the stack.  A throw there calls std::terminate, so log the error instead of throwing it.
+// Log only the first: on a lost device every remaining object fails the same way.
+static void releaseCheck(int err, const char *what) {
+  static std::atomic<bool> logged{false};
+  if (err != CL_SUCCESS && !logged.exchange(true)) { log("%s: %s\n", what, errMes(err).c_str()); }
+}
+
+void release(cl_context context) { releaseCheck(clReleaseContext(context), "clReleaseContext"); }
+void release(cl_program program) { releaseCheck(clReleaseProgram(program), "clReleaseProgram"); }
+void release(cl_mem buf)         { releaseCheck(clReleaseMemObject(buf), "clReleaseMemObject"); }
+void release(cl_queue queue)     { releaseCheck(clReleaseCommandQueue(queue), "clReleaseCommandQueue"); }
+void release(cl_kernel k)        { releaseCheck(clReleaseKernel(k), "clReleaseKernel"); }
+void release(cl_event event)     { releaseCheck(clReleaseEvent(event), "clReleaseEvent"); }
+void release(cl_graph graph)     { releaseCheck(clReleaseGraph(graph), "clReleaseGraph"); }
 
 Program loadSource(cl_context context, const string &source) {
   const char *ptr = source.c_str();
