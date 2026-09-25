@@ -16,7 +16,9 @@ Kernel::Kernel(string_view name, KernelCompiler* compiler, TimeInfo* timeInfo, Q
   queue{queue},
   workSizeX{workSize},
   workSizeY{1}
-{}
+{
+  compiler->declare(this->nameInFile, this->defines);
+}
 
 Kernel::~Kernel() = default;
 

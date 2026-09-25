@@ -393,7 +393,6 @@ void Args::parse(const string& line) {
     else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
     else if (key == "-smallest") { smallest = true; }
     else if (key == "-fft") { fftSpec = s; }
-    else if (key == "-dump") { dump = s; }
     else if (key == "-user") { user = s; }
     else if (key == "-device" || key == "-d") { device = stoi(s); }
     else if (key == "-uid") { device = getPosFromUid(s); }
