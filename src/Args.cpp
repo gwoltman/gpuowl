@@ -17,6 +17,7 @@
 #include <iterator>
 #include <sstream>
 #include <algorithm>
+#include <charconv>
 
 // This is a copy of the args.verbose level.  It allows the CUDA wrapper to access the value.
 int prpll_verbose = 0;
@@ -84,8 +85,31 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
   return ret;
 }
 
+// Checks the comma separated -tune options up front: Tune::tune() silently skips anything it does not recognise,
+// so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
+static void checkTuneOptions(const string& options) {
+  for (const string& s : split(options, ',')) {
+    if (s.empty() || s == "noconfig" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace") { continue; }
+    auto pos = s.find('=');
+    string const key = s.substr(0, pos);
+    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp")) {
+      string const val = s.substr(pos + 1);
+      u64 n = 0;
+      auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
+      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10))) {
+        log("-tune %s expects %s (found '%s')\n", key.c_str(), key == "quick" ? "a value from 1 to 10" : "a whole number, e.g. 5000000000", val.c_str());
+        throw "-tune option value";
+      }
+      continue;
+    }
+    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    throw "-tune option";
+  }
+}
+
 void Args::readConfig(const fs::path& path) {
   if (File file = File::openRead(path)) {
+    file.allowUnterminatedLastLine();
     for (string line : file) {
       line = rstripNewline(line);
       parse(line);
@@ -239,27 +263,30 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
            );
 
   }
-  printf("\nFFT Configurations (specify with -fft <type>:<width>:<middle>:<height> from the set below):\n"
-         " Size   MaxExp   BPW    FFT\n");
+  printf("\nFFT Configurations (specify with -fft <type>:<width>:<middle>:<height> from the set below):\n");
 
-  vector<FFTShape> configs = FFTShape::allShapes();
-  configs.push_back(configs.front()); // dummy guard for the loop below.
-  u32 activeSize = 0;
-  float maxBpw = 0;
-  string variants;
-  for (enum FFT_TYPES const type : {FFT64, FFT3161, FFT3261, FFT61}) {
-    for (auto c : configs) {
+  vector<FFTShape> const configs = FFTShape::allShapes();
+  for (auto [type, name] : {pair{FFT64, "FP64"}, {FFT3161, "M31+M61 NTT"}, {FFT3261, "FP32+M61"}, {FFT61, "M61 NTT"},
+                            {FFT323161, "FP32+M31+M61"}, {FFT6431, "FP64+M31"}}) {
+    printf("\nFFT type %d: %s\n"
+           " Size   MaxExp   BPW    FFT\n", type, name);
+    u32 activeSize = 0;
+    float maxBpw = 0;
+    string variants;
+    auto flush = [&]() {
+      if (variants.empty()) { return; }
+      printf("%5s  %7.2fM  %.2f  %s\n",
+             numberK(activeSize).c_str(),
+             // activeSize * FFTShape::MIN_BPW / 1'000'000,
+             activeSize * maxBpw / 1'000'000.0,
+             maxBpw,
+             variants.c_str());
+      variants.clear();
+    };
+    for (const FFTShape& c : configs) {
       if (c.fft_type != type) continue;
       if (c.size() != activeSize) {
-        if (!variants.empty()) {
-          printf("%5s  %7.2fM  %.2f  %s\n",
-                 numberK(activeSize).c_str(),
-                 // activeSize * FFTShape::MIN_BPW / 1'000'000,
-                 activeSize * maxBpw / 1'000'000.0,
-                 maxBpw,
-                 variants.c_str());
-          variants.clear();
-        }
+        flush();
         activeSize = c.size();
         maxBpw = 0;
       }
@@ -267,6 +294,7 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
       if (!variants.empty()) { variants.push_back(','); }
       variants += c.spec();
     }
+    flush();
   }
 }
 
@@ -325,7 +353,7 @@ void Args::parse(const string& line) {
       logROE = true;
     } else if (key == "-tune") {
       doTune = true;
-      if (!s.empty()) { tune = s; }
+      if (!s.empty()) { checkTuneOptions(s); tune = s; }
 //    } else if (key == "-ctune") {
 //      doCtune = true;
 //      if (!s.empty()) { ctune.push_back(s); }

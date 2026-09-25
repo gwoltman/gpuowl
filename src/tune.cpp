@@ -346,6 +346,9 @@ void Tune::tune() {
   bool const AMDGPU = isAmdGpu(shared.context->deviceId());
   bool const NVIDIAGPU = isNvidiaGpu(shared.context->deviceId());
   int const NO_ASM = args->value("NO_ASM", 0);
+  // Variant zero (BCAST) needs an AMD GPU whose OpenCL compiler has the amdgcn builtins (Gpu::make otherwise runs it as
+  // variant one).  Have NO_ASM bypass variant zero.
+  bool const VARIANT0 = AMDGPU && !NO_ASM && hasAmdBcastBuiltins(shared.context->get(), shared.context->deviceId());
 
   bool tune_config = true;
   bool time_FFTs = false;
@@ -1228,17 +1231,15 @@ skip_1K_256 = false;
       // Only AMD GPUs profitably support variant zero (BCAST) and only if width <= 1024.  CLANG doesn't support builtins.  Have NO_ASM bypass variant zero.
       // nVidia now supports variant zero, but is slower on TitanV
       if (variant_W(variant) == 0) {
-        if (!AMDGPU) continue;
+        if (!VARIANT0) continue;
         if (shape.width > 1024) continue;
-        if (args->value("NO_ASM", 0)) continue;
       }
 
       // Only AMD GPUs profitably support variant zero (BCAST) and only if height <= 1024.
       // nVidia now supports variant zero, but is slower on TitanV
       if (variant_H(variant) == 0) {
-        if (!AMDGPU) continue;
+        if (!VARIANT0) continue;
         if (shape.height > 1024) continue;
-        if (args->value("NO_ASM", 0)) continue;
       }
 
       // Reject shapes that won't be used to test exponents in the user's desired range
@@ -1268,7 +1269,7 @@ skip_1K_256 = false;
             FFTShape const test = FFTShape(FFT64, shape.width, 12, 256);
             double cost, min_cost = -1.0;
             for (u32 w = 0; w < N_VARIANT_W; w++) {
-              if (w == 0 && !AMDGPU) continue;
+              if (w == 0 && !VARIANT0) continue;
               if (w == 0 && test.width > 1024) continue;
               FFTConfig const fft{test, variant_WMH (w, 0, 1), CARRY_32};
               cost = Gpu::make(primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP(adjusted_quick);
@@ -1290,7 +1291,7 @@ skip_1K_256 = false;
             FFTShape const test = FFTShape(FFT64, shape.height, 12, shape.height);
             double cost, min_cost = -1.0;
             for (u32 h = 0; h < N_VARIANT_H; h++) {
-              if (h == 0 && !AMDGPU) continue;
+              if (h == 0 && !VARIANT0) continue;
               if (h == 0 && test.height > 1024) continue;
               FFTConfig const fft{test, variant_WMH (1, 0, h), CARRY_32};
               cost = Gpu::make(primes.prevPrime(fft.maxExp()), shared, fft, {}, false)->timePRP(quick);

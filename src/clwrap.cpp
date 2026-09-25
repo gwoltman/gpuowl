@@ -14,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <random>
+#include <atomic>
 
 using namespace std;
 
@@ -223,13 +224,21 @@ cl_context createContext(cl_device_id id) {
 }
 
 
-void release(cl_context context) { CHECK1(clReleaseContext(context)); }
-void release(cl_program program) { CHECK1(clReleaseProgram(program)); }
-void release(cl_mem buf)         { CHECK1(clReleaseMemObject(buf)); }
-void release(cl_queue queue)     { CHECK1(clReleaseCommandQueue(queue)); }
-void release(cl_kernel k)        { CHECK1(clReleaseKernel(k)); }
-void release(cl_event event)     { CHECK1(clReleaseEvent(event)); }
-void release(cl_graph graph)     { CHECK1(clReleaseGraph(graph));}
+// The release()s run from the Holder deleters, i.e. from destructors, often while an earlier CL error is
+// unwinding the stack.  A throw there calls std::terminate, so log the error instead of throwing it.
+// Log only the first: on a lost device every remaining object fails the same way.
+static void releaseCheck(int err, const char *what) {
+  static std::atomic<bool> logged{false};
+  if (err != CL_SUCCESS && !logged.exchange(true)) { log("%s: %s\n", what, errMes(err).c_str()); }
+}
+
+void release(cl_context context) { releaseCheck(clReleaseContext(context), "clReleaseContext"); }
+void release(cl_program program) { releaseCheck(clReleaseProgram(program), "clReleaseProgram"); }
+void release(cl_mem buf)         { releaseCheck(clReleaseMemObject(buf), "clReleaseMemObject"); }
+void release(cl_queue queue)     { releaseCheck(clReleaseCommandQueue(queue), "clReleaseCommandQueue"); }
+void release(cl_kernel k)        { releaseCheck(clReleaseKernel(k), "clReleaseKernel"); }
+void release(cl_event event)     { releaseCheck(clReleaseEvent(event), "clReleaseEvent"); }
+void release(cl_graph graph)     { releaseCheck(clReleaseGraph(graph), "clReleaseGraph"); }
 
 Program loadSource(cl_context context, const string &source) {
   const char *ptr = source.c_str();
@@ -238,6 +247,18 @@ Program loadSource(cl_context context, const string &source) {
   cl_program program = clCreateProgramWithSource(context, 1, &ptr, &size, &err);
   CHECK2(err, "clCreateProgramWithSource");
   return Program{program};
+}
+
+// FFT variant 0 (BCAST) needs these amdgcn builtins, which not every AMD OpenCL compiler has (e.g. the Windows driver's).
+// base.cl checks for them the same way and falls back to variant 1 without them.
+bool hasAmdBcastBuiltins(cl_context context, cl_device_id deviceId) {
+  if (!isAmdGpu(deviceId)) { return false; }
+  Program probe = loadSource(context,
+    "#if !defined(__has_builtin) || !__has_builtin(__builtin_amdgcn_mov_dpp) || !__has_builtin(__builtin_amdgcn_ds_swizzle) || !__has_builtin(__builtin_amdgcn_readfirstlane)\n"
+    "#error missing builtins\n"
+    "#endif\n"
+    "kernel void probe() {}\n");
+  return probe && clCompileProgram(probe.get(), 1, &deviceId, "", 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
 }
 
 string getBuildLog(cl_program program, cl_device_id deviceId) {
