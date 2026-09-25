@@ -51,6 +51,7 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
   vector<TuneEntry> results;
   File fi = File::openRead(tuneFile);
   if (!fi) { return {}; }
+  fi.allowUnterminatedLastLine();
 
   for (const string& line : fi) {
     char specBuf[32];
