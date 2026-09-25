@@ -195,4 +195,34 @@
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
+  <!-- Generate src/bundle.cpp and src/version.inc as the Makefile and CMake do.  genbundle.sh runs in Git for Windows'
+       bash, found from the git on PATH (a plain "bash" may be WSL's); pass /p:Bash=path\to\bash.exe to use another.
+       The kernel sources are not project items, so Visual Studio's fast up-to-date check would skip the build after
+       editing only a .cl file: always let MSBuild decide instead. -->
+  <PropertyGroup>
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+  </PropertyGroup>
+  <ItemGroup>
+    <BundleSource Include="$(ProjectDir)genbundle.sh;$(ProjectDir)src\cuda\*.cuh;$(ProjectDir)src\cl\*.cl" />
+  </ItemGroup>
+  <Target Name="FindBash" Condition="'$(Bash)'==''">
+    <Exec Command="git --exec-path" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitExecPath" />
+    </Exec>
+    <PropertyGroup>
+      <Bash Condition="'$(GitExecPath)'!=''">$([System.IO.Path]::GetFullPath('$(GitExecPath)\..\..\..\bin\bash.exe'))</Bash>
+    </PropertyGroup>
+  </Target>
+  <Target Name="GenerateBundle" BeforeTargets="ClCompile" DependsOnTargets="FindBash" Inputs="@(BundleSource)" Outputs="$(ProjectDir)src\bundle.cpp">
+    <Error Condition="'$(Bash)'=='' Or !Exists('$(Bash)')" Text="Generating src\bundle.cpp needs bash from Git for Windows (git on PATH), or /p:Bash=path\to\bash.exe" />
+    <Exec Command="&quot;$(Bash)&quot; -c &quot;bash genbundle.sh src/cuda/*.cuh src/cl/*.cl &gt; src/bundle.new &amp;&amp; mv src/bundle.new src/bundle.cpp&quot;" WorkingDirectory="$(ProjectDir)" />
+  </Target>
+  <!-- The version string compiled into the binary; pass /p:PrpllVersion=... for a build without .git, as with make VERSION=. -->
+  <Target Name="GenerateVersion" BeforeTargets="ClCompile">
+    <Exec Condition="'$(PrpllVersion)'==''" Command="git describe --tags --long --dirty --always" ConsoleToMSBuild="true" WorkingDirectory="$(ProjectDir)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="PrpllVersion" />
+    </Exec>
+    <WriteLinesToFile File="$(ProjectDir)src\version.inc" Lines="&quot;$([System.IO.Path]::GetFileName('$(PrpllVersion)'))&quot;" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Message Importance="high" Text="Version: $([System.IO.Path]::GetFileName('$(PrpllVersion)'))" />
+  </Target>
 </Project>
