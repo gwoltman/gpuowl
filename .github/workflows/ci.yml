@@ -273,7 +273,7 @@ jobs:
       shell: bash
       run: |
         bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
-        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
+        printf '"%s"\n' "$(basename "$(git describe --tags --long --always)")" > src/version.inc
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=OpenCL-Debug /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
@@ -298,7 +298,7 @@ jobs:
       shell: bash
       run: |
         bash genbundle.sh src/cuda/*.cuh src/cl/*.cl > src/bundle.cpp
-        printf '"%s"\n' "$(basename "$(git describe --tags --long --always --match 'v/prpll/*')")" > src/version.inc
+        printf '"%s"\n' "$(basename "$(git describe --tags --long --always)")" > src/version.inc
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=CUDA-Debug
