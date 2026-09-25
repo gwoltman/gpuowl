@@ -16,6 +16,7 @@
 #include <vector>
 #include <cassert>
 #include <cinttypes>
+#include <cmath>
 
 
 using namespace std;
@@ -330,6 +331,7 @@ for (const string& s : ctune) {
 // Add better -use settings to list of changes to be made to config.txt
 static void configsUpdate(double current_cost, double best_cost, double threshold, const char *key, u32 value, vector<pair<string,int>> &newConfigKeyVals, vector<pair<string,int>> &suggestedConfigKeyVals) {
   if (best_cost == current_cost) return;
+  if (!std::isfinite(best_cost)) return;     // every setting failed its check (Gpu::timePRP returned infinity)
   // If best cost is better than current cost by a substantial margin (the threshold) then add the key value pair to suggestedConfigKeyVals
   if (best_cost < (1.0 - threshold) * current_cost)
     newConfigKeyVals.emplace_back(key, value);
