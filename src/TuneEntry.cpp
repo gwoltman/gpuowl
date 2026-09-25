@@ -52,9 +52,6 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
   File fi = File::openRead(tuneFile);
   if (!fi) { return {}; }
 
-  [[maybe_unused]] u64 prevMaxExp{};
-  [[maybe_unused]] double prevCost{};
-
   for (const string& line : fi) {
     char specBuf[32];
     double cost{};
@@ -64,10 +61,12 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
     }
     try {
       FFTConfig const fft{specBuf};
-      assert(cost >= prevCost && fft.maxExp() > prevMaxExp);
-      prevCost = cost;
-      prevMaxExp = fft.maxExp();
-      results.push_back({cost, fft});
+      // Insert through update() so the list is a proper cost/maxExp frontier whatever order the file is in.  The file
+      // was written sorted, but maxExp comes from the bits-per-word tables of the build that reads it, so rows written
+      // by an older build can be out of order or dominated by a cheaper row; those are dropped here.
+      if (!TuneEntry{cost, fft}.update(results) && args.verbose) {
+        log("tune.txt line '%s' ignored, a cheaper FFT covers its exponents\n", rstripNewline(line).c_str());
+      }
     } catch (const char*) {
       // e.g. a row from an older build whose variant encoding is no longer valid: skip it, keep the other rows
       log("tune.txt line '%s' ignored\n", rstripNewline(line).c_str());
