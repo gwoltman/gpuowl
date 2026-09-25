@@ -245,8 +245,11 @@ named "config.txt" in the prpll run directory.
                          fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
                          ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
                          nofp32       - Do not tune for settings that affect FP32 FFTs.  Some openCL compilers have trouble with FP32.
-                         minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.
-                         maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.
+                         minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.  Default 75000000.
+                         maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.  Default 350000000.
+                                        Without an -fft <spec>, only FFTs in [minexp, maxexp] are timed, so tuning
+                                        for a small exponent (e.g. PRP-CF at 18M) needs both ends set low, e.g.
+                                        -tune minexp=10000000,maxexp=20000000
                          fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
 -device <N>        : select the GPU at position N in the list of devices
