@@ -2775,7 +2775,7 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   bool const ok = doCheck(blockSize);
   if (!ok) {
     log("Error %016" PRIx64 "\n", res);
-    secsPerIt = 0.1; // a large value to mark the error
+    return std::numeric_limits<double>::infinity();  // mark the error: never a real timing, never wins a comparison
   }
   return secsPerIt * 1e6;
 }
