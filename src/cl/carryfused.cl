@@ -146,16 +146,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   __asm("s_setprio 3");
 #endif
 
-  dependentLaunchWait();   // Previous kernel was fftMiddleOutFP64
-
-  readCarryFusedLine(in, u, line, lowMe);
-
-// Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
-// common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
-// which causes a terrible reduction in occupancy.
-  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
-  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
-
+  // Computed before waiting on the previous kernel: none of this depends on the FFT data that
+  // fftMiddleOutFP64 is still writing, so with PDL enabled it overlaps that kernel's tail.
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
   T2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
@@ -165,6 +157,22 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   weights.y = optionalHalve(weights.y);
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
 #endif
+
+  // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
+  u32 word_index = (lowMe * H + line) * 2;
+  u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
+  const u32 frac_bits_bigstep = fracBits(G_W * H * 2);
+  u32 starting_frac_bits = frac_bits;
+
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutFP64
+
+  readCarryFusedLine(in, u, line, lowMe);
+
+// Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
+// common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
+// which causes a terrible reduction in occupancy.
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
 #if MUL3
   P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
@@ -176,12 +184,6 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   float roundMax = 0;
   float carryMax = 0;
-
-  // Calculate the most significant 32-bits of FRAC_BPW * the word index.  Also add FRAC_BPW_HI to test first biglit flag.
-  u32 word_index = (lowMe * H + line) * 2;
-  u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
-  const u32 frac_bits_bigstep = fracBits(G_W * H * 2);
-  u32 starting_frac_bits = frac_bits;
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
