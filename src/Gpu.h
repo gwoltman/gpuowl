@@ -20,6 +20,7 @@
 #include <memory>
 #include <filesystem>
 #include <cmath>
+#include <atomic>
 
 struct PRPResult;
 class Task;
@@ -86,6 +87,10 @@ struct Weights {
 class Gpu {
   GpuCommon shared;
   Background* background;
+  // Set by the background thread when a proof residue could not be written (see ProofSet::save).  Every
+  // checkpoint queued after that point is skipped and the PRP test is aborted, so a restart resumes from
+  // the last checkpoint before the failed residue and writes it again.
+  std::atomic<bool> proofSaveFailed{false};
 
 public:
   Args& args;

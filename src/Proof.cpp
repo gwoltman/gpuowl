@@ -267,8 +267,27 @@ void ProofSet::save(u64 E, [[maybe_unused]] u32 power, u64 k, const Words& words
   assert(k && k <= E);
   assert(isInPoints(E, power, k));
 
-  File::openWrite(proofPath(E) / to_string(k)).writeChecked(words);
-  assert(load(E, power, k) == words);
+  fs::path const path = proofPath(E) / to_string(k);
+
+  // Write the point and read it back, in release builds too: a write can fail after fwrite() returned (e.g. the
+  // disk fills up when the buffer is flushed on close), and a bad point would otherwise only show at proof time.
+  // One retry covers a transient failure; a second failure is reported to the caller, which must not let the
+  // PRP test continue past this iteration with a missing proof residue.
+  for (int attempt = 1; ; ++attempt) {
+    string why;
+    try {
+      File::openWrite(path).writeChecked(words);
+      if (load(E, power, k) == words) { return; }
+      why = "read back differs";
+    } catch (const FileError& e) {
+      why = e.what();
+    } catch (const fs::filesystem_error& e) {
+      why = e.what();
+    }
+    log("Proof point %" PRIu64 " of %" PRIu64 " could not be written to '%s' (%s)%s\n",
+        k, E, path.string().c_str(), why.c_str(), attempt == 1 ? ", retrying" : "");
+    if (attempt == 2) { throw WriteError{path.string()}; }
+  }
 }
 
 Words ProofSet::load(u64 E, [[maybe_unused]] u32 power, u64 k) {
