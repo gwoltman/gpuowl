@@ -36,7 +36,6 @@ public:
 
   bool silent;
   string user;
-  string dump;
   string dir;
   
   string uid;

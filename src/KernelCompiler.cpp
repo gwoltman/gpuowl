@@ -119,7 +119,6 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   context{context->get()},
   linkArgs{},   // no compile-only options here: clLinkProgram accepts only linker options (POCL enforces it)
   baseArgs{},
-  dump{args.dump},
   useCache{args.useCache},
   verbose{args.verbose},
   asmDump{args.verbose >= 10 && getenv("PRPLL_ASM_REEXEC")},   // main() re-execs with the compiler options set only for AMD

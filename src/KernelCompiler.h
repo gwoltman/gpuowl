@@ -18,7 +18,6 @@ class KernelCompiler {
   cl_context context;
   std::string linkArgs;
   std::string baseArgs;
-  std::string dump;
   const bool useCache;
   const int verbose;
   const bool asmDump;   // -v 10: pick up the compiler's assembly (AMD OpenCL)
