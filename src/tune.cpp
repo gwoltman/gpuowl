@@ -362,6 +362,10 @@ void Tune::tune() {
   // There are some options and variants that are different based on GPU manufacturer
   bool const AMDGPU = isAmdGpu(shared.context->deviceId());
   bool const NVIDIAGPU = isNvidiaGpu(shared.context->deviceId());
+  // Gpu::make does this too, but the decisions just below are made before the first Gpu.
+  if (AMDGPU && !args->uses("NO_ASM") && !hasAmdInlineAsm(shared.context->get(), shared.context->deviceId())) {
+    args->flags["NO_ASM"] = "1";
+  }
   int const NO_ASM = args->value("NO_ASM", 0);
   // Variant zero (BCAST) needs an AMD GPU whose OpenCL compiler has the amdgcn builtins (Gpu::make otherwise runs it as
   // variant one).  Have NO_ASM bypass variant zero.
