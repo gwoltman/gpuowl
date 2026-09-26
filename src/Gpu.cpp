@@ -386,6 +386,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     while (big_h % wmul) --wmul;
     if (wmul != requested) {
       config["WMUL"] = to_string(wmul);
+      args.flags["WMUL"] = to_string(wmul);
       log("WMUL=%u is not usable for this FFT on this device.  Changing to WMUL=%u\n", requested, wmul);
     }
     if (fft.shape.width * shufl_bytes_w * wmul >= lds_limit) {

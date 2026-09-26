@@ -1074,9 +1074,11 @@ void Tune::tune() {
       for (u32 const wmul : {1, 2, 4}) {
         args->flags["WMUL"] = to_string(wmul);
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
-        log("Time for %12s using WMUL=%u is %6.1f\n", fft.spec().c_str(), wmul, cost);
+        // clDefines writes a rejected WMUL back into args.flags, as it does for L2_STRIPING.
+        u32 const used = args->value("WMUL", wmul);
+        log("Time for %12s using WMUL=%u is %6.1f\n", fft.spec().c_str(), used, cost);
         if (wmul == current_wmul) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_wmul = wmul; }
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_wmul = used; }
       }
       log("Best WMUL is %u.  Default WMUL is 2.\n", best_wmul);
       configsUpdate(current_cost, best_cost, 0.000, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
