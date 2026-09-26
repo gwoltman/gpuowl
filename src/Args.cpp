@@ -446,7 +446,7 @@ void Args::parse(const string& line) {
       log("-results is deprecated and ignored (results are always written to results-<N>.txt)\n");
     }
     else if (key == "-autoverify") {     // used to self-verify proofs of at least the given power right after generating them.
-      log("-autoverify is deprecated and ignored (proofs are no longer auto-verified; use -verify)\n");
+      log("-autoverify is deprecated and ignored (proofs are auto-verified)\n");
     }
     else if (key == "-tmpDir" || key == "-tmpdir") {   // used to redirect proof checkpoint scratch space.
       log("-tmpDir is deprecated and ignored (proof checkpoints are always kept under -dir)\n");
