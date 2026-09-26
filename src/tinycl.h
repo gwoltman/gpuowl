@@ -219,6 +219,8 @@ int clSetKernelArgSVMPointer(cl_kernel, unsigned, const void *);
 
 // AMD
 #define CL_DEVICE_PCIE_ID_AMD     0x4034
+#define CL_DEVICE_SIMD_PER_COMPUTE_UNIT_AMD 0x4040
+#define CL_DEVICE_WAVEFRONT_WIDTH_AMD       0x4043
 #define CL_DEVICE_TOPOLOGY_AMD    0x4037
 #define CL_DEVICE_BOARD_NAME_AMD  0x4038
 #define CL_DEVICE_GLOBAL_FREE_MEMORY_AMD 0x4039

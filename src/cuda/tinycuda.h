@@ -223,6 +223,10 @@ using cl_queue = cl_command_queue;
 
 // AMD-specific; the shim answers CL_DEVICE_TOPOLOGY_AMD from the CUDA device's PCI bus id
 #define CL_DEVICE_PCIE_ID_AMD           0x4034
+// Not answered by the shim's clGetDeviceInfo (no CUDA equivalent needed): callers of these two are
+// gated `#ifndef CUDA_BACKEND` and never reach this backend; the defines just let clwrap.cpp compile.
+#define CL_DEVICE_SIMD_PER_COMPUTE_UNIT_AMD 0x4040
+#define CL_DEVICE_WAVEFRONT_WIDTH_AMD       0x4043
 #define CL_DEVICE_TOPOLOGY_AMD          0x4037
 #define CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD 1
 #define CL_DEVICE_BOARD_NAME_AMD        0x4038

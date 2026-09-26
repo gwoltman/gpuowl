@@ -74,6 +74,9 @@ bool isRusticl(cl_device_id id);
 u32 getNvidiaComputeCapability(cl_device_id id);
 u32 getMaxWorkGroupSize(cl_device_id id);
 u64 getLocalMemSize(cl_device_id id);
+// AMD only (cl_amd_device_attribute_query); 0 when not available (e.g. not AMD, or an older driver).
+u32 getAmdSimdPerComputeUnit(cl_device_id id);
+u32 getAmdWavefrontWidth(cl_device_id id);
 string getDriverVersion(cl_device_id id);
 string getDriverVersionByPos(int pos);
 

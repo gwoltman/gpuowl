@@ -158,7 +158,12 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
     log("OpenCL C 2.0 is not available on this device; compiling the kernels as OpenCL C 3.0\n");
   }
   if (asmDump) { removeFiles(newCompilerTemps(before)); }
-  if (isAmdGpu(deviceId)) { maxWaves = maxWavesPerSimd(getDeviceName(deviceId)); }
+  if (isAmdGpu(deviceId)) {
+    maxWaves = maxWavesPerSimd(getDeviceName(deviceId));
+    simdPerCU = int(getAmdSimdPerComputeUnit(deviceId));
+    wavefrontWidth = int(getAmdWavefrontWidth(deviceId));
+    ldsPerCU = getLocalMemSize(deviceId);   // AMD: a workgroup can use up to the whole CU's LDS budget
+  }
 #endif
   baseArgs = "-cl-finite-math-only -cl-std=" + clStd + ' ' + clArgs;
   // Rusticl is detected, other drivers with the same limitation can be handled with -use NO_INT128=1
@@ -349,9 +354,31 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
       string const vgprs = (st.vgprs < 0 || st.vgprs == st.vgprsAllocated) ? to_string(st.vgprsAllocated) + " vgprs"
                                         : to_string(st.vgprs) + " vgprs (" + to_string(st.vgprsAllocated) + " allocated)";
       string const waves = to_string(st.occupancy) + (maxWaves ? "/" + to_string(maxWaves) : "") + " waves/SIMD";
-      log("%s%s%s: %s, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy %s%s -> %s\n",
+
+      // Is this kernel's LDS use, rather than its VGPR use, the tighter occupancy constraint? A workgroup's LDS is
+      // allocated once and shared by every wavefront in it, and by every workgroup resident on the same CU -- so the
+      // LDS-derived ceiling is "how many whole workgroups' worth of LDS fit in the CU's budget", converted to waves
+      // and averaged across that CU's SIMDs, not a per-SIMD quantity like the VGPR occupancy the compiler reports.
+      string ldsNote;
+      if (simdPerCU > 0 && wavefrontWidth > 0 && ldsPerCU > 0 && st.ldsBytes > 0 && st.occupancy > 0) {
+        try {
+          if (KernelHolder const probe{loadKernel(program.get(), kernelName.c_str())}) {
+            int const groupSize = getWorkGroupSize(probe.get(), deviceId, kernelName.c_str());
+            int const wavesPerWG = (groupSize + wavefrontWidth - 1) / wavefrontWidth;
+            long const wgPerCU = long(ldsPerCU) / st.ldsBytes;
+            double const wavesPerSimdLDS = double(wgPerCU * wavesPerWG) / simdPerCU;
+            if (wavesPerSimdLDS < st.occupancy) {
+              char buf[64];
+              snprintf(buf, sizeof(buf), ", LDS-limited to %.1f waves/SIMD", wavesPerSimdLDS);
+              ldsNote = buf;
+            }
+          }
+        } catch (const std::exception&) {}
+      }
+
+      log("%s%s%s: %s, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy %s%s%s -> %s\n",
           kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, st.ldsBytes,
-          st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", outName.c_str());
+          st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", ldsNote.c_str(), outName.c_str());
       { ofstream out(outName, ios::binary); out << asmText; }
       saved = true;
       break;

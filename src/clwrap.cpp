@@ -226,6 +226,26 @@ u64 getLocalMemSize(cl_device_id id) {
   return size;
 }
 
+u32 getAmdSimdPerComputeUnit(cl_device_id id) {
+  try {
+    u32 n = 0;
+    GET_INFO(id, CL_DEVICE_SIMD_PER_COMPUTE_UNIT_AMD, n);
+    return n;
+  } catch (const gpu_error& err) {
+    return 0;
+  }
+}
+
+u32 getAmdWavefrontWidth(cl_device_id id) {
+  try {
+    u32 n = 0;
+    GET_INFO(id, CL_DEVICE_WAVEFRONT_WIDTH_AMD, n);
+    return n;
+  } catch (const gpu_error& err) {
+    return 0;
+  }
+}
+
 /*
 static string getFreq(cl_device_id device) {
   unsigned computeUnits, frequency;
