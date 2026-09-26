@@ -346,7 +346,7 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
       string outName = base + ".s";
       for (int n = 2; !asmDumpNames.insert(outName).second; ++n) { outName = base + '_' + to_string(n) + ".s"; }
 
-      string const vgprs = st.vgprs < 0 ? to_string(st.vgprsAllocated) + " vgprs"
+      string const vgprs = (st.vgprs < 0 || st.vgprs == st.vgprsAllocated) ? to_string(st.vgprsAllocated) + " vgprs"
                                         : to_string(st.vgprs) + " vgprs (" + to_string(st.vgprsAllocated) + " allocated)";
       string const waves = to_string(st.occupancy) + (maxWaves ? "/" + to_string(maxWaves) : "") + " waves/SIMD";
       log("%s%s%s: %s, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy %s%s -> %s\n",
