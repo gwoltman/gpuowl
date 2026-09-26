@@ -52,7 +52,10 @@ static bool acceptsClStd(cl_context context, cl_device_id deviceId, const string
 // whatever path the option names, under names of its own:
 // * "<digits>.s/.cl/.i/.so" (e.g. "3949457118.s") from AMD_OCL_BUILD_OPTIONS_APPEND=-save-temps=x on older ROCm;
 // * "x_<N>_<gfx>.cl/.i" from that same option on current ROCm (7.x), which there yields no assembly;
-// * "_temp_<N>_<gfx>.s/.so" and "_temp_<N>_<gfx>_linked.bc" from AMD_OCL_LINK_OPTIONS_APPEND=-save-temps-all (current ROCm).
+// * "_temp_<N>_<gfx>.s/.so" and "_temp_<N>_<gfx>_linked.bc" from AMD_OCL_LINK_OPTIONS_APPEND=-save-temps-all (current ROCm);
+// * "<digits>(_linked<digits>)+.s/.so/.bc" (e.g. "830107278_linked2226068292_linked32993898123623157245.s") on a ROCm
+//   (verified: 6.3.3, gfx906) whose build stage honors the first option (constant name -- a hash of the literal "x") and
+//   whose link stage(s) each chain their own "_linked<hash>" onto it, rather than either of the two schemes above.
 // A name like "2026.log" or "42" may just as well be the user's own file, so a name is only taken for a compiler temp
 // file when it also appeared (or changed) during the compile at hand: see snapshotDir() and newCompilerTemps().
 static bool isCompilerTempName(const string& name) {
@@ -61,7 +64,15 @@ static bool isCompilerTempName(const string& name) {
     while (pos < stem.size() && isdigit((unsigned char) stem[pos])) { ++pos; }
     return pos;
   };
-  if (!stem.empty() && digitsEnd(0) == stem.size()) { return true; }
+  size_t pos = digitsEnd(0);
+  if (pos > 0) {
+    while (stem.compare(pos, 7, "_linked") == 0) {
+      size_t const next = digitsEnd(pos + 7);
+      if (next == pos + 7) { break; }
+      pos = next;
+    }
+    if (pos == stem.size()) { return true; }
+  }
   for (string const prefix : {"x_", "_temp_"}) {
     if (stem.starts_with(prefix)) {
       size_t const end = digitsEnd(prefix.size());
