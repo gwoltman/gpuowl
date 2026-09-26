@@ -296,6 +296,27 @@ bool hasAmdBcastBuiltins(cl_context context, cl_device_id deviceId) {
   return probe && clCompileProgram(probe.get(), 1, &deviceId, "", 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
 }
 
+// The legacy Windows AMD OpenCL compiler parses __asm as a function name ("implicit declaration of function '__asm'").
+// carryfused.cl's first such statement is s_sleep, and every GCN asm block is under HAS_ASM, so this probe is that statement.
+// A failure means the kernels must be compiled with NO_ASM; the result is cached for the device.
+bool hasAmdInlineAsm(cl_context context, cl_device_id deviceId) {
+  if (!isAmdGpu(deviceId)) { return false; }
+  static cl_device_id cachedId = nullptr;
+  static int cached = -1;
+  if (cached >= 0 && cachedId == deviceId) { return cached == 1; }
+  Program probe = loadSource(context, "kernel void probe() { __asm(\"s_sleep 0\"); }\n");
+  bool const ok = probe && clCompileProgram(probe.get(), 1, &deviceId, "", 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
+  cachedId = deviceId;
+  cached = ok ? 1 : 0;
+  if (!ok) {
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true)) {
+      log("This OpenCL compiler does not accept __asm().  Using NO_ASM.\n");
+    }
+  }
+  return ok;
+}
+
 string getBuildLog(cl_program program, cl_device_id deviceId) {
   size_t logSize = 0;
   const size_t maxLogSize = 64 * 1024;

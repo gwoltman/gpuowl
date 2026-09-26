@@ -707,6 +707,12 @@ unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const ve
     log("%s: this OpenCL compiler lacks the builtins FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
     fftConfig = fallback;
   }
+  // Same kind of probe as hasAmdBcastBuiltins.  Without it, HAS_ASM stays 1 on the legacy Windows compiler and
+  // carryfused.cl fails at __asm("s_sleep 0").  An explicit -use NO_ASM is left alone.
+  if (isAmdGpu(shared.context->deviceId()) && !shared.args->uses("NO_ASM")
+      && !hasAmdInlineAsm(shared.context->get(), shared.context->deviceId())) {
+    shared.args->flags["NO_ASM"] = "1";
+  }
   return make_unique<Gpu>(shared, fftConfig, E, extraConf, logFftSize);
 }
 
