@@ -183,8 +183,7 @@ void OVERLOAD chainMul4(T2 *u, T2 w) {
   T2 base = csqTrig(w);
   u[2] = cmul(u[2], base);
 
-  double a = mul2(base.y);
-  base = U2(fma(a, -w.y, w.x), fma(a, w.x, -w.y));
+  base = ccubeTrig(base, w);
   u[3] = cmul(u[3], base);
 }
 
@@ -198,8 +197,9 @@ void OVERLOAD chainMul8(T2 *u, T2 w) {
   u[2] = cmulFancy(u[2], w2);
 
   T2 w3;
-  // Rocm optimizer behaves weirdly yet again. Using mul2 instead of 2.0* makes double-wide single-kernel tailSquare inexplicably slower
-  // even though it is one fewer F64 op.
+  // Rocm optimizer behaves weirdly yet again. Using mul2 instead of 2.0* makes double-wide single-kernel tailSquare slower.
+  // Yes, mul2 saves an FP64 op, but the compiler no longer saves the computed powers of w from the first fft_HEIGHT call
+  // for use in the second fft_HEIGHT call for a large net increase in FP64 ops.
   if (DOING_WIDTH || VARIANT != 0) {
     w3 = ccubeTrigFancy(w2, w);
   } else {
@@ -1065,8 +1065,7 @@ void OVERLOAD chainMul4(F2 *u, F2 w) {
   F2 base = csqTrig(w);
   u[2] = cmul(u[2], base);
 
-  F a = mul2(base.y);
-  base = U2(fma(a, -w.y, w.x), fma(a, w.x, -w.y));
+  base = ccubeTrig(base, w);
   u[3] = cmul(u[3], base);
 }
 
@@ -1864,7 +1863,7 @@ void OVERLOAD fft_RADIX(GF61 *u) {
 void OVERLOAD chainMul4(GF61 *u, GF61 w) {
   u[1] = cmul(u[1], w);
 
-  GF61 base = csq(w);
+  GF61 base = csq(w);                   //GWBUG - see FP64 version for possible optimization
   u[2] = cmul(u[2], base);
 
   base = cmul(base, w);                 //GWBUG - see FP64 version for possible optimization
