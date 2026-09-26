@@ -268,7 +268,7 @@ T2 bcast(T2 src, u32 span) {
   return as_double2(s);
 }
 
-#elif NVIDIAGPU && VARIANT == 0
+#elif NVIDIAGPU && CUDA_BACKEND && VARIANT == 0
 
 // CUDA warps are 32 lanes, so shfl.sync.idx (__shfl_sync) directly covers spans 4/8/16/32 -- the same
 // per-segment broadcast as AMD's mov_dpp/ds_swizzle -- but there is no single-instruction equivalent of
