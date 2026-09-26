@@ -876,7 +876,7 @@ void PREFETCHL2(const __global void *addr) {
 // Force divergent threads in a warp to converge.  AMD GCN does not require this, all threads in a WAVEFRONT operate in lockstep.  Early CUDA versions did also.
 // The sync is needed in cases where one thread is setting a flag or state on behalf of all the threads in a WAVEFRONT.  For example, carryFused has thread 0 set
 // the carries-are-ready flag on behalf of all 32 threads in a warp.
-void OVERLOAD sync() {
+void sync(void) {
 #if HAS_PTX >= 600         // bar.warp.sync requires sm_60 support or higher
   __asm("bar.warp.sync 0xffffffff;" : : );
 #endif
@@ -928,7 +928,7 @@ void OVERLOAD bar(const u32 WG) {
 // defined where the hardware can do it (PTX bar.sync with a thread count, sm_20 or higher).  On any other GPU a call to
 // barsync() fails to compile at the call site instead of the whole of base.cl failing whether or not it is used.
 #if HAS_PTX >= 200
-void OVERLOAD barsync(const u32 numWG, const u32 WG) {
+void barsync(const u32 numWG, const u32 WG) {
   // As in bar(WG) above, except that substituting a barrier over all threads is not allowed here, so on
   // Volta and later the warp-wide sync is the only option.  (This routine is nVidia-only to begin with.)
   if (WG <= WAVEFRONT) {
