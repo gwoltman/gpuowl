@@ -15,6 +15,8 @@
 #include <chrono>
 #include <random>
 #include <atomic>
+#include <sstream>
+#include <algorithm>
 
 using namespace std;
 
@@ -317,6 +319,24 @@ bool hasAmdInlineAsm(cl_context context, cl_device_id deviceId) {
   return ok;
 }
 
+// NVIDIA's OpenCL compiler always says this for every single kernel function -- a kernel is a top-level
+// entry point, never inlined into anything, so "noinline" on it is meaningless and harmless to override;
+// confirmed present since well before this codebase's current history, on every device driver version
+// seen. Drop just these lines so a real warning elsewhere in the same log still gets through.
+static string dropKnownBenignWarnings(const string& log) {
+  static const string marker = "is a kernel, so overriding noinline attribute";
+  if (log.find(marker) == string::npos) { return log; }
+  istringstream in(log);
+  ostringstream out;
+  for (string line; getline(in, line); ) {
+    if (line.find(marker) == string::npos) { out << line << '\n'; }
+  }
+  string ret = out.str();
+  // A log that was only these lines (plus blank separators) is now just whitespace/newlines -- treat as empty.
+  if (std::ranges::all_of(ret, [](unsigned char c) { return isspace(c); })) { return {}; }
+  return ret;
+}
+
 string getBuildLog(cl_program program, cl_device_id deviceId) {
   size_t logSize = 0;
   const size_t maxLogSize = 64 * 1024;
@@ -332,7 +352,7 @@ string getBuildLog(cl_program program, cl_device_id deviceId) {
     err = clGetProgramBuildInfo(program, deviceId, CL_PROGRAM_BUILD_LOG, logSize, buf.get(), &logSize);
     CHECK2(err, "clGetProgramBuildInfo");
     buf.get()[logSize] = 0;
-    return buf.get();
+    return dropKnownBenignWarnings(buf.get());
   }
   return {};
 }
