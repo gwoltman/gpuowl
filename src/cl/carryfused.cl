@@ -8,11 +8,19 @@
 #define INCLUDE_FILE "middle.cl"
 #include "expand.cl"
 
+// Accept a priority scale of 0 to 3
+void setPriority(int p) {
+#if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_s_setprio)
+  if (p == 0) __builtin_amdgcn_s_setprio(0);
+  if (p == 1) __builtin_amdgcn_s_setprio(1);
+  if (p == 2) __builtin_amdgcn_s_setprio(2);
+  if (p == 3) __builtin_amdgcn_s_setprio(3);
+#endif
+}
+
 void spin() {
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_s_sleep)
   __builtin_amdgcn_s_sleep(0);
-#elif HAS_ASM
-  __asm("s_sleep 0");
 #else
   // nothing: just spin
   // on Nvidia: see if there's some brief sleep function
@@ -142,9 +150,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
   if (line >= H) line -= H;
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutFP64
 
@@ -247,9 +253,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
@@ -289,9 +293,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -377,9 +379,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
 #endif
   if (line >= H) line -= H;
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutFP32
 
@@ -487,9 +487,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
@@ -521,9 +519,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -605,9 +601,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
 #endif
   if (line >= H) line -= H;
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
@@ -723,9 +717,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   float fltRoundMax = (float) roundMax / (float) M31;      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
@@ -758,9 +750,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -841,9 +831,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
 #endif
   if (line >= H) line -= H;
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
@@ -964,9 +952,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   float fltRoundMax = (float) roundMax / (float) (M61 >> 32);      // For speed, roundoff was computed as 32-bit integer.  Convert to float.
@@ -999,9 +985,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -1090,9 +1074,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
   TrigGF31 smallTrig31 = (TrigGF31) (smallTrig + DISTWTRIGGF31);
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -1221,9 +1203,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   updateStats((local u32 *) lds, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
@@ -1263,9 +1243,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -1362,9 +1340,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   P(GF31) out31 = (P(GF31)) (out + DISTGF31);
   TrigGF31 smallTrig31 = (TrigGF31) (smallTrig + DISTWTRIGGF31);
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -1509,9 +1485,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   updateStats((local u32 *) ldsF2, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
@@ -1543,9 +1517,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -1645,9 +1617,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
   TrigGF61 smallTrig61 = (TrigGF61) (smallTrig + DISTWTRIGGF61);
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -1788,9 +1758,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
@@ -1822,9 +1790,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -1924,9 +1890,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
   TrigGF61 smallTrig61 = (TrigGF61) (smallTrig + DISTWTRIGGF61);
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -2061,9 +2025,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   float fltRoundMax = (float) roundMax / (float) 0x1FFFFFFF;      // For speed, roundoff was computed as 32-bit integer.  Convert to float - divide by M61.
@@ -2096,9 +2058,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE
@@ -2206,9 +2166,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   P(GF61) out61 = (P(GF61)) (out + DISTGF61);
   TrigGF61 smallTrig61 = (TrigGF61) (smallTrig + DISTWTRIGGF61);
 
-#if HAS_ASM
-  __asm("s_setprio 3");
-#endif
+  setPriority(3);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -2368,9 +2326,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   if (gr == 0) { return; }
 
   // Do some work while our carries may not be ready
-#if HAS_ASM
-  __asm("s_setprio 0");
-#endif
+  setPriority(0);
 
 #if ROE
   updateStats((local u32 *) lds61, G_W * WMUL, H / WMUL, bufROE, posROE, roundMax);
@@ -2402,9 +2358,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
 #endif
-#if HAS_ASM
-    __asm("s_setprio 1");
-#endif
+    setPriority(1);
   }
 
 #if !OLD_FENCE

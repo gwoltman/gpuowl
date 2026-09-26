@@ -20,7 +20,7 @@ NW
 NH
 AMDGPU  : if this is an AMD GPU
 NVIDIAGPU : if this is an nVidia GPU
-HAS_ASM : set if we believe __asm() can be used for AMD GCN
+HAS_ASM : set if we believe __asm() can be used for AMD GCN -- pretty much deprecated, we use amdgcn_builtins instead
 HAS_PTX : set if we believe __asm() can be used for nVidia PTX
 
 -- Derived from above:
@@ -29,7 +29,7 @@ ND         number of dwords == WIDTH * MIDDLE * SMALL_HEIGHT
 NWORDS     number of words  == ND * 2
 G_W        "group width"  == WIDTH / NW
 G_H        "group height" == SMALL_HEIGHT / NH
- */
+*/
 
 #define STR(x) XSTR(x)
 #define XSTR(x) #x
