@@ -369,9 +369,9 @@ void Args::parse(const string& line) {
     } else if (key == "-tune") {
       doTune = true;
       if (!s.empty()) { checkTuneOptions(s); tune = s; }
-//    } else if (key == "-ctune") {
-//      doCtune = true;
-//      if (!s.empty()) { ctune.push_back(s); }
+    } else if (key == "-ctune") {
+      doCtune = true;
+      if (!s.empty()) { ctune.push_back(s); }
     } else if (key == "-ztune") {
       doZtune = true;
     } else if (key == "-carryTune") {
