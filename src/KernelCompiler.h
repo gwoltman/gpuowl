@@ -20,7 +20,8 @@ class KernelCompiler {
   std::string baseArgs;
   const bool useCache;
   const int verbose;
-  const bool asmDump;   // -v 10: pick up the compiler's assembly (AMD OpenCL)
+  const bool asmDump;   // -v 10 or -v 11: pick up the compiler's assembly (AMD OpenCL). -v 10 reports only
+                        // the "important" kernels (see isImportantKernel in KernelCompiler.cpp); -v 11 reports all of them.
 
   std::vector<Program> clSources;
   std::vector<std::pair<std::string, std::string>> files;

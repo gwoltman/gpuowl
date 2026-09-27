@@ -419,6 +419,9 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
 
   // Store preprocessed source for __launch_bounds__ parsing in clCreateKernel
   prog->preprocessedSource = processedSource;
+  // Store the raw -D... options too, so clCreateKernel's -v 10 dump can tell carryFused's plain
+  // declaration apart from its -DROE=1/-DMUL3=1/-DLL=1 siblings (see isImportantKernel below).
+  prog->buildOptions = options ? options : "";
   for (auto& [name, src] : nvrtcHeaders) {
     prog->preprocessedSource += "\n";
     prog->preprocessedSource += src;
@@ -493,6 +496,7 @@ cl_program clLinkProgram(cl_context ctx, unsigned  /*nDevices*/, const cl_device
   linked->ptx = progs[0]->ptx;
   linked->cubin = progs[0]->cubin;
   linked->compiled = true;
+  linked->buildOptions = progs[0]->buildOptions;
   // Carry preprocessed source through for KERNEL(N) parsing in clCreateKernel
   for (unsigned i = 0; i < nProgs; ++i) {
     if (progs[i] && !progs[i]->preprocessedSource.empty()) {
@@ -599,6 +603,24 @@ int clGetProgramInfo(cl_program prog, cl_program_info info, size_t size, void* v
   return CL_SUCCESS;
 }
 
+// -v 10 reports only the kernels most relevant to routine performance tuning; -v 11 reports every
+// kernel (the original, unfiltered -v 10 behaviour). "Important" is tailSquare/fftMiddleIn/fftMiddleOut
+// under any FFT-type variant (plain, GF31, GF61), and carryFused's plain declaration specifically (not
+// -DROE=1, -DMUL3=1 or -DLL=1). Keep this allowlist in sync by hand with the AMD side's isImportantKernel
+// in KernelCompiler.cpp -- the two backends dump through separate files and have no shared header for it,
+// since this side identifies the carryFused variant from the compiled program's own buildOptions rather
+// than from KernelCompiler's declaredArgs bookkeeping.
+static bool isImportantKernel(const string& kernelName, const string& buildOptions) {
+  static const unordered_set<string> important = {
+    "tailSquare", "tailSquareGF31", "tailSquareGF61",
+    "fftMiddleIn", "fftMiddleInGF31", "fftMiddleInGF61",
+    "fftMiddleOut", "fftMiddleOutGF31", "fftMiddleOutGF61",
+  };
+  if (important.count(kernelName)) { return true; }
+  return kernelName == "carryFused" && buildOptions.find("-DROE=1") == string::npos
+      && buildOptions.find("-DMUL3=1") == string::npos && buildOptions.find("-DLL=1") == string::npos;
+}
+
 // ---- Kernel ----
 
 cl_kernel clCreateKernel(cl_program prog, const char* name, int* err) {
@@ -673,7 +695,7 @@ if (getenv("TRY_LDS_CARVEOUT"))
       k->pdl = ptx.find("griddepcontrol.wait", pos) < searchEnd;
     }
 
-    if (prpll_verbose >= 10) {
+    if (prpll_verbose >= 10 && (prpll_verbose >= 11 || isImportantKernel(name, prog->buildOptions))) {
       int numRegs = 0, shmem = 0, localmem = 0, maxThreads = 0;
       cuFuncGetAttribute(&numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
       cuFuncGetAttribute(&shmem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);

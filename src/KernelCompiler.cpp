@@ -276,6 +276,22 @@ static string fileSuffix(const string& args) {
   }
   return ret;
 }
+
+// -v 10 reports only the kernels most relevant to routine performance tuning; -v 11 reports every
+// kernel (the original, unfiltered -v 10 behaviour). "Important" is tailSquare/fftMiddleIn/fftMiddleOut
+// under any FFT-type variant (plain, GF31, GF61), and carryFused's plain declaration specifically (not
+// -DROE=1, -DMUL3=1 or -DLL=1). Keep this allowlist in sync by hand with the CUDA side's
+// isImportantKernel in clwrap_cuda.cpp -- the two backends dump through separate files and have no
+// shared header for it, since the CUDA side identifies the carryFused variant from build options
+// rather than from the declaredArgs bookkeeping this side already has.
+static bool isImportantKernel(const string& kernelName, const string& variant) {
+  static const set<string> important = {
+    "tailSquare", "tailSquareGF31", "tailSquareGF61",
+    "fftMiddleIn", "fftMiddleInGF31", "fftMiddleInGF61",
+    "fftMiddleOut", "fftMiddleOutGF31", "fftMiddleOutGF61",
+  };
+  return important.count(kernelName) || (kernelName == "carryFused" && variant.empty());
+}
 #endif
 
 Program KernelCompiler::build(const string& fileName, const string& extraArgs) const {
@@ -347,6 +363,13 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
       // "carryFused" plain/-DROE=1/-DMUL3=1/...): tell them apart by those defines, in the log and in the file name.
       auto it = declaredArgs.find(kernelName);
       string const variant = (it == declaredArgs.end()) ? "" : distinguishingArgs(extraArgs, it->second);
+
+      // -v 10 skips everything but the important kernels (see isImportantKernel); -v 11 dumps them all.
+      if (verbose == 10 && !isImportantKernel(kernelName, variant)) {
+        saved = true;   // assembly was found -- just not reported -- so this is not "no assembly at all"
+        break;
+      }
+
       string const base = variant.empty() ? kernelName : kernelName + '_' + fileSuffix(variant);
       string outName = base + ".s";
       for (int n = 2; !asmDumpNames.insert(outName).second; ++n) { outName = base + '_' + to_string(n) + ".s"; }

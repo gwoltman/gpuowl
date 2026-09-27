@@ -46,6 +46,7 @@ struct _cl_program {
   cl_context context;
   std::string source;     // OpenCL source (before NVRTC compilation)
   std::string preprocessedSource; // CUDA source after preprocessOpenCL (for parsing __launch_bounds__)
+  std::string buildOptions; // The -D... options this program was compiled with (for -v 10's importantKernel filter)
   std::string ptx;        // Compiled PTX (after NVRTC compilation); always the text — clCreateKernel reads .maxntid from it
   std::string cubin;      // NVRTC's CUBIN for this device's sm, when it produced one; loaded ahead of the PTX JIT
   CUmodule module{};        // Loaded module (after cuModuleLoadData)
