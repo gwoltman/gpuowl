@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,6 @@ static_assert(sizeof(u32) == 4, "size u32");
 static_assert(sizeof(u64) == 8, "size u64");
 
 using namespace std;
-namespace std::filesystem{};
 namespace fs = std::filesystem;
 
 // When using multiple primes in an NTT the size of an integer FFT "word" can be 64 bits.  Original FP64 FFT needs only 32 bits.

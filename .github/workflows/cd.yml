@@ -18,12 +18,11 @@ jobs:
         fetch-tags: true
     - name: Script
       run: |
-        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace centos:7 bash -s <<'EOF'
-        set -e -o pipefail
-        sed -i -e '/^mirrorlist/d;/^#baseurl=/{s,^#,,;s,/mirror,/vault,;}' /etc/yum.repos.d/CentOS*.repo
+        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace centos:7 bash -s -e -o pipefail <<'EOF'
+        sed -i '/^mirrorlist/d;/^#baseurl=/{s|^#||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS*.repo
         # yum update -y
         yum install -y centos-release-scl epel-release
-        sed -i -e '/^mirrorlist/d;/^# *baseurl=/{s,^# *,,;s,/mirror,/vault,;}' /etc/yum.repos.d/CentOS*.repo
+        sed -i '/^mirrorlist/d;/^# *baseurl=/{s|^# *||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS-SCLo-*.repo
         yum install -y devtoolset-11-gcc-c++ devtoolset-11-libstdc++-static make git ocl-icd-devel
 
         source /opt/rh/devtoolset-11/enable
@@ -31,15 +30,18 @@ jobs:
         ldd --version
 
         make STATIC_RUNTIME=1 -j "$(nproc)"
-        cp -vr README.* LICENSE tools/ build-release/
         cd build-release
         rm -f -- *.o
         ./prpll -h
         EOF
     - uses: actions/upload-artifact@v7
       with:
-        name: PRPLL-NTT_linux_x64_opencl
-        path: build-release/*
+        name: PRPLL-NTT_Linux_x64_opencl
+        path: |
+          README.*
+          LICENSE
+          tools/*
+          build-release/*
 
   Linux-CUDA:
     name: Linux CUDA
@@ -64,13 +66,12 @@ jobs:
         fetch-tags: true
     - name: Script
       run: |
-        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "nvcr.io/nvidia/cuda:${{ matrix.cuda }}-devel-${{ matrix.container }}" bash -s <<'EOF'
-        set -e -o pipefail
+        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "nvcr.io/nvidia/cuda:${{ matrix.cuda }}-devel-${{ matrix.container }}" bash -s -e -o pipefail <<'EOF'
         if [[ "${{ matrix.container }}" == centos* ]]; then
-          sed -i -e '/^mirrorlist/d;/^#baseurl=/{s,^#,,;s,/mirror,/vault,;}' /etc/yum.repos.d/CentOS*.repo
+          sed -i '/^mirrorlist/d;/^#baseurl=/{s|^#||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS*.repo
           # yum update -y
           yum install -y centos-release-scl epel-release
-          sed -i -e '/^mirrorlist/d;/^# *baseurl=/{s,^# *,,;s,/mirror,/vault,;}' /etc/yum.repos.d/CentOS*.repo
+          sed -i '/^mirrorlist/d;/^# *baseurl=/{s|^# *||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS-SCLo-*.repo
           yum install -y devtoolset-11-gcc-c++ devtoolset-11-libstdc++-static make git
           source /opt/rh/devtoolset-11/enable
         else
@@ -83,7 +84,6 @@ jobs:
         ldd --version
 
         make CUDA=1 STATIC_RUNTIME=1 STATIC_CUDA=${{ matrix.cuda != '10.2' && '1' || '0' }} -j "$(nproc)"
-        cp -vr README.* LICENSE tools/ build-cuda/
         cd build-cuda
         rm -f -- *.o
         if [[ "${{ matrix.cuda }}" == "10.2" ]]; then
@@ -93,8 +93,12 @@ jobs:
         EOF
     - uses: actions/upload-artifact@v7
       with:
-        name: PRPLL-NTT_linux_x64_cuda_${{ matrix.cuda }}
-        path: build-cuda/*
+        name: PRPLL-NTT_Linux_x64_cuda_${{ matrix.cuda }}
+        path: |
+          README.*
+          LICENSE
+          tools/*
+          build-cuda/*
 
   Windows-OpenCL:
     name: Windows OpenCL
@@ -112,13 +116,16 @@ jobs:
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=OpenCL-Release /p:StaticRuntime=true /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
-        Copy-Item -Recurse README.*, LICENSE, tools\ build-msvc\OpenCL\Release\
         cd build-msvc\OpenCL\Release\
         & .\prpll -h
     - uses: actions/upload-artifact@v7
       with:
-        name: PRPLL-NTT_win_x64_opencl
-        path: build-msvc/OpenCL/Release/*
+        name: PRPLL-NTT_Windows_x64_opencl
+        path: |
+          README.*
+          LICENSE
+          tools/*
+          build-msvc/OpenCL/Release/*
 
   Windows-CUDA:
     name: Windows CUDA
@@ -141,7 +148,6 @@ jobs:
     - name: Script
       run: |
         msbuild PRPLL.sln /m /p:Configuration=CUDA-Release /p:StaticRuntime=true /p:StaticCUDA=${{ matrix.cuda != '10.2.89' && 'true' || 'false' }}
-        Copy-Item -Recurse README.*, LICENSE, tools\ build-msvc\CUDA\Release\
         cd build-msvc\CUDA\Release\
         if ("${{ matrix.cuda }}" -eq "10.2.89") {
           Copy-Item "$env:CUDA_PATH\bin\nvrtc64_102_0.dll", "$env:CUDA_PATH\bin\nvrtc-builtins64_102.dll" .
@@ -149,5 +155,38 @@ jobs:
         # & .\prpll -h
     - uses: actions/upload-artifact@v7
       with:
-        name: PRPLL-NTT_win_x64_cuda_${{ matrix.cuda }}
-        path: build-msvc/CUDA/Release/*
+        name: PRPLL-NTT_Windows_x64_cuda_${{ matrix.cuda }}
+        path: |
+          README.*
+          LICENSE
+          tools/*
+          build-msvc/CUDA/Release/*
+
+  deploy:
+    name: Deploy
+    needs: [Linux-OpenCL, Linux-CUDA, Windows-OpenCL, Windows-CUDA]
+
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/download-artifact@v8
+    - name: Install
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y lftp
+    - name: Script
+      run: |
+        set -x
+        ls -alR PRPLL-NTT_*
+        for DIR in PRPLL-NTT_*/; do
+            (
+                cd "$DIR"
+                if [[ $DIR == PRPLL-NTT_Windows_* ]]; then
+                    zip -r "../${DIR%/}.zip" -- README.* LICENSE tools/
+                    zip -j "../${DIR%/}.zip" -- build-msvc/*/Release/*
+                else
+                    tar -czf "../${DIR%/}.tar.gz" --transform='s|^build-[^/]*/||' README.* LICENSE tools/ build-*/*
+                fi
+            )
+        done
+        ls -alR PRPLL-NTT_*
+        lftp -u '${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }}' -e 'set cmd:fail-exit true; set ssl:check-hostname false; cd /PRPLL-NTT; mput PRPLL-NTT_*.zip PRPLL-NTT_*.tar.gz; exit' download.mersenne.ca
