@@ -363,9 +363,11 @@ void Tune::tune() {
   bool const AMDGPU = isAmdGpu(shared.context->deviceId());
   bool const NVIDIAGPU = isNvidiaGpu(shared.context->deviceId());
   int const NO_ASM = args->value("NO_ASM", 0);
-  // Variant zero (BCAST) needs an AMD GPU whose OpenCL compiler has the amdgcn builtins (Gpu::make otherwise runs it as
-  // variant one).  Have NO_ASM bypass variant zero.
-  bool const VARIANT0 = AMDGPU && !NO_ASM && hasAmdBcastBuiltins(shared.context->get(), shared.context->deviceId());
+  // Variant zero (BCAST) needs either an AMD GPU whose OpenCL compiler has the amdgcn builtins, or an nVidia GPU
+  // new enough for shfl.sync (sm_30+; Gpu::make otherwise runs it as variant one).  Have NO_ASM bypass variant zero.
+  bool const VARIANT0 = !NO_ASM
+    && ((AMDGPU && hasAmdBcastBuiltins(shared.context->get(), shared.context->deviceId()))
+        || (NVIDIAGPU && getNvidiaComputeCapability(shared.context->deviceId()) >= 300));
 
   bool tune_config = true;
   bool time_FFTs = false;
