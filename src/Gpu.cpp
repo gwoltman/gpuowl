@@ -2079,7 +2079,7 @@ void Gpu::logTimeKernels() {
     assert(n);
     double const f = 1e-3 / n;
     double const percent = 100.0 / total * p->times[2];
-    if (!args.verbose && percent < 0.2) { break; }
+    if ((args.verbose == 0 || args.verbose == 10) && percent < 0.2) { break; }
     snprintf(buf, sizeof(buf),
              args.verbose ? "%s %5.2f%% %-18s : %6.1f us/call x %5d calls  (%.3f %.0f)\n"
                           : "%s %5.2f%% %-18s %6.1f x%6d  %.3f %.0f\n",
