@@ -543,7 +543,46 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         // Read val2 from the standard shufl's i = i/2 + 4, lowMe = lowMe % WG/2 + (i&1) * WG/2
         T_Z61 val1 = lds[(i / 2)     * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
         T_Z61 val2 = lds[(i / 2 + 4) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2); 
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // Special case second RADIX == 8 to eliminate LDS bank conflicts, with an fft2 add-on (WIDTH or HEIGHT == 1K;
+    // shufl_and_fft2 is only ever called with WG == 128, see this function's header comment, so this is not
+    // generalised to other WG like the LDSPAD case above).
+    // The write is the same swizzle plain shufl() uses for its own f==8,RADIX==8 case: the write layout does not
+    // care what the read will do with it (the LDSPAD case above reuses its own plain i*(WG+8)+lowMe write for
+    // both shufl() and shufl_and_fft2 the same way).
+    // The read substitutes the standard shufl-read's i=i/2 and i=i/2+4 at ll = lowMe%(WG/2) + (i&1)*(WG/2) into
+    // plain shufl's own WG==128 *read* formula (i*WG+lowMe)^((lowMe/8)&8) -- not its write formula, the two are not
+    // interchangeable -- and simplifies via 2*(i/2)+(i&1)==i to (i*64+(lowMe&63))^((i&1)*8) for val1, +512 for val2
+    // (the (i/2+4) term only adds 4*128==512, which cannot interact with the low mask bits). Verified by simulating
+    // the full write+read round trip of plain shufl(f=8) against this read, and checked bank-conflict-free by brute
+    // force, before landing here -- an earlier version of this comment (and code) verified against the write
+    // formula instead of the read formula, which matched a bank-conflict brute force fine but was numerically wrong
+    // and failed on real hardware at iteration 2000 of a correctness run; do not repeat that mistake.
+    if (f == 8 && RADIX == 8 && WG == 128) {
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T_Z61 val1 = lds[(i * 64 + (lowMe & 63)) ^ ((i & 1) * 8)];
+        T_Z61 val2 = lds[(i * 64 + (lowMe & 63) + 512) ^ ((i & 1) * 8)];
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T_Z61 val1 = lds[(i * 64 + (lowMe & 63)) ^ ((i & 1) * 8)];
+        T_Z61 val2 = lds[(i * 64 + (lowMe & 63) + 512) ^ ((i & 1) * 8)];
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
         else u[i].y = subq(val1, val2);
       }
       LDStx_end(lds2, numWG);
