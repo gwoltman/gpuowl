@@ -479,7 +479,18 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                     {"NH", fft.shape.nH()}
                   });
 
-  if (isAmdGpu(id)) { defines += toDefine("AMDGPU", 1); }
+  if (isAmdGpu(id)) {
+    defines += toDefine("AMDGPU", 1);
+    // WAVEFRONT: query it rather than infer it from a compiler-predefined per-chip macro (defined(__gfx906__)
+    // and friends). Those macros turned out not to be defined at all on at least one ROCm version's actual
+    // OpenCL compile path (comgr), which silently forced FAST_BARRIER off on every AMD GPU, including gfx906
+    // where it's supposed to stay on. CL_DEVICE_WAVEFRONT_WIDTH_AMD is queried live instead, since RDNA
+    // supports both 32 and 64 but ROCm's OpenCL compiler always selects 32.
+    if (u32 const wavefront = getAmdWavefrontWidth(id)) { defines += toDefine("WAVEFRONT", wavefront); }
+    // CDNA2/CDNA3 (gfx90a, gfx94x/gfx95x) are also natively wave64, so WAVEFRONT alone can't tell them apart
+    // from gfx906 -- but they have a "back-off" barrier that does not wait for LDS, same as RDNA.
+    if (isAmdCdna2Plus(id)) { defines += toDefine("AMD_BARRIER_NO_WAIT", 1); }
+  }
   if (isNvidiaGpu(id)) { defines += toDefine("NVIDIAGPU", 1); }
   if (isNvidiaGpu(id)) { defines += toDefine("CC", getNvidiaComputeCapability(id)); }
   if (!hasFP64(id)) { defines += toDefine("NO_FP64", 1); }

@@ -246,6 +246,17 @@ u32 getAmdWavefrontWidth(cl_device_id id) {
   }
 }
 
+bool isAmdCdna2Plus(cl_device_id id) {
+  string const name = getDeviceName(id);
+  return name.find("gfx90a") != string::npos || name.find("gfx94") != string::npos || name.find("gfx95") != string::npos;
+}
+
+bool amdFastBarrierUnsafe(cl_device_id id) {
+  if (!isAmdGpu(id)) { return false; }
+  if (getAmdWavefrontWidth(id) != 64) { return true; }
+  return isAmdCdna2Plus(id);
+}
+
 /*
 static string getFreq(cl_device_id device) {
   unsigned computeUnits, frequency;

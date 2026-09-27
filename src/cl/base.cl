@@ -844,26 +844,37 @@ void PREFETCHL2(const __global void *addr) {
 #endif
 }
 
-// FAST_BARRIER replaces barrier(CLK_LOCAL_MEM_FENCE) with barrier(0), a bare s_barrier on AMD.  That is only safe where the
-// compiler puts an "s_waitcnt lgkmcnt(0)" (wait for outstanding LDS accesses) in front of every s_barrier by itself: GCN up
-// to gfx908/gfx90c.  gfx90a, gfx94x/gfx95x and all of RDNA have a "back-off" barrier that does not wait, so there barrier(0)
-// lets a lane read LDS before another lane's store has landed and the Gerbicz check fails.  Ignore FAST_BARRIER on those.
-#if FAST_BARRIER && AMDGPU && !(defined(__GFX6__) || defined(__GFX7__) || defined(__GFX8__) || defined(__gfx900__) || \
-    defined(__gfx902__) || defined(__gfx904__) || defined(__gfx906__) || defined(__gfx908__) || defined(__gfx909__) || \
-    defined(__gfx90c__))
-#undef FAST_BARRIER
-#define FAST_BARRIER 0
-#endif
-
-// On "classic" AMD GCN GPUs such as Radeon VII, the wavefront size was always 64. On RDNA GPUs the wavefront can
-// be configured to be either 64 or 32 (ROCm OpenCL uses 32). We use the FAST_BARRIER define as an indicator for GCN GPUs.
-// On Nvidia GPUs the wavefront size is 32.
+// On "classic" AMD GCN GPUs such as Radeon VII, the wavefront size is always 64. On RDNA GPUs the wavefront can
+// be configured to be either 64 or 32 (ROCm OpenCL uses 32). On AMD this comes from the host's query of
+// CL_DEVICE_WAVEFRONT_WIDTH_AMD (Gpu.cpp) rather than being guessed here -- see the FAST_BARRIER comment below
+// for why a guess based on compiler-predefined macros was tried and abandoned. On Nvidia GPUs the wavefront
+// size is 32. This is a fallback for whenever the host did not provide a value.
 #if !WAVEFRONT
-#if FAST_BARRIER && AMDGPU
+#if AMDGPU
 #define WAVEFRONT 64
 #else
 #define WAVEFRONT 32
 #endif
+#endif
+
+#ifndef AMD_BARRIER_NO_WAIT
+#define AMD_BARRIER_NO_WAIT 0
+#endif
+
+// FAST_BARRIER replaces barrier(CLK_LOCAL_MEM_FENCE) with barrier(0), a bare s_barrier on AMD.  That is only safe where the
+// compiler puts an "s_waitcnt lgkmcnt(0)" (wait for outstanding LDS accesses) in front of every s_barrier by itself: GCN up
+// to gfx908/gfx90c, running in their native 64-wide wavefront.  RDNA parts run wave32 under ROCm's OpenCL compiler (even
+// though the hardware supports wave64 too) -- caught here by WAVEFRONT != 64.  gfx90a and gfx94x/gfx95x (CDNA2/CDNA3) are
+// *also* natively wave64 but have the same "back-off" barrier that does not wait as RDNA, so WAVEFRONT alone cannot tell
+// them apart from gfx906 -- the host passes AMD_BARRIER_NO_WAIT=1 there instead, from a device-name check (Gpu.cpp).
+// This used to be a defined(__gfx906__)-style compiler-macro check instead of a host-queried WAVEFRONT/name check:
+// verified empirically (an #error probe compiled through gpuowl's real OpenCL runtime, not a standalone clang invocation)
+// that those macros are not defined at all on at least one ROCm version's actual compile path (comgr's OpenCL JIT), which
+// silently forced FAST_BARRIER off on every AMD GPU including the ones, like gfx906, it was supposed to stay on for.
+// Do not go back to compiler-macro detection here.
+#if FAST_BARRIER && AMDGPU && (WAVEFRONT != 64 || AMD_BARRIER_NO_WAIT)
+#undef FAST_BARRIER
+#define FAST_BARRIER 0
 #endif
 
 // Default settings for USE_REGISTER_BARSYNC.  OpenCL on nVidia has compiler issues when USE_REGISTER_BARSYNC=0.  Annoying, as register bar.sync is slower in many cases.
