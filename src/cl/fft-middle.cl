@@ -316,8 +316,36 @@ void OVERLOAD middleShuffle(local T *lds, T2 *u, u32 workgroupSize, u32 blockSiz
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
-    local int *p1 = ((local int*) lds) + (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
-    local int *p2 = (local int*) lds + me;
+    // The plain write index below -- (me%blockSize)*(workgroupSize/blockSize)+me/blockSize -- is a classic
+    // shared-memory transpose and conflicts badly: verified via simulation, every 32-lane phase group collides
+    // (workgroupSize=128, blockSize=16, the default IN_SIZEX/OUT_SIZEX). Replace it with a "diagonal" address,
+    // addr(outer,inner) = outer*BIG + (inner + k*outer) % BIG, where BIG/ROWS are blockSize and
+    // workgroupSize/blockSize in whichever order is larger, "outer" is whichever of row/col has the smaller
+    // range, and k is 1 (square: blockSize==ROWS) or 2 (2:1 ratio, e.g. 16 vs 8, or 8 vs 16) -- the only ratios
+    // verified conflict-free (on both the write and the read below) by exhaustive simulation, and also verified
+    // to reproduce the exact same per-thread values as the plain formula (a correctness round trip, not just a
+    // conflict count -- see the shufl_and_fft2 fix earlier for why that distinction matters). Falls back to the
+    // plain, possibly-conflicting formula for any other ratio so an unusual -use combination still computes the
+    // right answer, just without the guaranteed fix.
+    u32 ROWS = workgroupSize / blockSize;
+    u32 row = me / blockSize, col = me % blockSize;
+    u32 row_w = me % ROWS, col_w = me / ROWS;
+    u32 p1idx, p2idx;
+    if (blockSize == 2 * ROWS) {
+      p1idx = row * blockSize + (col + 2 * row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
+    } else if (ROWS == 2 * blockSize) {
+      p1idx = col * ROWS + (row + 2 * col) % ROWS;
+      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
+    } else if (blockSize == ROWS) {
+      p1idx = row * blockSize + (col + row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
+    } else {
+      p1idx = col * ROWS + row;
+      p2idx = me;
+    }
+    local int *p1 = ((local int*) lds) + p1idx;
+    local int *p2 = ((local int*) lds) + p2idx;
     int4 *pu = (int4 *)u;
 
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].x; }
@@ -603,8 +631,28 @@ void OVERLOAD middleMul2(F2 *u, u32 x, u32 y, float factor, TrigFP32 trig) {
 void OVERLOAD middleShuffle(local F *lds, F2 *u, u32 workgroupSize, u32 blockSize) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 16) {
-    local F *p1 = lds + (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
-    local F *p2 = lds + me;
+    // See the T2 overload of middleShuffle (in the T2_GF61 section above) for the derivation of this
+    // diagonal addressing, which replaces the plain (me%blockSize)*(workgroupSize/blockSize)+me/blockSize
+    // write index -- a classic shared-memory transpose that conflicts badly at the default IN_SIZEX/OUT_SIZEX.
+    u32 ROWS = workgroupSize / blockSize;
+    u32 row = me / blockSize, col = me % blockSize;
+    u32 row_w = me % ROWS, col_w = me / ROWS;
+    u32 p1idx, p2idx;
+    if (blockSize == 2 * ROWS) {
+      p1idx = row * blockSize + (col + 2 * row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
+    } else if (ROWS == 2 * blockSize) {
+      p1idx = col * ROWS + (row + 2 * col) % ROWS;
+      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
+    } else if (blockSize == ROWS) {
+      p1idx = row * blockSize + (col + row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
+    } else {
+      p1idx = col * ROWS + row;
+      p2idx = me;
+    }
+    local F *p1 = lds + p1idx;
+    local F *p2 = lds + p2idx;
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
@@ -723,8 +771,28 @@ void OVERLOAD middleMul2(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
 void OVERLOAD middleShuffle(local Z31 *lds, GF31 *u, u32 workgroupSize, u32 blockSize) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 16) {
-    local Z31 *p1 = lds + (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
-    local Z31 *p2 = lds + me;
+    // See the T2 overload of middleShuffle (in the T2_GF61 section above) for the derivation of this
+    // diagonal addressing, which replaces the plain (me%blockSize)*(workgroupSize/blockSize)+me/blockSize
+    // write index -- a classic shared-memory transpose that conflicts badly at the default IN_SIZEX/OUT_SIZEX.
+    u32 ROWS = workgroupSize / blockSize;
+    u32 row = me / blockSize, col = me % blockSize;
+    u32 row_w = me % ROWS, col_w = me / ROWS;
+    u32 p1idx, p2idx;
+    if (blockSize == 2 * ROWS) {
+      p1idx = row * blockSize + (col + 2 * row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
+    } else if (ROWS == 2 * blockSize) {
+      p1idx = col * ROWS + (row + 2 * col) % ROWS;
+      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
+    } else if (blockSize == ROWS) {
+      p1idx = row * blockSize + (col + row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
+    } else {
+      p1idx = col * ROWS + row;
+      p2idx = me;
+    }
+    local Z31 *p1 = lds + p1idx;
+    local Z31 *p2 = lds + p2idx;
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
@@ -854,8 +922,26 @@ void OVERLOAD middleShuffle(local Z61 *lds, GF61 *u, u32 workgroupSize, u32 bloc
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
-    local int *p1 = ((local int*) lds) + (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
-    local int *p2 = (local int*) lds + me;
+    // See the T2 overload of middleShuffle above for the derivation of this diagonal addressing.
+    u32 ROWS = workgroupSize / blockSize;
+    u32 row = me / blockSize, col = me % blockSize;
+    u32 row_w = me % ROWS, col_w = me / ROWS;
+    u32 p1idx, p2idx;
+    if (blockSize == 2 * ROWS) {
+      p1idx = row * blockSize + (col + 2 * row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
+    } else if (ROWS == 2 * blockSize) {
+      p1idx = col * ROWS + (row + 2 * col) % ROWS;
+      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
+    } else if (blockSize == ROWS) {
+      p1idx = row * blockSize + (col + row) % blockSize;
+      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
+    } else {
+      p1idx = col * ROWS + row;
+      p2idx = me;
+    }
+    local int *p1 = ((local int*) lds) + p1idx;
+    local int *p2 = ((local int*) lds) + p2idx;
     int4 *pu = (int4 *)u;
 
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].x; }
