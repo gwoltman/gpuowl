@@ -355,30 +355,36 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
                                         : to_string(st.vgprs) + " vgprs (" + to_string(st.vgprsAllocated) + " allocated)";
       string const waves = to_string(st.occupancy) + (maxWaves ? "/" + to_string(maxWaves) : "") + " waves/SIMD";
 
+      // The compiled kernel's actual workgroup size (threads), from a throwaway kernel handle -- the same call
+      // Kernel.cpp makes on the real one it loads afterwards. -1 when unavailable (e.g. the query throws).
+      int groupSize = -1;
+      try {
+        if (KernelHolder const probe{loadKernel(program.get(), kernelName.c_str())}) {
+          groupSize = getWorkGroupSize(probe.get(), deviceId, kernelName.c_str());
+        }
+      } catch (const std::exception&) {}
+      string const threads = groupSize > 0 ? to_string(groupSize) + " threads" : "? threads";
+
       // Is this kernel's LDS use, rather than its VGPR use, the tighter occupancy constraint? A workgroup's LDS is
       // allocated once and shared by every wavefront in it, and by every workgroup resident on the same CU -- so the
       // LDS-derived ceiling is "how many whole workgroups' worth of LDS fit in the CU's budget", converted to waves
       // and averaged across that CU's SIMDs, not a per-SIMD quantity like the VGPR occupancy the compiler reports.
       string ldsNote;
-      if (simdPerCU > 0 && wavefrontWidth > 0 && ldsPerCU > 0 && st.ldsBytes > 0 && st.occupancy > 0) {
-        try {
-          if (KernelHolder const probe{loadKernel(program.get(), kernelName.c_str())}) {
-            int const groupSize = getWorkGroupSize(probe.get(), deviceId, kernelName.c_str());
-            int const wavesPerWG = (groupSize + wavefrontWidth - 1) / wavefrontWidth;
-            long const wgPerCU = long(ldsPerCU) / st.ldsBytes;
-            double const wavesPerSimdLDS = double(wgPerCU * wavesPerWG) / simdPerCU;
-            if (wavesPerSimdLDS < st.occupancy) {
-              char buf[64];
-              snprintf(buf, sizeof(buf), ", LDS-limited to %.1f waves/SIMD", wavesPerSimdLDS);
-              ldsNote = buf;
-            }
-          }
-        } catch (const std::exception&) {}
+      if (simdPerCU > 0 && wavefrontWidth > 0 && ldsPerCU > 0 && st.ldsBytes > 0 && st.occupancy > 0 && groupSize > 0) {
+        int const wavesPerWG = (groupSize + wavefrontWidth - 1) / wavefrontWidth;
+        long const wgPerCU = long(ldsPerCU) / st.ldsBytes;
+        double const wavesPerSimdLDS = double(wgPerCU * wavesPerWG) / simdPerCU;
+        if (wavesPerSimdLDS < st.occupancy) {
+          char buf[64];
+          snprintf(buf, sizeof(buf), ", LDS-limited to %.1f waves/SIMD", wavesPerSimdLDS);
+          ldsNote = buf;
+        }
       }
 
-      log("%s%s%s: %s, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy %s%s%s -> %s\n",
-          kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, st.ldsBytes,
-          st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", ldsNote.c_str(), outName.c_str());
+      log("%s%s%s: %s, %ld sgprs, %s, %ld bytes lds, %ld bytes scratch, occupancy %s%s%s -> %s\n",
+          kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, threads.c_str(),
+          st.ldsBytes, st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", ldsNote.c_str(),
+          outName.c_str());
       { ofstream out(outName, ios::binary); out << asmText; }
       saved = true;
       break;
