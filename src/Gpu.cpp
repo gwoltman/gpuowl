@@ -2510,8 +2510,17 @@ fs::path Gpu::saveProof(const Args& args, ProofSet& proofSet) {
 
         fs::path proofFile = proof.file(args.proofResultDir);
 
-        bool const ok = Proof::load(tmpFile).verify(this, hashes);
-        log("Proof '%s' verification %s\n", tmpFile.string().c_str(), ok ? "OK" : "FAILED");
+        // Self-verification costs about E/2^power iterations and must finish in this same run, which is too
+        // expensive at low proof powers in time-limited environments; -autoverify sets the power it kicks in at.
+        bool const doVerify = proofSet.power >= args.proofVerify;
+        bool ok = true;
+        if (doVerify) {
+          ok = Proof::load(tmpFile).verify(this, hashes);
+          log("Proof '%s' verification %s\n", tmpFile.string().c_str(), ok ? "OK" : "FAILED");
+        } else {
+          log("Proof '%s' verification skipped (proof power %u below -autoverify %u)\n",
+              tmpFile.string().c_str(), proofSet.power, args.proofVerify);
+        }
         if (ok) {
           fancyRename(tmpFile, proofFile);
           log("Proof '%s' generated\n", proofFile.string().c_str());

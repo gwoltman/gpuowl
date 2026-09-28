@@ -203,6 +203,11 @@ named "config.txt" in the prpll run directory.
                      A higher power increases disk usage a lot.
                      e.g. proof power 10 for a 120M exponent uses about %.0fGB of disk space.
                      -proof 0 disables proof generation: the PRP result is reported without a proof.
+-autoverify <power>: self-verify a generated proof only when its power is at least <power>. Default 0,
+                     i.e. verify every proof. Self-verification costs about E/2^power iterations, so it
+                     is cheap at high proof powers and expensive at low ones; it must also complete in
+                     the same run that generated the proof. Use e.g. -autoverify 9 to skip it for the
+                     low powers, or a value above the maximum power to skip it entirely.
 -iters <N>         : run next PRP test for <N> iterations and exit.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
@@ -403,6 +408,13 @@ void Args::parse(const string& line) {
       }
       proofPow = power;
       assert(proofPow >= 0);
+    } else if (key == "-autoverify") {
+      int power = 0;
+      if (s.empty() || (power = stoi(s)) < 0 || power > 14) {
+        log("-autoverify expects <power> 0-14 (found '%s')\n", s.c_str());
+        throw "-autoverify <power>";
+      }
+      proofVerify = power;
     } else if (key == "-keep") {
       if (s != "proof") {
         log("-keep requires 'proof'\n");
@@ -444,9 +456,6 @@ void Args::parse(const string& line) {
     }
     else if (key == "-results") {        // used to rename results.txt; PRPLL always writes results-<worker>.txt.
       log("-results is deprecated and ignored (results are always written to results-<N>.txt)\n");
-    }
-    else if (key == "-autoverify") {     // used to self-verify proofs of at least the given power right after generating them.
-      log("-autoverify is deprecated and ignored (proofs are no longer auto-verified; use -verify)\n");
     }
     else if (key == "-tmpDir" || key == "-tmpdir") {   // used to redirect proof checkpoint scratch space.
       log("-tmpDir is deprecated and ignored (proof checkpoints are always kept under -dir)\n");

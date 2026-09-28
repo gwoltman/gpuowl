@@ -69,6 +69,7 @@ public:
   // fs::path tuneFile = "tune.txt";
 
   bool keepProof = false;
+  u32 proofVerify = 0;      // self-verify a generated proof only if its power is at least this; 0 verifies every proof.
 
   enum CARRY_KIND carry = CARRY_AUTO;
   u32 workers = 1;
