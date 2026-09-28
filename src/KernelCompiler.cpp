@@ -277,22 +277,27 @@ static string fileSuffix(const string& args) {
   return ret;
 }
 
-// -v 10 reports only the kernels most relevant to routine performance tuning; -v 11 reports every
-// kernel (the original, unfiltered -v 10 behaviour). "Important" is tailSquare/fftMiddleIn/fftMiddleOut
-// under any FFT-type variant (plain, GF31, GF61), and carryFused's plain declaration specifically (not
-// -DROE=1, -DMUL3=1 or -DLL=1). Keep this allowlist in sync by hand with the CUDA side's
-// isImportantKernel in clwrap_cuda.cpp -- the two backends dump through separate files and have no
-// shared header for it, since the CUDA side identifies the carryFused variant from build options
-// rather than from the declaredArgs bookkeeping this side already has.
-static bool isImportantKernel(const string& kernelName, const string& variant) {
+#endif
+
+// -v 10 reports only the kernels most relevant to routine performance tuning (both in the AMD
+// assembly dump -- see compile() below -- and in the plain "Loaded ..." log line every kernel gets,
+// AMD or CUDA -- see loadAux() below); -v 11 (AMD only) reports every kernel's assembly. "Important"
+// is tailSquare/fftMiddleIn/fftMiddleOut under any FFT-type variant (plain, GF31, GF61), and
+// carryFused's plain declaration specifically -- told apart from its siblings by args itself rather
+// than the declaredArgs/variant bookkeeping compile() uses for file naming, so this works the same
+// for both backends. Keep this allowlist in sync by hand with the CUDA side's own isImportantKernel
+// in clwrap_cuda.cpp, which needs its own copy to gate its PTX dump from inside clCreateKernel, where
+// this function isn't reachable.
+static bool isImportantKernel(const string& kernelName, const string& args) {
   static const set<string> important = {
     "tailSquare", "tailSquareGF31", "tailSquareGF61",
     "fftMiddleIn", "fftMiddleInGF31", "fftMiddleInGF61",
     "fftMiddleOut", "fftMiddleOutGF31", "fftMiddleOutGF61",
   };
-  return important.count(kernelName) || (kernelName == "carryFused" && variant.empty());
+  if (important.count(kernelName)) { return true; }
+  return kernelName == "carryFused" && args.find("-DROE=1") == string::npos
+      && args.find("-DMUL3=1") == string::npos && args.find("-DLL=1") == string::npos;
 }
-#endif
 
 Program KernelCompiler::build(const string& fileName, const string& extraArgs) const {
   Program p1 = loadSource(context, "#include \""s + fileName + "\"\n");
@@ -365,7 +370,7 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
       string const variant = (it == declaredArgs.end()) ? "" : distinguishingArgs(extraArgs, it->second);
 
       // -v 10 skips everything but the important kernels (see isImportantKernel); -v 11 dumps them all.
-      if (verbose == 10 && !isImportantKernel(kernelName, variant)) {
+      if (verbose == 10 && !isImportantKernel(kernelName, extraArgs)) {
         saved = true;   // assembly was found -- just not reported -- so this is not "no assembly at all"
         break;
       }
@@ -468,7 +473,11 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
       if (verbose) { log("saving binary to '%s'\n", cacheFile.c_str()); }
       saveBinary(program.get(), cacheFile);
     }
-    if (verbose) { log("Loaded %s %s: %.0fms\n", kernelName.c_str(), args.c_str(), timer.at() * 1000); }
+    // At -v 10, keep this line as filtered as the assembly/PTX dump itself -- otherwise every
+    // uninteresting kernel still gets logged even though it never gets a dump (see isImportantKernel).
+    if (verbose && (verbose != 10 || isImportantKernel(kernelName, args))) {
+      log("Loaded %s %s: %.0fms\n", kernelName.c_str(), args.c_str(), timer.at() * 1000);
+    }
   }
 
   return ret;
