@@ -453,7 +453,10 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // the caller has done only a partial fft_RADIX step (fft8_4 on the SIZE=256/RADIX=8 path).  For r == RADIX
     // this is identical to the i * f + (lowMe & ~mask) * RADIX + (lowMe & mask) it replaces.
 
-    LDStx_start(lds2, numWG);
+    // NOTE: This is the one known case where Radeon VIIs require a local memory fence!  The reason is not known, I would think each LDSbar call
+    // would need the local memory fence, but only the transaction start does!?
+
+    LDStx_start_with_fence(lds2, numWG);
     for (u32 i = 0; i < RADIX; ++i) { lds[i / (RADIX / r) * f + i % (RADIX / r) * WG * r + (lowMe & ~mask) * r + (lowMe & mask)] = as_int4(u[i]).x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }

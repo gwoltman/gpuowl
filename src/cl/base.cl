@@ -895,19 +895,18 @@ void sync(void) {
 #endif
 }
 
-// Create a barrier across all threads.
+// Create a barrier across all threads.  Primarily used to coordinate access to local memory.
+// A local memory fence is optional.  This is a DANGEROUS practice!!
+// On Radeon VII and Radeon PRO VII barrier with no local memory fence works (in most cases -- see barFence routine) and is much faster.
+// On nVidia hardware, a barrier instruction automatically creates a local memory fence.
+// Hardware from other vendors and other AMD GPUs has not been thoroughly researched.  The FAST_BARRIER option allows selecting the faster path when it works.
 void OVERLOAD bar(void) {
-  // barrier(CLK_LOCAL_MEM_FENCE) is correct, but it turns out that on some GPUs
-  // (in particular on Radeon VII and Radeon PRO VII) barrier(0) works as well and is faster.
-  // So allow selecting the faster path when it works with -use FAST_BARRIER
-#if FAST_BARRIER
-  barrier(0);
-#else
-  barrier(CLK_LOCAL_MEM_FENCE);
-#endif
+  barrier(FAST_BARRIER ? 0 : CLK_LOCAL_MEM_FENCE);
 }
 
 // Create a barrier across a subset of threads OR across all threads if that is faster.
+// Again, the local memory fence is optional controlled by the FAST_BARRIER setting.
+// At this point in time, only nVidia GPUs support creating a barrier across a subset of threads.
 void OVERLOAD bar(const u32 WG) {
   // A group no larger than a wavefront can skip the barrier only where the hardware really does run a whole
   // wavefront in lock-step.  AMD GCN does, and so did nVidia before Volta.  Volta and later do not:
@@ -921,6 +920,7 @@ void OVERLOAD bar(const u32 WG) {
     mem_fence(CLK_LOCAL_MEM_FENCE);
     return;
 #elif AMDGPU || HAS_PTX >= 200
+    if (!FAST_BARRIER) mem_fence(CLK_LOCAL_MEM_FENCE);
     return;
 #endif
   }
@@ -935,6 +935,28 @@ void OVERLOAD bar(const u32 WG) {
 #else
   bar();
 #endif
+}
+
+// Create a barrier across all threads.  Like bar(), primarily used to coordinate access to local memory.
+// However a local memory fence is NOT optional, guaranteeing safe behavior.
+// On Radeon VII and Radeon PRO VII barrier it was discoverred that 4 byte shufls in shufl.cl required a local memory barrier.
+// My theory is something like 8-byte writes store LSW, then MSW.  An 8-byte read accesses LSW first, with the write of MSW giving just
+// enough cushion for the read of LSW to be safe.  That cushion disappears with 4-byte writes and reads.  Alas, that theory does not
+// hold up in real practice.
+void OVERLOAD barFence(void) {
+  barrier(CLK_LOCAL_MEM_FENCE);
+}
+
+// Like bar(WG), except a local memory fence is NOT optional, guaranteeing safe behavior.
+void OVERLOAD barFence(const u32 WG) {
+  // Catch the one case where regular bar(WG) can skip the local memory fence
+  if (WG <= WAVEFRONT) {
+#if AMDGPU || (HAS_PTX >= 200 && HAS_PTX < 600)
+    mem_fence(CLK_LOCAL_MEM_FENCE);
+    return;
+#endif
+  }
+  bar(WG);
 }
 
 // Create a barrier across a subset of threads.  Substituting a barrier on all threads is not permitted, so this is only

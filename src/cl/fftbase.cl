@@ -31,8 +31,16 @@ void OVERLOAD LDSbar(const u32 numWG) {
   bar(WG);
 }
 
+void OVERLOAD LDSbar_with_fence(const u32 numWG) {
+  barFence(WG);
+}
+
 void OVERLOAD LDStx_start(local void *lds, const u32 numWG) {
   LDSbar(numWG);
+}
+
+void OVERLOAD LDStx_start_with_fence(local void *lds, const u32 numWG) {
+  LDSbar_with_fence(numWG);
 }
 
 void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
@@ -126,6 +134,13 @@ void OVERLOAD LDSbar(const u32 numWG) {
   barsync(numWG, WG);
 }
 
+// Wait for all of a workgroup's threads to arrive.  Skipping a local memory fence is NOT permitted.
+// Since optional local memory fence is for Radeon VII class GPUs and those GPUs do not support
+// barrier on a subset of threads, simply turn LDSbarFence calls into LDSbar calls.
+void OVERLOAD LDSbar_with_fence(const u32 numWG) {
+  LDSbar(numWG);
+}
+
 // Start a new LDS access transaction.  This is required for sharing LDS memory with other workgroups.
 // Historically, each workgroup had its own LDS area, and shufl routines performed a bar(WG) at the start of accessing LDS but not at the end.
 // After calling shufl, a bar(WG) was required before next LDS memory usage.  All routines that use LDS memory OBEYED THIS PROTOCOL
@@ -152,6 +167,11 @@ void OVERLOAD LDStx_start(local void *lds, const u32 numWG) {
     while (atomic_cmpxchg(&semaphores[get_local_id(0) / WG / SBMUL(numWG)], 0, 1) != 0);
   }
   LDSbar(numWG);
+}
+
+// Like LDStx_start but requires a local memory fence.  Like LDSbar_with_fence, never needed in practice.
+void OVERLOAD LDStx_start_with_fence(local void *lds, const u32 numWG) {
+  LDStx_start(lds, numWG);
 }
 
 // End an LDS access transaction
