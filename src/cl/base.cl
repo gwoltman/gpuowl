@@ -872,6 +872,9 @@ void PREFETCHL2(const __global void *addr) {
 // that those macros are not defined at all on at least one ROCm version's actual compile path (comgr's OpenCL JIT), which
 // silently forced FAST_BARRIER off on every AMD GPU including the ones, like gfx906, it was supposed to stay on for.
 // Do not go back to compiler-macro detection here.
+#ifndef FAST_BARRIER
+#define FAST_BARRIER 0      // Default to the safe case, FAST_BARRIER is risky!
+#endif
 #if FAST_BARRIER && AMDGPU && (WAVEFRONT != 64 || AMD_BARRIER_NO_WAIT)
 #undef FAST_BARRIER
 #define FAST_BARRIER 0
