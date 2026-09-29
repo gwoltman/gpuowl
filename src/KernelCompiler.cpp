@@ -52,7 +52,10 @@ static bool acceptsClStd(cl_context context, cl_device_id deviceId, const string
 // whatever path the option names, under names of its own:
 // * "<digits>.s/.cl/.i/.so" (e.g. "3949457118.s") from AMD_OCL_BUILD_OPTIONS_APPEND=-save-temps=x on older ROCm;
 // * "x_<N>_<gfx>.cl/.i" from that same option on current ROCm (7.x), which there yields no assembly;
-// * "_temp_<N>_<gfx>.s/.so" and "_temp_<N>_<gfx>_linked.bc" from AMD_OCL_LINK_OPTIONS_APPEND=-save-temps-all (current ROCm).
+// * "_temp_<N>_<gfx>.s/.so" and "_temp_<N>_<gfx>_linked.bc" from AMD_OCL_LINK_OPTIONS_APPEND=-save-temps-all (current ROCm);
+// * "<digits>(_linked<digits>)+.s/.so/.bc" (e.g. "830107278_linked2226068292_linked32993898123623157245.s") on a ROCm
+//   (verified: 6.3.3, gfx906) whose build stage honors the first option (constant name -- a hash of the literal "x") and
+//   whose link stage(s) each chain their own "_linked<hash>" onto it, rather than either of the two schemes above.
 // A name like "2026.log" or "42" may just as well be the user's own file, so a name is only taken for a compiler temp
 // file when it also appeared (or changed) during the compile at hand: see snapshotDir() and newCompilerTemps().
 static bool isCompilerTempName(const string& name) {
@@ -61,7 +64,15 @@ static bool isCompilerTempName(const string& name) {
     while (pos < stem.size() && isdigit((unsigned char) stem[pos])) { ++pos; }
     return pos;
   };
-  if (!stem.empty() && digitsEnd(0) == stem.size()) { return true; }
+  size_t pos = digitsEnd(0);
+  if (pos > 0) {
+    while (stem.compare(pos, 7, "_linked") == 0) {
+      size_t const next = digitsEnd(pos + 7);
+      if (next == pos + 7) { break; }
+      pos = next;
+    }
+    if (pos == stem.size()) { return true; }
+  }
   for (string const prefix : {"x_", "_temp_"}) {
     if (stem.starts_with(prefix)) {
       size_t const end = digitsEnd(prefix.size());
@@ -147,7 +158,12 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
     log("OpenCL C 2.0 is not available on this device; compiling the kernels as OpenCL C 3.0\n");
   }
   if (asmDump) { removeFiles(newCompilerTemps(before)); }
-  if (isAmdGpu(deviceId)) { maxWaves = maxWavesPerSimd(getDeviceName(deviceId)); }
+  if (isAmdGpu(deviceId)) {
+    maxWaves = maxWavesPerSimd(getDeviceName(deviceId));
+    simdPerCU = int(getAmdSimdPerComputeUnit(deviceId));
+    wavefrontWidth = int(getAmdWavefrontWidth(deviceId));
+    ldsPerCU = getLocalMemSize(deviceId);   // AMD: a workgroup can use up to the whole CU's LDS budget
+  }
 #endif
   baseArgs = "-cl-finite-math-only -cl-std=" + clStd + ' ' + clArgs;
   // Rusticl is detected, other drivers with the same limitation can be handled with -use NO_INT128=1
@@ -260,7 +276,28 @@ static string fileSuffix(const string& args) {
   }
   return ret;
 }
+
 #endif
+
+// -v 10 reports only the kernels most relevant to routine performance tuning (both in the AMD
+// assembly dump -- see compile() below -- and in the plain "Loaded ..." log line every kernel gets,
+// AMD or CUDA -- see loadAux() below); -v 11 (AMD only) reports every kernel's assembly. "Important"
+// is tailSquare/fftMiddleIn/fftMiddleOut under any FFT-type variant (plain, GF31, GF61), and
+// carryFused's plain declaration specifically -- told apart from its siblings by args itself rather
+// than the declaredArgs/variant bookkeeping compile() uses for file naming, so this works the same
+// for both backends. Keep this allowlist in sync by hand with the CUDA side's own isImportantKernel
+// in clwrap_cuda.cpp, which needs its own copy to gate its PTX dump from inside clCreateKernel, where
+// this function isn't reachable.
+static bool isImportantKernel(const string& kernelName, const string& args) {
+  static const set<string> important = {
+    "tailSquare", "tailSquareGF31", "tailSquareGF61",
+    "fftMiddleIn", "fftMiddleInGF31", "fftMiddleInGF61",
+    "fftMiddleOut", "fftMiddleOutGF31", "fftMiddleOutGF61",
+  };
+  if (important.count(kernelName)) { return true; }
+  return kernelName == "carryFused" && args.find("-DROE=1") == string::npos
+      && args.find("-DMUL3=1") == string::npos && args.find("-DLL=1") == string::npos;
+}
 
 Program KernelCompiler::build(const string& fileName, const string& extraArgs) const {
   Program p1 = loadSource(context, "#include \""s + fileName + "\"\n");
@@ -331,16 +368,51 @@ Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const s
       // "carryFused" plain/-DROE=1/-DMUL3=1/...): tell them apart by those defines, in the log and in the file name.
       auto it = declaredArgs.find(kernelName);
       string const variant = (it == declaredArgs.end()) ? "" : distinguishingArgs(extraArgs, it->second);
+
+      // -v 10 skips everything but the important kernels (see isImportantKernel); -v 11 dumps them all.
+      if (verbose == 10 && !isImportantKernel(kernelName, extraArgs)) {
+        saved = true;   // assembly was found -- just not reported -- so this is not "no assembly at all"
+        break;
+      }
+
       string const base = variant.empty() ? kernelName : kernelName + '_' + fileSuffix(variant);
       string outName = base + ".s";
       for (int n = 2; !asmDumpNames.insert(outName).second; ++n) { outName = base + '_' + to_string(n) + ".s"; }
 
-      string const vgprs = st.vgprs < 0 ? to_string(st.vgprsAllocated) + " vgprs"
+      string const vgprs = (st.vgprs < 0 || st.vgprs == st.vgprsAllocated) ? to_string(st.vgprsAllocated) + " vgprs"
                                         : to_string(st.vgprs) + " vgprs (" + to_string(st.vgprsAllocated) + " allocated)";
       string const waves = to_string(st.occupancy) + (maxWaves ? "/" + to_string(maxWaves) : "") + " waves/SIMD";
-      log("%s%s%s: %s, %ld sgprs, %ld bytes lds, %ld bytes scratch, occupancy %s%s -> %s\n",
-          kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, st.ldsBytes,
-          st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", outName.c_str());
+
+      // The compiled kernel's actual workgroup size (threads), from a throwaway kernel handle -- the same call
+      // Kernel.cpp makes on the real one it loads afterwards. -1 when unavailable (e.g. the query throws).
+      int groupSize = -1;
+      try {
+        if (KernelHolder const probe{loadKernel(program.get(), kernelName.c_str())}) {
+          groupSize = getWorkGroupSize(probe.get(), deviceId, kernelName.c_str());
+        }
+      } catch (const std::exception&) {}
+      string const threads = groupSize > 0 ? to_string(groupSize) + " threads" : "? threads";
+
+      // Is this kernel's LDS use, rather than its VGPR use, the tighter occupancy constraint? A workgroup's LDS is
+      // allocated once and shared by every wavefront in it, and by every workgroup resident on the same CU -- so the
+      // LDS-derived ceiling is "how many whole workgroups' worth of LDS fit in the CU's budget", converted to waves
+      // and averaged across that CU's SIMDs, not a per-SIMD quantity like the VGPR occupancy the compiler reports.
+      string ldsNote;
+      if (simdPerCU > 0 && wavefrontWidth > 0 && ldsPerCU > 0 && st.ldsBytes > 0 && st.occupancy > 0 && groupSize > 0) {
+        int const wavesPerWG = (groupSize + wavefrontWidth - 1) / wavefrontWidth;
+        long const wgPerCU = long(ldsPerCU) / st.ldsBytes;
+        double const wavesPerSimdLDS = double(wgPerCU * wavesPerWG) / simdPerCU;
+        if (wavesPerSimdLDS < st.occupancy) {
+          char buf[64];
+          snprintf(buf, sizeof(buf), ", LDS-limited to %.1f waves/SIMD", wavesPerSimdLDS);
+          ldsNote = buf;
+        }
+      }
+
+      log("%s%s%s: %s, %ld sgprs, %s, %ld bytes lds, %ld bytes scratch, occupancy %s%s%s -> %s\n",
+          kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, threads.c_str(),
+          st.ldsBytes, st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", ldsNote.c_str(),
+          outName.c_str());
       { ofstream out(outName, ios::binary); out << asmText; }
       saved = true;
       break;
@@ -401,7 +473,11 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
       if (verbose) { log("saving binary to '%s'\n", cacheFile.c_str()); }
       saveBinary(program.get(), cacheFile);
     }
-    if (verbose) { log("Loaded %s %s: %.0fms\n", kernelName.c_str(), args.c_str(), timer.at() * 1000); }
+    // At -v 10, keep this line as filtered as the assembly/PTX dump itself -- otherwise every
+    // uninteresting kernel still gets logged even though it never gets a dump (see isImportantKernel).
+    if (verbose && (verbose != 10 || isImportantKernel(kernelName, args))) {
+      log("Loaded %s %s: %.0fms\n", kernelName.c_str(), args.c_str(), timer.at() * 1000);
+    }
   }
 
   return ret;

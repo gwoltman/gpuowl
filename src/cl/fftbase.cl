@@ -183,8 +183,7 @@ void OVERLOAD chainMul4(T2 *u, T2 w) {
   T2 base = csqTrig(w);
   u[2] = cmul(u[2], base);
 
-  double a = mul2(base.y);
-  base = U2(fma(a, -w.y, w.x), fma(a, w.x, -w.y));
+  base = ccubeTrig(base, w);
   u[3] = cmul(u[3], base);
 }
 
@@ -198,8 +197,9 @@ void OVERLOAD chainMul8(T2 *u, T2 w) {
   u[2] = cmulFancy(u[2], w2);
 
   T2 w3;
-  // Rocm optimizer behaves weirdly yet again. Using mul2 instead of 2.0* makes double-wide single-kernel tailSquare inexplicably slower
-  // even though it is one fewer F64 op.
+  // Rocm optimizer behaves weirdly yet again. Using mul2 instead of 2.0* makes double-wide single-kernel tailSquare slower.
+  // Yes, mul2 saves an FP64 op, but the compiler no longer saves the computed powers of w from the first fft_HEIGHT call
+  // for use in the second fft_HEIGHT call for a large net increase in FP64 ops.
   if (DOING_WIDTH || VARIANT != 0) {
     w3 = ccubeTrigFancy(w2, w);
   } else {
@@ -268,6 +268,9 @@ T2 bcast(T2 src, u32 span) {
   return as_double2(s);
 }
 
+// OpenCL has no way to access nVidia's __shfl_sync (a CUDA C++ builtin).  Inline PTX assembly for shfl.sync.idx.b32 is needed.
+// base.cl only lets FFT_VARIANT_W/H= 0 reach here once HAS_PTX>=300 (shfl needs sm_30), so no capability check is needed here.
+
 #elif NVIDIAGPU && VARIANT == 0
 
 // CUDA warps are 32 lanes, so shfl.sync.idx (__shfl_sync) directly covers spans 4/8/16/32 -- the same
@@ -275,24 +278,23 @@ T2 bcast(T2 src, u32 span) {
 // AMD's 64-wide readfirstlane (a CUDA warp cannot broadcast past its own 32 lanes).  Only reachable for
 // WG > 32; not needed for the WIDTH/SMALL_HEIGHT=512, NW/NH=8 (WG=64, spans 1 and 8 only) config this
 // was tested with -- trap loudly instead of silently returning the wrong (unbroadcast) value.
-int bcast64(int x) { __trap(); return x; }
+int bcast64(int x) { __asm("trap;" : : ); return x; }
 
 int bcastAux(int x, u32 span) {
-  return span == 4 ? __shfl_sync(0xffffffffu, x, 0, 4)
-       : span == 8 ? __shfl_sync(0xffffffffu, x, 0, 8)
-       : span == 16 ? __shfl_sync(0xffffffffu, x, 0, 16)
-       : span == 32 ? __shfl_sync(0xffffffffu, x, 0, 32)
-       : span == 64 ? bcast64(x)
-       : x;
+  int result;
+  if (span == 4)       __asm("shfl.sync.idx.b32 %0, %1, 0, 0x1c1f, 0xffffffff;" : "=r"(result) : "r"(x));  // __shfl_sync(0xffffffffu, x, 0, 4)
+  else if (span == 8)  __asm("shfl.sync.idx.b32 %0, %1, 0, 0x181f, 0xffffffff;" : "=r"(result) : "r"(x));  // __shfl_sync(0xffffffffu, x, 0, 8)
+  else if (span == 16) __asm("shfl.sync.idx.b32 %0, %1, 0, 0x101f, 0xffffffff;" : "=r"(result) : "r"(x));  // __shfl_sync(0xffffffffu, x, 0, 16)
+  else if (span == 32) __asm("shfl.sync.idx.b32 %0, %1, 0, 0x001f, 0xffffffff;" : "=r"(result) : "r"(x));  // __shfl_sync(0xffffffffu, x, 0, 32)
+  else result = x;
+  return result;
 }
 
 T2 bcast(T2 src, u32 span) {
-  int4 s = as_int4(src);
-  // Unlike OpenCL's int4, CUDA's native int4 struct has no operator[]; index through
-  // a plain int* instead of s.x/.y/.z/.w so bcastAux can still be a loop over 0..3.
-  int* p = (int*)&s;
-  for (int i = 0; i < 4; ++i) { p[i] = bcastAux(p[i], span); }
-  return as_double2(s);
+  int4 src_as_int4 = as_int4(src);
+  int* s = (int*)&src_as_int4;   // Unlike OpenCL's int4, CUDA's native int4 struct has no operator[]; index through a plain int* instead
+  for (int i = 0; i < 4; ++i) { s[i] = bcastAux(s[i], span); }
+  return as_double2(src_as_int4);
 }
 
 #else
@@ -1065,8 +1067,7 @@ void OVERLOAD chainMul4(F2 *u, F2 w) {
   F2 base = csqTrig(w);
   u[2] = cmul(u[2], base);
 
-  F a = mul2(base.y);
-  base = U2(fma(a, -w.y, w.x), fma(a, w.x, -w.y));
+  base = ccubeTrig(base, w);
   u[3] = cmul(u[3], base);
 }
 
@@ -1864,7 +1865,7 @@ void OVERLOAD fft_RADIX(GF61 *u) {
 void OVERLOAD chainMul4(GF61 *u, GF61 w) {
   u[1] = cmul(u[1], w);
 
-  GF61 base = csq(w);
+  GF61 base = csq(w);                   //GWBUG - see FP64 version for possible optimization
   u[2] = cmul(u[2], base);
 
   base = cmul(base, w);                 //GWBUG - see FP64 version for possible optimization

@@ -413,11 +413,13 @@ T2 OVERLOAD sub(T2 a, T2 b) { return U2(sub(a.x, b.x), sub(a.y, b.y)); }
 T2 OVERLOAD conjugate(T2 a) { return U2(a.x, -a.y); }
 
 // Multiply by 2 without using floating point instructions.  This is a little sloppy as an input of zero returns 2^-1022.
-T OVERLOAD mul2(T a) { int2 tmp = as_int2(a); tmp.y += 0x00100000; /* Bump exponent by 1 */ return (as_double(tmp)); }
+// WARNING:  Use of this macro *may* cause the rocm optimizer to fail to recognize common sub-expressions built on the returned result.
+T OVERLOAD mul2(T a) { return as_double(as_ulong(a) + (u64)0x0010000000000000ULL); /* Bump exponent by 1 */; }
 T2 OVERLOAD mul2(T2 a) { return U2(mul2(a.x), mul2(a.y)); }
 
 // Multiply by -2 without using floating point instructions.  This is a little sloppy as an input of zero returns -2^-1022.
-T OVERLOAD mulminus2(T a) { int2 tmp = as_int2(a); tmp.y += 0x80100000; /* Bump exponent by 1, flip sign bit */ return (as_double(tmp)); }
+// WARNING:  Use of this macro *may* cause the rocm optimizer to fail to recognize common sub-expressions built on the returned result.
+T OVERLOAD mulminus2(T a) { return as_double(as_ulong(a) + (u64)0x8010000000000000ULL); /* Bump exponent by 1, flip sign bit */; }
 T2 OVERLOAD mulminus2(T2 a) { return U2(mulminus2(a.x), mulminus2(a.y)); }
 
 // a * (b + 1) == a * b + a

@@ -479,7 +479,18 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
                     {"NH", fft.shape.nH()}
                   });
 
-  if (isAmdGpu(id)) { defines += toDefine("AMDGPU", 1); }
+  if (isAmdGpu(id)) {
+    defines += toDefine("AMDGPU", 1);
+    // WAVEFRONT: query it rather than infer it from a compiler-predefined per-chip macro (defined(__gfx906__)
+    // and friends). Those macros turned out not to be defined at all on at least one ROCm version's actual
+    // OpenCL compile path (comgr), which silently forced FAST_BARRIER off on every AMD GPU, including gfx906
+    // where it's supposed to stay on. CL_DEVICE_WAVEFRONT_WIDTH_AMD is queried live instead, since RDNA
+    // supports both 32 and 64 but ROCm's OpenCL compiler always selects 32.
+    if (u32 const wavefront = getAmdWavefrontWidth(id)) { defines += toDefine("WAVEFRONT", wavefront); }
+    // CDNA2/CDNA3 (gfx90a, gfx94x/gfx95x) are also natively wave64, so WAVEFRONT alone can't tell them apart
+    // from gfx906 -- but they have a "back-off" barrier that does not wait for LDS, same as RDNA.
+    if (isAmdCdna2Plus(id)) { defines += toDefine("AMD_BARRIER_NO_WAIT", 1); }
+  }
   if (isNvidiaGpu(id)) { defines += toDefine("NVIDIAGPU", 1); }
   if (isNvidiaGpu(id)) { defines += toDefine("CC", getNvidiaComputeCapability(id)); }
   if (!hasFP64(id)) { defines += toDefine("NO_FP64", 1); }
@@ -698,13 +709,16 @@ unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const ve
     log("FFT %s needs FP64, which this device does not support.  Use an FFT type without FP64 (e.g. 1 = M31+M61).\n", fftConfig.spec().c_str());
     throw "FP64 not supported";
   }
-  // Without the builtins, base.cl compiles variant 0 as variant 1 (with a warning from every .cl file).  Make that switch
-  // here instead, with one log line, so that the FFT spec and its max exponent describe the FFT that actually runs.
+  // Without the builtins (AMD) or new enough shfl.sync support (nVidia), base.cl compiles variant 0 as variant 1
+  // (with a warning from every .cl file).  Make that switch here instead, with one log line, so that the FFT spec
+  // and its max exponent describe the FFT that actually runs.
   u32 const v = fftConfig.variant;
-  if (fftConfig.FFT_FP64 && (variant_W(v) == 0 || variant_H(v) == 0) && isAmdGpu(shared.context->deviceId())
-      && !hasAmdBcastBuiltins(shared.context->get(), shared.context->deviceId())) {
+  cl_device_id const id = shared.context->deviceId();
+  bool const missingVariant0Support = (isAmdGpu(id) && !hasAmdBcastBuiltins(shared.context->get(), id))
+                                    || (isNvidiaGpu(id) && getNvidiaComputeCapability(id) < 300);
+  if (fftConfig.FFT_FP64 && (variant_W(v) == 0 || variant_H(v) == 0) && missingVariant0Support) {
     FFTConfig const fallback{fftConfig.shape, variant_WMH(max(variant_W(v), 1u), variant_M(v), max(variant_H(v), 1u)), fftConfig.carry};
-    log("%s: this OpenCL compiler lacks the builtins FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
+    log("%s: this OpenCL compiler lacks what FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
     fftConfig = fallback;
   }
   return make_unique<Gpu>(shared, fftConfig, E, extraConf, logFftSize);
@@ -2065,7 +2079,7 @@ void Gpu::logTimeKernels() {
     assert(n);
     double const f = 1e-3 / n;
     double const percent = 100.0 / total * p->times[2];
-    if (!args.verbose && percent < 0.2) { break; }
+    if ((args.verbose == 0 || args.verbose == 10) && percent < 0.2) { break; }
     snprintf(buf, sizeof(buf),
              args.verbose ? "%s %5.2f%% %-18s : %6.1f us/call x %5d calls  (%.3f %.0f)\n"
                           : "%s %5.2f%% %-18s %6.1f x%6d  %.3f %.0f\n",

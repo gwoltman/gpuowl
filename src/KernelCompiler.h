@@ -20,7 +20,8 @@ class KernelCompiler {
   std::string baseArgs;
   const bool useCache;
   const int verbose;
-  const bool asmDump;   // -v 10: pick up the compiler's assembly (AMD OpenCL)
+  const bool asmDump;   // -v 10 or -v 11: pick up the compiler's assembly (AMD OpenCL). -v 10 reports only
+                        // the "important" kernels (see isImportantKernel in KernelCompiler.cpp); -v 11 reports all of them.
 
   std::vector<Program> clSources;
   std::vector<std::pair<std::string, std::string>> files;
@@ -36,6 +37,10 @@ class KernelCompiler {
   mutable bool asmMissingNoted = false;
   mutable bool asmCacheNoted = false;
   int maxWaves = 0;   // waves per SIMD, AMD; 0 when not known
+  // For the -v 10 LDS-occupancy check (AMD only; 0 when not known/available):
+  int simdPerCU = 0;        // SIMDs per compute unit
+  int wavefrontWidth = 0;   // threads per wavefront
+  u64 ldsPerCU = 0;         // LDS bytes per compute unit (a workgroup's LDS is shared by the whole CU)
 
   [[nodiscard]] Program build(const string& fileName, const string& args) const;
   [[nodiscard]] Program compile(const string& fileName, const string& kernelName, const string& args) const;

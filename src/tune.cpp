@@ -363,9 +363,11 @@ void Tune::tune() {
   bool const AMDGPU = isAmdGpu(shared.context->deviceId());
   bool const NVIDIAGPU = isNvidiaGpu(shared.context->deviceId());
   int const NO_ASM = args->value("NO_ASM", 0);
-  // Variant zero (BCAST) needs an AMD GPU whose OpenCL compiler has the amdgcn builtins (Gpu::make otherwise runs it as
-  // variant one).  Have NO_ASM bypass variant zero.
-  bool const VARIANT0 = AMDGPU && !NO_ASM && hasAmdBcastBuiltins(shared.context->get(), shared.context->deviceId());
+  // Variant zero (BCAST) needs either an AMD GPU whose OpenCL compiler has the amdgcn builtins, or an nVidia GPU
+  // new enough for shfl.sync (sm_30+; Gpu::make otherwise runs it as variant one).  Have NO_ASM bypass variant zero.
+  bool const VARIANT0 = !NO_ASM
+    && ((AMDGPU && hasAmdBcastBuiltins(shared.context->get(), shared.context->deviceId()))
+        || (NVIDIAGPU && getNvidiaComputeCapability(shared.context->deviceId()) >= 300));
 
   bool tune_config = true;
   bool time_FFTs = false;
@@ -752,8 +754,11 @@ void Tune::tune() {
     }
 
 #ifndef CUDA_BACKEND
-    // Find best FAST_BARRIER setting
-    if (true /*AMDGPU*/) {                 // FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
+    // Find best FAST_BARRIER setting.  Skip it where it provably can't do anything: base.cl forces it off
+    // whenever the compiled wavefront isn't 64 (RDNA under ROCm's OpenCL compiler always picks 32) or the
+    // device is CDNA2/CDNA3 (gfx90a, gfx94x/gfx95x -- wave64 too, but with the same non-waiting barrier as
+    // RDNA), so testing FAST_BARRIER=1 there would just repeat the FAST_BARRIER=0 timing.
+    if (!amdFastBarrierUnsafe(shared.context->deviceId())) {                 // FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_fast_barrier = 0;

@@ -15,6 +15,8 @@
 #include <chrono>
 #include <random>
 #include <atomic>
+#include <sstream>
+#include <algorithm>
 
 using namespace std;
 
@@ -224,6 +226,37 @@ u64 getLocalMemSize(cl_device_id id) {
   return size;
 }
 
+u32 getAmdSimdPerComputeUnit(cl_device_id id) {
+  try {
+    u32 n = 0;
+    GET_INFO(id, CL_DEVICE_SIMD_PER_COMPUTE_UNIT_AMD, n);
+    return n;
+  } catch (const gpu_error& err) {
+    return 0;
+  }
+}
+
+u32 getAmdWavefrontWidth(cl_device_id id) {
+  try {
+    u32 n = 0;
+    GET_INFO(id, CL_DEVICE_WAVEFRONT_WIDTH_AMD, n);
+    return n;
+  } catch (const gpu_error& err) {
+    return 0;
+  }
+}
+
+bool isAmdCdna2Plus(cl_device_id id) {
+  string const name = getDeviceName(id);
+  return name.find("gfx90a") != string::npos || name.find("gfx94") != string::npos || name.find("gfx95") != string::npos;
+}
+
+bool amdFastBarrierUnsafe(cl_device_id id) {
+  if (!isAmdGpu(id)) { return false; }
+  if (getAmdWavefrontWidth(id) != 64) { return true; }
+  return isAmdCdna2Plus(id);
+}
+
 /*
 static string getFreq(cl_device_id device) {
   unsigned computeUnits, frequency;
@@ -296,6 +329,24 @@ bool hasAmdBcastBuiltins(cl_context context, cl_device_id deviceId) {
   return probe && clCompileProgram(probe.get(), 1, &deviceId, "", 0, nullptr, nullptr, nullptr, nullptr) == CL_SUCCESS;
 }
 
+// NVIDIA's OpenCL compiler always says this for every single kernel function -- a kernel is a top-level
+// entry point, never inlined into anything, so "noinline" on it is meaningless and harmless to override;
+// confirmed present since well before this codebase's current history, on every device driver version
+// seen. Drop just these lines so a real warning elsewhere in the same log still gets through.
+static string dropKnownBenignWarnings(const string& log) {
+  static const string marker = "is a kernel, so overriding noinline attribute";
+  if (log.find(marker) == string::npos) { return log; }
+  istringstream in(log);
+  ostringstream out;
+  for (string line; getline(in, line); ) {
+    if (line.find(marker) == string::npos) { out << line << '\n'; }
+  }
+  string ret = out.str();
+  // A log that was only these lines (plus blank separators) is now just whitespace/newlines -- treat as empty.
+  if (std::ranges::all_of(ret, [](unsigned char c) { return isspace(c); })) { return {}; }
+  return ret;
+}
+
 string getBuildLog(cl_program program, cl_device_id deviceId) {
   size_t logSize = 0;
   const size_t maxLogSize = 64 * 1024;
@@ -311,7 +362,7 @@ string getBuildLog(cl_program program, cl_device_id deviceId) {
     err = clGetProgramBuildInfo(program, deviceId, CL_PROGRAM_BUILD_LOG, logSize, buf.get(), &logSize);
     CHECK2(err, "clGetProgramBuildInfo");
     buf.get()[logSize] = 0;
-    return buf.get();
+    return dropKnownBenignWarnings(buf.get());
   }
   return {};
 }
