@@ -10,7 +10,15 @@ jobs:
   Linux-OpenCL:
     name: Linux OpenCL
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            container: 'centos:7'
+          - os: ubuntu-24.04-arm
+            container: 'rockylinux:8'
+      fail-fast: false
     steps:
     - uses: actions/checkout@v7
       with:
@@ -18,14 +26,22 @@ jobs:
         fetch-tags: true
     - name: Script
       run: |
-        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace centos:7 bash -s -e -o pipefail <<'EOF'
-        sed -i '/^mirrorlist/d;/^#baseurl=/{s|^#||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS*.repo
-        # yum update -y
-        yum install -y centos-release-scl epel-release
-        sed -i '/^mirrorlist/d;/^# *baseurl=/{s|^# *||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS-SCLo-*.repo
-        yum install -y devtoolset-11-gcc-c++ devtoolset-11-libstdc++-static make git ocl-icd-devel
+        docker run --rm -i -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "${{ matrix.container }}" bash -s -e -o pipefail <<'EOF'
+        if [[ "${{ matrix.container }}" == centos:* ]]; then
+          sed -i '/^mirrorlist/d;/^#baseurl=/{s|^#||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS*.repo
+          # yum update -y
+          yum install -y centos-release-scl epel-release
+          sed -i '/^mirrorlist/d;/^# *baseurl=/{s|^# *||;s|/mirror|/vault|;}' /etc/yum.repos.d/CentOS-SCLo-*.repo
+          yum install -y devtoolset-11-gcc-c++ devtoolset-11-libstdc++-static make git ocl-icd-devel
+          source /opt/rh/devtoolset-11/enable
+        else
+          # dnf update -y
+          dnf install -y dnf-plugins-core
+          dnf config-manager --set-enabled powertools
+          dnf install -y gcc-toolset-11-gcc-c++ make git ocl-icd-devel
+          source /opt/rh/gcc-toolset-11/enable
+        fi
 
-        source /opt/rh/devtoolset-11/enable
         g++ --version
         ldd --version
 
@@ -36,7 +52,7 @@ jobs:
         EOF
     - uses: actions/upload-artifact@v7
       with:
-        name: PRPLL-NTT_Linux_x64_opencl
+        name: PRPLL-NTT_Linux_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x64' }}_opencl
         path: |
           README.*
           LICENSE
@@ -103,24 +119,30 @@ jobs:
   Windows-OpenCL:
     name: Windows OpenCL
 
-    runs-on: windows-2022
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2022, windows-11-arm]
+      fail-fast: false
     steps:
     - uses: actions/checkout@v7
       with:
         fetch-depth: 0
         fetch-tags: true
     - uses: step-security/msvc-dev-cmd@v1
+      with:
+        arch: ${{ endsWith(matrix.os, '-arm') && 'amd64_arm64' || 'x64' }}
     - name: Install OpenCL
       run: |
         vcpkg install opencl
     - name: Script
       run: |
-        msbuild PRPLL.sln /m /p:Configuration=OpenCL-Release /p:StaticRuntime=true /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
+        msbuild PRPLL.sln /m /p:Configuration=OpenCL-Release /p:Platform=${{ endsWith(matrix.os, '-arm') && 'ARM64' || 'x64' }} /p:StaticRuntime=true /p:OpenCLRoot=C:\vcpkg\installed\${{ endsWith(matrix.os, '-arm') && 'arm64' || 'x64' }}-windows
         cd build-msvc\OpenCL\Release\
         & .\prpll -h
     - uses: actions/upload-artifact@v7
       with:
-        name: PRPLL-NTT_Windows_x64_opencl
+        name: PRPLL-NTT_Windows_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x64' }}_opencl
         path: |
           README.*
           LICENSE

@@ -261,28 +261,34 @@ jobs:
     - uses: actions/upload-artifact@v7
       if: always()
       with:
-        name: win_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_${{ matrix.cxx }}_prpll
+        name: windows_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_${{ matrix.cxx }}_prpll
         path: build-debug/
 
   Windows-MSVC-OpenCL:
     name: Windows MSVC OpenCL
 
-    runs-on: windows-2022
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2022, windows-11-arm]
+      fail-fast: false
     steps:
     - uses: actions/checkout@v7
     - uses: step-security/msvc-dev-cmd@v1
+      with:
+        arch: ${{ endsWith(matrix.os, '-arm') && 'amd64_arm64' || 'x64' }}
     - name: Install OpenCL
       run: |
         vcpkg install opencl
     - name: Script
       run: |
-        msbuild PRPLL.sln /m /p:Configuration=OpenCL-Debug /p:OpenCLRoot=C:\vcpkg\installed\x64-windows
+        msbuild PRPLL.sln /m /p:Configuration=OpenCL-Debug /p:Platform=${{ endsWith(matrix.os, '-arm') && 'ARM64' || 'x64' }} /p:OpenCLRoot=C:\vcpkg\installed\${{ endsWith(matrix.os, '-arm') && 'arm64' || 'x64' }}-windows
         cd build-msvc\OpenCL\Debug\
         & .\prpll -h
     - uses: actions/upload-artifact@v7
       if: always()
       with:
-        name: win_x86_msvc_opencl_prpll
+        name: windows_${{ endsWith(matrix.os, '-arm') && 'arm' || 'x86' }}_msvc_opencl_prpll
         path: build-msvc/
 
   Windows-MSVC-CUDA:
