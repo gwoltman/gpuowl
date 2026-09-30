@@ -989,6 +989,16 @@ void barsync(const u32 numWG, const u32 WG) {
 }
 #endif
 
+// OPAQUE(x) hides x's value from the optimizer, forcing expressions that use x afterwards to be recomputed rather than
+// reused from registers.  The asm constraint letter is backend-specific, and the other backend's is a compile error.
+#if HAS_ASM
+#define OPAQUE(x) __asm volatile("" : "+v"(x))
+#elif HAS_PTX
+#define OPAQUE(x) __asm volatile("" : "+r"(x))
+#else
+#define OPAQUE(x)
+#endif
+
 // nVidia GPUs (Hopper architecture sm 9.0 and later) support Programatic Dependent Launch where the tail end execution of one kernel can overlap
 // with the beginning of the next kernel.  This requires a special launch kernel command that is only available in CUDA 12.0 and later.
 // These routines let us take advantage of this CUDA feature.  These routines do nothing in OpenCL.

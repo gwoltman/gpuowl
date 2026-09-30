@@ -1,5 +1,4 @@
-// Copyright (C) Mihai Preda
-
+// Copyright (C) Mihai Preda and George Woltman
 
 // The LDSSWIZ swizzle masks below are sized for a workgroup of at least 64: at WG 32 the XOR patterns
 // (lowMe & 7), (lowMe & 15), ((lowMe / 8) & 15) and friends fold several rows onto each other, and five
@@ -9,6 +8,16 @@
 // record rather than code to rewrite.
 #if LDSSWIZ && WG < 64
 #error LDSSWIZ needs a workgroup of at least 64: its swizzle masks fold rows together below that
+#endif
+
+// SWIZ_RECOMPUTE: with SHUFL_BYTES == 4 and LDSSWIZ, the RADIX == 8, f == 8 swizzle needs four different XORed LDS
+// addresses on both the write and the read side.  Left alone, the compiler computes all eight once and keeps them live
+// across the four int-sized passes, which on gfx906 costs 9 VGPRs (carryFused 81 -> 90, dropping from 3 to 2 waves/SIMD).
+// SWIZ_RECOMPUTE makes the compiler recompute them in each pass instead, trading those VGPRs for extra integer
+// instructions.  Default is on for AMD only.  On nVidia (TitanV) the addresses fit within carryFused's register cap and
+// recomputing them is slightly slower.
+#if !defined(SWIZ_RECOMPUTE)
+#define SWIZ_RECOMPUTE AMDGPU
 #endif
 
 // The LDSPAD RADIX == 4 reads in this file choose between a WG == 64 form and an else arm whose
@@ -50,6 +59,8 @@ local T2_F2_GF31_GF61 * OVERLOAD LDSsharing_ptr(local T2_F2_GF31_GF61 *lds, cons
 // r usually equals RADIX if a full fft_RADIX step was just performed.  On occasion u[8] values may do less than an fft8 step.
 // numWG = number of fft_WIDTHs or fft_HEIGHTs being processed simultaneously
 // lowMe = me % WG
+int4 int4_of(int a, int b, int c, int d) { int4 v; v.x = a; v.y = b; v.z = c; v.w = d; return v; }
+
 void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u32 lowMe) {
 
   u32 mask = f - 1;
@@ -220,10 +231,6 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // Read from LDS in output order.  In the example:  u[0] = 0, 64, ... 448, 8, 72...   u[1] = +1
     if (f == 8 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
-    // One expression for every WG.  The old pair of arms laid the data out as exactly eight padded rows,
-    // which only inverts when WG/64 == 8, and read a row of 64 regardless of WG: correct at WG 64 and 512,
-    // wrong everywhere between (896 of 1024 elements at WG 128, 1792 of 2048 at WG 256, some of them
-    // reading slots nothing had written).  This is the form the 64-bit sibling above already uses.
       for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = u[i].x; }
       LDSbar(numWG);
       if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * (WG / 64) * 8                    +  (lowMe / 8)      * (WG + 8) + (lowMe & 7)]; }
@@ -442,13 +449,281 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
   }
 
   // If SHUFL_BYTES is 4 we split the T2 values into 4 int values.  These are written to LDS memory using four instructions.
-  // NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS!!
+  // We're writing 4 bytes at a time, which means all 32 banks must be in play for a conflict-free pass.
+  // NOTE: every LDStx_start below uses the _with_fence variant, not just the generic fallback's.  Radeon VII was
+  // found to need the fence for the plain fallback case (see the comment on the generic path below), and the
+  // mechanism is not understood well enough to trust that the LDSPAD/LDSSWIZ cases -- which share the same
+  // 4-byte-at-a-time LDS traffic -- are exempt.
   else if (SBMUL(numWG) * SHUFL_BYTES == 4) {
-    // Lower LDS requirements may let the optimizer use fewer VGPRs and increase occupancy for WIDTHs >= 1024.
-    // Alas, the increased occupancy does not offset extra code needed for shufl_int (the assembly
-    // code generated is not pretty).  This might not be true for nVidia or future ROCm optimizers.
     local int* lds = (local int*)LDSsharing_ptr(lds2, numWG);
 
+#if LDSPAD
+    // Input values are in order and written straight to LDS memory.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
+    // Output to LDS that uses a little padding.  Pad four values after every row to eliminate bank conflicts.
+    // Read from LDS in the desired output order.  In the example:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    if (f == 1 && r == 8 && RADIX == 8) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG / 8 + (lowMe / 8) + (lowMe & 7) * (WG + 4)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG / 8 + (lowMe / 8) + (lowMe & 7) * (WG + 4)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG / 8 + (lowMe / 8) + (lowMe & 7) * (WG + 4)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG / 8 + (lowMe / 8) + (lowMe & 7) * (WG + 4)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
+    // Output to LDS with 8 pads after each row.
+    // Read from LDS in output order.  In the example:  u[0] = 0, 64, ... 448, 8, 72...   u[1] = +1
+    if (f == 8 && r == 8 && RADIX == 8) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * (WG / 64) * 8                    +  (lowMe / 8)      * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * (WG / 64) * 8                    +  (lowMe / 8)      * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * (WG / 64) * 8                    +  (lowMe / 8)      * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * (WG / 64) * 8                    +  (lowMe / 8)      * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Special case alternate first RADIX == 8 code to eliminate LDS bank conflicts (only a radix-4 step was performed).
+    // Input values are in order and written straight to LDS memory.  For example, WIDTH=256:  u[0] = 0, 1, 2...  u[1] = +32...
+    // Output to LDS that uses a little padding.  Pad eight values after every other row to eliminate bank conflicts.
+    // Read from LDS in the desired output order.  In the example:  u[0] = 0, 64, 128, 192, 1, 65...   u[1] = +8
+    if (f == 1 && r == 4 && RADIX == 8) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i / 2 * (2 * WG + 8) + (i % 2) * WG + lowMe] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG / 4 + (lowMe / 4) + (lowMe & 3) * (2 * WG + 8)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i / 2 * (2 * WG + 8) + (i % 2) * WG + lowMe] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG / 4 + (lowMe / 4) + (lowMe & 3) * (2 * WG + 8)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i / 2 * (2 * WG + 8) + (i % 2) * WG + lowMe] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG / 4 + (lowMe / 4) + (lowMe & 3) * (2 * WG + 8)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i / 2 * (2 * WG + 8) + (i % 2) * WG + lowMe] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG / 4 + (lowMe / 4) + (lowMe & 3) * (2 * WG + 8)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Special case alternate second RADIX == 8 to eliminate LDS bank conflicts (first shufl was partial after a radix-4 step).
+    // Input values are the output from a previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, 128, 192, 1, 65...   u[1] = +8
+    // Output to LDS with 4 pads after each row.
+    // Read from LDS in output order.  In the example:  u[0] = 0, 64, 128, 192, 8, 72...   u[1] = +1
+    if (f == 4 && r == 8 && RADIX == 8) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      if (WG == 32) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * (WG / 32) * 4                    +  (lowMe / 4)      * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * (WG / 32) * 4 + (lowMe / 32) * 4 + ((lowMe / 4) & 7) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      if (WG == 32) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * (WG / 32) * 4                    +  (lowMe / 4)      * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * (WG / 32) * 4 + (lowMe / 32) * 4 + ((lowMe / 4) & 7) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      if (WG == 32) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * (WG / 32) * 4                    +  (lowMe / 4)      * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * (WG / 32) * 4 + (lowMe / 32) * 4 + ((lowMe / 4) & 7) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      if (WG == 32) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * (WG / 32) * 4                    +  (lowMe / 4)      * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * (WG / 32) * 4 + (lowMe / 32) * 4 + ((lowMe / 4) & 7) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Same permutation as the 8-byte path's active "Special case first RADIX == 4" above, done in 4 int-sized passes.
+    if (f == 1 && r == 4 && RADIX == 4) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 1) + (lowMe / 16) * 16 + (lowMe & 3) * 4 + i] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * 16                     + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 1) + (lowMe / 16) * 16 + (lowMe & 3) * 4 + i] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * 16                     + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 1) + (lowMe / 16) * 16 + (lowMe & 3) * 4 + i] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * 16                     + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 1) + (lowMe / 16) * 16 + (lowMe & 3) * 4 + i] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * 16                     + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      else          for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 1) + (lowMe & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Same permutation as the 8-byte path's active "Special case second RADIX == 4" above, done in 4 int-sized passes.
+    if (f == 4 && r == 4 && RADIX == 4) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * (WG / 16) * 4 + (lowMe / 16) * 4 + ((lowMe / 4) & 3) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * (WG / 16) * 4 + (lowMe / 16) * 4 + ((lowMe / 4) & 3) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * (WG / 16) * 4 + (lowMe / 16) * 4 + ((lowMe / 4) & 3) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * (WG / 16) * 4 + (lowMe / 16) * 4 + ((lowMe / 4) & 3) * (WG + 4) + (lowMe & 3)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // XORing the low bits of i into the address stops the compiler from merging accesses (every access becomes a separate ds_write_b32/ds_read_b32
+    // with its own address VGPR).  This swizzle algorithm only XOR address bits the compiler can still merge across.
+    // First RADIX == 8: each thread writes u[0..3] and u[4..7] as two contiguous 16-byte chunks (ds_write_b128), swapping
+    // the two chunks when lowMe & 4.  The 8 lanes of a b128 access then cover all 32 banks.  The read XOR does not depend on i,
+    // so all reads share one base address (ds_read2st64_b32).
+    if (f == 1 && r == 8 && RADIX == 8) {
+      LDStx_start_with_fence(lds2, numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).x, as_int4(u[1]).x, as_int4(u[2]).x, as_int4(u[3]).x);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).x, as_int4(u[5]).x, as_int4(u[6]).x, as_int4(u[7]).x);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + (lowMe ^ ((lowMe / 8) & 4))]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).y, as_int4(u[1]).y, as_int4(u[2]).y, as_int4(u[3]).y);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).y, as_int4(u[5]).y, as_int4(u[6]).y, as_int4(u[7]).y);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + (lowMe ^ ((lowMe / 8) & 4))]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).z, as_int4(u[1]).z, as_int4(u[2]).z, as_int4(u[3]).z);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).z, as_int4(u[5]).z, as_int4(u[6]).z, as_int4(u[7]).z);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + (lowMe ^ ((lowMe / 8) & 4))]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).w, as_int4(u[1]).w, as_int4(u[2]).w, as_int4(u[3]).w);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).w, as_int4(u[5]).w, as_int4(u[6]).w, as_int4(u[7]).w);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + (lowMe ^ ((lowMe / 8) & 4))]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Second RADIX == 8: XOR only bits 0-1 of i with bits 3-4 of lowMe, so u[i] and u[i + 4] stay a constant 32 ints apart
+    // (ds_write2_b32).  The read XOR depends only on i (and lowMe / 64 for WG > 64), so pairs are again a constant distance apart.
+    // Each side needs four XORed addresses.  Only the two i == 0 addresses are kept across the passes, see SWIZ_RECOMPUTE.
+    // They are byte offsets from lds2 so that each of the other addresses costs a single XOR (this workgroup's LDS region
+    // starts at a multiple of WG * RADIX * 4 bytes, so XORing bits 5 and 6 of the offset stays within the region).
+    if (f == 8 && r == 8 && RADIX == 8) {
+      LDStx_start_with_fence(lds2, numWG);
+      local char* root = (local char*)lds2;
+      u32 wa = (u32)((local char*)lds - root) + ((lowMe / 8) * 64 + ((lowMe / 8) & 3) * 8 + (lowMe & 7)) * 4;
+      u32 ra = (u32)((local char*)lds - root) + (lowMe ^ (((lowMe / 64) & 3) * 8)) * 4;
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).x; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = *(local int*)(root + i * WG * 4 + (ra ^ (((i * (WG / 64)) & 3) * 32))); u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).y; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = *(local int*)(root + i * WG * 4 + (ra ^ (((i * (WG / 64)) & 3) * 32))); u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).z; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = *(local int*)(root + i * WG * 4 + (ra ^ (((i * (WG / 64)) & 3) * 32))); u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).w; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = *(local int*)(root + i * WG * 4 + (ra ^ (((i * (WG / 64)) & 3) * 32))); u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Same permutation as the 8-byte path's "Special case first RADIX == 4" swizzle above, done in 4 int-sized passes.
+    if (f == 1 && r == 4 && RADIX == 4) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Same permutation as the 8-byte path's "Special case second RADIX == 4" swizzle above, done in 4 int-sized passes.
+    if (f == 4 && r == 4 && RADIX == 4) {
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+#endif
+
+    // Otherwise (no LDSPAD/LDSSWIZ case above matched, or neither is enabled): execute the original shufl code
+    // modified to handle the case where a full RADIX fft was not done.  NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS!!
     // Use the same write index as the 8- and 16-byte paths: it honours r, which is smaller than RADIX when
     // the caller has done only a partial fft_RADIX step (fft8_4 on the SIZE=256/RADIX=8 path).  For r == RADIX
     // this is identical to the i * f + (lowMe & ~mask) * RADIX + (lowMe & mask) it replaces.
