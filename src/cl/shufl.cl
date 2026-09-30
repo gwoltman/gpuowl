@@ -358,22 +358,32 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
 #endif
 
 #if LDSSWIZ
+    // The swizzles below are expressed as two byte offsets from lds2 (wa for the write, ra for the read) that are XORed with a
+    // constant for each i.  This workgroup's LDS region starts at a multiple of WG * RADIX * 8 bytes and the XORs only touch
+    // bits 3 to 6, so they stay within the region.  Each additional address then costs at most one XOR, and accesses a constant
+    // distance apart can be merged by the compiler (ds_write2_b64/ds_read2st64_b64).  See SWIZ_RECOMPUTE.
+
     // Special case first RADIX == 8 code to eliminate LDS bank conflicts.
     // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
     // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 1, 65...   lds[64..127] = +8
     // Swizzle LDS blocks to eliminate bank conflicts.
     // Swizzle on the first 16 threads written to LDS (8 multiples of 1 and 2 multiples of 8) and the first 16 threads read from LDS (8 multiples of 64 and 2 multiples of 1).
+    // The writes cannot be paired without padding (a conflict-free write must XOR all three bits of i), the reads are.
     if (f == 1 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 8 + i) ^ (lowMe & 15)] = u[i].x; }
+      local char* root = (local char*)lds2;
+      u32 region = (u32)((local char*)lds - root);
+      u32 wa = region + ((lowMe * 8) ^ (lowMe & 15)) * 8;
+      u32 ra = region + (WG == 64 ? lowMe ^ ((lowMe / 8) & 7) : lowMe ^ ((lowMe / 8) & 15)) * 8;
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; ++i) { *(local T_Z61*)(root + (wa ^ (i * 8))) = u[i].x; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i * WG + lowMe) ^ (((i & 1) * 8) + ((lowMe / 8) & 7))]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i * WG + lowMe) ^ (((lowMe / 8) & 15))]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].x = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 8 + i) ^ (lowMe & 15)] = u[i].y; }
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; ++i) { *(local T_Z61*)(root + (wa ^ (i * 8))) = u[i].y; }
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i * WG + lowMe) ^ (((i & 1) * 8) + ((lowMe / 8) & 7))]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i * WG + lowMe) ^ (((lowMe / 8) & 15))]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].y = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
       LDStx_end(lds2, numWG);
       return;
     }
@@ -383,17 +393,24 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // Output to LDS in the order we expect to read.  In the example:  lds[0..63] = 0, 64, ... 448, 8, 72...   lds[64..127] = +1
     // Swizzle LDS blocks to eliminate bank conflicts.
     // Swizzle on the first 16 threads written to LDS (8 multiples of 64 and 2 multiples of 1) and the first 16 threads read from LDS (8 multiples of 64 and 2 multiples of 8).
+    // Only bit 0 of i is XORed, so u[i] and u[i + 2] are a constant distance apart for both the writes and the reads.
     if (f == 8 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].x; }
+      local char* root = (local char*)lds2;
+      u32 region = (u32)((local char*)lds - root);
+      u32 wa = region + (((lowMe / 8) * 64 + (lowMe & 7)) ^ (lowMe & 8)) * 8;
+      u32 ra = region + (WG == 64 ? lowMe : lowMe ^ ((lowMe / 8) & 8)) * 8;
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; i += 2) { *(local T_Z61*)(root + wa + i * 64) = u[i].x; }             // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { *(local T_Z61*)(root + (wa ^ 64) + (i - 1) * 64) = u[i].x; }  // and can be merged into ds_write2
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i * WG + lowMe) ^ ((i & 1) * 8)]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[(i * WG + lowMe) ^ ((lowMe / 8) & 8)]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].x = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].y; }
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; i += 2) { *(local T_Z61*)(root + wa + i * 64) = u[i].y; }             // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { *(local T_Z61*)(root + (wa ^ 64) + (i - 1) * 64) = u[i].y; }  // and can be merged into ds_write2
       LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i * WG + lowMe) ^ ((i & 1) * 8)]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[(i * WG + lowMe) ^ ((lowMe / 8) & 8)]; }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].y = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
       LDStx_end(lds2, numWG);
       return;
     }
