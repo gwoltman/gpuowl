@@ -12,7 +12,7 @@
 
 #define SHARING_LDS(numWG)        0
 #define SBMUL(numWG)              1
-#define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? 12 : SHUFL_BYTES >= 16 ? 7 : 56)
+#define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? (SHUFL_BYTES == 4 ? WG - 16 : 12) : SHUFL_BYTES >= 16 ? 7 : 56)
 #define LDS_SHUFL_BYTES(numWG)    ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
 #define LDS_BYTES(numWG)          (numWG * LDS_SHUFL_BYTES(numWG))
 
@@ -55,8 +55,8 @@ void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
 #define SHARING_LDS(numWG)        (numWG > 1 && LDSMUL > 1 && (NVIDIAGPU || WG <= WAVEFRONT))
 // If sharing LDS access, LDSMUL sets a limit on how many workgroups share the same LDS memory.  Sharing LDS allow shufl to use a multiple of SHUFL_BYTES.
 #define SBMUL(numWG)              (!SHARING_LDS(numWG) ? 1 : numWG >= LDSMUL ? LDSMUL : numWG)
-// Calculate the LDS padding used by shufl
-#define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? 12 : SBMUL(numWG) * SHUFL_BYTES >= 16 ? 7 : 56)
+// Calculate the LDS padding used by shufl.  The 4-byte RADIX == 4 cases need WG - 16 ints: 16 after every 64 for f == 16.
+#define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? (SBMUL(numWG) * SHUFL_BYTES == 4 ? WG - 16 : 12) : SBMUL(numWG) * SHUFL_BYTES >= 16 ? 7 : 56)
 // LDS_SHUFL_BYTES is the number of LDS bytes *allocated* for each workgroup (SBMUL > 1 means the workgroup can *access* some multiple of LDS_SHUFL_BYTES)
 #define LDS_SHUFL_BYTES(numWG)    ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
 // The workgroups are partitioned into groups of SBMUL that share one LDS region and one semaphore.
