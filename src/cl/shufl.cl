@@ -699,46 +699,78 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
       return;
     }
 
-    // Same permutation as the 8-byte path's "Special case first RADIX == 4" swizzle above, done in 4 int-sized passes.
+    // First RADIX == 4: each thread's four values are contiguous, so one ds_write_b128 per pass is already conflict-free
+    // (its 8 lanes cover all 32 banks) and the reads i * WG + lowMe are conflict-free and pairable.  No swizzle is needed.
     if (f == 1 && r == 4 && RADIX == 4) {
       LDStx_start_with_fence(lds2, numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).x; }
+      ((local int4*)lds)[lowMe] = int4_of(as_int4(u[0]).x, as_int4(u[1]).x, as_int4(u[2]).x, as_int4(u[3]).x);
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).y; }
+      ((local int4*)lds)[lowMe] = int4_of(as_int4(u[0]).y, as_int4(u[1]).y, as_int4(u[2]).y, as_int4(u[3]).y);
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).z; }
+      ((local int4*)lds)[lowMe] = int4_of(as_int4(u[0]).z, as_int4(u[1]).z, as_int4(u[2]).z, as_int4(u[3]).z);
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe * 4 + i) ^ (lowMe & 15)] = as_int4(u[i]).w; }
+      ((local int4*)lds)[lowMe] = int4_of(as_int4(u[0]).w, as_int4(u[1]).w, as_int4(u[2]).w, as_int4(u[3]).w);
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 15)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + lowMe]; u[i] = as_T2_GF61(tmp); }
       LDStx_end(lds2, numWG);
       return;
     }
 
-    // Same permutation as the 8-byte path's "Special case second RADIX == 4" swizzle above, done in 4 int-sized passes.
+    // Second RADIX == 4: XOR both bits of i with bits 3-4 of lowMe (a conflict-free write needs both, so the writes cannot be
+    // paired).  The read XOR depends on lowMe and on i * (WG / 32), so u[i] and u[i + 2] are read a constant distance apart.
     if (f == 4 && r == 4 && RADIX == 4) {
       LDStx_start_with_fence(lds2, numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).x; }
+      u32 wb = (lowMe / 4) * 16 + (lowMe & 3);
+      u32 ws = (lowMe / 8) & 3;
+      u32 rb = lowMe ^ (((lowMe / 32) & 3) * 4);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + ((i ^ ws) & 3) * 4] = as_int4(u[i]).x; }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + (rb ^ (((i * (WG / 32)) & 3) * 4))]; u[i] = as_T2_GF61(tmp); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).y; }
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + ((i ^ ws) & 3) * 4] = as_int4(u[i]).y; }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + (rb ^ (((i * (WG / 32)) & 3) * 4))]; u[i] = as_T2_GF61(tmp); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).z; }
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + ((i ^ ws) & 3) * 4] = as_int4(u[i]).z; }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + (rb ^ (((i * (WG / 32)) & 3) * 4))]; u[i] = as_T2_GF61(tmp); }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 4 * 16 + i * 4 + (lowMe & 3)) ^ (lowMe & 12)] = as_int4(u[i]).w; }
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + ((i ^ ws) & 3) * 4] = as_int4(u[i]).w; }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[(i * WG + lowMe) ^ ((lowMe / 4) & 12)]; u[i] = as_T2_GF61(tmp); }
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + (rb ^ (((i * (WG / 32)) & 3) * 4))]; u[i] = as_T2_GF61(tmp); }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Third RADIX == 4 (f == 16, reached by WIDTH or HEIGHT 256 and 1K): XOR bit 0 of i with bit 4 of lowMe, so u[i] and u[i + 2]
+    // are written 32 ints apart (even i stored first so the merged ds_write2 stores are adjacent) and also read a constant
+    // distance apart.  (f == 64, the fourth step at WG == 256, is conflict-free in the generic code below.)
+    if (f == 16 && r == 4 && RADIX == 4) {
+      LDStx_start_with_fence(lds2, numWG);
+      u32 w0 = (lowMe / 16) * 64 + (lowMe & 15) + ((lowMe / 16) & 1) * 16;
+      u32 w1 = w0 ^ 16;
+      u32 rb = lowMe ^ (((lowMe / 64) & 1) * 16);
+      lds[w0] = as_int4(u[0]).x; lds[w0 + 32] = as_int4(u[2]).x; lds[w1] = as_int4(u[1]).x; lds[w1 + 32] = as_int4(u[3]).x;
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.x = lds[i * WG + (rb ^ (((i * (WG / 64)) & 1) * 16))]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      lds[w0] = as_int4(u[0]).y; lds[w0 + 32] = as_int4(u[2]).y; lds[w1] = as_int4(u[1]).y; lds[w1 + 32] = as_int4(u[3]).y;
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.y = lds[i * WG + (rb ^ (((i * (WG / 64)) & 1) * 16))]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      lds[w0] = as_int4(u[0]).z; lds[w0 + 32] = as_int4(u[2]).z; lds[w1] = as_int4(u[1]).z; lds[w1 + 32] = as_int4(u[3]).z;
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.z = lds[i * WG + (rb ^ (((i * (WG / 64)) & 1) * 16))]; u[i] = as_T2_GF61(tmp); }
+      LDSbar(numWG);
+      lds[w0] = as_int4(u[0]).w; lds[w0 + 32] = as_int4(u[2]).w; lds[w1] = as_int4(u[1]).w; lds[w1 + 32] = as_int4(u[3]).w;
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { int4 tmp = as_int4(u[i]); tmp.w = lds[i * WG + (rb ^ (((i * (WG / 64)) & 1) * 16))]; u[i] = as_T2_GF61(tmp); }
       LDStx_end(lds2, numWG);
       return;
     }
