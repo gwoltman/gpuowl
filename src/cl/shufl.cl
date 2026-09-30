@@ -6,6 +6,9 @@
 // dispatch reaches them there today (the WG == 32 branch of fft_common asks for f=1,r=4 at RADIX 8 and
 // f=4,r=8, and no swizzle case matches either), so like the padded cases above this is a constraint to
 // record rather than code to rewrite.
+// The RADIX == 8 LDSSWIZ cases address LDS as byte offsets from lds2 XORed with small constants.  That relies on each
+// workgroup's LDS region starting at a multiple of WG * RADIX * SHUFL_BYTES, i.e. on there being no LDSPAD padding.  Every
+// such LDSSWIZ case therefore has a matching LDSPAD case earlier in the same function, which returns first when LDSPAD is on.
 #if LDSSWIZ && WG < 64
 #error LDSSWIZ needs a workgroup of at least 64: its swizzle masks fold rows together below that
 #endif
@@ -369,21 +372,22 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // Swizzle LDS blocks to eliminate bank conflicts.
     // Swizzle on the first 16 threads written to LDS (8 multiples of 1 and 2 multiples of 8) and the first 16 threads read from LDS (8 multiples of 64 and 2 multiples of 1).
     // The writes cannot be paired without padding (a conflict-free write must XOR all three bits of i), the reads are.
+    // Works for any WG >= 64 (the read XOR ((i * WG / 8) & 15) is (i & 1) * 8 at WG == 64 and 0 for larger WGs).
     if (f == 1 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
       local char* root = (local char*)lds2;
       u32 region = (u32)((local char*)lds - root);
       u32 wa = region + ((lowMe * 8) ^ (lowMe & 15)) * 8;
-      u32 ra = region + (WG == 64 ? lowMe ^ ((lowMe / 8) & 7) : lowMe ^ ((lowMe / 8) & 15)) * 8;
+      u32 ra = region + (lowMe ^ ((lowMe / 8) & 15)) * 8;
       if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
       for (u32 i = 0; i < RADIX; ++i) { *(local T_Z61*)(root + (wa ^ (i * 8))) = u[i].x; }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { u[i].x = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].x = *(local T_Z61*)(root + i * WG * 8 + (ra ^ (((i * WG / 8) & 15) * 8))); }
       LDSbar(numWG);
       if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
       for (u32 i = 0; i < RADIX; ++i) { *(local T_Z61*)(root + (wa ^ (i * 8))) = u[i].y; }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { u[i].y = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].y = *(local T_Z61*)(root + i * WG * 8 + (ra ^ (((i * WG / 8) & 15) * 8))); }
       LDStx_end(lds2, numWG);
       return;
     }
@@ -394,23 +398,24 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     // Swizzle LDS blocks to eliminate bank conflicts.
     // Swizzle on the first 16 threads written to LDS (8 multiples of 64 and 2 multiples of 1) and the first 16 threads read from LDS (8 multiples of 64 and 2 multiples of 8).
     // Only bit 0 of i is XORed, so u[i] and u[i + 2] are a constant distance apart for both the writes and the reads.
+    // Works for any WG >= 64 (the read XOR ((i * WG / 8) & 8) is (i & 1) * 8 at WG == 64 and 0 for larger WGs).
     if (f == 8 && r == 8 && RADIX == 8) {
       LDStx_start(lds2, numWG);
       local char* root = (local char*)lds2;
       u32 region = (u32)((local char*)lds - root);
       u32 wa = region + (((lowMe / 8) * 64 + (lowMe & 7)) ^ (lowMe & 8)) * 8;
-      u32 ra = region + (WG == 64 ? lowMe : lowMe ^ ((lowMe / 8) & 8)) * 8;
+      u32 ra = region + (lowMe ^ ((lowMe / 8) & 8)) * 8;
       if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
       for (u32 i = 0; i < RADIX; i += 2) { *(local T_Z61*)(root + wa + i * 64) = u[i].x; }             // even i first so that same-base stores are adjacent
       for (u32 i = 1; i < RADIX; i += 2) { *(local T_Z61*)(root + (wa ^ 64) + (i - 1) * 64) = u[i].x; }  // and can be merged into ds_write2
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { u[i].x = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].x = *(local T_Z61*)(root + i * WG * 8 + (ra ^ (((i * WG / 8) & 8) * 8))); }
       LDSbar(numWG);
       if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
       for (u32 i = 0; i < RADIX; i += 2) { *(local T_Z61*)(root + wa + i * 64) = u[i].y; }             // even i first so that same-base stores are adjacent
       for (u32 i = 1; i < RADIX; i += 2) { *(local T_Z61*)(root + (wa ^ 64) + (i - 1) * 64) = u[i].y; }  // and can be merged into ds_write2
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { u[i].y = *(local T_Z61*)(root + i * WG * 8 + (WG == 64 ? ra ^ ((i & 1) * 64) : ra)); }
+      for (u32 i = 0; i < RADIX; ++i) { u[i].y = *(local T_Z61*)(root + i * WG * 8 + (ra ^ (((i * WG / 8) & 8) * 8))); }
       LDStx_end(lds2, numWG);
       return;
     }
@@ -775,10 +780,8 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe
 }
 
 
-// NEEDS TONS OF WORK!!!  SWIZ NOT CODED, MOST PAD CASES NOT CODED, SHUFL_BYTES = 4 needs differernt algorithm.
-// At present, this is only used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8.
-
 // Shufl two or more fft_WIDTHs or fft_HEIGHTs operating on 64-bit values using LDS_BYTES of LDS memory.  An fft2 is also performed.
+// At present, this is only used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8.
 void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe) {
   assert(RADIX == 8);
 
@@ -847,36 +850,37 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
 #endif
 
 #if LDSSWIZ
-    // Special case second RADIX == 8 to eliminate LDS bank conflicts, with an fft2 add-on (WIDTH or HEIGHT == 1K;
-    // shufl_and_fft2 is only ever called with WG == 128, see this function's header comment, so this is not
-    // generalised to other WG like the LDSPAD case above).
-    // The write is the same swizzle plain shufl() uses for its own f==8,RADIX==8 case: the write layout does not
-    // care what the read will do with it (the LDSPAD case above reuses its own plain i*(WG+8)+lowMe write for
-    // both shufl() and shufl_and_fft2 the same way).
-    // The read substitutes the standard shufl-read's i=i/2 and i=i/2+4 at ll = lowMe%(WG/2) + (i&1)*(WG/2) into
-    // plain shufl's own WG==128 *read* formula (i*WG+lowMe)^((lowMe/8)&8) -- not its write formula, the two are not
-    // interchangeable -- and simplifies via 2*(i/2)+(i&1)==i to (i*64+(lowMe&63))^((i&1)*8) for val1, +512 for val2
-    // (the (i/2+4) term only adds 4*128==512, which cannot interact with the low mask bits). Verified by simulating
-    // the full write+read round trip of plain shufl(f=8) against this read, and checked bank-conflict-free by brute
-    // force, before landing here -- an earlier version of this comment (and code) verified against the write
-    // formula instead of the read formula, which matched a bank-conflict brute force fine but was numerically wrong
-    // and failed on real hardware at iteration 2000 of a correctness run; do not repeat that mistake.
-    if (f == 8 && RADIX == 8 && WG == 128) {
+    // Special case second RADIX == 8 to eliminate LDS bank conflicts, with an fft2 add-on.  Works for any WG >= 128.
+    // The write is plain shufl's f == 8 swizzle.  val1 is plain shufl's read of i / 2 at lane lowMe % (WG / 2) + (i & 1) * (WG / 2),
+    // which is index i * (WG / 2) + lowMe % (WG / 2) under the same swizzle; val2 is 4 * WG further (ds_read2st64_b64 pairs).
+    // Addresses are byte offsets from lds2 XORed with a constant for each i, see plain shufl's LDSSWIZ cases.
+    if (f == 8 && RADIX == 8 && WG >= 128) {
       LDStx_start(lds2, numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].x; }
+      local char* root = (local char*)lds2;
+      u32 region = (u32)((local char*)lds - root);
+      u32 lowHalf = lowMe % (WG / 2);
+      u32 wa = region + (((lowMe / 8) * 64 + (lowMe & 7)) ^ (lowMe & 8)) * 8;
+      u32 ra = region + (lowHalf ^ ((lowHalf / 8) & 8)) * 8;
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; i += 2) { *(local T_Z61*)(root + wa + i * 64) = u[i].x; }             // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { *(local T_Z61*)(root + (wa ^ 64) + (i - 1) * 64) = u[i].x; }  // and can be merged into ds_write2
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) {
-        T_Z61 val1 = lds[(i * 64 + (lowMe & 63)) ^ ((i & 1) * 8)];
-        T_Z61 val2 = lds[(i * 64 + (lowMe & 63) + 512) ^ ((i & 1) * 8)];
+        u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 2) / 8) & 8) * 8));
+        T_Z61 val1 = *(local T_Z61*)(root + a1);
+        T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
         if (lowMe < WG / 2) u[i].x = addq(val1, val2);
         else u[i].x = subq(val1, val2);
       }
       LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe / 8 * 64 + i * 8 + (lowMe & 7)) ^ (lowMe & 8)] = u[i].y; }
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; i += 2) { *(local T_Z61*)(root + wa + i * 64) = u[i].y; }             // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { *(local T_Z61*)(root + (wa ^ 64) + (i - 1) * 64) = u[i].y; }  // and can be merged into ds_write2
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) {
-        T_Z61 val1 = lds[(i * 64 + (lowMe & 63)) ^ ((i & 1) * 8)];
-        T_Z61 val2 = lds[(i * 64 + (lowMe & 63) + 512) ^ ((i & 1) * 8)];
+        u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 2) / 8) & 8) * 8));
+        T_Z61 val1 = *(local T_Z61*)(root + a1);
+        T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
         if (lowMe < WG / 2) u[i].y = addq(val1, val2);
         else u[i].y = subq(val1, val2);
       }
@@ -909,7 +913,6 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
   }
 
   // If SHUFL_BYTES is 4 we split the T2 values into 4 int values.  These are written to LDS memory using four instructions.
-  // NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS!!
   else if (SBMUL(numWG) * SHUFL_BYTES == 4) {
 
     // Lower LDS requirements may let the optimizer use fewer VGPRs and increase occupancy for WIDTHs >= 1024.
@@ -917,6 +920,105 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
     // code generated is not pretty).  This might not be true for nVidia or future ROCm optimizers.
     local int* lds = (local int*)LDSsharing_ptr(lds2, numWG);
 
+#if LDSPAD
+    // Same permutation as the 8-byte LDSPAD case above, done in 4 int-sized passes.  As in the fallback below, all four 32-bit
+    // pieces of val1 and val2 are gathered before the fft2.  val2 is a constant 32 * (WG / 64) ints after val1.
+    if (f == 8 && RADIX == 8) {
+      int4 v1[RADIX], v2[RADIX];
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 k = (i / 2) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7);
+        v1[i].x = lds[k]; v2[i].x = lds[k + 4 * (WG / 64) * 8];
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 k = (i / 2) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7);
+        v1[i].y = lds[k]; v2[i].y = lds[k + 4 * (WG / 64) * 8];
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 k = (i / 2) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7);
+        v1[i].z = lds[k]; v2[i].z = lds[k + 4 * (WG / 64) * 8];
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 k = (i / 2) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7);
+        v1[i].w = lds[k]; v2[i].w = lds[k + 4 * (WG / 64) * 8];
+      }
+      LDStx_end(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T2_GF61 val1 = as_T2_GF61(v1[i]);
+        T2_GF61 val2 = as_T2_GF61(v2[i]);
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // Same swizzle as plain shufl's 4-byte f == 8 case (only bits 0-1 of i XORed, so u[i] and u[i + 4] are 32 ints apart), with
+    // val1 at index i * (WG / 2) + lowMe % (WG / 2) under that swizzle and val2 4 * WG ints further.  Works for any WG >= 128.
+    // Addresses are byte offsets from lds2 XORed with a constant for each i, see plain shufl's LDSSWIZ cases and SWIZ_RECOMPUTE.
+    if (f == 8 && RADIX == 8 && WG >= 128) {
+      int4 v1[RADIX], v2[RADIX];
+      LDStx_start_with_fence(lds2, numWG);
+      local char* root = (local char*)lds2;
+      u32 region = (u32)((local char*)lds - root);
+      u32 lowHalf = lowMe % (WG / 2);
+      u32 wa = region + ((lowMe / 8) * 64 + ((lowMe / 8) & 3) * 8 + (lowMe & 7)) * 4;
+      u32 ra = region + (lowHalf ^ (((lowHalf / 64) & 3) * 8)) * 4;
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).x; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 a1 = i * (WG / 2) * 4 + (ra ^ ((((i * (WG / 2)) / 64) & 3) * 32));
+        v1[i].x = *(local int*)(root + a1); v2[i].x = *(local int*)(root + a1 + 4 * WG * 4);
+      }
+      LDSbar(numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).y; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 a1 = i * (WG / 2) * 4 + (ra ^ ((((i * (WG / 2)) / 64) & 3) * 32));
+        v1[i].y = *(local int*)(root + a1); v2[i].y = *(local int*)(root + a1 + 4 * WG * 4);
+      }
+      LDSbar(numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).z; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 a1 = i * (WG / 2) * 4 + (ra ^ ((((i * (WG / 2)) / 64) & 3) * 32));
+        v1[i].z = *(local int*)(root + a1); v2[i].z = *(local int*)(root + a1 + 4 * WG * 4);
+      }
+      LDSbar(numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX / 2; ++i) { *(local int*)(root + (wa ^ (i * 32))) = as_int4(u[i]).w; *(local int*)(root + (wa ^ (i * 32)) + 128) = as_int4(u[i + 4]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 a1 = i * (WG / 2) * 4 + (ra ^ ((((i * (WG / 2)) / 64) & 3) * 32));
+        v1[i].w = *(local int*)(root + a1); v2[i].w = *(local int*)(root + a1 + 4 * WG * 4);
+      }
+      LDStx_end(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T2_GF61 val1 = as_T2_GF61(v1[i]);
+        T2_GF61 val2 = as_T2_GF61(v2[i]);
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      return;
+    }
+#endif
+
+    // Otherwise (no LDSPAD/LDSSWIZ case above): the original shufl code, NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS.
     // The fft2 has to add and subtract whole 64-bit values, so first gather all four 32-bit pieces of val1 and val2
     // (same LDS locations as the 16- and 8-byte paths above), then combine.  u[] stays intact as the source of the
     // four write passes.
