@@ -544,7 +544,9 @@ void partial_tabMul4(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
   if (f > 1) {
     bar(WG);
     lds1[me] = preloads[4];     // Preloaded sine/cosine values
-    lds1[WG+me] = preloads[5];  // Preloaded cosine values
+    // Cosine j is stored at WG + (j ^ ((j / (WG/4)) & 3)).  Without the XOR, the f == 4 reads below hit 4 addresses WG/4 apart
+    // (the same LDS bank) in every group of 16 lanes, a 4-way bank conflict.
+    lds1[WG + (me ^ ((me / (WG/4)) & 3))] = preloads[5];  // Preloaded cosine values
   }
 
   // Apply sine/cosines
@@ -567,11 +569,12 @@ void partial_tabMul4(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
     }
   }
   else {
-    // Load cosine1, cosine2, cosine3/cosine1
-    if (f < WG/4) preloads[0] = lds1[WG + ((me/f) & 3) * WG/4 + (0 * WG + me)/(4*f) * f/4];
-    preloads[2] = lds1[WG + ((me/f) & 3) * WG/4 + (2 * WG + me)/(4*f) * f/4];
-    preloads[3] = lds1[WG + ((me/f) & 3) * WG/4 + (3 * WG + me)/(4*f) * f/4];
-    preloads[1] = lds1[WG + ((me/f) & 3) * WG/4 + (1 * WG + me)/(4*f) * f/4];
+    // Load cosine1, cosine2, cosine3/cosine1.  Cosine k's index is cb + k * (WG/16), a constant apart, so the reads can be paired.
+    u32 cb = WG + ((me/f) & 3) * WG/4 + (((me/(4*f)) * (f/4)) ^ ((me/f) & 3));
+    if (f < WG/4) preloads[0] = lds1[cb];
+    preloads[2] = lds1[cb + 2 * (WG/16)];
+    preloads[3] = lds1[cb + 3 * (WG/16)];
+    preloads[1] = lds1[cb + 1 * (WG/16)];
   }
 }
 
