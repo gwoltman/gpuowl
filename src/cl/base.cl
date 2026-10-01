@@ -6,8 +6,8 @@
 
 IN_WG, OUT_WG: 64, 128, 256. Default: 128.
 IN_SIZEX, OUT_SIZEX: 4, 8, 16, 32. Default: 16.
-UNROLL_W: 0, 1. Default: 0 on AMD, 1 on Nvidia.
-UNROLL_H: 0, 1. Default: 1.
+UNROLL_W: 0, 1.  1 = fully unroll fft_WIDTH's radix loop (variants 0 and 1, FP32, NTTs), 0 = never unroll it.  Default: 0 on AMD, 1 on Nvidia.
+UNROLL_H: 0, 1.  Same for fft_HEIGHT.  Default: 1 (0 on AMD for SMALL_HEIGHT >= 1024).
 */
 
 /* List of code-specific macros. These are set by the C++ host code or derived

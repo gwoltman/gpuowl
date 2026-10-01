@@ -1051,8 +1051,12 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 
   // Old / original version
 
-#if !UNROLL
-  __attribute__((opencl_unroll_hint(1)))
+  // UNROLL (UNROLL_W / UNROLL_H) = 1 always unrolls this loop completely, 0 never unrolls it.  The pragmas work for both
+  // OpenCL and NVRTC.  (Without them the compiler decides; ROCm kept this loop rolled even with UNROLL = 1.)
+#if UNROLL
+  #pragma unroll
+#else
+  #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
     if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2 && s == 1) fft_RADIX_skip1(u); else fft_RADIX(u);
@@ -1642,8 +1646,12 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 
   // Old / original version
 
-#if !UNROLL
-  __attribute__((opencl_unroll_hint(1)))
+  // UNROLL (UNROLL_W / UNROLL_H) = 1 always unrolls this loop completely, 0 never unrolls it.  The pragmas work for both
+  // OpenCL and NVRTC.  (Without them the compiler decides; ROCm kept this loop rolled even with UNROLL = 1.)
+#if UNROLL
+  #pragma unroll
+#else
+  #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
     fft_RADIX(u);
@@ -1852,8 +1860,12 @@ void OVERLOAD fft_common(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, u32
 
 #else
 
-#if !UNROLL
-  __attribute__((opencl_unroll_hint(1)))
+  // UNROLL (UNROLL_W / UNROLL_H) = 1 always unrolls this loop completely, 0 never unrolls it.  The pragmas work for both
+  // OpenCL and NVRTC.  (Without them the compiler decides; ROCm kept this loop rolled even with UNROLL = 1.)
+#if UNROLL
+  #pragma unroll
+#else
+  #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
     fft_RADIX(u);
@@ -2064,8 +2076,12 @@ void OVERLOAD fft_common(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, u32
 
 #else
 
-#if !UNROLL
-  __attribute__((opencl_unroll_hint(1)))
+  // UNROLL (UNROLL_W / UNROLL_H) = 1 always unrolls this loop completely, 0 never unrolls it.  The pragmas work for both
+  // OpenCL and NVRTC.  (Without them the compiler decides; ROCm kept this loop rolled even with UNROLL = 1.)
+#if UNROLL
+  #pragma unroll
+#else
+  #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
     fft_RADIX(u);
