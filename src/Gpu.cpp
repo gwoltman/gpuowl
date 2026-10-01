@@ -764,7 +764,7 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
   case CARRYFUSED:         // Register usage depends on NW, the FFT/NTT type, and perhaps the long carry setting
     switch (fft.shape.fft_type) {
     case FFT64:
-      regs = nW == 8 ? 80 : 64;
+      regs = nW == 8 ? 72 : 56;
       use_override = "REGCF64";
       break;
     case FFT3161:
@@ -836,7 +836,7 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
     break;
   case TAIL:               // Register usage depends on NH and the FP32/FP64 (assumes double-wide kernel)
     if (fft.FFT_FP64) {
-      regs = nH == 8 ? 88 : 64;
+      regs = nH == 8 ? 72 : 56;
       use_override = "REGTS64";
     } else {
       regs = nH == 8 ? 64 : 48;

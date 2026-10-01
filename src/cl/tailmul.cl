@@ -223,20 +223,6 @@ KERNEL_CAP(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig
 
 // Special pairMul for double-wide line 0: both halves compute their own self-pairing (u with p),
 // there is no cross-half data since line_u == 0 and line_v == H/2 both pair with themselves.
-void OVERLOAD pairMul2_special(T2 *u, T2 *p, T2 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(2 * foo2(u[0], p[0]));
-      u[NH/2] = SWAP_XY(4 * cmul(u[NH/2], p[NH/2]));
-    } else {
-      onePairMul(&u[i], &u[NH/2+i], &p[i], &p[NH/2+i], base_squared);
-    }
-    T2 new_base_squared = mul_t4(base_squared);
-    onePairMul(&u[i+NH/4], &u[NH/2+i+NH/4], &p[i+NH/4], &p[NH/2+i+NH/4], new_base_squared);
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES(2) / sizeof(T2)];
   LDSinit(lds, 2);
@@ -281,22 +267,18 @@ KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
   T2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    reverse2(lds, p);
-    pairMul2_special(u, p, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  revLineOrSelf(lds, p, line_u == 0);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  revCrossLine(lds, p);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    revCrossLine(lds, p);
-    pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
 
@@ -486,20 +468,6 @@ KERNEL_CAP(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig
 
 // Special pairMul for double-wide line 0: both halves compute their own self-pairing (u with p),
 // there is no cross-half data since line_u == 0 and line_v == H/2 both pair with themselves.
-void OVERLOAD pairMul2_special(F2 *u, F2 *p, F2 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(2 * foo2(u[0], p[0]));
-      u[NH/2] = SWAP_XY(4 * cmul(u[NH/2], p[NH/2]));
-    } else {
-      onePairMul(&u[i], &u[NH/2+i], &p[i], &p[NH/2+i], base_squared);
-    }
-    F2 new_base_squared = mul_t4(base_squared);
-    onePairMul(&u[i+NH/4], &u[NH/2+i+NH/4], &p[i+NH/4], &p[NH/2+i+NH/4], new_base_squared);
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES(2) / sizeof(F2)];
   LDSinit(lds, 2);
@@ -541,22 +509,18 @@ KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
   F2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    reverse2(lds, p);
-    pairMul2_special(u, p, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  revLineOrSelf(lds, p, line_u == 0);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  revCrossLine(lds, p);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    revCrossLine(lds, p);
-    pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
 
@@ -771,19 +735,6 @@ KERNEL_CAP(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
 
 // Special pairMul for double-wide line 0: both halves compute their own self-pairing (u with p),
 // there is no cross-half data since line_u == 0 and line_v == H/2 both pair with themselves.
-void OVERLOAD pairMul2_special(GF31 *u, GF31 *p, GF31 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(mul2(foo2(u[0], p[0])));
-      u[NH/2] = SWAP_XY(shl(cmul(u[NH/2], p[NH/2]), 2));
-    } else {
-      onePairMul(&u[i], &u[NH/2+i], &p[i], &p[NH/2+i], base_squared);
-    }
-    onePairMul(&u[i+NH/4], &u[NH/2+i+NH/4], &p[i+NH/4], &p[NH/2+i+NH/4], mul_t4(base_squared));
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(2) / sizeof(GF31)];
   LDSinit(lds, 2);
@@ -834,22 +785,18 @@ KERNEL_CAP(G_H * 2) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig s
 #endif
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    reverse2(lds, p);
-    pairMul2_special(u, p, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  revLineOrSelf(lds, p, line_u == 0);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  revCrossLine(lds, p);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    revCrossLine(lds, p);
-    pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF31 which must dependentLaunchWait before reading data
 
@@ -1066,19 +1013,6 @@ KERNEL_CAP(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
 
 // Special pairMul for double-wide line 0: both halves compute their own self-pairing (u with p),
 // there is no cross-half data since line_u == 0 and line_v == H/2 both pair with themselves.
-void OVERLOAD pairMul2_special(GF61 *u, GF61 *p, GF61 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(mul2(foo2(u[0], p[0])));
-      u[NH/2] = SWAP_XY(shl(cmul(u[NH/2], p[NH/2]), 2));
-    } else {
-      onePairMul(&u[i], &u[NH/2+i], &p[i], &p[NH/2+i], base_squared);
-    }
-    onePairMul(&u[i+NH/4], &u[NH/2+i+NH/4], &p[i+NH/4], &p[NH/2+i+NH/4], mul_t4(base_squared));
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(2) / sizeof(GF61)];
   LDSinit(lds, 2);
@@ -1129,22 +1063,18 @@ KERNEL_CAP(G_H * 2) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig s
 #endif
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    reverse2(lds, p);
-    pairMul2_special(u, p, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  revLineOrSelf(lds, p, line_u == 0);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  revCrossLine(lds, p);
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    revCrossLine(lds, p);
-    pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF61 which must dependentLaunchWait before reading data
 

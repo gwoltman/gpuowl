@@ -227,21 +227,6 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-// Special pairSq for double-wide line 0
-void OVERLOAD pairSq2_special(T2 *u, T2 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(2 * foo(u[0]));
-      u[NH/2] = SWAP_XY(4 * csq(u[NH/2]));
-    } else {
-      onePairSq(&u[i], &u[NH/2+i], base_squared);
-    }
-    T2 new_base_squared = mul_t4(base_squared);
-    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], new_base_squared);
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES(2) / sizeof(T2)];
   LDSinit(lds, 2);
@@ -300,20 +285,16 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #endif
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    pairSq2_special(u, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  pairSq(NH/2, u, u + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    pairSq(NH/2, u, u + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
 
@@ -502,21 +483,6 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-// Special pairSq for double-wide line 0
-void OVERLOAD pairSq2_special(F2 *u, F2 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(2 * foo(u[0]));
-      u[NH/2] = SWAP_XY(4 * csq(u[NH/2]));
-    } else {
-      onePairSq(&u[i], &u[NH/2+i], base_squared);
-    }
-    F2 new_base_squared = mul_t4(base_squared);
-    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], new_base_squared);
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES(2) / sizeof(F2)];
   LDSinit(lds, 2);
@@ -571,20 +537,16 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #endif
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    pairSq2_special(u, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  pairSq(NH/2, u, u + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    pairSq(NH/2, u, u + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
 
@@ -791,20 +753,6 @@ KERNEL_CAP(G_H) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-// Special pairSq for double-wide line 0
-void OVERLOAD pairSq2_special(GF31 *u, GF31 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(mul2(foo(u[0])));
-      u[NH/2] = SWAP_XY(shl(csq(u[NH/2]), 2));
-    } else {
-      onePairSq(&u[i], &u[NH/2+i], base_squared, 0);
-    }
-    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], base_squared, 1);
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(2) / sizeof(GF31)];
   LDSinit(lds, 2);
@@ -855,20 +803,16 @@ KERNEL_CAP(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTri
 #endif
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    pairSq2_special(u, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  pairSq(NH/2, u, u + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    pairSq(NH/2, u, u + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF31 which must dependentLaunchWait before reading data
 
@@ -1134,20 +1078,6 @@ KERNEL_CAP(G_H) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-// Special pairSq for double-wide line 0
-void OVERLOAD pairSq2_special(GF61 *u, GF61 base_squared) {
-  u32 me = get_local_id(0);
-  for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
-    if (i == 0 && me == 0) {
-      u[0] = SWAP_XY(mul2(foo(u[0])));
-      u[NH/2] = SWAP_XY(shl(csq(u[NH/2]), 2));
-    } else {
-      onePairSq(&u[i], &u[NH/2+i], base_squared, 0);
-    }
-    onePairSq(&u[i+NH/4], &u[NH/2+i+NH/4], base_squared, 1);
-  }
-}
-
 KERNEL_CAP(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(2) / sizeof(GF61)];
   LDSinit(lds, 2);
@@ -1198,20 +1128,16 @@ KERNEL_CAP(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTri
 #endif
 
 #if SINGLE_KERNEL
-  // Line 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.
-  if (line_u == 0) {
-    reverse2(lds, u);
-    pairSq2_special(u, trig);
-    reverse2(lds, u);
-  }
-  else {
+  // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
+  // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+  revLineOrSelf(lds, u, line_u == 0);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0);
+  revLineOrSelf(lds, u, line_u == 0);
 #else
-  if (1) {
+  revCrossLine(lds, u);
+  pairSq(NH/2, u, u + NH/2, trig, false);
+  revCrossLine(lds, u);
 #endif
-    revCrossLine(lds, u);
-    pairSq(NH/2, u, u + NH/2, trig, false);
-    revCrossLine(lds, u);
-  }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutGF61 which must dependentLaunchWait before reading data
 
