@@ -23,6 +23,64 @@ using U16 = uint16_t;
 using U32 = uint32_t;
 using U64 = uint64_t;
 
+static inline unsigned char u128_addcarry64(unsigned char carry, U64 a, U64 b, U64* result)
+{
+#if defined(_M_ARM64)
+    const U64 ab = a + b;
+    const unsigned char carry1 = static_cast<unsigned char>(ab < a);
+    const U64 abc = ab + U64(carry);
+    const unsigned char carry2 = static_cast<unsigned char>(abc < ab);
+    *result = abc;
+    return static_cast<unsigned char>(carry1 | carry2);
+#else
+    return _addcarry_u64(carry, a, b, result);
+#endif
+}
+
+static inline unsigned char u128_subborrow64(unsigned char borrow, U64 a, U64 b, U64* result)
+{
+#if defined(_M_ARM64)
+    const U64 ab = a - b;
+    const unsigned char borrow1 = static_cast<unsigned char>(a < b);
+    const U64 abc = ab - U64(borrow);
+    const unsigned char borrow2 = static_cast<unsigned char>(ab < U64(borrow));
+    *result = abc;
+    return static_cast<unsigned char>(borrow1 | borrow2);
+#else
+    return _subborrow_u64(borrow, a, b, result);
+#endif
+}
+
+static inline U64 u128_mul64(U64 a, U64 b, U64* high)
+{
+#if defined(_M_ARM64)
+    *high = __umulh(a, b);
+    return a * b;
+#else
+    return _umul128(a, b, high);
+#endif
+}
+
+static inline U64 u128_shiftleft64(U64 low, U64 high, U8 shift)
+{
+#if defined(_M_ARM64)
+    const unsigned int n = shift & 63u;
+    return n ? (high << n) | (low >> (64u - n)) : high;
+#else
+    return __shiftleft128(low, high, shift);
+#endif
+}
+
+static inline U64 u128_shiftright64(U64 low, U64 high, U8 shift)
+{
+#if defined(_M_ARM64)
+    const unsigned int n = shift & 63u;
+    return n ? (low >> n) | (high << (64u - n)) : low;
+#else
+    return __shiftright128(low, high, shift);
+#endif
+}
+
 #define MAKE_BINARY_OP_HELPERS(op) \
 friend auto operator op(const U128& x, U8   y) { return operator op(x, (U128)y); }  \
 friend auto operator op(const U128& x, U16  y) { return operator op(x, (U128)y); }  \
@@ -87,14 +145,14 @@ public:
 
     U128& operator+=(const U128& x)
     {
-        static_cast<void>(_addcarry_u64(_addcarry_u64(0, m_lo, x.m_lo, &m_lo), m_hi, x.m_hi, &m_hi));
+        static_cast<void>(u128_addcarry64(u128_addcarry64(0, m_lo, x.m_lo, &m_lo), m_hi, x.m_hi, &m_hi));
         return *this;
     }
 
     friend U128 operator+(const U128& x, const U128& y)
     {
         U128 ret;
-        static_cast<void>(_addcarry_u64(_addcarry_u64(0, x.m_lo, y.m_lo, &ret.m_lo), x.m_hi, y.m_hi, &ret.m_hi));
+        static_cast<void>(u128_addcarry64(u128_addcarry64(0, x.m_lo, y.m_lo, &ret.m_lo), x.m_hi, y.m_hi, &ret.m_hi));
         return ret;
     }
 
@@ -103,14 +161,14 @@ public:
 
     U128& operator-=(const U128& x)
     {
-        static_cast<void>(_subborrow_u64(_subborrow_u64(0, m_lo, x.m_lo, &m_lo), m_hi, x.m_hi, &m_hi));
+        static_cast<void>(u128_subborrow64(u128_subborrow64(0, m_lo, x.m_lo, &m_lo), m_hi, x.m_hi, &m_hi));
         return *this;
     }
 
     friend U128 operator-(const U128& x, const U128& y)
     {
         U128 ret;
-        static_cast<void>(_subborrow_u64(_subborrow_u64(0, x.m_lo, y.m_lo, &ret.m_lo), x.m_hi, y.m_hi, &ret.m_hi));
+        static_cast<void>(u128_subborrow64(u128_subborrow64(0, x.m_lo, y.m_lo, &ret.m_lo), x.m_hi, y.m_hi, &ret.m_hi));
         return ret;
     }
 
@@ -128,7 +186,7 @@ public:
         // |  |  |hh|hh|
 
         U64 hHi;
-        const U64 hLo = _umul128(m_lo, x.m_lo, &hHi);
+        const U64 hLo = u128_mul64(m_lo, x.m_lo, &hHi);
         m_hi = hHi + m_hi * x.m_lo + m_lo * x.m_hi;
         m_lo = hLo;
         return *this;
@@ -138,7 +196,7 @@ public:
     {
         U128 ret;
         U64 hHi;
-        ret.m_lo = _umul128(x.m_lo, y.m_lo, &hHi);
+        ret.m_lo = u128_mul64(x.m_lo, y.m_lo, &hHi);
         ret.m_hi = hHi + y.m_hi * x.m_lo + y.m_lo * x.m_hi;
         return ret;
     }
@@ -221,7 +279,7 @@ public:
 
     U128& operator>>=(U64 n)
     {
-        const U64 lo = __shiftright128(m_lo, m_hi, (U8)n);
+        const U64 lo = u128_shiftright64(m_lo, m_hi, (U8)n);
         const U64 hi = m_hi >> (n & 63ULL);
 
         m_lo = n & 64 ? hi : lo;
@@ -234,7 +292,7 @@ public:
     {
         U128 ret;
 
-        const U64 lo = __shiftright128(x.m_lo, x.m_hi, (U8)n);
+        const U64 lo = u128_shiftright64(x.m_lo, x.m_hi, (U8)n);
         const U64 hi = x.m_hi >> (n & 63ULL);
 
         ret.m_lo = n & 64 ? hi : lo;
@@ -247,7 +305,7 @@ public:
 
     U128& operator<<=(U64 n)
     {
-        const U64 hi = __shiftleft128(m_lo, m_hi, (U8)n);
+        const U64 hi = u128_shiftleft64(m_lo, m_hi, (U8)n);
         const U64 lo = m_lo << (n & 63ULL);
 
         m_hi = n & 64 ? lo : hi;
@@ -260,7 +318,7 @@ public:
     {
         U128 ret;
 
-        const U64 hi = __shiftleft128(x.m_lo, x.m_hi, (U8)n);
+        const U64 hi = u128_shiftleft64(x.m_lo, x.m_hi, (U8)n);
         const U64 lo = x.m_lo << (n & 63ULL);
 
         ret.m_hi = n & 64 ? lo : hi;
@@ -284,7 +342,7 @@ public:
     friend U128 operator-(const U128& x)
     {
         U128 ret;
-        static_cast<void>(_subborrow_u64(_subborrow_u64(0, 0, x.m_lo, &ret.m_lo), 0, x.m_hi, &ret.m_hi));
+        static_cast<void>(u128_subborrow64(u128_subborrow64(0, 0, x.m_lo, &ret.m_lo), 0, x.m_hi, &ret.m_hi));
         return ret;
     }
 
@@ -317,7 +375,7 @@ public:
     friend bool operator<(const U128& x, const U128& y)
     {
         U64 unusedLo, unusedHi;
-        return _subborrow_u64(_subborrow_u64(0, x.m_lo, y.m_lo, &unusedLo), x.m_hi, y.m_hi, &unusedHi);
+        return u128_subborrow64(u128_subborrow64(0, x.m_lo, y.m_lo, &unusedLo), x.m_hi, y.m_hi, &unusedHi);
     }
     MAKE_BINARY_OP_HELPERS(<);
     MAKE_BINARY_OP_HELPERS_FLOAT(<);
