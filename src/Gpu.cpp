@@ -764,11 +764,11 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
   case CARRYFUSED:         // Register usage depends on NW, the FFT/NTT type, and perhaps the long carry setting
     switch (fft.shape.fft_type) {
     case FFT64:
-      regs = nW == 8 ? 72 : 56;
+      regs = nW == 8 ? 64 : 56;                        // Tested on TitanV, CUDA 13.0, nW=8 nvrtc default is 64.
       use_override = "REGCF64";
       break;
     case FFT3161:
-      regs = nW == 8 ? 96 : 64;         // Tested on 4090, nW=8, CUDA 13.0 (88 regs is possible without spilling but is slower)
+      regs = nW == 8 ? 96 : 64;                        // Tested on 5070Ti, CUDA 13.2, nW=8 nvrtc default is 84.
       use_override = "REGCF3161";
       break;
     case FFT3261:
@@ -788,7 +788,7 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
       use_override = "REGCF3231";
       break;
     case FFT6431:
-      regs = nW == 8 ? -1 : -1;         // Tested on TitanV, NW=8, CUDA 13.0.  NW=4 not tested.
+      regs = nW == 8 ? -1 : -1;                        // (not checked recently) Tested on TitanV, NW=8, CUDA 13.0.  NW=4 not tested.
       use_override = "REGCF6431";
       break;
     case FFT31:
@@ -822,21 +822,21 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
     break;
   case MIDIN31:            // Register usage depends on MIDDLE
     if (fft.shape.middle == 16) regs = 56;
-    else if (fft.shape.middle == 8) regs = 48;         // Tested on 4090, CUDA 13.0 (40 regs is possible without spilling but is not measurably faster)
-    else if (fft.shape.middle == 4) regs = 32;         // Tested on 5070Ti, CUDA 13.2.
+    else if (fft.shape.middle == 8) regs = 48;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 44.
+    else if (fft.shape.middle == 4) regs = 32;         // (not checked recently) Tested on 5070Ti, CUDA 13.2.
     else regs = -1;  
     use_override = "REGMI31";
     break;
   case MIDIN61:            // Register usage depends on MIDDLE
     if (fft.shape.middle == 16) regs = 96;
-    else if (fft.shape.middle == 8) regs = 64;         // Tested on 4090, CUDA 13.0
-    else if (fft.shape.middle == 4) regs = -1;         // Tested on 5070Ti, CUDA 13.2 (48 regs is possible without spilling but is slower), best is -1.
+    else if (fft.shape.middle == 8) regs = -1;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 68.
+    else if (fft.shape.middle == 4) regs = -1;         // (not checked recently) Tested on 5070Ti, CUDA 13.2 (48 regs is possible without spilling but is slower), best is -1.
     else regs = -1;  
     use_override = "REGMI61";
     break;
   case TAIL:               // Register usage depends on NH and the FP32/FP64 (assumes double-wide kernel)
     if (fft.FFT_FP64) {
-      regs = nH == 8 ? 72 : 56;
+      regs = nH == 8 ? 72 : 56;                        // Tested on TitanV, CUDA 13.0, nH=8 nvrtc default is 70.
       use_override = "REGTS64";
     } else {
       regs = nH == 8 ? 64 : 48;
@@ -844,12 +844,11 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
     }
     break;
   case TAIL31:             // Register usage depends on NH (assumes double-wide kernel)
-    regs = nH == 8 ? -1 : 48;         // Tested on 4090, NH=8, CUDA 13.0.  Occupancy is limited by LDS memory use, register usage of 48 is possible, best is 64.
-                                      // Tested on 5070Ti, NH=8, CUDA 13.2.  Occupancy is limited by LDS memory use, register usage of 56 is possible, best is -1.
+    regs = nH == 8 ? -1 : 48;                          // Tested on 5070Ti, CUDA 13.2, nH=8 nvrtc default is 64.
     use_override = "REGTS31";
     break;
   case TAIL61:             // Register usage depends on NH (assumes double-wide kernel)
-    regs = nH == 8 ? 96 : 64;         // Tested on 4090, nH=8, CUDA 13.0 (80 regs is possible without spilling but is slower)
+    regs = nH == 8 ? -1 : 64;                          // Tested on 5070Ti, CUDA 13.2, nH=8 nvrtc default is 80.
     use_override = "REGTS61";
     break;
   case MIDOUT:             // Register usage depends on MIDDLE and the FFT/NTT type
@@ -873,16 +872,15 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
     break;
   case MIDOUT31:           // Register usage depends on MIDDLE
     if (fft.shape.middle == 16) regs = 48;
-    else if (fft.shape.middle == 8) regs = 40;         // Tested on 4090, CUDA 13.0
-    else if (fft.shape.middle == 4) regs = -1;         // Tested on 5070Ti, CUDA 13.2 (32 regs is possible without spilling but is slower), best is -1.
+    else if (fft.shape.middle == 8) regs = 48;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 44.
+    else if (fft.shape.middle == 4) regs = -1;         // (not checked recently) Tested on 5070Ti, CUDA 13.2 (32 regs is possible without spilling but is slower), best is -1.
     else regs = -1;
     use_override = "REGMO31";
     break;
   case MIDOUT61:           // Register usage depends on MIDDLE
     if (fft.shape.middle == 16) regs = 96;
-    else if (fft.shape.middle == 8) regs = 64;         // Tested on 4090, CUDA 13.0, best is 64.
-                                                       // Tested on 5070Ti, CUDA 13.2, best is 72.
-    else if (fft.shape.middle == 4) regs = 64;         // Tested on 5070Ti, CUDA 13.2 (48 regs is possible without spilling but is slower), best is 64.
+    else if (fft.shape.middle == 8) regs = -1;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 64.
+    else if (fft.shape.middle == 4) regs = 64;         // (not checked recently) Tested on 5070Ti, CUDA 13.2 (48 regs is possible without spilling but is slower), best is 64.
     else regs = -1;
     use_override = "REGMO61";
     break;
