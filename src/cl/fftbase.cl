@@ -411,6 +411,7 @@ void OVERLOAD tabMul(Trig trig, T2 *u, u32 f, u32 me) {
 // holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
 // The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
 void OVERLOAD tabMul16_2K(Trig trig, T2 *u, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   trig += 7 * WG;
   u32 q = (me % (WG / 2)) / 8;
   u32 h = me / (WG / 2);
@@ -1166,13 +1167,17 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 // needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
 #elif WG == 256 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
-  tabMul(trig, u, 1, lowMe);
-  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+  tabMul(trig, u, 1, me);
+  shufl_and_fft2(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
-  tabMul16_2K(trig, u, lowMe);
-  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
+  tabMul16_2K(trig, u, me);
+  shufl_and_fft2(lds, u, 16, true, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -1284,6 +1289,7 @@ void OVERLOAD tabMul(TrigFP32 trig, F2 *u, u32 f, u32 me) {
 // holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
 // The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
 void OVERLOAD tabMul16_2K(TrigFP32 trig, F2 *u, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   trig += 7 * WG;
   u32 q = (me % (WG / 2)) / 8;
   u32 h = me / (WG / 2);
@@ -1796,13 +1802,17 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 // needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
 #elif WG == 256 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
   fft8(u);
-  tabMul(trig, u, 1, lowMe);
-  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+  tabMul(trig, u, 1, me);
+  shufl_and_fft2(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
-  tabMul16_2K(trig, u, lowMe);
-  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
+  tabMul16_2K(trig, u, me);
+  shufl_and_fft2(lds, u, 16, true, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -1903,6 +1913,7 @@ void OVERLOAD tabMul(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
 // holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
 // The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
 void OVERLOAD tabMul16_2K(TrigGF31 trig, GF31 *u, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   trig += 7 * WG;
   u32 q = (me % (WG / 2)) / 8;
   u32 h = me / (WG / 2);
@@ -2046,13 +2057,17 @@ void OVERLOAD fft_common(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, u32
 // needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
 #elif WG == 256 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
   fft8(u);
-  tabMul(trig, u, 1, lowMe);
-  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+  tabMul(trig, u, 1, me);
+  shufl_and_fft2(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
-  tabMul16_2K(trig, u, lowMe);
-  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
+  tabMul16_2K(trig, u, me);
+  shufl_and_fft2(lds, u, 16, true, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -2152,6 +2167,7 @@ void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 // holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
 // The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
 void OVERLOAD tabMul16_2K(TrigGF61 trig, GF61 *u, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   trig += 7 * WG;
   u32 q = (me % (WG / 2)) / 8;
   u32 h = me / (WG / 2);
@@ -2296,13 +2312,17 @@ void OVERLOAD fft_common(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, u32
 // needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
 #elif WG == 256 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
   fft8(u);
-  tabMul(trig, u, 1, lowMe);
-  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+  tabMul(trig, u, 1, me);
+  shufl_and_fft2(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
-  tabMul16_2K(trig, u, lowMe);
-  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
+  tabMul16_2K(trig, u, me);
+  shufl_and_fft2(lds, u, 16, true, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
