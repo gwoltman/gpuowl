@@ -51,6 +51,11 @@ local T2_F2_GF31_GF61 * OVERLOAD LDSsharing_ptr(local T2_F2_GF31_GF61 *lds, cons
   return lds + ((u32)get_local_id(0) / WG / SBMUL(numWG)) * SBMUL(numWG) * LDS_SHUFL_BYTES(numWG) / sizeof(T2_F2_GF31_GF61);
 }
 
+// Not type-specific, so define it only once (this file is included once per data type)
+#ifndef INT4_OF_DEFINED
+#define INT4_OF_DEFINED
+int4 int4_of(int a, int b, int c, int d) { int4 v; v.x = a; v.y = b; v.z = c; v.w = d; return v; }
+#endif
 
 #ifdef T2_GF61
 
@@ -62,7 +67,6 @@ local T2_F2_GF31_GF61 * OVERLOAD LDSsharing_ptr(local T2_F2_GF31_GF61 *lds, cons
 // r usually equals RADIX if a full fft_RADIX step was just performed.  On occasion u[8] values may do less than an fft8 step.
 // numWG = number of fft_WIDTHs or fft_HEIGHTs being processed simultaneously
 // lowMe = me % WG
-int4 int4_of(int a, int b, int c, int d) { int4 v; v.x = a; v.y = b; v.z = c; v.w = d; return v; }
 
 void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u32 lowMe) {
 
@@ -75,22 +79,6 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
     local T2_GF61* lds = LDSsharing_ptr(lds2, numWG);
 
 #if LDSPAD
-    // Special case first RADIX == 8 to eliminate LDS bank conflicts.
-    // Input values are in order.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
-    // Output to LDS that does not use much padding and generates good code because all the lowMe calcs can be computed up front.
-    // In the example:  lds[0..63] = 0, 64, ...448, 8, 72..., 16...   lds[64..127] = +1
-    // Read from LDS in the desired output order.  In the example:  output[0..63] = 0, 64, ... 448, 1, 65...   output[64..127] = +8
-    // Pad 1 value every row to eliminate bank conflicts.
-    if (0 && f == 1 && r == 8 && RADIX == 8) {
-      LDStx_start(lds2, numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[(lowMe & 7) * (WG + 1) + (lowMe / 8) * 8 + i] = u[i]; }
-      LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * (WG / 64) * 8                    + ((lowMe / 8) & 7) * (WG + 1) + (lowMe & 7)]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i] = lds[i * (WG / 64) * 8 + (lowMe / 64) * 8 + ((lowMe / 8) & 7) * (WG + 1) + (lowMe & 7)]; }
-      LDStx_end(lds2, numWG);
-      return;
-    }
-
     // Special case first RADIX == 8 to eliminate LDS bank conflicts.
     // Input values are in order and written straight to LDS memory.  For example, WIDTH=512:  u[0] = 0, 1, 2...  u[1] = +64...
     // Output to LDS that uses a little padding.  Pad one value after every row to eliminate bank conflicts.
@@ -317,27 +305,6 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 r, u32 numWG, u3
       for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 4) + lowMe] = u[i].y; }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * WG / 4 + (lowMe / 4) + (lowMe & 3) * (WG + 4)]; }
-      LDStx_end(lds2, numWG);
-      return;
-    }
-
-    // Special case second RADIX == 4 to eliminate LDS bank conflicts.
-    // Input values are the output from previous shufl.  For example, WIDTH=256:  u[0] = 0, 64, ... 192, 1, 65...   u[1] = +16
-    // Output to LDS that does not use much padding and generates good code because all the lowMe calcs can be computed up front.
-    // In the example:  lds[0..63] = 0...192, 16..., 32..., 48..., 4...   lds[64..127] = +1
-    // Output to LDS in the order we expect to read.  In the example:  u[0] = 0...192, 16... 32.. 48.. 1...  u[1] = +4
-    // Pad 4 values after every row to eliminate bank conflicts.
-    if (0 && f == 4 && r == 4 && RADIX == 4) {
-      LDStx_start(lds2, numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 4) + (lowMe / 16) * 16 + i * 4 + (lowMe & 3)] = u[i].x; }
-      LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 16                     +  (lowMe / 16)      * (WG + 4) + (lowMe & 15)]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].x = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 4) + (lowMe & 15)]; }
-      LDSbar(numWG);
-      for (u32 i = 0; i < RADIX; ++i) { lds[((lowMe / 4) & 3) * (WG + 4) + (lowMe / 16) * 16 + i * 4 + (lowMe & 3)] = u[i].y; }
-      LDSbar(numWG);
-      if (WG == 64) for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 16                     +  (lowMe / 16)      * (WG + 4) + (lowMe & 15)]; }
-      else          for (u32 i = 0; i < RADIX; ++i) { u[i].y = lds[i * 64 + (lowMe / 64) * 16 + ((lowMe / 16) & 3) * (WG + 4) + (lowMe & 15)]; }
       LDStx_end(lds2, numWG);
       return;
     }
@@ -835,16 +802,26 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe
 
 
 // Shufl two or more fft_WIDTHs or fft_HEIGHTs operating on 64-bit values using LDS_BYTES of LDS memory.  An fft2 is also performed.
-// At present, this is used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8, and by WIDTH = 2K with RADIX=8 for f=1 and
-// after_fft16 (see fft2_write_index).  The LDSPAD and LDSSWIZ special cases only cover f=8; the others take the generic path.
-void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_fft16, u32 numWG, u32 lowMe) {
+// At present, this is used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8, and by WIDTH or HEIGHT = 2K with RADIX=8 for f=1 and f=16.
+// The LDSPAD and LDSSWIZ special cases cover f=1, f=8 and f=16.
+// f == 16 is not a standard shufl: SIZE=2K, RADIX=8 is done as 8 * 16 * 16 and calls shufl_and_fft2 a second time right after the
+// middle radix-16 step (see fft_common).  Lane lowMe = h * WG/2 + 8q + k then holds radix-16 output 2i+h of column q, k selecting
+// one of 8 independent sub-FFTs.  The f == 16 writes put those where the usual reads find column q's radix-16 inputs i and i+8.
+void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe) {
   assert(RADIX == 8);
-  assert(!after_fft16 || (f == 16 && WG == 256));
+  assert(f != 16 || WG == 256);
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
 
-  // Start by doing the writes of a standard shufl (or the after_fft16 writes, see fft2_write_index).
+  // This lane writes u[i] to base + i * f.  For f == 1 and f == 8 these are plain shufl's writes.  After 2K's radix-16 step (f == 16),
+  // each half of the workgroup holds half of every radix-16 output: lanes are numbered within their half, in groups of 8.
+  u32 upper = 0, me = lowMe;                                          // There are no upper and lower halves following a radix-8 step
+  if (f == 16) upper = lowMe / (WG / 2), me = lowMe % (WG / 2);       // Following a radix-16 step, input data comes from each half of the workgroup
+  u32 grp = (f == 16) ? 8 : f;                                        // Number of lanes whose writes are adjacent
+  u32 base = (me / grp) * grp * ((f == 16) ? 16 : RADIX) + upper * 8 + me % grp;
+
+  // Start by doing the writes of a standard shufl (or for f == 16 the writes described above).
   // Next, each thread reads a pair of values.  The lower threads add the two values, the higher threads subtract the two values.
   // val1 is read from          i * WG/2
   // val2 is read from 4 * WG + i * WG/2
@@ -853,9 +830,30 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
   if (SBMUL(numWG) * SHUFL_BYTES >= 16) {
     local T2_GF61* lds = LDSsharing_ptr(lds2, numWG);
 
+#if LDSSWIZ
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Same LDS swizzle as plain shufl's first RADIX == 8.  The writes cannot be
+    // paired without padding, the reads are.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 wb = (lowMe * 8) ^ (lowMe & 7);
+      u32 ra = rb ^ ((rb / 8) & 7);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb ^ i] = u[i]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T2_GF61 val1 = lds[i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 7))];
+        T2_GF61 val2 = lds[4 * WG + i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 7))];
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+#endif
+
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i]; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i]; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       T2_GF61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -872,6 +870,38 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
     local T_Z61* lds = LDSsharing_ptr((local T_Z61 *)lds2, numWG);
 
 #if LDSPAD
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Like plain shufl's first RADIX == 8, write each u[i] to its own row, but
+    // in chunks of 32 lanes with rows of 32 + 2 so that the writes are a pairable distance apart.  Logical index Q = 8 * m + c is at
+    // (m / 32) * 8 * (32 + 2) + c * (32 + 2) + m % 32.  val1 is Q = i * (WG / 2) + r, so m = i * (WG / 16) + r / 8 and c = r & 7.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 wb = (lowMe / 32) * 8 * (32 + 2) + lowMe % 32;
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 2)] = u[i].x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 m = i * (WG / 16) + rb / 8;
+        u32 k = (m / 32) * 8 * (32 + 2) + (rb & 7) * (32 + 2) + m % 32;
+        T_Z61 val1 = lds[k];
+        T_Z61 val2 = lds[k + (WG / 64) * 8 * (32 + 2)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 2)] = u[i].y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 m = i * (WG / 16) + rb / 8;
+        u32 k = (m / 32) * 8 * (32 + 2) + (rb & 7) * (32 + 2) + m % 32;
+        T_Z61 val1 = lds[k];
+        T_Z61 val2 = lds[k + (WG / 64) * 8 * (32 + 2)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
     // Special case second RADIX == 8 to eliminate LDS bank conflicts.
     // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
     // Output to LDS with 8 pads after each row.
@@ -903,9 +933,70 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
       LDStx_end(lds2, numWG);
       return;
     }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  Pad 8 values after every WG/2 values (LDSPAD_COUNT reserves the
+    // 120 this needs, the f == 1 case needs more).  Writes and reads are then conflict-free and every access is a per-lane base plus a constant.
+    if (f == 16 && RADIX == 8) {
+      u32 wb = base + (me / 8) * 8;                // base is below (me / 8 + 1) * (WG / 2), so it gets me / 8 pads
+      u32 rb = lowMe % (WG / 2);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T_Z61 val1 = lds[i * (WG / 2 + 8) + rb];
+        T_Z61 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T_Z61 val1 = lds[i * (WG / 2 + 8) + rb];
+        T_Z61 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
 #endif
 
 #if LDSSWIZ
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Same LDS swizzle as plain shufl's first RADIX == 8.  The writes cannot be
+    // paired without padding, the reads are.  Addresses are byte offsets from lds2, see plain shufl's LDSSWIZ cases.
+    if (f == 1 && RADIX == 8) {
+      local char* root = (local char*)lds2;
+      u32 region = (u32)((local char*)lds - root);
+      u32 rb = lowMe % (WG / 2);
+      u32 wa = region + ((lowMe * 8) ^ (lowMe & 15)) * 8;
+      u32 ra = region + (rb ^ ((rb / 8) & 15)) * 8;
+      LDStx_start(lds2, numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; ++i) { *(local T_Z61*)(root + (wa ^ (i * 8))) = u[i].x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 16)) & 15) * 8));
+        T_Z61 val1 = *(local T_Z61*)(root + a1);
+        T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
+      for (u32 i = 0; i < RADIX; ++i) { *(local T_Z61*)(root + (wa ^ (i * 8))) = u[i].y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 16)) & 15) * 8));
+        T_Z61 val1 = *(local T_Z61*)(root + a1);
+        T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
     // Special case second RADIX == 8 to eliminate LDS bank conflicts, with an fft2 add-on.  Works for any WG >= 128.
     // The write is plain shufl's f == 8 swizzle.  val1 is plain shufl's read of i / 2 at lane lowMe % (WG / 2) + (i & 1) * (WG / 2),
     // which is index i * (WG / 2) + lowMe % (WG / 2) under the same swizzle; val2 is 4 * WG further (ds_read2st64_b64 pairs).
@@ -943,11 +1034,38 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
       LDStx_end(lds2, numWG);
       return;
     }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  XOR bit 3 of the LDS index with bit 7.  For 8-byte (or larger)
+    // accesses that makes writes and reads conflict-free while keeping every write and read pair a constant distance apart.
+    if (f == 16 && RADIX == 8) {
+      u32 wb = base ^ (((me / 8) & 1) * 8);
+      u32 rb = lowMe % (WG / 2);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T_Z61 val1 = lds[i * (WG / 2) + (rb ^ ((i & 1) * 8))];
+        T_Z61 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 1) * 8))];
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T_Z61 val1 = lds[i * (WG / 2) + (rb ^ ((i & 1) * 8))];
+        T_Z61 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 1) * 8))];
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
 #endif
 
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].x; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i].x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       T_Z61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -956,7 +1074,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
       else u[i].x = subq(val1, val2);
     }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].y; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i].y; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       T_Z61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -977,6 +1095,43 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
     local int* lds = (local int*)LDSsharing_ptr(lds2, numWG);
 
 #if LDSPAD
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Like plain shufl's first RADIX == 8, write each u[i] to its own row, but
+    // in chunks of 32 lanes with rows of 32 + 4 so that the writes are a pairable distance apart.  Logical index Q = 8 * m + c is at
+    // (m / 32) * 8 * (32 + 4) + c * (32 + 4) + m % 32.  val1 is Q = i * (WG / 2) + r, so m = i * (WG / 16) + r / 8 and c = r & 7.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 wb = (lowMe / 32) * 8 * (32 + 4) + lowMe % 32;
+      int4 v1[RADIX], v2[RADIX];
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 4)] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { u32 m = i * (WG / 16) + rb / 8; u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
+                                        v1[i].x = lds[k]; v2[i].x = lds[k + (WG / 64) * 8 * (32 + 4)]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 4)] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { u32 m = i * (WG / 16) + rb / 8; u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
+                                        v1[i].y = lds[k]; v2[i].y = lds[k + (WG / 64) * 8 * (32 + 4)]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 4)] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { u32 m = i * (WG / 16) + rb / 8; u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
+                                        v1[i].z = lds[k]; v2[i].z = lds[k + (WG / 64) * 8 * (32 + 4)]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 4)] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { u32 m = i * (WG / 16) + rb / 8; u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
+                                        v1[i].w = lds[k]; v2[i].w = lds[k + (WG / 64) * 8 * (32 + 4)]; }
+      LDStx_end(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T2_GF61 val1 = as_T2_GF61(v1[i]);
+        T2_GF61 val2 = as_T2_GF61(v2[i]);
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      return;
+    }
+
     // Same permutation as the 8-byte LDSPAD case above, done in 4 int-sized passes.  As in the fallback below, all four 32-bit
     // pieces of val1 and val2 are gathered before the fft2.  val2 is a constant 32 * (WG / 64) ints after val1.
     if (f == 8 && RADIX == 8) {
@@ -1018,9 +1173,77 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
       }
       return;
     }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  Pad 8 values after every WG/2 values (LDSPAD_COUNT reserves the
+    // 120 this needs, the f == 1 case needs more).  Writes and reads are then conflict-free and every access is a per-lane base plus a constant.
+    if (f == 16 && RADIX == 8) {
+      u32 wb = base + (me / 8) * 8;                // base is below (me / 8 + 1) * (WG / 2), so it gets me / 8 pads
+      u32 rb = lowMe % (WG / 2);
+      int4 v1[RADIX], v2[RADIX];
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = as_int4(u[i]).x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].x = lds[i * (WG / 2 + 8) + rb]; v2[i].x = lds[(i + 8) * (WG / 2 + 8) + rb]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = as_int4(u[i]).y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].y = lds[i * (WG / 2 + 8) + rb]; v2[i].y = lds[(i + 8) * (WG / 2 + 8) + rb]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = as_int4(u[i]).z; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].z = lds[i * (WG / 2 + 8) + rb]; v2[i].z = lds[(i + 8) * (WG / 2 + 8) + rb]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = as_int4(u[i]).w; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].w = lds[i * (WG / 2 + 8) + rb]; v2[i].w = lds[(i + 8) * (WG / 2 + 8) + rb]; }
+      LDStx_end(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T2_GF61 val1 = as_T2_GF61(v1[i]);
+        T2_GF61 val2 = as_T2_GF61(v2[i]);
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      return;
+    }
 #endif
 
 #if LDSSWIZ
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Same LDS swizzle as plain shufl's first RADIX == 8:  each thread writes
+    // u[0..3] and u[4..7] as two 16-byte chunks (ds_write_b128), swapping the chunks when lowMe & 4.  Reads XOR bit 2 with bit 5.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 ra = rb ^ ((rb / 8) & 4);
+      int4 v1[RADIX], v2[RADIX];
+      LDStx_start_with_fence(lds2, numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).x, as_int4(u[1]).x, as_int4(u[2]).x, as_int4(u[3]).x);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).x, as_int4(u[5]).x, as_int4(u[6]).x, as_int4(u[7]).x);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].x = lds[i * (WG / 2) + ra]; v2[i].x = lds[4 * WG + i * (WG / 2) + ra]; }
+      LDSbar(numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).y, as_int4(u[1]).y, as_int4(u[2]).y, as_int4(u[3]).y);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).y, as_int4(u[5]).y, as_int4(u[6]).y, as_int4(u[7]).y);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].y = lds[i * (WG / 2) + ra]; v2[i].y = lds[4 * WG + i * (WG / 2) + ra]; }
+      LDSbar(numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).z, as_int4(u[1]).z, as_int4(u[2]).z, as_int4(u[3]).z);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).z, as_int4(u[5]).z, as_int4(u[6]).z, as_int4(u[7]).z);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].z = lds[i * (WG / 2) + ra]; v2[i].z = lds[4 * WG + i * (WG / 2) + ra]; }
+      LDSbar(numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int4(u[0]).w, as_int4(u[1]).w, as_int4(u[2]).w, as_int4(u[3]).w);
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int4(u[4]).w, as_int4(u[5]).w, as_int4(u[6]).w, as_int4(u[7]).w);
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].w = lds[i * (WG / 2) + ra]; v2[i].w = lds[4 * WG + i * (WG / 2) + ra]; }
+      LDStx_end(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T2_GF61 val1 = as_T2_GF61(v1[i]);
+        T2_GF61 val2 = as_T2_GF61(v2[i]);
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      return;
+    }
+
     // Same swizzle as plain shufl's 4-byte f == 8 case (only bits 0-1 of i XORed, so u[i] and u[i + 4] are 32 ints apart), with
     // val1 at index i * (WG / 2) + lowMe % (WG / 2) under that swizzle and val2 4 * WG ints further.  Works for any WG >= 128.
     // Addresses are byte offsets from lds2 XORed with a constant for each i, see plain shufl's LDSSWIZ cases and SWIZ_RECOMPUTE.
@@ -1072,6 +1295,44 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
       }
       return;
     }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  XOR bits 3-4 of the LDS index with bits 7-8, which 4-byte
+    // accesses need to be conflict-free (all 32 banks in play).  Pairs of writes and pairs of reads are still a constant distance apart.
+    if (f == 16 && RADIX == 8) {
+      u32 wa[2];                                   // base has bits 4-6 clear, so the swizzled base + i * 16 is wa[i & 1] + (i / 2) * 32
+      wa[0] = base ^ (((me / 8) & 3) * 8);
+      wa[1] = wa[0] ^ 16;
+      u32 rb = lowMe % (WG / 2);
+      int4 v1[RADIX], v2[RADIX];
+      LDStx_start_with_fence(lds2, numWG);
+      for (u32 i = 0; i < RADIX; i += 2) { lds[wa[0] + (i / 2) * 32] = as_int4(u[i]).x; }           // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { lds[wa[1] + (i / 2) * 32] = as_int4(u[i]).x; }           // and can be merged into ds_write2
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].x = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))]; v2[i].x = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; i += 2) { lds[wa[0] + (i / 2) * 32] = as_int4(u[i]).y; }           // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { lds[wa[1] + (i / 2) * 32] = as_int4(u[i]).y; }           // and can be merged into ds_write2
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].y = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))]; v2[i].y = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; i += 2) { lds[wa[0] + (i / 2) * 32] = as_int4(u[i]).z; }           // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { lds[wa[1] + (i / 2) * 32] = as_int4(u[i]).z; }           // and can be merged into ds_write2
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].z = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))]; v2[i].z = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; i += 2) { lds[wa[0] + (i / 2) * 32] = as_int4(u[i]).w; }           // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { lds[wa[1] + (i / 2) * 32] = as_int4(u[i]).w; }           // and can be merged into ds_write2
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { v1[i].w = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))]; v2[i].w = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))]; }
+      LDStx_end(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        T2_GF61 val1 = as_T2_GF61(v1[i]);
+        T2_GF61 val2 = as_T2_GF61(v2[i]);
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      return;
+    }
 #endif
 
     // Otherwise (no LDSPAD/LDSSWIZ case above): the original shufl code, NOT OPTIMIZED TO REDUCE LDS BANK CONFLICTS.
@@ -1080,19 +1341,19 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
     // four write passes.
     int4 v1[RADIX], v2[RADIX];
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).x; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = as_int4(u[i]).x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].x = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].x = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).y; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = as_int4(u[i]).y; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].y = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].y = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).z; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = as_int4(u[i]).z; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].z = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].z = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).w; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = as_int4(u[i]).w; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].w = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].w = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDStx_end(lds2, numWG);
@@ -1104,11 +1365,6 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_
     }
     return;
   }
-}
-
-// Shufl plus fft2 where the writes are those of a standard shufl.
-void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe) {
-  shufl_and_fft2(lds2, u, f, false, numWG, lowMe);
 }
 
 #endif
@@ -1394,19 +1650,28 @@ void OVERLOAD shufl(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, u32 lowMe
 }
 
 
-// NEEDS TONS OF WORK!!!  SWIZ NOT CODED, MOST PAD CASES NOT CODED.
-// At present, this is used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8, and by WIDTH = 2K with RADIX=8 for f=1 and
-// after_fft16 (see fft2_write_index).  The LDSPAD and LDSSWIZ special cases only cover f=8; the others take the generic path.
+// At present, this is used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8, and by WIDTH or HEIGHT = 2K with RADIX=8 for f=1 and f=16.
+// The LDSPAD and LDSSWIZ special cases cover f=1, f=8 and f=16.
+// f == 16 is not a standard shufl: SIZE=2K, RADIX=8 is done as 8 * 16 * 16 and calls shufl_and_fft2 a second time right after the
+// middle radix-16 step (see fft_common).  Lane lowMe = h * WG/2 + 8q + k then holds radix-16 output 2i+h of column q, k selecting
+// one of 8 independent sub-FFTs.  The f == 16 writes put those where the usual reads find column q's radix-16 inputs i and i+8.
 
 // Shufl two or more fft_WIDTHs or fft_HEIGHTs operating on 32-bit values using LDS_BYTES of LDS memory.  An fft2 is also performed.
-void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, bool after_fft16, u32 numWG, u32 lowMe) {
+void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, u32 lowMe) {
   assert(RADIX == 8);
-  assert(!after_fft16 || (f == 16 && WG == 256));
+  assert(f != 16 || WG == 256);
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
 
-  // Start by doing the writes of a standard shufl (or the after_fft16 writes, see fft2_write_index).
+  // This lane writes u[i] to base + i * f.  For f == 1 and f == 8 these are plain shufl's writes.  After 2K's radix-16 step (f == 16),
+  // each half of the workgroup holds half of every radix-16 output: lanes are numbered within their half, in groups of 8.
+  u32 upper = 0, me = lowMe;                                          // There are no upper and lower halves following a radix-8 step
+  if (f == 16) upper = lowMe / (WG / 2), me = lowMe % (WG / 2);       // Following a radix-16 step, input data comes from each half of the workgroup
+  u32 grp = (f == 16) ? 8 : f;                                        // Number of lanes whose writes are adjacent
+  u32 base = (me / grp) * grp * ((f == 16) ? 16 : RADIX) + upper * 8 + me % grp;
+
+  // Start by doing the writes of a standard shufl (or for f == 16 the writes described above).
   // Next, each thread reads a pair of values.  The lower threads add the two values, the higher threads subtract the two values.
   // val1 is read from          i * WG/2
   // val2 is read from 4 * WG + i * WG/2
@@ -1416,6 +1681,27 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, bool after_
     local F2_GF31* lds = LDSsharing_ptr(lds2, numWG);
 
 #if LDSPAD
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Like plain shufl's first RADIX == 8, write each u[i] to its own row, but
+    // in chunks of 32 lanes with rows of 32 + 2 so that the writes are a pairable distance apart.  Logical index Q = 8 * m + c is at
+    // (m / 32) * 8 * (32 + 2) + c * (32 + 2) + m % 32.  val1 is Q = i * (WG / 2) + r, so m = i * (WG / 16) + r / 8 and c = r & 7.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 wb = (lowMe / 32) * 8 * (32 + 2) + lowMe % 32;
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 2)] = u[i]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 m = i * (WG / 16) + rb / 8;
+        u32 k = (m / 32) * 8 * (32 + 2) + (rb & 7) * (32 + 2) + m % 32;
+        F2_GF31 val1 = lds[k];
+        F2_GF31 val2 = lds[k + (WG / 64) * 8 * (32 + 2)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
     // Special case second RADIX == 8 to eliminate LDS bank conflicts.
     // Input values are the output from previous shufl.  For example, WIDTH=512:  u[0] = 0, 64, ... 448, 1, 65...   u[1] = +8
     // Output to LDS with 8 pads after each row.
@@ -1436,11 +1722,68 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, bool after_
       LDStx_end(lds2, numWG);
       return;
     }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  Pad 8 values after every WG/2 values (LDSPAD_COUNT reserves the
+    // 120 this needs, the f == 1 case needs more).  Writes and reads are then conflict-free and every access is a per-lane base plus a constant.
+    if (f == 16 && RADIX == 8) {
+      u32 wb = base + (me / 8) * 8;                // base is below (me / 8 + 1) * (WG / 2), so it gets me / 8 pads
+      u32 rb = lowMe % (WG / 2);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F2_GF31 val1 = lds[i * (WG / 2 + 8) + rb];
+        F2_GF31 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Same LDS swizzle as plain shufl's first RADIX == 8.  The writes cannot be
+    // paired without padding, the reads are.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 wb = (lowMe * 8) ^ (lowMe & 15);
+      u32 ra = rb ^ ((rb / 8) & 15);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb ^ i] = u[i]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F2_GF31 val1 = lds[i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 15))];
+        F2_GF31 val2 = lds[4 * WG + i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 15))];
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  XOR bit 3 of the LDS index with bit 7.  For 8-byte (or larger)
+    // accesses that makes writes and reads conflict-free while keeping every write and read pair a constant distance apart.
+    if (f == 16 && RADIX == 8) {
+      u32 wb = base ^ (((me / 8) & 1) * 8);
+      u32 rb = lowMe % (WG / 2);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i]; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F2_GF31 val1 = lds[i * (WG / 2) + (rb ^ ((i & 1) * 8))];
+        F2_GF31 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 1) * 8))];
+        if (lowMe < WG / 2) u[i] = addq(val1, val2);
+        else u[i] = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
 #endif
 
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i]; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i]; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       F2_GF31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -1456,9 +1799,132 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, bool after_
   else if (SBMUL(numWG) * SHUFL_BYTES == 4) {
     local F_Z31* lds = LDSsharing_ptr((local F_Z31 *)lds2, numWG);
 
+#if LDSPAD
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Like plain shufl's first RADIX == 8, write each u[i] to its own row, but
+    // in chunks of 32 lanes with rows of 32 + 4 so that the writes are a pairable distance apart.  Logical index Q = 8 * m + c is at
+    // (m / 32) * 8 * (32 + 4) + c * (32 + 4) + m % 32.  val1 is Q = i * (WG / 2) + r, so m = i * (WG / 16) + r / 8 and c = r & 7.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 wb = (lowMe / 32) * 8 * (32 + 4) + lowMe % 32;
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 4)] = u[i].x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 m = i * (WG / 16) + rb / 8;
+        u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
+        F_Z31 val1 = lds[k];
+        F_Z31 val2 = lds[k + (WG / 64) * 8 * (32 + 4)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 4)] = u[i].y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        u32 m = i * (WG / 16) + rb / 8;
+        u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
+        F_Z31 val1 = lds[k];
+        F_Z31 val2 = lds[k + (WG / 64) * 8 * (32 + 4)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  Pad 8 values after every WG/2 values (LDSPAD_COUNT reserves the
+    // 120 this needs, the f == 1 case needs more).  Writes and reads are then conflict-free and every access is a per-lane base plus a constant.
+    if (f == 16 && RADIX == 8) {
+      u32 wb = base + (me / 8) * 8;                // base is below (me / 8 + 1) * (WG / 2), so it gets me / 8 pads
+      u32 rb = lowMe % (WG / 2);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].x; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F_Z31 val1 = lds[i * (WG / 2 + 8) + rb];
+        F_Z31 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].y; }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F_Z31 val1 = lds[i * (WG / 2 + 8) + rb];
+        F_Z31 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+#endif
+
+#if LDSSWIZ
+    // Special case f == 1 (SIZE=2K's first shufl_and_fft2).  Same LDS swizzle as plain shufl's first RADIX == 8:  each thread writes
+    // u[0..3] and u[4..7] as two 16-byte chunks (ds_write_b128), swapping the chunks when lowMe & 4.  Reads XOR bit 2 with bit 5.
+    if (f == 1 && RADIX == 8) {
+      u32 rb = lowMe % (WG / 2);
+      u32 ra = rb ^ ((rb / 8) & 4);
+      LDStx_start(lds2, numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int(u[0].x), as_int(u[1].x), as_int(u[2].x), as_int(u[3].x));
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int(u[4].x), as_int(u[5].x), as_int(u[6].x), as_int(u[7].x));
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F_Z31 val1 = lds[i * (WG / 2) + ra];
+        F_Z31 val2 = lds[4 * WG + i * (WG / 2) + ra];
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int(u[0].y), as_int(u[1].y), as_int(u[2].y), as_int(u[3].y));
+      ((local int4*)lds)[lowMe * 2 + (((lowMe / 4) & 1) ^ 1)] = int4_of(as_int(u[4].y), as_int(u[5].y), as_int(u[6].y), as_int(u[7].y));
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F_Z31 val1 = lds[i * (WG / 2) + ra];
+        F_Z31 val2 = lds[4 * WG + i * (WG / 2) + ra];
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+
+    // Special case f == 16 (SIZE=2K's second shufl_and_fft2, see above).  XOR bits 3-4 of the LDS index with bits 7-8, which 4-byte
+    // accesses need to be conflict-free (all 32 banks in play).  Pairs of writes and pairs of reads are still a constant distance apart.
+    if (f == 16 && RADIX == 8) {
+      u32 wa[2];                                   // base has bits 4-6 clear, so the swizzled base + i * 16 is wa[i & 1] + (i / 2) * 32
+      wa[0] = base ^ (((me / 8) & 3) * 8);
+      wa[1] = wa[0] ^ 16;
+      u32 rb = lowMe % (WG / 2);
+      LDStx_start(lds2, numWG);
+      for (u32 i = 0; i < RADIX; i += 2) { lds[wa[0] + (i / 2) * 32] = u[i].x; }           // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { lds[wa[1] + (i / 2) * 32] = u[i].x; }           // and can be merged into ds_write2
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F_Z31 val1 = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))];
+        F_Z31 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))];
+        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
+        else u[i].x = subq(val1, val2);
+      }
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; i += 2) { lds[wa[0] + (i / 2) * 32] = u[i].y; }           // even i first so that same-base stores are adjacent
+      for (u32 i = 1; i < RADIX; i += 2) { lds[wa[1] + (i / 2) * 32] = u[i].y; }           // and can be merged into ds_write2
+      LDSbar(numWG);
+      for (u32 i = 0; i < RADIX; ++i) {
+        F_Z31 val1 = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))];
+        F_Z31 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))];
+        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
+        else u[i].y = subq(val1, val2);
+      }
+      LDStx_end(lds2, numWG);
+      return;
+    }
+#endif
+
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].x; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i].x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       F_Z31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -1467,7 +1933,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, bool after_
       else u[i].x = subq(val1, val2);
     }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].y; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i].y; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       F_Z31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -1478,11 +1944,6 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, bool after_
     LDStx_end(lds2, numWG);
     return;
   }
-}
-
-// Shufl plus fft2 where the writes are those of a standard shufl.
-void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, u32 lowMe) {
-  shufl_and_fft2(lds2, u, f, false, numWG, lowMe);
 }
 
 #endif

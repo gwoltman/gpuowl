@@ -212,6 +212,7 @@ __device__ __forceinline__ i64 as_long(double v) { return (i64)__double_as_longl
 __device__ __forceinline__ float as_float(int v) { return __int_as_float(v); }
 __device__ __forceinline__ float as_float(uint v) { return __int_as_float((int)v); }
 __device__ __forceinline__ int as_int(float v) { return __float_as_int(v); }
+__device__ __forceinline__ int as_int(uint v) { return (int)v; }             // without this, a uint would be converted to float
 __device__ __forceinline__ uint as_uint(float v) { return (uint)__float_as_int(v); }
 
 // 16-byte reinterprets: int4 ↔ double2 ↔ ulong2
