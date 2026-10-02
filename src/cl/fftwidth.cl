@@ -18,8 +18,8 @@
 #include "trig.cl"
 #include "fftbase.cl"
 
-#if WIDTH != 256 && WIDTH != 512 && WIDTH != 1024 && WIDTH != 4096 && WIDTH != 625
-#error WIDTH must be one of: 256, 512, 1024, 4096, 625
+#if WIDTH != 256 && WIDTH != 512 && WIDTH != 1024 && WIDTH != 2048 && WIDTH != 4096 && WIDTH != 625
+#error WIDTH must be one of: 256, 512, 1024, 2048, 4096, 625
 #endif
 
 #if FFT_FP64

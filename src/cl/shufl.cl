@@ -835,14 +835,16 @@ void OVERLOAD shufl(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe
 
 
 // Shufl two or more fft_WIDTHs or fft_HEIGHTs operating on 64-bit values using LDS_BYTES of LDS memory.  An fft2 is also performed.
-// At present, this is only used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8.
-void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe) {
+// At present, this is used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8, and by WIDTH = 2K with RADIX=8 for f=1 and
+// after_fft16 (see fft2_write_index).  The LDSPAD and LDSSWIZ special cases only cover f=8; the others take the generic path.
+void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, bool after_fft16, u32 numWG, u32 lowMe) {
   assert(RADIX == 8);
+  assert(!after_fft16 || (f == 16 && WG == 256));
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
 
-  // Start by doing the writes of a standard shufl.
+  // Start by doing the writes of a standard shufl (or the after_fft16 writes, see fft2_write_index).
   // Next, each thread reads a pair of values.  The lower threads add the two values, the higher threads subtract the two values.
   // val1 is read from          i * WG/2
   // val2 is read from 4 * WG + i * WG/2
@@ -853,7 +855,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
 
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = u[i]; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i]; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       T2_GF61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -945,7 +947,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
 
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = u[i].x; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       T_Z61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -954,7 +956,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       else u[i].x = subq(val1, val2);
     }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = u[i].y; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].y; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       T_Z61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -1078,19 +1080,19 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
     // four write passes.
     int4 v1[RADIX], v2[RADIX];
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).x; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].x = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].x = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).y; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).y; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].y = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].y = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).z; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).z; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].z = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].z = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = as_int4(u[i]).w; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = as_int4(u[i]).w; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { v1[i].w = lds[i * (WG / 2) + lowMe % (WG / 2)]; v2[i].w = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)]; }
     LDStx_end(lds2, numWG);
@@ -1102,6 +1104,11 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
     }
     return;
   }
+}
+
+// Shufl plus fft2 where the writes are those of a standard shufl.
+void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, u32 lowMe) {
+  shufl_and_fft2(lds2, u, f, false, numWG, lowMe);
 }
 
 #endif
@@ -1388,16 +1395,18 @@ void OVERLOAD shufl(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, u32 lowMe
 
 
 // NEEDS TONS OF WORK!!!  SWIZ NOT CODED, MOST PAD CASES NOT CODED.
-// At present, this is only used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8.
+// At present, this is used by WIDTH or HEIGHT = 1K with RADIX=8 and f=8, and by WIDTH = 2K with RADIX=8 for f=1 and
+// after_fft16 (see fft2_write_index).  The LDSPAD and LDSSWIZ special cases only cover f=8; the others take the generic path.
 
 // Shufl two or more fft_WIDTHs or fft_HEIGHTs operating on 32-bit values using LDS_BYTES of LDS memory.  An fft2 is also performed.
-void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, u32 lowMe) {
+void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, bool after_fft16, u32 numWG, u32 lowMe) {
   assert(RADIX == 8);
+  assert(!after_fft16 || (f == 16 && WG == 256));
 
   u32 mask = f - 1;
   assert((mask & (mask + 1)) == 0);
 
-  // Start by doing the writes of a standard shufl.
+  // Start by doing the writes of a standard shufl (or the after_fft16 writes, see fft2_write_index).
   // Next, each thread reads a pair of values.  The lower threads add the two values, the higher threads subtract the two values.
   // val1 is read from          i * WG/2
   // val2 is read from 4 * WG + i * WG/2
@@ -1431,7 +1440,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
 
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = u[i]; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i]; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       F2_GF31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -1449,7 +1458,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
 
     // Execute the original shufl code with an fft2 add-on.
     LDStx_start(lds2, numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = u[i].x; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].x; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       F_Z31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -1458,7 +1467,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       else u[i].x = subq(val1, val2);
     }
     LDSbar(numWG);
-    for (u32 i = 0; i < RADIX; ++i) { lds[i * f + (lowMe & ~mask) * RADIX + (lowMe & mask)] = u[i].y; }
+    for (u32 i = 0; i < RADIX; ++i) { lds[fft2_write_index(i, f, after_fft16, lowMe)] = u[i].y; }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) {
       F_Z31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
@@ -1469,6 +1478,11 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
     LDStx_end(lds2, numWG);
     return;
   }
+}
+
+// Shufl plus fft2 where the writes are those of a standard shufl.
+void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, u32 lowMe) {
+  shufl_and_fft2(lds2, u, f, false, numWG, lowMe);
 }
 
 #endif

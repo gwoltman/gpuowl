@@ -192,6 +192,15 @@ void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
 #endif
 
 
+// Where shufl_and_fft2's (unpadded, unswizzled) code writes u[i] to LDS.  Normally that is plain shufl's write for step f.
+// SIZE=2K, RADIX=8 is done as 8 * 16 * 16 and calls shufl_and_fft2 a second time right after the middle radix-16 step (see
+// fft_common).  Lane lowMe = h * WG/2 + 8q + k then holds radix-16 output 2i+h of column q, k selecting one of 8 independent
+// sub-FFTs.  after_fft16 writes those so that shufl_and_fft2's usual reads find column q's radix-16 inputs i and i+8.
+u32 fft2_write_index(u32 i, u32 f, bool after_fft16, u32 lowMe) {
+  if (after_fft16) { return ((lowMe % (WG / 2)) / 8) * (WG / 2) + i * 16 + (lowMe / (WG / 2)) * 8 + (lowMe & 7); }
+  return i * f + (lowMe & ~(f - 1)) * RADIX + (lowMe & (f - 1));
+}
+
 #define INCLUDE_FILE "shufl.cl"
 #include "expand.cl"
 
@@ -395,6 +404,19 @@ void OVERLOAD tabMul(Trig trig, T2 *u, u32 f, u32 me) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
+  }
+}
+
+// Twiddles for the middle radix-16 step of SIZE=2K, RADIX=8 (performed as 8 * 16 * 16, see fft_common).  Lane me = h * WG/2 + 8q + k
+// holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
+// The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
+void OVERLOAD tabMul16_2K(Trig trig, T2 *u, u32 me) {
+  trig += 7 * WG;
+  u32 q = (me % (WG / 2)) / 8;
+  u32 h = me / (WG / 2);
+  for (u32 i = 0; i < 8; ++i) {
+    if (i == 0 && h == 0) continue;
+    u[i] = cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
   }
 }
 
@@ -1140,6 +1162,20 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
+// Code for SIZE=2048, RADIX=8, threads=256.  Performed as 8 * 16 * 16 using the same pieces as SIZE=1024 (see above), which
+// needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
+#elif WG == 256 && RADIX == 8
+
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
+  tabMul(trig, u, 1, lowMe);
+  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+  tabMul16_2K(trig, u, lowMe);
+  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+
 #else
 
   // Old / original version
@@ -1241,6 +1277,19 @@ void OVERLOAD tabMul(TrigFP32 trig, F2 *u, u32 f, u32 me) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
+  }
+}
+
+// Twiddles for the middle radix-16 step of SIZE=2K, RADIX=8 (performed as 8 * 16 * 16, see fft_common).  Lane me = h * WG/2 + 8q + k
+// holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
+// The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
+void OVERLOAD tabMul16_2K(TrigFP32 trig, F2 *u, u32 me) {
+  trig += 7 * WG;
+  u32 q = (me % (WG / 2)) / 8;
+  u32 h = me / (WG / 2);
+  for (u32 i = 0; i < 8; ++i) {
+    if (i == 0 && h == 0) continue;
+    u[i] = cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
   }
 }
 
@@ -1743,6 +1792,20 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
+// Code for SIZE=2048, RADIX=8, threads=256.  Performed as 8 * 16 * 16 using the same pieces as SIZE=1024 (see above), which
+// needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
+#elif WG == 256 && RADIX == 8
+
+  fft8(u);
+  tabMul(trig, u, 1, lowMe);
+  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+  tabMul16_2K(trig, u, lowMe);
+  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+
 #else
 
   // Old / original version
@@ -1833,6 +1896,19 @@ void OVERLOAD tabMul(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
+  }
+}
+
+// Twiddles for the middle radix-16 step of SIZE=2K, RADIX=8 (performed as 8 * 16 * 16, see fft_common).  Lane me = h * WG/2 + 8q + k
+// holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
+// The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
+void OVERLOAD tabMul16_2K(TrigGF31 trig, GF31 *u, u32 me) {
+  trig += 7 * WG;
+  u32 q = (me % (WG / 2)) / 8;
+  u32 h = me / (WG / 2);
+  for (u32 i = 0; i < 8; ++i) {
+    if (i == 0 && h == 0) continue;
+    u[i] = cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
   }
 }
 
@@ -1966,6 +2042,20 @@ void OVERLOAD fft_common(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, u32
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
+// Code for SIZE=2048, RADIX=8, threads=256.  Performed as 8 * 16 * 16 using the same pieces as SIZE=1024 (see above), which
+// needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
+#elif WG == 256 && RADIX == 8
+
+  fft8(u);
+  tabMul(trig, u, 1, lowMe);
+  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+  tabMul16_2K(trig, u, lowMe);
+  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+
 #else
 
   // UNROLL (UNROLL_W / UNROLL_H) = 1 always unrolls this loop completely, 0 never unrolls it.  The pragmas work for both
@@ -2055,6 +2145,19 @@ void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
+  }
+}
+
+// Twiddles for the middle radix-16 step of SIZE=2K, RADIX=8 (performed as 8 * 16 * 16, see fft_common).  Lane me = h * WG/2 + 8q + k
+// holds radix-16 output 2i+h of column q in u[i], which gets multiplied by w256^(q*(2i+h)).  Lanes with h=0 skip the mul by w^0.
+// The 15 lines of 16 trig values (line j-1 holds w256^(q*j)) are stored after the standard 7 lines of WG trig values.
+void OVERLOAD tabMul16_2K(TrigGF61 trig, GF61 *u, u32 me) {
+  trig += 7 * WG;
+  u32 q = (me % (WG / 2)) / 8;
+  u32 h = me / (WG / 2);
+  for (u32 i = 0; i < 8; ++i) {
+    if (i == 0 && h == 0) continue;
+    u[i] = cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
   }
 }
 
@@ -2186,6 +2289,20 @@ void OVERLOAD fft_common(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, u32
   fft8(u);
   tabMul(trig, u, 8, me);
   shufl_and_fft2(lds, u, 8, numWG, me);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+
+// Code for SIZE=2048, RADIX=8, threads=256.  Performed as 8 * 16 * 16 using the same pieces as SIZE=1024 (see above), which
+// needs only two shufls.  The first radix-16 step's radix-2 is done in the first shufl_and_fft2, the second's in the second.
+#elif WG == 256 && RADIX == 8
+
+  fft8(u);
+  tabMul(trig, u, 1, lowMe);
+  shufl_and_fft2(lds, u, 1, numWG, lowMe);
+
+  if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+  tabMul16_2K(trig, u, lowMe);
+  shufl_and_fft2(lds, u, 16, true, numWG, lowMe);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
