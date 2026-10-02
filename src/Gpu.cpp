@@ -2513,42 +2513,68 @@ void Gpu::doDiv9(u64 E, Words& words) {
   doDiv3(E, words);
 }
 
+// Generating and verifying a proof can fail for transient reasons: a hardware error during the verification squarings (which
+// have no Gerbicz check), a bad GPU read, a file error.  So try hard before giving up: the initial power twice, then each lower
+// power down to 5, all verified (subject to -autoverify), and finally power 4 (or the initial power if lower) without verification.
+// Any failure moves on to the next attempt.
+// If every attempt fails, a file error (missing or corrupt proof residues, which a restart cannot fix) throws to the caller,
+// which reports the result without a proof.  Any other failure is most likely the GPU: e.g. a CUDA "sticky" error leaves the
+// context unusable for the rest of the process.  Then stop every worker without reporting the result.  The worktodo entry,
+// savefiles and proof residues are all kept, so a restart redoes the iterations since the last savefile and makes the proof.
 fs::path Gpu::saveProof(const Args& args, ProofSet& proofSet) {
-  bool problem_proof = false;
-  for ( ; ; ) {
-    for (int retry = 0; retry == 0 || (retry == 1 && !problem_proof); ++retry) {
-      try {
-        auto [proof, hashes] = proofSet.computeProof(this);
-        fs::path const tmpFile = proof.file(args.proofToVerifyDir);
-        proof.save(tmpFile);
+  u32 const initialPower = proofSet.power;
+  vector<pair<u32, bool>> attempts{{initialPower, true}, {initialPower, true}};      // {power, verify}
+  for (u32 p = initialPower; p-- > 5; ) { attempts.push_back({p, true}); }
+  attempts.push_back({min(initialPower, 4u), false});
 
-        fs::path proofFile = proof.file(args.proofResultDir);
+  bool fileError = false;      // whether the most recent attempt failed on a file error
+  for (auto [power, verify] : attempts) {
+    while (proofSet.power > power) { proofSet.reducePower(); }
+    fs::path tmpFile;
+    string why;
+    fileError = false;
+    try {
+      auto [proof, hashes] = proofSet.computeProof(this);
+      tmpFile = proof.file(args.proofToVerifyDir);
+      proof.save(tmpFile);
 
-        // Self-verification costs about E/2^power iterations and must finish in this same run, which is too
-        // expensive at low proof powers in time-limited environments; -autoverify sets the power it kicks in at.
-        bool const doVerify = proofSet.power >= args.proofVerify;
-        bool ok = true;
-        if (doVerify) {
-          ok = Proof::load(tmpFile).verify(this, hashes);
-          log("Proof '%s' verification %s\n", tmpFile.string().c_str(), ok ? "OK" : "FAILED");
-        } else {
-          log("Proof '%s' verification skipped (proof power %u below -autoverify %u)\n",
-              tmpFile.string().c_str(), proofSet.power, args.proofVerify);
-        }
-        if (ok) {
-          fancyRename(tmpFile, proofFile);
-          log("Proof '%s' generated\n", proofFile.string().c_str());
-          return proofFile;
-        }
-      } catch (const CRCError&) {
-        break;
+      fs::path proofFile = proof.file(args.proofResultDir);
+
+      // Self-verification costs about E/2^power iterations and must finish in this same run, which is too
+      // expensive at low proof powers in time-limited environments; -autoverify sets the power it kicks in at.
+      bool ok = true;
+      if (!verify) {
+        log("Proof '%s' verification skipped (last resort)\n", tmpFile.string().c_str());
+      } else if (proofSet.power >= args.proofVerify) {
+        ok = Proof::load(tmpFile).verify(this, hashes);
+        log("Proof '%s' verification %s\n", tmpFile.string().c_str(), ok ? "OK" : "FAILED");
+      } else {
+        log("Proof '%s' verification skipped (proof power %u below -autoverify %u)\n",
+            tmpFile.string().c_str(), proofSet.power, args.proofVerify);
       }
+      if (ok) {
+        fancyRename(tmpFile, proofFile);
+        log("Proof '%s' generated\n", proofFile.string().c_str());
+        return proofFile;
+      }
+      why = "verification failed";
+    } catch (const FileError& e) {
+      why = e.what();
+      fileError = true;
+    } catch (const char* mes) {
+      why = mes;
+    } catch (const string& mes) {
+      why = mes;
+    } catch (const std::exception& e) {
+      why = e.what();
     }
-    problem_proof = true;
-    proofSet.reducePower();
-    if (proofSet.power < 4) break;
+    if (Signal::stopRequested()) { throw "stop requested"; }
+    log("Proof of power %u failed (%s)\n", proofSet.power, why.c_str());
   }
-  throw "bad proof generation";
+  if (fileError) { throw "bad proof generation"; }
+  log("Proof generation failed, most likely a GPU error.  Stopping without reporting the result; restart to make the proof.\n");
+  Signal::requestStop();
+  throw "GPU error during proof generation";
 }
 
 PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
@@ -2998,7 +3024,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
             try {
               proofFile = saveProof(args, *proofSet);
             } catch (...) {
-              if (Signal::stopRequested()) { throw; }
+              if (Signal::stopRequested()) { throw; }     // including saveProof's stop after a GPU error
               log("Proof generation failed; reporting the result without a proof\n");
             }
           }

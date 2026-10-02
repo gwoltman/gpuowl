@@ -49,6 +49,8 @@ unsigned Signal::stopRequested() {
   return signalled;
 }
 
+void Signal::requestStop() { signalled = SIGTERM; }
+
 void Signal::release() {
   if (isOwner) {
     isOwner = false;

@@ -43,6 +43,24 @@ static void ensureContextCurrent() {
   }
 }
 
+// Several CUDA failures are reported to the caller as CL_OUT_OF_RESOURCES.  Log the real error so that it reaches gpuowl.log.
+// A "sticky" error (e.g. CUDA_ERROR_ILLEGAL_ADDRESS or CUDA_ERROR_LAUNCH_FAILED after a bad kernel) leaves the CUDA context
+// unusable for the rest of the process: every later call, including creating a new stream, fails with that error.
+static void logCudaError(const char* what, CUresult r) {
+  // A sticky error makes every later call fail too; the first few failures are the informative ones.
+  static std::atomic<int> nLogged{0};
+  if (nLogged.fetch_add(1) >= 20) { return; }
+  const char* errName = nullptr;
+  cuGetErrorName(r, &errName);
+  log("%s failed: %s (%d)\n", what, errName ? errName : "?", (int)r);
+}
+
+static int clResult(const char* what, CUresult r) {
+  if (r == CUDA_SUCCESS) { return CL_SUCCESS; }
+  logCudaError(what, r);
+  return CL_OUT_OF_RESOURCES;
+}
+
 // Reference-count CUmodules so they get unloaded once nothing uses them.
 //
 // In OpenCL, clCreateKernel retains the program, so the underlying code object
@@ -154,6 +172,7 @@ cl_context clCreateContext(const intptr_t*, unsigned nDevices, const cl_device_i
   CUresult const r = cuCtxCreate(&ctx->ctx, 0, ctx->dev);
 #endif
   if (r != CUDA_SUCCESS) {
+    logCudaError("cuCtxCreate", r);
     delete ctx;
     if (err) *err = CL_OUT_OF_RESOURCES;
     return nullptr;
@@ -827,6 +846,7 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
   cuCtxSetCurrent(ctx->ctx);
   CUresult const r = cuStreamCreate(&q->stream, CU_STREAM_NON_BLOCKING);
   if (r != CUDA_SUCCESS) {
+    logCudaError("cuStreamCreate", r);
     delete q;
     if (err) *err = CL_OUT_OF_RESOURCES;
     return nullptr;
@@ -901,7 +921,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
     CUresult const r = launchKernel(k, numBlocksX, numBlocksY, lsX, lsY, q->stream, argPtrs);
     cuEventRecord(ev->end, q->stream);
     *event = ev;
-    return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+    return clResult("clEnqueueNDRangeKernel", r);
   }
   if (doProfile) {
     static std::map<std::string, double> kTime;
@@ -942,7 +962,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
       fprintf(stderr, "  TOTAL: %.1f ms\n===\n\n", totalMs);
     }
     if (event) *event = nullptr;
-    return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+    return clResult("clEnqueueNDRangeKernel", r);
   }
 
   CUresult const r = launchKernel(k, numBlocksX, numBlocksY, lsX, lsY, q->stream, argPtrs);
@@ -953,7 +973,7 @@ int clEnqueueNDRangeKernel(cl_command_queue q, cl_kernel k, unsigned workDim,
   }
 
   if (event) *event = nullptr;
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clEnqueueNDRangeKernel", r);
 }
 
 int clEnqueueReadBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
@@ -966,7 +986,7 @@ int clEnqueueReadBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
     r = cuStreamSynchronize(q->stream);
   }
   if (event) *event = nullptr;
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clEnqueueReadBuffer", r);
 }
 
 int clEnqueueWriteBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
@@ -978,7 +998,7 @@ int clEnqueueWriteBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking,
     r = cuStreamSynchronize(q->stream);
   }
   if (event) *event = nullptr;
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clEnqueueWriteBuffer", r);
 }
 
 int clEnqueueCopyBuffer(cl_command_queue q, cl_mem src, cl_mem dst,
@@ -986,7 +1006,7 @@ int clEnqueueCopyBuffer(cl_command_queue q, cl_mem src, cl_mem dst,
                          unsigned  /*nWaits*/, const cl_event*  /*waits*/, cl_event* event) {
   CUresult const r = cuMemcpyDtoDAsync(dst->ptr + dstOffset, src->ptr + srcOffset, size, q->stream);
   if (event) *event = nullptr;
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clEnqueueCopyBuffer", r);
 }
 
 int clEnqueueFillBuffer(cl_command_queue q, cl_mem buf, const void* pattern,
@@ -1025,7 +1045,7 @@ int clEnqueueFillBuffer(cl_command_queue q, cl_mem buf, const void* pattern,
     return CL_INVALID_VALUE;
   }
   if (event) *event = nullptr;
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clEnqueueFillBuffer", r);
 }
 
 int clEnqueueMarkerWithWaitList(cl_command_queue q, unsigned nWaits, const cl_event* waits, cl_event* event) {
@@ -1050,8 +1070,7 @@ int clFlush(cl_command_queue  /*q*/) {
 }
 
 int clFinish(cl_command_queue q) {
-  if (q) cuStreamSynchronize(q->stream);
-  return CL_SUCCESS;
+  return q ? clResult("clFinish", cuStreamSynchronize(q->stream)) : CL_SUCCESS;
 }
 
 // ---- Events ----
@@ -1064,7 +1083,8 @@ int clReleaseEvent(cl_event ev) {
 int clWaitForEvents(unsigned n, const cl_event* events) {
   for (unsigned i = 0; i < n; i++) {
     if (events[i] && events[i]->end) {
-      cuEventSynchronize(events[i]->end);
+      int const err = clResult("clWaitForEvents", cuEventSynchronize(events[i]->end));
+      if (err != CL_SUCCESS) { return err; }
     }
   }
   return CL_SUCCESS;
@@ -1465,7 +1485,7 @@ bool clIsGraphSupported(cl_device_id dev) {
 int clGraphBeginRecording(cl_command_queue q) {
   ensureContextCurrent();
   CUresult r = cuStreamBeginCapture(q->stream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL);
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clGraphBeginRecording", r);
 }
 
 int clGraphEndRecording(cl_command_queue q, cl_graph* graph) {
@@ -1481,13 +1501,13 @@ int clGraphEndRecording(cl_command_queue q, cl_graph* graph) {
   if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, nullptr, nullptr, 0);
 #endif
   *graph = g;
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clGraphEndRecording", r);
 }
 
 int clGraphLaunch(cl_graph graph) {
   ensureContextCurrent();
   CUresult r = cuGraphLaunch(graph->graphExec, graph->queue->stream);
-  return r == CUDA_SUCCESS ? CL_SUCCESS : CL_OUT_OF_RESOURCES;
+  return clResult("clGraphLaunch", r);
 }
 
 int clReleaseGraph(cl_graph graph) {
