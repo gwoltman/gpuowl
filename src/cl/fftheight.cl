@@ -18,8 +18,8 @@
 #include "trig.cl"
 #include "fftbase.cl"
 
-#if SMALL_HEIGHT != 256 && SMALL_HEIGHT != 512 && SMALL_HEIGHT != 1024
-#error SMALL_HEIGHT must be one of: 256, 512, 1024
+#if SMALL_HEIGHT != 256 && SMALL_HEIGHT != 512 && SMALL_HEIGHT != 1024 && SMALL_HEIGHT != 2048
+#error SMALL_HEIGHT must be one of: 256, 512, 1024, 2048
 #endif
 
 #if !INPLACE

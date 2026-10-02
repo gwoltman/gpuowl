@@ -91,7 +91,7 @@ vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
   vector<FFTShape> configs;
   for (enum FFT_TYPES const type : {FFT64, FFT6431, FFT3161, FFT3261, FFT61, FFT323161}) {
     for (u32 const width : {256, 512, 1024, 2048, 4096}) {
-      for (u32 const height : {256, 512, 1024}) {
+      for (u32 const height : {256, 512, 1024, 2048}) {
         for (u32 const middle : {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
           if (type != FFT64 && type != FFT32 && (middle & (middle - 1))) continue;  // Reject non-power-of-two NTTs
           u32 const sz = width * height * middle * 2;
@@ -140,8 +140,8 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
 
   // Same limits FFTConfig applies to a full spec.  Shapes can also arrive here from -tune / -info / size ranges, and a
   // too-small one (e.g. 128:2:128) drives middle to 0 in the fallback below and then loops forever.
-  if ((w != 256 && w != 512 && w != 1024 && w != 2048 && w != 4096) || m < 2 || m > 16 || (h != 256 && h != 512 && h != 1024)) {
-    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 2..16, height 256/512/1024)\n", w, m, h);
+  if ((w != 256 && w != 512 && w != 1024 && w != 2048 && w != 4096) || m < 2 || m > 16 || (h != 256 && h != 512 && h != 1024 && h != 2048)) {
+    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 2..16, height 256/512/1024/2048)\n", w, m, h);
     throw "Invalid FFT shape";
   }
 
@@ -249,8 +249,8 @@ FFTConfig::FFTConfig(const string& spec) {
       log("Middle must be between 2 and 16.\n");
       throw "Invalid FFT spec";
     }
-    if (h != 256 && h != 512 && h != 1024) {
-      log("Height must be 256, 512, 1024.\n");
+    if (h != 256 && h != 512 && h != 1024 && h != 2048) {
+      log("Height must be 256, 512, 1024, or 2048.\n");
       throw "Invalid FFT spec";
     }
     if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1))) {
