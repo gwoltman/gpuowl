@@ -28,6 +28,19 @@ int Args::value(const string& key, int valNotFound) const {
   return atoi(it->second.c_str());
 }
 
+int Args::valueFor(const string& key, int valNotFound, const string& fftSpec, const vector<KeyVal>& extraConf) const {
+  for (const auto& [k, v] : extraConf) {
+    if (k == key) { return atoi(v.c_str()); }
+  }
+  if (auto it = flags.find(key); it != flags.end()) { return atoi(it->second.c_str()); }
+  if (auto it = perFftConfig.find(fftSpec); it != perFftConfig.end()) {
+    for (const auto& [k, v] : it->second) {
+      if (k == key) { return atoi(v.c_str()); }
+    }
+  }
+  return valNotFound;
+}
+
 string Args::mergeArgs(int argc, char **argv) {
   string ret;
   for (int i = 1; i < argc; ++i) {
