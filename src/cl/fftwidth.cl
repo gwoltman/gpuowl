@@ -9,6 +9,7 @@
 #define SHUFL_BYTES   SHUFL_BYTES_W
 #define LDSMUL        LDSMUL_W
 #define UNROLL        UNROLL_W
+#define HOIST         HOIST_W
 #define SAVE_ONE_MUL  0          // Radeon VII weirdness where saving one mul in width variant 2 was slower
 #define DOING_HEIGHT  0          // Flags to work around any optimizer weirdness where common code performs better in fft_WIDTH and worse in fft_HEIGHT or vice versa
 #define DOING_WIDTH   1

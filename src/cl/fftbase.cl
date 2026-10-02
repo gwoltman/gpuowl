@@ -264,6 +264,7 @@ void OVERLOAD chainMul8(T2 *u, T2 w) {
 #endif
 
 void OVERLOAD chainMul(T2 *u, T2 w) {
+  if (HOIST == 2) { OPAQUE_F64(w.x); OPAQUE_F64(w.y); }   // Power chain not computed before the butterflies preceding this call (see HOIST_W/H)
   // Do a length 4 chain mul, w must not be in Fancy format
   if (RADIX == 4) chainMul4(u, w);
   // Do a length 8 chain mul, w must be in Fancy format
@@ -350,6 +351,7 @@ void OVERLOAD fft_RADIX_skip1(T2 *u) {
 }
 
 void OVERLOAD tabMul(Trig trig, T2 *u, u32 f, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
 #if 0
   u32 p = me / f * f;
 #else
@@ -546,7 +548,7 @@ void partial_tabMul4(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
     lds1[me] = preloads[4];     // Preloaded sine/cosine values
     // Cosine j is stored at WG + (j ^ ((j / (WG/4)) & 3)).  Without the XOR, the f == 4 reads below hit 4 addresses WG/4 apart
     // (the same LDS bank) in every group of 16 lanes, a 4-way bank conflict.
-    lds1[WG + (me ^ ((me / (WG/4)) & 3))] = preloads[5];  // Preloaded cosine values
+    if (HOIST < 3) lds1[WG + (me ^ ((me / (WG/4)) & 3))] = preloads[5];  // Preloaded cosine values
   }
 
   // Apply sine/cosines
@@ -559,7 +561,11 @@ void partial_tabMul4(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
   }
 
   // Preload cosines for finishing first tabMul (done after using up preloaded sine/cosine values).  Hopefully, shufl will hide the latency.
-  if (f == 1) {
+  if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
+  if (HOIST == 3) {
+    // The cosines are loaded after the shufl, in finish_tabMul4_fft4
+  }
+  else if (f == 1) {
     // Read pairs of lines to make AMD happy with T2 global memory loads
     for (u32 i = 0; i < 4; i += 2) {
       Trig trig2 = (Trig) (trig1 + i*WG);
@@ -582,6 +588,24 @@ void partial_tabMul4(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
 void finish_tabMul4_fft4(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me, u32 save_one_more_mul) {
   TrigSingle trig1 = (TrigSingle) trig;
 
+  // HOIST == 3: load the cosines here, after the shufl, rather than keeping them live across it.  For f > 1 these are the values
+  // partial_tabMul4 would have read from LDS: cosine j is trig1[8*WG + j].
+  if (HOIST == 3) {
+    if (f == 1) {
+      for (u32 i = 0; i < 4; i += 2) {
+        Trig trig2 = (Trig) (trig1 + 4*WG + i*WG);
+        T2 cosines = TFLOAD(&trig2[me]);
+        preloads[i] = cosines.x;
+        preloads[i+1] = cosines.y;
+      }
+    } else {
+      for (u32 k = 0; k < 4; ++k) {
+        if (k == 0 && f >= WG/4) continue;
+        preloads[k] = TFLOAD(&trig1[8*WG + ((me/f) & 3) * (WG/4) + ((k * WG + me) / (4*f)) * (f/4)]);
+      }
+    }
+  }
+
   //
   // Mimic a traditional fft4 but use FMA instructions to apply the cosine multiplies.
   //
@@ -594,9 +618,10 @@ void finish_tabMul4_fft4(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
   X2_via_FMA(u[1], preloads[3], u[3]);  u[3] = mul_t4(u[3]);
 
   // Preload one line of sine/cosines and one line of cosines for later tabMuls.  We'll later broadcast these values as needed using LDS.
+  if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
   if (f == 1) {
     preloads[4] = TFLOAD(&trig1[3*WG + me]);             // Sine/cosines for later tabMuls
-    preloads[5] = TFLOAD(&trig1[4*WG + 4*WG + me]);      // Cosines for later tabMuls
+    if (HOIST < 3) preloads[5] = TFLOAD(&trig1[4*WG + 4*WG + me]);      // Cosines for later tabMuls
   }
 
   // Do the last level of fft4 applying cosine1
@@ -636,7 +661,7 @@ void partial_tabMul8(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
   if (f > 1) {
     bar(WG);
     lds1[me] = preloads[8];     // Preloaded sine/cosine values
-    lds1[WG+me] = preloads[9];  // Preloaded cosine values
+    if (HOIST < 3) lds1[WG+me] = preloads[9];  // Preloaded cosine values
   }
 
   // Apply sine/cosines
@@ -649,7 +674,11 @@ void partial_tabMul8(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
   }
 
   // Preload cosines for finishing first tabMul (done after using up preloaded sine/cosine values).  Hopefully, shufl will hide the latency.
-  if (f == 1) {
+  if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
+  if (HOIST == 3) {
+    // The cosines are loaded after the shufl, in finish_tabMul8_fft8
+  }
+  else if (f == 1) {
     // Read pairs of lines to make AMD happy with T2 global memory loads
     for (u32 i = 0; i < 8; i += 2) {
       Trig trig2 = (Trig) (trig1 + i*WG);
@@ -676,6 +705,24 @@ void partial_tabMul8(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
 void finish_tabMul8_fft8(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me, u32 save_one_more_mul) {
   TrigSingle trig1 = (TrigSingle) trig;
 
+  // HOIST == 3: load the cosines here, after the shufl, rather than keeping them live across it.  For f > 1 these are the values
+  // partial_tabMul8 would have read from LDS: cosine j is trig1[16*WG + j].
+  if (HOIST == 3) {
+    if (f == 1) {
+      for (u32 i = 0; i < 8; i += 2) {
+        Trig trig2 = (Trig) (trig1 + 8*WG + i*WG);
+        T2 cosines = TFLOAD(&trig2[me]);
+        preloads[i] = cosines.x;
+        preloads[i+1] = cosines.y;
+      }
+    } else {
+      for (u32 k = 0; k < 8; ++k) {
+        if (k == 0 && f >= WG/8) continue;
+        preloads[k] = TFLOAD(&trig1[16*WG + ((me/f) & 7) * (WG/8) + ((k * WG + me) / (8*f)) * (f/8)]);
+      }
+    }
+  }
+
   //
   // Mimic a traditional fft8 but use FMA instructions to apply the cosine multiplies.
   //
@@ -692,9 +739,10 @@ void finish_tabMul8_fft8(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
     X2_via_FMA(u[3], preloads[7], u[7]);  u[7] = mul_3t8_delayed(u[7]);
 
     // Preload one line of sine/cosines and one line of cosines for second tabMul.  We'll later broadcast these values as needed using LDS.
+    if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
     if (f == 1) {
       preloads[8] = TFLOAD(&trig1[7*WG + me]);             // Sine/cosines for second tabMul
-      preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
+      if (HOIST < 3) preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
     }
 
     // Do the fft4Core and fft4CoreSpecial applying cosine2, cosine3/cosine1
@@ -723,9 +771,10 @@ void finish_tabMul8_fft8(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
     X2_via_FMA(u[3], preloads[7], u[7]);  u[7] = mul_3t8_delayed(u[7]);
 
     // Preload one line of sine/cosines and one line of cosines for second tabMul.  We'll later broadcast these values as needed using LDS.
+    if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
     if (f == 1) {
       preloads[8] = TFLOAD(&trig1[7*WG + me]);             // Sine/cosines for second tabMul
-      preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
+      if (HOIST < 3) preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
     }
 
     // Do the fft4Core and fft4CoreSpecial applying cosine2, cosine3
@@ -788,25 +837,33 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   trig += WG*4 + 2*WG*4;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul4_trig(trig, preloads, 1, numWG, lowMe);
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This stage's LDS addresses and preloads are not computed before this point (see HOIST_W/H)
+  preload_tabMul4_trig(trig, preloads, 1, numWG, me);
 
   // Do first fft4, partial tabMul, and shufl.
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft4_skip1(u); else fft4(u);
-  partial_tabMul4(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  partial_tabMul4(partitioned_lds, trig, preloads, u, 1, numWG, me);
+  shufl(lds, u, 1, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the first tabMul and perform second fft4.  Do second partial tabMul and shufl.
-  finish_tabMul4_fft4(trig, preloads, u, 1, numWG, lowMe, 1);
-  partial_tabMul4(partitioned_lds, trig, preloads, u, 4, numWG, lowMe);
-  shufl(lds, u, 4, numWG, lowMe);
+  finish_tabMul4_fft4(trig, preloads, u, 1, numWG, me, 1);
+  partial_tabMul4(partitioned_lds, trig, preloads, u, 4, numWG, me);
+  shufl(lds, u, 4, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the second tabMul and perform third fft4.  Do third partial tabMul and shufl.
-  finish_tabMul4_fft4(trig, preloads, u, 4, numWG, lowMe, 1);
-  partial_tabMul4(partitioned_lds, trig, preloads, u, 16, numWG, lowMe);
-  shufl(lds, u, 16, numWG, lowMe);
+  finish_tabMul4_fft4(trig, preloads, u, 4, numWG, me, 1);
+  partial_tabMul4(partitioned_lds, trig, preloads, u, 16, numWG, me);
+  shufl(lds, u, 16, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish third tabMul and perform final fft4.
-  finish_tabMul4_fft4(trig, preloads, u, 16, numWG, lowMe, 1);
+  finish_tabMul4_fft4(trig, preloads, u, 16, numWG, me, 1);
 
 // Variant 2 code for SIZE=512, RADIX=8
 #elif WG == 64 && RADIX == 8 && VARIANT == 2
@@ -815,20 +872,26 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   trig += WG*8 + SAVE_ONE_MUL*2*WG*8;   // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul8_trig(trig, preloads, 1, numWG, lowMe);
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This stage's LDS addresses and preloads are not computed before this point (see HOIST_W/H)
+  preload_tabMul8_trig(trig, preloads, 1, numWG, me);
 
   // Do first fft8, partial tabMul, and shufl.
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
-  partial_tabMul8(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  partial_tabMul8(partitioned_lds, trig, preloads, u, 1, numWG, me);
+  shufl(lds, u, 1, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the first tabMul and perform second fft8.  Do second partial tabMul and shufl.
-  finish_tabMul8_fft8(trig, preloads, u, 1, numWG, lowMe, SAVE_ONE_MUL);  // We'd rather set save_one_more_mul to 1
-  partial_tabMul8(partitioned_lds, trig, preloads, u, 8, numWG, lowMe);
-  shufl(lds, u, 8, numWG, lowMe);
+  finish_tabMul8_fft8(trig, preloads, u, 1, numWG, me, SAVE_ONE_MUL);  // We'd rather set save_one_more_mul to 1
+  partial_tabMul8(partitioned_lds, trig, preloads, u, 8, numWG, me);
+  shufl(lds, u, 8, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish second tabMul and perform final fft8.
-  finish_tabMul8_fft8(trig, preloads, u, 8, numWG, lowMe, SAVE_ONE_MUL);  // We'd rather set save_one_more_mul to 1
+  finish_tabMul8_fft8(trig, preloads, u, 8, numWG, me, SAVE_ONE_MUL);  // We'd rather set save_one_more_mul to 1
 
 // Variant 2 code for SIZE=1024, RADIX=4
 #elif WG == 256 && RADIX == 4 && VARIANT == 2
@@ -837,30 +900,40 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   trig += WG*4 + 2*WG*4;      // Skip past old FFT_width trig values.  Also skip past !save_one_more_mul trig values.
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul4_trig(trig, preloads, 1, numWG, lowMe);
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This stage's LDS addresses and preloads are not computed before this point (see HOIST_W/H)
+  preload_tabMul4_trig(trig, preloads, 1, numWG, me);
 
   // Do first fft4, partial tabMul, and shufl.
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft4_skip1(u); else fft4(u);
-  partial_tabMul4(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  partial_tabMul4(partitioned_lds, trig, preloads, u, 1, numWG, me);
+  shufl(lds, u, 1, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the first tabMul and perform second fft4.  Do second partial tabMul and shufl.
-  finish_tabMul4_fft4(trig, preloads, u, 1, numWG, lowMe, 1);
-  partial_tabMul4(partitioned_lds, trig, preloads, u, 4, numWG, lowMe);
-  shufl(lds, u, 4, numWG, lowMe);
+  finish_tabMul4_fft4(trig, preloads, u, 1, numWG, me, 1);
+  partial_tabMul4(partitioned_lds, trig, preloads, u, 4, numWG, me);
+  shufl(lds, u, 4, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the second tabMul and perform third fft4.  Do third partial tabMul and shufl.
-  finish_tabMul4_fft4(trig, preloads, u, 4, numWG, lowMe, 1);
-  partial_tabMul4(partitioned_lds, trig, preloads, u, 16, numWG, lowMe);
-  shufl(lds, u, 16, numWG, lowMe);
+  finish_tabMul4_fft4(trig, preloads, u, 4, numWG, me, 1);
+  partial_tabMul4(partitioned_lds, trig, preloads, u, 16, numWG, me);
+  shufl(lds, u, 16, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the third tabMul and perform fourth fft4.  Do fourth partial tabMul and shufl.
-  finish_tabMul4_fft4(trig, preloads, u, 16, numWG, lowMe, 1);
-  partial_tabMul4(partitioned_lds, trig, preloads, u, 64, numWG, lowMe);
-  shufl(lds, u, 64, numWG, lowMe);
+  finish_tabMul4_fft4(trig, preloads, u, 16, numWG, me, 1);
+  partial_tabMul4(partitioned_lds, trig, preloads, u, 64, numWG, me);
+  shufl(lds, u, 64, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish fourth tabMul and perform final fft4.
-  finish_tabMul4_fft4(trig, preloads, u, 64, numWG, lowMe, 1);
+  finish_tabMul4_fft4(trig, preloads, u, 64, numWG, me, 1);
 
 // Variant 2 code for SIZE=1024, RADIX=8, threads=128.  Same 8*8*16 structure as the plain version below,
 // but the first radix-8 stage (and its tabMul) is done with the FMA-based partial/finish tabMul8 machinery.
@@ -873,19 +946,25 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   Trig trig2 = trig + WG*8;     // Skip past old FFT_width trig values to the !save_one_more_mul trig values.  Keep trig unmodified for the second stage's plain tabMul.
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul8_trig(trig2, preloads, 1, numWG, lowMe);
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This stage's LDS addresses and preloads are not computed before this point (see HOIST_W/H)
+  preload_tabMul8_trig(trig2, preloads, 1, numWG, me);
 
   // Do first fft8, partial tabMul, and shufl.
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
-  partial_tabMul8(partitioned_lds, trig2, preloads, u, 1, numWG, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  partial_tabMul8(partitioned_lds, trig2, preloads, u, 1, numWG, me);
+  shufl(lds, u, 1, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the first tabMul and perform second fft8.
-  finish_tabMul8_fft8(trig2, preloads, u, 1, numWG, lowMe, 0);
+  finish_tabMul8_fft8(trig2, preloads, u, 1, numWG, me, 0);
 
   // Second radix-8 stage stays plain -- shufl_and_fft2 doesn't care how the twiddle was applied.
-  tabMul(trig, u, 8, lowMe);
-  shufl_and_fft2(lds, u, 8, numWG, lowMe);
+  tabMul(trig, u, 8, me);
+  shufl_and_fft2(lds, u, 8, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -896,25 +975,33 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   trig += WG*8;               // Skip past old FFT_width trig values to the !save_one_more_mul trig values
 
   // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
-  preload_tabMul8_trig(trig, preloads, 1, numWG, lowMe);
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This stage's LDS addresses and preloads are not computed before this point (see HOIST_W/H)
+  preload_tabMul8_trig(trig, preloads, 1, numWG, me);
 
   // Do first fft8, partial tabMul, and shufl.
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
-  partial_tabMul8(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  partial_tabMul8(partitioned_lds, trig, preloads, u, 1, numWG, me);
+  shufl(lds, u, 1, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the first tabMul and perform second fft8.  Do second partial tabMul and shufl.
-  finish_tabMul8_fft8(trig, preloads, u, 1, numWG, lowMe, 0);  // We'd rather set save_one_more_mul to 1
-  partial_tabMul8(partitioned_lds, trig, preloads, u, 8, numWG, lowMe);
-  shufl(lds, u, 8, numWG, lowMe);
+  finish_tabMul8_fft8(trig, preloads, u, 1, numWG, me, 0);  // We'd rather set save_one_more_mul to 1
+  partial_tabMul8(partitioned_lds, trig, preloads, u, 8, numWG, me);
+  shufl(lds, u, 8, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish the second tabMul and perform third fft8.  Do third partial tabMul and shufl.
-  finish_tabMul8_fft8(trig, preloads, u, 8, numWG, lowMe, 0);  // We'd rather set save_one_more_mul to 1
-  partial_tabMul8(partitioned_lds, trig, preloads, u, 64, numWG, lowMe);
-  shufl(lds, u, 64, numWG, lowMe);
+  finish_tabMul8_fft8(trig, preloads, u, 8, numWG, me, 0);  // We'd rather set save_one_more_mul to 1
+  partial_tabMul8(partitioned_lds, trig, preloads, u, 64, numWG, me);
+  shufl(lds, u, 64, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
 
   // Finish third tabMul and perform final fft8.
-  finish_tabMul8_fft8(trig, preloads, u, 64, numWG, lowMe, 0);  // We'd rather set save_one_more_mul to 1
+  finish_tabMul8_fft8(trig, preloads, u, 64, numWG, me, 0);  // We'd rather set save_one_more_mul to 1
 
 
 // Custom code for SIZE=256, RADIX=8, threads=32.  Performed as 4 * 8 * 8.  Radix-8 allows fewer
@@ -1035,15 +1122,21 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 // Code for SIZE=1024, RADIX=8
 #elif WG == 128 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
+  if (HOIST >= 1 && VARIANT == 0) { OPAQUE_F64(w.x); OPAQUE_F64(w.y); }   // Nor its twiddle power chain
   if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
   if (VARIANT == 0) chainMul(u, w);
-  else tabMul(trig, u, 1, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  else tabMul(trig, u, 1, me);
+  shufl(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
+  if (HOIST >= 1 && VARIANT == 0) { OPAQUE_F64(w.x); OPAQUE_F64(w.y); }
   fft8(u);
   if (VARIANT == 0) chainMul(u, w = bcast(w, 8));
-  else tabMul(trig, u, 8, lowMe);
-  shufl_and_fft2(lds, u, 8, numWG, lowMe);
+  else tabMul(trig, u, 8, me);
+  shufl_and_fft2(lds, u, 8, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -1059,10 +1152,13 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
+    u32 me = lowMe;
+    if (HOIST >= 1) OPAQUE(me);     // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
+    if (HOIST >= 1 && VARIANT == 0) { OPAQUE_F64(w.x); OPAQUE_F64(w.y); }   // Nor its twiddle power chain
     if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2 && s == 1) fft_RADIX_skip1(u); else fft_RADIX(u);
     if (VARIANT == 0) chainMul(u, w = bcast(w, s));
-    else tabMul(trig, u, s, lowMe);
-    shufl(lds, u, s, numWG, lowMe);
+    else tabMul(trig, u, s, me);
+    shufl(lds, u, s, numWG, me);
   }
   fft_RADIX(u);
 
@@ -1123,6 +1219,7 @@ void OVERLOAD chainMul(F2 *u, F2 w) {
 }
 
 void OVERLOAD tabMul(TrigFP32 trig, F2 *u, u32 f, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   u32 p = me & ~(f - 1);
 
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
@@ -1632,13 +1729,17 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 // Code for SIZE=1024, RADIX=8
 #elif WG == 128 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
   fft8(u);
-  tabMul(trig, u, 1, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  tabMul(trig, u, 1, me);
+  shufl(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
   fft8(u);
-  tabMul(trig, u, 8, lowMe);
-  shufl_and_fft2(lds, u, 8, numWG, lowMe);
+  tabMul(trig, u, 8, me);
+  shufl_and_fft2(lds, u, 8, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -1654,9 +1755,11 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
   #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
+    u32 me = lowMe;
+    if (HOIST >= 1) OPAQUE(me);     // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
     fft_RADIX(u);
-    tabMul(trig, u, s, lowMe);
-    shufl(lds, u, s, numWG, lowMe);
+    tabMul(trig, u, s, me);
+    shufl(lds, u, s, numWG, me);
   }
   fft_RADIX(u);
 
@@ -1713,6 +1816,7 @@ void OVERLOAD chainMul(GF31 *u, GF31 w) {
 }
 
 void OVERLOAD tabMul(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   u32 p = me & ~(f - 1);
 
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
@@ -1848,13 +1952,17 @@ void OVERLOAD fft_common(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, u32
 // Code for SIZE=1024, RADIX=8
 #elif WG == 128 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
   fft8(u);
-  tabMul(trig, u, 1, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  tabMul(trig, u, 1, me);
+  shufl(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
   fft8(u);
-  tabMul(trig, u, 8, lowMe);
-  shufl_and_fft2(lds, u, 8, numWG, lowMe);
+  tabMul(trig, u, 8, me);
+  shufl_and_fft2(lds, u, 8, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -1868,9 +1976,11 @@ void OVERLOAD fft_common(local GF31 *lds, GF31 *u, TrigGF31 trig, u32 numWG, u32
   #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
+    u32 me = lowMe;
+    if (HOIST >= 1) OPAQUE(me);     // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
     fft_RADIX(u);
-    tabMul(trig, u, s, lowMe);
-    shufl(lds, u, s, numWG, lowMe);
+    tabMul(trig, u, s, me);
+    shufl(lds, u, s, numWG, me);
   }
   fft_RADIX(u);
 
@@ -1928,6 +2038,7 @@ void OVERLOAD chainMul(GF61 *u, GF61 w) {
 }
 
 void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
+  if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   u32 p = me & ~(f - 1);
 
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
@@ -2064,13 +2175,17 @@ void OVERLOAD fft_common(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, u32
 // Code for SIZE=1024, RADIX=8
 #elif WG == 128 && RADIX == 8
 
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
   fft8(u);
-  tabMul(trig, u, 1, lowMe);
-  shufl(lds, u, 1, numWG, lowMe);
+  tabMul(trig, u, 1, me);
+  shufl(lds, u, 1, numWG, me);
 
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
   fft8(u);
-  tabMul(trig, u, 8, lowMe);
-  shufl_and_fft2(lds, u, 8, numWG, lowMe);
+  tabMul(trig, u, 8, me);
+  shufl_and_fft2(lds, u, 8, numWG, me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
 
@@ -2084,9 +2199,11 @@ void OVERLOAD fft_common(local GF61 *lds, GF61 *u, TrigGF61 trig, u32 numWG, u32
   #pragma unroll 1
 #endif
   for (u32 s = 1; s < WG; s *= RADIX) {
+    u32 me = lowMe;
+    if (HOIST >= 1) OPAQUE(me);     // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
     fft_RADIX(u);
-    tabMul(trig, u, s, lowMe);
-    shufl(lds, u, s, numWG, lowMe);
+    tabMul(trig, u, s, me);
+    shufl(lds, u, s, numWG, me);
   }
   fft_RADIX(u);
 

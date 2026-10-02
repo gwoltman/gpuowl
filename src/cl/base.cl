@@ -8,6 +8,12 @@ IN_WG, OUT_WG: 64, 128, 256. Default: 128.
 IN_SIZEX, OUT_SIZEX: 4, 8, 16, 32. Default: 16.
 UNROLL_W: 0, 1.  1 = fully unroll fft_WIDTH's radix loop (variants 0 and 1, FP32, NTTs), 0 = never unroll it.  Default: 0 on AMD, 1 on Nvidia.
 UNROLL_H: 0, 1.  Same for fft_HEIGHT.  Default: 1 (0 on AMD for SMALL_HEIGHT >= 1024).
+HOIST_W, HOIST_H: 0..3.  Limits how early the compiler may compute fft_WIDTH's / fft_HEIGHT's per-radix-step LDS addresses, twiddle loads
+  and (variant 0) twiddle power chains.  Hoisting these to the start of the kernel can cost many VGPRs.  0 = compiler decides.
+  1 = not before the start of their radix step (variant 2: their stage, i.e. after the previous shufl).
+  2 = additionally, twiddle loads and power chains not before that step's butterflies (applied in tabMul and chainMul), and
+      variant 2's next-stage preloads not before the point partial_tabMul / finish_tabMul issue them.
+  3 = variant 2 only: additionally, load the cosines after the shufl instead of keeping them live across it.  Default: 0.
 */
 
 /* List of code-specific macros. These are set by the C++ host code or derived
@@ -207,6 +213,13 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #else
 #define UNROLL_W 1
 #endif
+#endif
+
+#if !defined(HOIST_W)
+#define HOIST_W 0
+#endif
+#if !defined(HOIST_H)
+#define HOIST_H 0
 #endif
 
 #if !defined(UNROLL_H)
@@ -991,12 +1004,16 @@ void barsync(const u32 numWG, const u32 WG) {
 
 // OPAQUE(x) hides x's value from the optimizer, forcing expressions that use x afterwards to be recomputed rather than
 // reused from registers.  The asm constraint letter is backend-specific, and the other backend's is a compile error.
+// OPAQUE takes a 32-bit integer, OPAQUE_F64 a double (PTX needs a different constraint letter for each).
 #if HAS_ASM
 #define OPAQUE(x) __asm volatile("" : "+v"(x))
+#define OPAQUE_F64(x) __asm volatile("" : "+v"(x))
 #elif HAS_PTX
 #define OPAQUE(x) __asm volatile("" : "+r"(x))
+#define OPAQUE_F64(x) __asm volatile("" : "+d"(x))
 #else
 #define OPAQUE(x)
+#define OPAQUE_F64(x)
 #endif
 
 // nVidia GPUs (Hopper architecture sm 9.0 and later) support Programatic Dependent Launch where the tail end execution of one kernel can overlap
