@@ -1238,7 +1238,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     throw "FFT size too large";
   }
 
-  useLongCarry = useLongCarry || (bitsPerWord < 10.0);
+  // carryFused computes each pair's carry-out before it knows the carry-in from the previous line, then adds the carry-in to
+  // the pair's low word and leaves that word's excess, about sqrt(N) in size, unnormalized in the high word.  When 2^bpw is not
+  // well above sqrt(N) the inflated words make the next squaring's outputs larger, which inflates the words further, until the
+  // convolution overflows.  On a Titan V this failed up to bpw = log2(N)/2 - 0.2 and showed inflated carries up to
+  // log2(N)/2 - 0.1; a model of the carry scheme (tools/fused_carry_model.py) is back to long carry's magnitudes by log2(N)/2 + 0.5.
+  useLongCarry = useLongCarry || (bitsPerWord < std::max(10.0, 0.5 * log2(double(N)) + 0.5));
 
   if (useLongCarry) { log("Using long carry!\n"); }
 
