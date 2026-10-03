@@ -163,11 +163,15 @@ KERNEL_CAP(IN_WG) fftMiddleInGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
   readMiddleInLine(u, in31, y, x);
 
+#if PFA
+  pfaMiddleIn(u, x, y, trig31);
+#else
   middleMul2(u, x, y, trig31);
 
   fft_MIDDLE(u);
 
   middleMul(u, y, trig31);
+#endif
 
   dependentLaunch();       // Next kernel will be tailSquareGF31 which must dependentLaunchWait before reading data
 

@@ -118,6 +118,9 @@ KERNEL(G_W) fftP(P(GF31) out, CP(Word2) in, TrigGF31 smallTrig) {
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
+#if PFA
+    combo_counter = pfaCombo(p, g, 31, bigword_weight_shift_minus1, 0);
+#endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -476,6 +479,10 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig) {
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
+#if PFA
+    m31_combo_counter = pfaCombo(p, g, 31, m31_bigword_weight_shift_minus1, 0);
+    m61_combo_counter = pfaCombo(p, g, 61, m61_bigword_weight_shift_minus1, 0);
+#endif
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;

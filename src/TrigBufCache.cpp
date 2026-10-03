@@ -719,10 +719,40 @@ static vector<uint2> genSmallTrigGF31(u32 size, u32 radix) {
 }
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
+// A primitive cube root of unity in Z/M31Z, J = 7^((M31-1)/3) where 7 is a primitive root.  PFA's radix-3 uses it (PFA_J31).
+static GF31 pfaCubeRootGF31() { return GF31(Z31(1513477735u), Z31(0u)); }
+
 static vector<uint2> genSmallTrigComboGF31(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   vector<uint2> tab = genSmallTrigGF31(size, radix);
 
   u32 const tail_trigs = args->value("TAIL_TRIGS31", 0);          // Default is reading all trigs from memory
+
+  // PFA (MIDDLE=3 on an NTT), see genSmallTrigComboGF61
+  if (middle == 3) {
+    u32 const height = size;
+    GF31 const v = GF31::root_one(width * height);
+    auto trig = [&](u32 k3, u32 k) { GF31 const t = pfaCubeRootGF31().pow(k3).mul(v.pow(k)); return uint2{t.s0().get(), t.s1().get()}; };
+    if (tail_trigs >= 1) {
+      for (u32 me = 0; me < height / radix; ++me) { tab.push_back(trig(0, width * me)); }
+      for (u32 k3 = 0; k3 < 3; ++k3) {
+        for (u32 u = 0; u <= width / 2; ++u) {
+          tab.push_back(trig(k3, u));
+          if (!tail_single_wide) tab.push_back(trig(k3, u ? width - u : width / 2));
+        }
+      }
+    }
+    if (tail_trigs == 0) {
+      for (u32 k3 = 0; k3 < 3; ++k3) {
+        for (u32 u = 0; u <= width / 2; ++u) {
+          for (u32 v2 = 0; v2 < (tail_single_wide ? 1u : 2u); ++v2) {
+            u32 const line = (v2 == 0) ? u : (u ? width - u : width / 2);
+            for (u32 me = 0; me < height / radix; ++me) { tab.push_back(trig(k3, line + width * me)); }
+          }
+        }
+      }
+    }
+    return tab;
+  }
 
   // From tailSquareGF31 pre-calculate some or all of these:  GF31 trig = slowTrigGF31(line + H * lowMe, ND / NH * 2);
   u32 const height = size;
@@ -756,6 +786,13 @@ static vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width) {
   vector<uint2> tab;
   if (middle == 1) {
     tab.resize(1);
+  } else if (middle == 3) {
+    // PFA, see genMiddleTrigGF61
+    tab.resize(smallH * (middle - 1));
+    GF31 const root1w = GF31::root_one(width);
+    for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF31(root1w, k)); }
+    GF31 const root1wh = GF31::root_one(width * smallH);
+    for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF31(root1wh, k)); }
   } else {
     GF31 const root1hm = GF31::root_one(smallH * middle);
     for (u32 m = 1; m < middle; ++m) {
