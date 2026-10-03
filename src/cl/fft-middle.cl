@@ -1228,12 +1228,14 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
 GF61 OVERLOAD pfaScale(GF61 a, Z61 s) { return U2(mul(a.x, s), mul(a.y, s)); }
 
 // Three-point DFT using w^2 + w + 1 = 0, so it needs a single scalar multiply:  y1 = a0 - a2 + w(a1 - a2), y2 = a0 - a1 - w(a1 - a2)
+// Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
 void OVERLOAD pfaDft3(GF61 *a, Z61 w) {
-  GF61 wd = pfaScale(sub(a[1], a[2]), w);
-  GF61 y0 = add(add(a[0], a[1]), a[2]);
-  GF61 y1 = add(sub(a[0], a[2]), wd);
-  GF61 y2 = sub(sub(a[0], a[1]), wd);
-  a[0] = y0; a[1] = y1; a[2] = y2;
+  GF61 d = a[1] + neg(a[2], 2);                                         // 1-..3+, positive for the multiply
+  GF61 wd = U2(weakMul(d.x, w, 4, 2), weakMul(d.y, w, 4, 2));           // 0..4+
+  GF61 y0 = a[0] + a[1] + a[2];                                         // 0..3+
+  GF61 y1 = a[0] - a[2] + wd;                                           // -1-..5+
+  GF61 y2 = a[0] - a[1] - wd;                                           // -5-..1+
+  a[0] = modM61q(y0, 0); a[1] = modM61q(y1, 2); a[2] = modM61q(y2, 6);
 }
 
 // Forward PFA-point DFT with the root w = PFA_WPOW61[1] (the host passes PFA_WPOW61 = w^0..w^(PFA-1) and, for 7 and 11,
@@ -1265,21 +1267,29 @@ void OVERLOAD pfaDftR(GF61 *a) {
   // Unrolled so that c[] and s[] are indexed by constants.  Whether a compiler unrolls these loops on its own depends on its
   // heuristics.  When NVIDIA's did not (GF61, PFA = 11, before the 128-bit dot products), the arrays went on the stack and
   // fftMiddleIn/Out were 30% slower.
+  // Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
   #pragma unroll
-  for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); y[0] = add(y[0], sum[k - 1]); }
+  for (u32 k = 1; k <= h; ++k) {
+    sum[k - 1] = a[k] + a[PFA - k];                                     // 0..2+
+    dif[k - 1] = a[k] + neg(a[PFA - k], 2);                             // 1-..3+, positive for the multiplies
+  }
+  // y0 = a0 + the sums: at most three sums at a time stay below 8 M61
+  y[0] = modM61q(y[0] + sum[0] + sum[1] + sum[2], 0);                   // 0..7+ before the mod
+  #pragma unroll
+  for (u32 k = 4; k <= h; k += 2) { y[0] = modM61q(y[0] + sum[k - 1] + (k < h ? sum[k] : U2(0ull, 0ull)), 0); }  // 0..5+ before the mod
   #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
-    // Dot products accumulated in 128 bits and reduced once (sum and dif are reduced, so each product is below 2^122)
+    // Dot products accumulated in 128 bits and reduced once: h <= 5 products below 3 M61^2 each stay below 2^126
     u128 pcx = mul64(sum[0].x, c[j % PFA]), pcy = mul64(sum[0].y, c[j % PFA]), qsx = mul64(dif[0].x, s[j % PFA]), qsy = mul64(dif[0].y, s[j % PFA]);
     #pragma unroll
     for (u32 k = 2; k <= h; ++k) {
       pcx = mad64(sum[k - 1].x, c[j * k % PFA], pcx); pcy = mad64(sum[k - 1].y, c[j * k % PFA], pcy);
       qsx = mad64(dif[k - 1].x, s[j * k % PFA], qsx); qsy = mad64(dif[k - 1].y, s[j * k % PFA], qsy);
     }
-    GF61 pc = U2(modM61(weakModM61(pcx, 125)), modM61(weakModM61(pcy, 125))), qs = U2(modM61(weakModM61(qsx, 125)), modM61(weakModM61(qsy, 125)));
-    pc = add(a[0], pc);
-    y[j] = add(pc, qs);
-    y[PFA - j] = sub(pc, qs);
+    GF61 pc = a[0] + U2(weakModM61(pcx, 128), weakModM61(pcy, 128));      // 0..3+
+    GF61 qs = U2(weakModM61(qsx, 128), weakModM61(qsy, 128));             // 0..2+
+    y[j] = modM61q(pc + qs, 0);                                           // 0..5+ before the mod
+    y[PFA - j] = modM61q(pc - qs, 3);                                     // -2-..3+ before the mod
   }
   for (u32 k = 0; k < PFA; ++k) { a[k] = y[k]; }
 #endif
