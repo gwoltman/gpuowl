@@ -980,8 +980,9 @@ void OVERLOAD pfaDftR(GF31 *a) {
   const u32 h = (PFA - 1) / 2;
   GF31 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
   y[0] = a[0];
-  // Unrolled so that c[] and s[] are indexed by constants.  Otherwise NVIDIA's compiler kept the GF61 arrays on the stack
-  // for PFA = 11, making fftMiddleIn/Out 30% slower.
+  // Unrolled so that c[] and s[] are indexed by constants.  Whether a compiler unrolls these loops on its own depends on its
+  // heuristics.  When NVIDIA's did not (GF61, PFA = 11, before the 128-bit dot products), the arrays went on the stack and
+  // fftMiddleIn/Out were 30% slower.
   #pragma unroll
   for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); y[0] = add(y[0], sum[k - 1]); }
   #pragma unroll
@@ -1261,8 +1262,9 @@ void OVERLOAD pfaDftR(GF61 *a) {
   const u32 h = (PFA - 1) / 2;
   GF61 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
   y[0] = a[0];
-  // Unrolled so that c[] and s[] are indexed by constants.  Otherwise NVIDIA's compiler kept the GF61 arrays on the stack
-  // for PFA = 11, making fftMiddleIn/Out 30% slower.
+  // Unrolled so that c[] and s[] are indexed by constants.  Whether a compiler unrolls these loops on its own depends on its
+  // heuristics.  When NVIDIA's did not (GF61, PFA = 11, before the 128-bit dot products), the arrays went on the stack and
+  // fftMiddleIn/Out were 30% slower.
   #pragma unroll
   for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); y[0] = add(y[0], sum[k - 1]); }
   #pragma unroll
