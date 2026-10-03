@@ -404,9 +404,13 @@ void OVERLOAD pfaDftR(T2 *a) {
   const u32 h = (PFA - 1) / 2;
   T2 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
   y[0] = a[0];
+  // Unrolled so that c[] and s[] are indexed by constants, as in the GF versions
+  #pragma unroll
   for (u32 k = 1; k <= h; ++k) { sum[k - 1] = a[k] + a[PFA - k]; dif[k - 1] = a[k] - a[PFA - k]; y[0] += sum[k - 1]; }
+  #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
     T2 pc = sum[0] * c[j % PFA], qs = dif[0] * s[j % PFA];
+    #pragma unroll
     for (u32 k = 2; k <= h; ++k) { pc += sum[k - 1] * c[j * k % PFA]; qs += dif[k - 1] * s[j * k % PFA]; }
     pc += a[0];
     T2 iqs = U2(-qs.y, qs.x);
@@ -791,9 +795,13 @@ void OVERLOAD pfaDftR(F2 *a) {
   const u32 h = (PFA - 1) / 2;
   F2 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
   y[0] = a[0];
+  // Unrolled so that c[] and s[] are indexed by constants, as in the GF versions
+  #pragma unroll
   for (u32 k = 1; k <= h; ++k) { sum[k - 1] = a[k] + a[PFA - k]; dif[k - 1] = a[k] - a[PFA - k]; y[0] += sum[k - 1]; }
+  #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
     F2 pc = sum[0] * c[j % PFA], qs = dif[0] * s[j % PFA];
+    #pragma unroll
     for (u32 k = 2; k <= h; ++k) { pc += sum[k - 1] * c[j * k % PFA]; qs += dif[k - 1] * s[j * k % PFA]; }
     pc += a[0];
     F2 iqs = U2(-qs.y, qs.x);
