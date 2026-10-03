@@ -134,7 +134,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(GF31) in, u32 posROE, P(CarryABM) carryOut, P
   u32 roundMax = 0;
   float carryMax = 0;
 
+#if PFA
+  // A chunk of CARRY_LEN lines never crosses a multiple of SMALL_HEIGHT, so its pairs are consecutive as in the stock layout
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   // Weights can be applied with shifts because 2 is the 30th root GF31.
@@ -546,7 +551,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, P(u
   u32 roundMax = 0;
   float carryMax = 0;
 
+#if PFA
+  // A chunk of CARRY_LEN lines never crosses a multiple of SMALL_HEIGHT, so its pairs are consecutive as in the stock layout
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
 
   // Weight is 2^[ceil(qj / n) - qj/n] where j is the word index, q is the Mersenne exponent, and n is the number of words.
   const u32 m31_log2_root_two = LOG2_ROOT_TWO31;

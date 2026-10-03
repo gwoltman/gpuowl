@@ -534,6 +534,11 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     // MIDDLE=3 as a Good-Thomas transform (see base.cl).  J is a primitive cube root of unity in Z/qZ (a power of a
     // primitive root) and must match the one in TrigBufCache.cpp.
     defines += toDefine("PFA", 1);
+    if (fft.NTT_GF31) {
+      defines += toDefine("PFA_J31", 1513477735u);
+      defines += toDefine("PFA_J31SQ", 634005911u);
+      defines += toDefine("PFA_INV3_31", 1431655765u);
+    }
     if (fft.NTT_GF61) {
       defines += toDefine("PFA_J61", 1669582390241348315ULL);
       defines += toDefine("PFA_J61SQ", 636260618972345635ULL);
