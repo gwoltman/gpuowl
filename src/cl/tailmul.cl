@@ -607,10 +607,10 @@ KERNEL(G_H) tailMulZeroGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
 #if PFA
-  // Six workgroups: lines 0 and WIDTH/2 of each row frequency k3
+  // Six workgroups: lines 0 and PFA_TW/2 of each row frequency k3
   assert(which < 6);
-  u32 line = which / 2 * WIDTH + (which & 1) * (WIDTH / 2);
-  u32 tline = pfaTailTrigIndex(which / 2 * WIDTH) * 2 + (which & 1);    // Double-wide trig layout index of the line
+  u32 line = which / 2 * PFA_TW + (which & 1) * (PFA_TW / 2);
+  u32 tline = pfaTailTrigIndex(which / 2 * PFA_TW) * 2 + (which & 1);    // Double-wide trig layout index of the line
   bool self_offset = !(which & 1);                                     // Line kx=0 pairs with itself offset by 1
 #else
   assert(which < 2);
@@ -904,10 +904,10 @@ KERNEL(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
 #if PFA
-  // Six workgroups: lines 0 and WIDTH/2 of each row frequency k3
+  // Six workgroups: lines 0 and PFA_TW/2 of each row frequency k3
   assert(which < 6);
-  u32 line = which / 2 * WIDTH + (which & 1) * (WIDTH / 2);
-  u32 tline = pfaTailTrigIndex(which / 2 * WIDTH) * 2 + (which & 1);    // Double-wide trig layout index of the line
+  u32 line = which / 2 * PFA_TW + (which & 1) * (PFA_TW / 2);
+  u32 tline = pfaTailTrigIndex(which / 2 * PFA_TW) * 2 + (which & 1);    // Double-wide trig layout index of the line
   bool self_offset = !(which & 1);                                     // Line kx=0 pairs with itself offset by 1
 #else
   assert(which < 2);

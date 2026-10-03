@@ -727,9 +727,10 @@ static vector<uint2> genSmallTrigComboGF31(Args *args, u32 width, u32 middle, u3
 
   u32 const tail_trigs = args->value("TAIL_TRIGS31", 0);          // Default is reading all trigs from memory
 
-  // PFA (MIDDLE=3 on an NTT), see genSmallTrigComboGF61
-  if (middle == 3) {
+  // PFA (MIDDLE=3, 6 or 12 on an NTT), see genSmallTrigComboGF61
+  if (middle % 3 == 0) {
     u32 const height = size;
+    width *= middle / 3;                // PFA_TW: the tail lines of a row
     GF31 const v = GF31::root_one(width * height);
     auto trig = [&](u32 k3, u32 k) { GF31 const t = pfaCubeRootGF31().pow(k3).mul(v.pow(k)); return uint2{t.s0().get(), t.s1().get()}; };
     if (tail_trigs >= 1) {
@@ -786,13 +787,18 @@ static vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width) {
   vector<uint2> tab;
   if (middle == 1) {
     tab.resize(1);
-  } else if (middle == 3) {
+  } else if (middle % 3 == 0) {
     // PFA, see genMiddleTrigGF61
+    u32 const m2 = middle / 3, bh = smallH * m2;
+    GF31 const root1wbh = GF31::root_one(width * bh);
+    for (u32 k = 0; k < bh; ++k) { tab.push_back(root1GF31(root1wbh, k)); }
+    GF31 const root1bh = GF31::root_one(bh);
+    for (u32 k = 1; k < m2; ++k) {
+      for (u32 y = 0; y < smallH; ++y) { tab.push_back(root1GF31(root1bh, y * k)); }
+    }
     tab.resize(smallH * (middle - 1));
     GF31 const root1w = GF31::root_one(width);
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF31(root1w, k)); }
-    GF31 const root1wh = GF31::root_one(width * smallH);
-    for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF31(root1wh, k)); }
   } else {
     GF31 const root1hm = GF31::root_one(smallH * middle);
     for (u32 m = 1; m < middle; ++m) {
@@ -954,10 +960,11 @@ static vector<ulong2> genSmallTrigComboGF61(Args *args, u32 width, u32 middle, u
 
   u32 const tail_trigs = args->value("TAIL_TRIGS61", 0);          // Default is reading all trigs from memory
 
-  // PFA (MIDDLE=3 on an NTT): the tail line kx + width*k3 holds the frequencies (k3, kx + width*ky) and t^2 = J^k3 * v^(kx + width*ky),
-  // v a root of order width*height.  Each k3 gets the lines kx = 0..width/2, which mirror the stock layout of lines 0..H/2.
-  if (middle == 3) {
+  // PFA (MIDDLE=3, 6 or 12 on an NTT): with TW = width * middle/3 the tail line kx + TW*k3 holds the frequencies (k3, kx + TW*ky) and
+  // t^2 = J^k3 * v^(kx + TW*ky), v a root of order TW*height.  Each k3 gets the lines kx = 0..TW/2, mirroring the stock lines 0..H/2.
+  if (middle % 3 == 0) {
     u32 const height = size;
+    width *= middle / 3;                // PFA_TW: the tail lines of a row
     GF61 const v = GF61::root_one(width * height);
     auto trig = [&](u32 k3, u32 k) { GF61 const t = pfaCubeRootGF61().pow(k3).mul(v.pow(k)); return ulong2{t.s0().get(), t.s1().get()}; };
     if (tail_trigs >= 1) {
@@ -1014,14 +1021,20 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
   vector<ulong2> tab;
   if (middle == 1) {
     tab.resize(1);
-  } else if (middle == 3) {
-    // PFA (see pfaTwiddle): the twiddle between width and height of a row, w^(x*y) with w a root of order width*smallH, from
-    // trig1[k] = w^(smallH*k) and trig2[k] = w^k.  Placed where middleMul2's tables are, after (middle - 1) * smallH unused values.
+  } else if (middle % 3 == 0) {
+    // PFA, see pfaTwiddle.  A row has bh = smallH * middle/3 lines and w is a root of order width*bh:
+    //   trig2[k] = w^k for k < bh, then the row's middleMul twiddles w^(width*y*k) for 0 < k < middle/3 and y < smallH,
+    //   then at smallH * (middle - 1): trig1[k] = w^(bh*k) for k < width
+    u32 const m2 = middle / 3, bh = smallH * m2;
+    GF61 const root1wbh = GF61::root_one(width * bh);
+    for (u32 k = 0; k < bh; ++k) { tab.push_back(root1GF61(root1wbh, k)); }
+    GF61 const root1bh = GF61::root_one(bh);
+    for (u32 k = 1; k < m2; ++k) {
+      for (u32 y = 0; y < smallH; ++y) { tab.push_back(root1GF61(root1bh, y * k)); }
+    }
     tab.resize(smallH * (middle - 1));
     GF61 const root1w = GF61::root_one(width);
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF61(root1w, k)); }
-    GF61 const root1wh = GF61::root_one(width * smallH);
-    for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF61(root1wh, k)); }
   } else {
     GF61 const root1hm = GF61::root_one(smallH * middle);
     for (u32 m = 1; m < middle; ++m) {

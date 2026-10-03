@@ -429,7 +429,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
   // PFA is only implemented for the not-in-place layout
   if (fft.shape.isPfa() && in_place) {
-    log("MIDDLE=3 NTTs need INPLACE=0.  Changing to INPLACE=0.\n");
+    log("MIDDLE=3, 6 and 12 NTTs need INPLACE=0.  Changing to INPLACE=0.\n");
     in_place = 0;
     config["INPLACE"] = to_string(0);
     args.flags["INPLACE"] = to_string(0);
@@ -2144,14 +2144,14 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
   }
 }
 
-// With PFA (MIDDLE=3 NTT, see base.cl) the pair transposeOut puts at x * BIG_HEIGHT + line is logical pair pfaPair(x, line).
+// With PFA (MIDDLE=3, 6 or 12 NTT, see base.cl) the pair transposeOut puts at x * BIG_HEIGHT + line is logical pair pfaPair(x, line).
 // Return, for each such position, the logical pair it holds.
 static vector<u32> pfaPairMap(const FFTShape& shape) {
-  u32 const W = shape.width, SH = shape.height, BH = SH * shape.middle, L = W * SH;
+  u32 const W = shape.width, BH = shape.height * shape.middle, RBH = BH / 3, L = W * RBH;   // RBH: the lines of a row (PFA_BH)
   vector<u32> map(W * BH);
   for (u32 x = 0; x < W; ++x) {
     for (u32 g = 0; g < BH; ++g) {
-      u32 const q = x * SH + g % SH;
+      u32 const q = x * RBH + g % RBH;
       map[x * BH + g] = q + L * ((g % 3 + 3 - q % 3) * (L % 3) % 3);
     }
   }
