@@ -744,7 +744,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
-  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do lines SMALL_HEIGHT and 2*SMALL_HEIGHT.
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
 #if PFA
   bool rotatedCarries = pfaRotatedLine(gr * WMUL);
 #else
@@ -993,7 +993,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
-  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do lines SMALL_HEIGHT and 2*SMALL_HEIGHT.
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
 #if PFA
   bool rotatedCarries = pfaRotatedLine(gr * WMUL);
 #else
@@ -2084,7 +2084,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
-  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do lines SMALL_HEIGHT and 2*SMALL_HEIGHT.
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
 #if PFA
   bool rotatedCarries = pfaRotatedLine(gr * WMUL);
 #else

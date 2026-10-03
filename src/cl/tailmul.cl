@@ -562,7 +562,7 @@ void OVERLOAD pairMul(u32 N, GF31 *u, GF31 *v, GF31 *p, GF31 *q, GF31 base_squar
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
     if (special && i == 0 && me == 0) {
 #if PFA
-      // The two self-paired elements of a PFA tail line have t^2 = J^k3 and -J^k3, not 1 and -1.  Use the general
+      // The two self-paired elements of a PFA tail line have t^2 = w^k3 and -w^k3 (w a PFA-th root of unity), not 1 and -1.  Use the general
       // formula with each element as its own partner.
       GF31 self = u[i], selfp = p[i];
       onePairMul(&u[i], &self, &p[i], &selfp, base_squared);
@@ -607,8 +607,8 @@ KERNEL(G_H) tailMulZeroGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
 #if PFA
-  // Six workgroups: lines 0 and PFA_TW/2 of each row frequency k3
-  assert(which < 6);
+  // 2 * PFA workgroups: lines 0 and PFA_TW/2 of each row frequency k3
+  assert(which < 2 * PFA);
   u32 line = which / 2 * PFA_TW + (which & 1) * (PFA_TW / 2);
   u32 tline = pfaTailTrigIndex(which / 2 * PFA_TW) * 2 + (which & 1);    // Double-wide trig layout index of the line
   bool self_offset = !(which & 1);                                     // Line kx=0 pairs with itself offset by 1
@@ -859,7 +859,7 @@ void OVERLOAD pairMul(u32 N, GF61 *u, GF61 *v, GF61 *p, GF61 *q, GF61 base_squar
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
     if (special && i == 0 && me == 0) {
 #if PFA
-      // The two self-paired elements of a PFA tail line have t^2 = J^k3 and -J^k3, not 1 and -1.  Use the general
+      // The two self-paired elements of a PFA tail line have t^2 = w^k3 and -w^k3 (w a PFA-th root of unity), not 1 and -1.  Use the general
       // formula with each element as its own partner.
       GF61 self = u[i], selfp = p[i];
       onePairMul(&u[i], &self, &p[i], &selfp, base_squared);
@@ -904,8 +904,8 @@ KERNEL(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
 #if PFA
-  // Six workgroups: lines 0 and PFA_TW/2 of each row frequency k3
-  assert(which < 6);
+  // 2 * PFA workgroups: lines 0 and PFA_TW/2 of each row frequency k3
+  assert(which < 2 * PFA);
   u32 line = which / 2 * PFA_TW + (which & 1) * (PFA_TW / 2);
   u32 tline = pfaTailTrigIndex(which / 2 * PFA_TW) * 2 + (which & 1);    // Double-wide trig layout index of the line
   bool self_offset = !(which & 1);                                     // Line kx=0 pairs with itself offset by 1
