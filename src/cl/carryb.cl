@@ -15,7 +15,11 @@ KERNEL(G_W) carryB(P(Word2) io, CP(CarryABM) carryIn) {
   // Derive the big vs. little flags from the fractional number of bits in each FFT word rather read the flags from memory.
   // Calculate the most significant 32-bits of FRAC_BPW * the index of the FFT word.  Also add FRAC_BPW_HI to test first biglit flag.
   u32 line = gy * CARRY_LEN;
+#if PFA
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
   u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
 
   io += G_W * gx + WIDTH * CARRY_LEN * gy;
@@ -25,6 +29,10 @@ KERNEL(G_W) carryB(P(Word2) io, CP(CarryABM) carryIn) {
   u32 prev = (gy + HB * G_W * gx + HB * me + (HB * WIDTH - 1)) % (HB * WIDTH);
   u32 prevLine = prev % HB;
   u32 prevCol  = prev / HB;
+#if PFA
+  // Chunks starting at line SMALL_HEIGHT or 2*SMALL_HEIGHT take their carry from column x - 1 (as the chunk at line 0 does).
+  if (gy && pfaRotatedLine(line)) { prevCol = (G_W * gx + me + WIDTH - 1) % WIDTH; }
+#endif
 
   CarryABM carry = carryIn[WIDTH * prevLine + prevCol];
 

@@ -11,6 +11,9 @@
 // If not doing L2 stripes, process the lines in any order.
 // If L2 striping, process lines output by fftMiddleIn.  fftMiddleIn outputs 16 * MIDDLE tailSquare lines.
 u32 get_line_number(u32 base) {
+#if PFA
+  return pfaTailLine(get_group_id(0), SINGLE_KERNEL);
+#endif
   u32 g = get_group_id(0);
 #if !SINGLE_KERNEL
 #if L2_STRIPING
@@ -836,8 +839,17 @@ void OVERLOAD pairMul(u32 N, GF61 *u, GF61 *v, GF61 *p, GF61 *q, GF61 base_squar
 
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
     if (special && i == 0 && me == 0) {
+#if PFA
+      // The two self-paired elements of a PFA tail line have t^2 = J^k3 and -J^k3, not 1 and -1.  Use the general
+      // formula with each element as its own partner.
+      GF61 self = u[i], selfp = p[i];
+      onePairMul(&u[i], &self, &p[i], &selfp, base_squared);
+      self = v[i], selfp = q[i];
+      onePairMul(&v[i], &self, &q[i], &selfp, neg(base_squared));
+#else
       u[i] = SWAP_XY(mul2(foo2(u[i], p[i])));
       v[i] = SWAP_XY(shl(cmul(v[i], q[i]), 2));
+#endif
    } else {
       onePairMul(&u[i], &v[i], &p[i], &q[i], base_squared);
     }
@@ -872,9 +884,19 @@ KERNEL(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
+#if PFA
+  // Six workgroups: lines 0 and WIDTH/2 of each row frequency k3
+  assert(which < 6);
+  u32 line = which / 2 * WIDTH + (which & 1) * (WIDTH / 2);
+  u32 tline = pfaTailTrigIndex(which / 2 * WIDTH) * 2 + (which & 1);    // Double-wide trig layout index of the line
+  bool self_offset = !(which & 1);                                     // Line kx=0 pairs with itself offset by 1
+#else
   assert(which < 2);
 
   u32 line = which ? (H/2) : 0;
+  u32 tline = which;
+  bool self_offset = !which;
+#endif
   u32 memline = transPos(line, MIDDLE, WIDTH);
   u32 me = get_local_id(0);
 
@@ -898,23 +920,23 @@ KERNEL(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 #if TAIL_TRIGS61 >= 1
   GF61 trig = TFLOAD(&smallTrig61[height_trigs + me]);
 #if SINGLE_WIDE
-  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + line]);
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + TAIL_TRIG_LINE(line)]);
 #else
-  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + which]);
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + tline]);
 #endif
   trig = cmul(trig, mult);
 #else
 #if SINGLE_WIDE
-  GF61 trig = TOLOAD(&smallTrig61[height_trigs + line*G_H + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + TAIL_TRIG_LINE(line)*G_H + me]);
 #else
-  GF61 trig = TOLOAD(&smallTrig61[height_trigs + which*G_H + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + tline*G_H + me]);
 #endif
 #endif
 
-  reverse(lds, u + NH/2, !which);
-  reverse(lds, p + NH/2, !which);
-  pairMul(NH/2, u,   u + NH/2, p, p + NH/2, trig, !which);
-  reverse(lds, u + NH/2, !which);
+  reverse(lds, u + NH/2, self_offset);
+  reverse(lds, p + NH/2, self_offset);
+  pairMul(NH/2, u,   u + NH/2, p, p + NH/2, trig, self_offset);
+  reverse(lds, u + NH/2, self_offset);
 
   fft_HEIGHT2(lds, u, smallTrig61, 1, me);
   writeTailFusedLine(u, out61, memline, me);
@@ -938,7 +960,7 @@ KERNEL_CAP(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
   GF61 p[NH], q[NH];
 
   u32 line1 = get_line_number(base);
-  u32 line2 = line1 ? H - line1 : (H / 2);
+  u32 line2 = TAIL_PARTNER(line1);
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
@@ -967,14 +989,14 @@ KERNEL_CAP(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
   u32 height_trigs = SMALL_HEIGHT*1;
 #if TAIL_TRIGS61 >= 1
   GF61 trig = TFLOAD(&smallTrig61[height_trigs + me]);                    // Trig values for line zero, should be cached
-  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + line1]);
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + TAIL_TRIG_LINE(line1)]);
   trig = cmul(trig, mult);
 #else
-  GF61 trig = TOLOAD(&smallTrig61[height_trigs + line1*G_H + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + TAIL_TRIG_LINE(line1)*G_H + me]);
 #endif
 
 #if SINGLE_KERNEL
-  if (line1 == 0) {
+  if (TAIL_SELF_PAIRED(line1)) {
     reverse(lds, u + NH/2, true);
     reverse(lds, p + NH/2, true);
     pairMul(NH/2, u,  u + NH/2, p, p + NH/2, trig, true);
@@ -1027,7 +1049,7 @@ KERNEL_CAP(G_H * 2) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig s
   GF61 u[NH], p[NH];
 
   u32 line_u = get_line_number(base);
-  u32 line_v = line_u ? H - line_u : (H / 2);
+  u32 line_v = TAIL_PARTNER(line_u);
   u32 me = get_local_id(0);
   u32 lowMe = me % G_H;  // lane-id in one of the two halves (half-workgroups).
 
@@ -1056,19 +1078,19 @@ KERNEL_CAP(G_H * 2) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig s
   u32 height_trigs = SMALL_HEIGHT*1;
 #if TAIL_TRIGS61 >= 1
   GF61 trig = TFLOAD(&smallTrig61[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
-  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + line_u*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
+  GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + TAIL_TRIG_LINE(line_u)*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
   trig = cmul(trig, mult);
 #else
-  GF61 trig = TOLOAD(&smallTrig61[height_trigs + line_u*G_H*2 + me]);
+  GF61 trig = TOLOAD(&smallTrig61[height_trigs + TAIL_TRIG_LINE(line_u)*G_H*2 + me]);
 #endif
 
 #if SINGLE_KERNEL
   // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
   // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
-  revLineOrSelf(lds, u, line_u == 0);
-  revLineOrSelf(lds, p, line_u == 0);
-  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, line_u == 0);
-  revLineOrSelf(lds, u, line_u == 0);
+  revLineOrSelf(lds, u, TAIL_SELF_PAIRED(line_u));
+  revLineOrSelf(lds, p, TAIL_SELF_PAIRED(line_u));
+  pairMul(NH/2, u, u + NH/2, p, p + NH/2, trig, TAIL_SELF_PAIRED(line_u));
+  revLineOrSelf(lds, u, TAIL_SELF_PAIRED(line_u));
 #else
   revCrossLine(lds, u);
   revCrossLine(lds, p);

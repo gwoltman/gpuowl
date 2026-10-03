@@ -53,6 +53,10 @@ public:
   [[nodiscard]] float carry32BPW() const;
   [[nodiscard]] bool needsLargeCarry(u64 E) const;
   [[nodiscard]] bool isFavoredShape() const;
+  // MIDDLE=3 on a pure-NTT type is done as a Good-Thomas prime-factor transform (3 rows of a power-of-two transform, the
+  // radix-3 in fftMiddleIn/Out uses only a cube root of unity and no twiddles).  The FP types use an ordinary radix-3.
+  [[nodiscard]] static bool pfaType(enum FFT_TYPES t) { return t == FFT61; }
+  [[nodiscard]] bool isPfa() const { return middle == 3 && pfaType(fft_type); }
 };
 
 static const u32 N_VARIANT_W = 3;

@@ -909,10 +909,41 @@ static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix) {
 }
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
+// A primitive cube root of unity in Z/M61Z, J = 37^((M61-1)/3) where 37 is a primitive root.  PFA's radix-3 uses it (PFA_J61).
+static GF61 pfaCubeRootGF61() { return GF61(Z61(1669582390241348315ULL), Z61(0)); }
+
 static vector<ulong2> genSmallTrigComboGF61(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   vector<ulong2> tab = genSmallTrigGF61(size, radix);
 
   u32 const tail_trigs = args->value("TAIL_TRIGS61", 0);          // Default is reading all trigs from memory
+
+  // PFA (MIDDLE=3 on an NTT): the tail line kx + width*k3 holds the frequencies (k3, kx + width*ky) and t^2 = J^k3 * v^(kx + width*ky),
+  // v a root of order width*height.  Each k3 gets the lines kx = 0..width/2, which mirror the stock layout of lines 0..H/2.
+  if (middle == 3) {
+    u32 const height = size;
+    GF61 const v = GF61::root_one(width * height);
+    auto trig = [&](u32 k3, u32 k) { GF61 const t = pfaCubeRootGF61().pow(k3).mul(v.pow(k)); return ulong2{t.s0().get(), t.s1().get()}; };
+    if (tail_trigs >= 1) {
+      for (u32 me = 0; me < height / radix; ++me) { tab.push_back(trig(0, width * me)); }
+      for (u32 k3 = 0; k3 < 3; ++k3) {
+        for (u32 u = 0; u <= width / 2; ++u) {
+          tab.push_back(trig(k3, u));
+          if (!tail_single_wide) tab.push_back(trig(k3, u ? width - u : width / 2));
+        }
+      }
+    }
+    if (tail_trigs == 0) {
+      for (u32 k3 = 0; k3 < 3; ++k3) {
+        for (u32 u = 0; u <= width / 2; ++u) {
+          for (u32 v2 = 0; v2 < (tail_single_wide ? 1u : 2u); ++v2) {
+            u32 const line = (v2 == 0) ? u : (u ? width - u : width / 2);
+            for (u32 me = 0; me < height / radix; ++me) { tab.push_back(trig(k3, line + width * me)); }
+          }
+        }
+      }
+    }
+    return tab;
+  }
 
   // From tailSquareGF61 pre-calculate some or all of these:  GF61 trig = slowTrigGF61(line + H * lowMe, ND / NH * 2);
   u32 const height = size;
@@ -946,6 +977,14 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
   vector<ulong2> tab;
   if (middle == 1) {
     tab.resize(1);
+  } else if (middle == 3) {
+    // PFA (see pfaTwiddle): the twiddle between width and height of a row, w^(x*y) with w a root of order width*smallH, from
+    // trig1[k] = w^(smallH*k) and trig2[k] = w^k.  Placed where middleMul2's tables are, after (middle - 1) * smallH unused values.
+    tab.resize(smallH * (middle - 1));
+    GF61 const root1w = GF61::root_one(width);
+    for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF61(root1w, k)); }
+    GF61 const root1wh = GF61::root_one(width * smallH);
+    for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF61(root1wh, k)); }
   } else {
     GF61 const root1hm = GF61::root_one(smallH * middle);
     for (u32 m = 1; m < middle; ++m) {

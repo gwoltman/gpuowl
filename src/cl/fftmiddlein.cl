@@ -6,6 +6,10 @@
 #define INCLUDE_FILE "middle.cl"
 #include "expand.cl"
 
+#if PFA && INPLACE
+#error PFA needs INPLACE=0
+#endif
+
 #if !INPLACE                  // Original implementation (not in place)
 
 #if FFT_FP64
@@ -220,11 +224,15 @@ KERNEL_CAP(IN_WG) fftMiddleInGF61(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
   readMiddleInLine(u, in61, y, x);
 
+#if PFA
+  pfaMiddleIn(u, x, y, trig61);
+#else
   middleMul2(u, x, y, trig61);
 
   fft_MIDDLE(u);
 
   middleMul(u, y, trig61);
+#endif
 
   dependentLaunch();       // Next kernel will be tailSquareGF61 which must dependentLaunchWait before reading data
 
