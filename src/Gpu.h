@@ -187,6 +187,8 @@ private:
   u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly.
   u32 wmul;                             // Number of workgroups carryFused kernel should process ("width multiplier").
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
+  u32 l2_striping;                      // L2_STRIPING as resolved (and clamped) when the kernels were compiled.
+  u32 multi_q;                          // MULTI_Q as resolved when the kernels were compiled.
 
   // Twiddles: trigonometry constant buffers, used in FFTs.
   // The twiddles depend only on FFT config and do not depend on the exponent.
