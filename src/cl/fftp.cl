@@ -248,9 +248,15 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
+#if PFA
+    combo_counter = pfaCombo(p, g, 31, bigword_weight_shift_minus1, 0);
+#endif
     // Generate the FP64 weights and the second GF31 weight shift
     T w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
     T w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP));
+#if PFA
+    { T2 pw0, pw1; pfaWeights(p, g, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.y; w2 = pw1.y; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -323,9 +329,15 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
+#if PFA
+    combo_counter = pfaCombo(p, g, 31, bigword_weight_shift_minus1, 0);
+#endif
     // Generate the FP32 weights and the second GF31 weight shift
     F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(p, g, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.y; w2 = pw1.y; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -399,9 +411,15 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
+#if PFA
+    combo_counter = pfaCombo(p, g, 61, bigword_weight_shift_minus1, 0);
+#endif
     // Generate the FP32 weights and the second GF61 weight shift
     F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(p, g, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.y; w2 = pw1.y; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 61) weight_shift -= 61;
@@ -577,9 +595,16 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTabFP32 THREAD_WEIG
 
   for (u32 i = 0; i < NW; ++i) {
     u32 p = G_W * i + me;
+#if PFA
+    m31_combo_counter = pfaCombo(p, g, 31, m31_bigword_weight_shift_minus1, 0);
+    m61_combo_counter = pfaCombo(p, g, 61, m61_bigword_weight_shift_minus1, 0);
+#endif
     // Generate the FP32 weights and the second GF31 and GF61 weight shift
     F w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(p, g, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.y; w2 = pw1.y; }
+#endif
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
     m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);

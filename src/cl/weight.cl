@@ -34,6 +34,14 @@ u64 pfaCombo(u32 x, u32 g, u32 q, u32 bigword_weight_shift_minus1, u32 extra_shi
   u64 c = comboFracBits(word_index) + make_u64(word_index % q * bigword_weight_shift_minus1, 0xFFFFFFFF);
   return make_u64(((u32) (c >> 32) % q + extra_shift) % q, (u32) c);
 }
+
+// The FP weights of the pair p at column x of line g.  With p = x * PFA_BH + b + PFA_L * r (b = g % PFA_BH, r the row offset),
+// genWeights stores the (inverse weight, weight) of word 2 * x * PFA_BH at THREAD_WEIGHTS[x] (x < WIDTH, scaled as the stock
+// per-thread weights) and those of word 2 * (b + PFA_L * r), minus one, at THREAD_WEIGHTS[WIDTH + b + PFA_BH * r].  The weight of
+// word k is 2^(extra(k) / NWORDS) with extra(k) = k * STEP % NWORDS, so the product of the two is too large by 2 exactly when the
+// extras wrap, i.e. when extra(2p) < extra(2 * x * PFA_BH).  w0 gets the (inverse weight, weight) of word 2p, w1 that of 2p + 1.
+u32 pfaExtra(u32 k) { return (u32) ((u64) k * STEP % NWORDS); }
+
 #endif
 
 // Routines to acces the 8 precomputed step weights
@@ -190,3 +198,32 @@ u32 adjust_m61_weight_shift (u32 weight_shift) {
 
 #endif
 
+#if PFA
+#if FFT_FP32
+void pfaWeights(u32 x, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
+  u32 b = g % PFA_BH;
+  u32 q = x * PFA_BH + b;
+  u32 r = (g % PFA + PFA - q % PFA) * PFA_LINV % PFA;
+  u32 e = pfaExtra(2 * (q + PFA_L * r));
+  bool wrap = e < pfaExtra(2 * x * PFA_BH);
+  F2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));
+  w = U2(optionalDouble(w.x, wrap), optionalHalve(w.y, wrap));
+  bool wrap1 = e + STEP >= NWORDS;
+  *w0 = w;
+  *w1 = U2(optionalDouble(fancyMul(w.x, IWEIGHT_STEP), wrap1), optionalHalve(fancyMul(w.y, WEIGHT_STEP), wrap1));
+}
+#endif
+
+#if FFT_FP64
+// The FP64 weights are kept in [2, 4) (inverse weights in [1, 2)), which optionalHalve / optionalDouble restore from the value.
+void pfaWeights(u32 x, u32 g, BigTab THREAD_WEIGHTS, T2 *w0, T2 *w1) {
+  u32 b = g % PFA_BH;
+  u32 q = x * PFA_BH + b;
+  u32 r = (g % PFA + PFA - q % PFA) * PFA_LINV % PFA;
+  T2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));
+  w = U2(optionalDouble(w.x), optionalHalve(w.y));
+  *w0 = w;
+  *w1 = U2(optionalDouble(fancyMul(w.x, IWEIGHT_STEP)), optionalHalve(fancyMul(w.y, WEIGHT_STEP)));
+}
+#endif
+#endif

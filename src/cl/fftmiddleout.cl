@@ -39,9 +39,11 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
   readMiddleOutLine(u, in, y, x);
 
+#if !PFA
   middleMul(u, x, trig);
 
   fft_MIDDLE(u);
+#endif
 
   // FFT results come out multiplied by the FFT length (NWORDS).  Also, for performance reasons
   // weights and invweights are doubled meaning we need to divide by another 2^2 and 2^2.
@@ -49,7 +51,11 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
   // number.  This may be due to roundoff errors introduced by applying inexact TWO_TO_N_8TH weights.
   double factor = 1.0 / (4 * 4 * NWORDS);
 
+#if PFA
+  pfaMiddleOut(u, y, x, factor, trig);       // y is the width position, x the height position
+#else
   middleMul2(u, y, x, factor, trig);
+#endif
 
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 
@@ -108,14 +114,20 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
   readMiddleOutLine(u, inF2, y, x);
 
+#if !PFA
   middleMul(u, x, trigF2);
 
   fft_MIDDLE(u);
+#endif
 
   // FFT results come out multiplied by the FFT length (NWORDS * 2).
   const float factor = 1.0f / (NWORDS * 2);
 
+#if PFA
+  pfaMiddleOut(u, y, x, factor, trigF2);       // y is the width position, x the height position
+#else
   middleMul2(u, y, x, factor, trigF2);
+#endif
 
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 

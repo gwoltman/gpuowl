@@ -47,6 +47,10 @@ u32 get_line_number(u32 base) {
 
 #if FFT_FP64
 
+#if PFA && SINGLE_KERNEL
+#error The PFA FP tail needs two tail kernels (TAIL_KERNELS 1 or 3)
+#endif
+
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
 // We used to conjugate the results, but swapping real and imaginary can save some negations in carry propagation.
 void OVERLOAD onePairSq(T2* pa, T2* pb, T2 t_squared) {
@@ -104,9 +108,15 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
+#if PFA
+  // PFA_FP_ZERO_GROUPS workgroups: row 0's self-paired lines 0 and PFA_TW/2, then the kx = 0 lines of rows k3 and PFA - k3
+  assert(which < PFA_FP_ZERO_GROUPS);
+  u32 line = which == 0 ? 0 : which == 1 ? PFA_TW / 2 : (which - 1) * PFA_TW;
+#else
   assert(which < 2);
 
   u32 line = which ? (H/2) : 0;
+#endif
   u32 me = get_local_id(0);
 
   dependentLaunch();       // Next kernel will be tailSquareFP64 which must dependentLaunchWait before reading data from fftMiddleInFP64
@@ -122,7 +132,27 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   T2 w = slowTrig_N(H * me, ND / NH);
 #endif
 
+#if PFA
+  T2 trig = slowTrig_N(pfaFpTailTrigBase(line) + me * H, 2 * ND);
+  if (which >= 2) {
+    // Line kx = 0 of row k3 pairs element ky with element -ky of line kx = 0 of row PFA - k3
+    T2 v[NH];
+    u32 line2 = pfaFpTailPartner(line);
+    readTailFusedLine(in, v, line2, me);
+    fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
+    fft_HEIGHT1(lds, v, smallTrig, w, 1, me);
+    reverseLineBump(lds, v);
+    pairSq(NH, u, v, trig, false);
+    reverseLineBump(lds, v);
+    fft_HEIGHT2(lds, v, smallTrig, w, 1, me);
+    fft_HEIGHT2(lds, u, smallTrig, w, 1, me);
+    writeTailFusedLine(v, out, transPos(line2, MIDDLE, WIDTH), me);
+    writeTailFusedLine(u, out, transPos(line, MIDDLE, WIDTH), me);
+    return;
+  }
+#else
   T2 trig = slowTrig_N(line + me * H, ND / NH);
+#endif
 
   fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
   reverse(lds, u + NH/2, !which);
@@ -144,8 +174,13 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   T2 u[NH], v[NH];
 
+#if PFA
+  u32 line1 = pfaFpTailLine(get_group_id(0));
+  u32 line2 = pfaFpTailPartner(line1);
+#else
   u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
+#endif
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
@@ -169,7 +204,9 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   fft_HEIGHT1(lds + zerohack, v, smallTrig + zerohack, w, 1, me);
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
-#if TAIL_TRIGS == 2
+#if PFA
+  T2 trig = slowTrig_N(pfaFpTailTrigBase(line1) + me * H, 2 * ND);
+#elif TAIL_TRIGS == 2
   T2 trig = slowTrig_N(line1 + me * H, ND / NH);
 
   // Do a little bit of memory access and a little bit of DP math.  Good on a Radeon VII.
@@ -238,8 +275,13 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   T2 u[NH];
 
+#if PFA
+  u32 line_u = pfaFpTailLine(get_group_id(0));
+  u32 line_v = pfaFpTailPartner(line_u);
+#else
   u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
+#endif
   u32 me = get_local_id(0);
   u32 lowMe = me % G_H;  // lane-id in one of the two halves (half-workgroups).
 
@@ -265,7 +307,9 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   fft_HEIGHT1(lds + zerohack, u, smallTrig + zerohack, w, 2, lowMe);
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
-#if TAIL_TRIGS == 2
+#if PFA
+  T2 trig = slowTrig_N(pfaFpTailTrigBase(line) + H * lowMe, 2 * ND);
+#elif TAIL_TRIGS == 2
   T2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
 
   // Do a little bit of memory access and a little bit of DP math.  Good on a Radeon VII.
@@ -317,6 +361,10 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 /**************************************************************************/
 
 #if FFT_FP32
+
+#if PFA && SINGLE_KERNEL
+#error The PFA FP tail needs two tail kernels (TAIL_KERNELS 1 or 3)
+#endif
 
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
 // We used to conjugate the results, but swapping real and imaginary can save some negations in carry propagation.
@@ -372,9 +420,15 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
+#if PFA
+  // PFA_FP_ZERO_GROUPS workgroups: row 0's self-paired lines 0 and PFA_TW/2, then the kx = 0 lines of rows k3 and PFA - k3
+  assert(which < PFA_FP_ZERO_GROUPS);
+  u32 line = which == 0 ? 0 : which == 1 ? PFA_TW / 2 : (which - 1) * PFA_TW;
+#else
   assert(which < 2);
 
   u32 line = which ? (H/2) : 0;
+#endif
   u32 me = get_local_id(0);
 
   dependentLaunch();       // Next kernel will be tailSquareFP32 which must dependentLaunchWait before reading data from fftMiddleInFP32
@@ -382,7 +436,27 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   readTailFusedLine(inF2, u, line, me);
 
+#if PFA
+  F2 trig = slowTrig_N(pfaFpTailTrigBase(line) + me * H, 2 * ND);
+  if (which >= 2) {
+    // Line kx = 0 of row k3 pairs element ky with element -ky of line kx = 0 of row PFA - k3
+    F2 v[NH];
+    u32 line2 = pfaFpTailPartner(line);
+    readTailFusedLine(inF2, v, line2, me);
+    fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
+    fft_HEIGHT1(lds, v, smallTrigF2, 1, me);
+    reverseLineBump(lds, v);
+    pairSq(NH, u, v, trig, false);
+    reverseLineBump(lds, v);
+    fft_HEIGHT2(lds, v, smallTrigF2, 1, me);
+    fft_HEIGHT2(lds, u, smallTrigF2, 1, me);
+    writeTailFusedLine(v, outF2, transPos(line2, MIDDLE, WIDTH), me);
+    writeTailFusedLine(u, outF2, transPos(line, MIDDLE, WIDTH), me);
+    return;
+  }
+#else
   F2 trig = slowTrig_N(line + me * H, ND / NH);
+#endif
 
   fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
   reverse(lds, u + NH/2, !which);
@@ -408,8 +482,13 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   F2 u[NH], v[NH];
 
+#if PFA
+  u32 line1 = pfaFpTailLine(get_group_id(0));
+  u32 line2 = pfaFpTailPartner(line1);
+#else
   u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
+#endif
   u32 memline1 = transPos(line1, MIDDLE, WIDTH);
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
@@ -425,7 +504,9 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   fft_HEIGHT1(lds + zerohack, v, smallTrigF2 + zerohack, 1, me);
 
   // Compute trig values from scratch.  Good on GPUs with high FP throughput.
-#if TAIL_TRIGS32 == 2
+#if PFA
+  F2 trig = slowTrig_N(pfaFpTailTrigBase(line1) + me * H, 2 * ND);
+#elif TAIL_TRIGS32 == 2
   F2 trig = slowTrig_N(line1 + me * H, ND / NH);
 
   // Do a little bit of memory access and a little bit of FP math.
@@ -498,8 +579,13 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   F2 u[NH];
 
+#if PFA
+  u32 line_u = pfaFpTailLine(get_group_id(0));
+  u32 line_v = pfaFpTailPartner(line_u);
+#else
   u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
+#endif
   u32 me = get_local_id(0);
   u32 lowMe = me % G_H;  // lane-id in one of the two halves (half-workgroups).
 
@@ -517,7 +603,9 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   fft_HEIGHT1(lds + zerohack, u, smallTrigF2 + zerohack, 2, lowMe);
 
   // Compute trig values from scratch.  Good on GPUs with high FP throughput.
-#if TAIL_TRIGS32 == 2
+#if PFA
+  F2 trig = slowTrig_N(pfaFpTailTrigBase(line) + H * lowMe, 2 * ND);
+#elif TAIL_TRIGS32 == 2
   F2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
 
   // Do a little bit of memory access and a little bit of FP math.
