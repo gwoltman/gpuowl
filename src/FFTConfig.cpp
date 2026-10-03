@@ -93,7 +93,7 @@ vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
     for (u32 const width : {256, 512, 1024, 2048, 4096}) {
       for (u32 const height : {256, 512, 1024, 2048}) {
         for (u32 const middle : {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
-          if (type != FFT64 && type != FFT32 && (middle & (middle - 1)) && !(middle == 3 && pfaType(type))) continue;  // Reject non-power-of-two NTTs
+          if (type != FFT64 && type != FFT32 && (middle & (middle - 1)) && !(pfaMiddle(middle) && pfaType(type))) continue;  // Reject non-power-of-two NTTs
           u32 const sz = width * height * middle * 2;
           if (sizeFrom <= sz && sz <= sizeTo) {
             configs.emplace_back(type, width, middle, height);
@@ -150,8 +150,8 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
     bpw = it->second;
   } else if (isPfa()) {
     // An NTT has no roundoff, so its BPW depends only on its size.  Interpolate in log2(size) between the
-    // W:2:H and W:4:H shapes of the same type: log2(3/2) of the way from the 2N/3 size to the 4N/3 size.
-    FFTShape const lo{t, w, 2, h}, hi{t, w, 4, h};
+    // W:2M:H and W:4M:H shapes of the same type (M = MIDDLE/3): log2(3/2) of the way from the 2N/3 size to the 4N/3 size.
+    FFTShape const lo{t, w, 2 * m / 3, h}, hi{t, w, 4 * m / 3, h};
     for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] = lo.bpw[j] + 0.585f * (hi.bpw[j] - lo.bpw[j]);
   } else {
     if (height > width) {
@@ -258,8 +258,8 @@ FFTConfig::FFTConfig(const string& spec) {
       log("Height must be 256, 512, 1024, or 2048.\n");
       throw "Invalid FFT spec";
     }
-    if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1)) && !(m == 3 && FFTShape::pfaType(fft_type))) {
-      log("NTT middle must be a power of two (or 3 for the pure NTT types that support it).\n");
+    if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1)) && !(FFTShape::pfaMiddle(m) && FFTShape::pfaType(fft_type))) {
+      log("NTT middle must be a power of two (or 3, 6, 12 for the pure NTT types that support it).\n");
       throw "Invalid FFT spec";
     }
   }

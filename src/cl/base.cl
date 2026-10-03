@@ -266,40 +266,43 @@ typedef uint u32;
 typedef long i64;
 typedef ulong u64;
 
-// PFA: MIDDLE=3 on a pure-NTT type is done as a Good-Thomas prime-factor transform.  The ND pairs of words are split into
-// 3 rows of PFA_L = WIDTH*SMALL_HEIGHT pairs by the Chinese remainder theorem: pair p is in row p % 3 at binary index p % PFA_L.
-// Each row is an ordinary power-of-two transform (width, then height) and the radix-3 between the rows (fftMiddleIn/Out)
-// uses only a cube root of unity, which lies in Z/pZ, and no twiddles.  The rows are stored in the stock MIDDLE=3 layout:
-// line g holds row g % 3 at binary indices x * SMALL_HEIGHT + g % SMALL_HEIGHT.  Then the carry out of the pair at (x, g)
-// goes to (x, g + 1), except that lines SMALL_HEIGHT and 2*SMALL_HEIGHT (like line 0) take their carries from column x - 1.
-// The tail pairs each row with itself: the line kx + WIDTH*k3 (row frequency k3) pairs with (WIDTH - kx) + WIDTH*k3.
+// PFA: MIDDLE = 3 * PFA_M2 (PFA_M2 = 1, 2 or 4) on a pure-NTT type is done as a Good-Thomas prime-factor transform.  The ND pairs
+// of words are split into 3 rows of PFA_L pairs by the Chinese remainder theorem: pair p is in row p % 3 at binary index p % PFA_L.
+// Each row is an ordinary power-of-two transform of WIDTH * PFA_M2 * SMALL_HEIGHT pairs (width, middle radix PFA_M2, height).  The
+// radix-3 between the rows (fftMiddleIn/Out) uses only a cube root of unity, which lies in Z/pZ, and no twiddles.  The rows are
+// stored in the stock MIDDLE layout: line g holds row g % 3 at binary line g % PFA_BH, i.e. at the binary indices x * PFA_BH + g % PFA_BH.
+// Then the carry out of the pair at (x, g) goes to (x, g + 1), except that lines PFA_BH and 2*PFA_BH (like line 0) take their
+// carries from column x - 1.  The tail pairs each row with itself: line kx + PFA_TW*k3 (row frequency k3, kx < PFA_TW) pairs with
+// (PFA_TW - kx) + PFA_TW*k3.
 #if !defined(PFA)
 #define PFA 0
 #endif
 #if PFA
-#if MIDDLE != 3 || FFT_FP64 || FFT_FP32
-#error PFA needs MIDDLE=3 and a pure NTT type
+#if (MIDDLE != 3 && MIDDLE != 6 && MIDDLE != 12) || FFT_FP64 || FFT_FP32
+#error PFA needs MIDDLE=3, 6 or 12 and a pure NTT type
 #endif
-#define PFA_L (WIDTH * SMALL_HEIGHT)
+#define PFA_M2 (MIDDLE / 3)                     // The power-of-two part of MIDDLE
+#define PFA_BH (SMALL_HEIGHT * PFA_M2)          // The lines (BIG_HEIGHT) of a row
+#define PFA_TW (WIDTH * PFA_M2)                 // The tail lines of a row
+#define PFA_L (WIDTH * PFA_BH)                  // The pairs of a row
 // The logical pair stored at column x of line g
 u32 pfaPair(u32 x, u32 g) {
-  u32 q = x * SMALL_HEIGHT + g % SMALL_HEIGHT;
+  u32 q = x * PFA_BH + g % PFA_BH;
   return q + PFA_L * ((g % 3 + 3 - q % 3) * (PFA_L % 3) % 3);     // PFA_L % 3 is its own inverse mod 3
 }
 // Does line g take its carries from column x - 1 of the previous line?
-bool pfaRotatedLine(u32 g) { return g % SMALL_HEIGHT == 0; }
-// Tail line kx + WIDTH*k3 pairs with (WIDTH - kx) + WIDTH*k3, and the lines kx = 0 and kx = WIDTH/2 pair with themselves.
-// The u line of the g-th tail pair, numbering the pairs kx = 0..WIDTH/2-1 (or 1..WIDTH/2-1 without the self-paired lines) of each k3.
+bool pfaRotatedLine(u32 g) { return g % PFA_BH == 0; }
+// The u line of the g-th tail pair, numbering the pairs kx = 0..PFA_TW/2-1 (or 1..PFA_TW/2-1 without the self-paired lines) of each k3.
 u32 pfaTailLine(u32 g, bool withSelfPairs) {
-  u32 n = withSelfPairs ? WIDTH / 2 : WIDTH / 2 - 1;
-  return g / n * WIDTH + g % n + (withSelfPairs ? 0 : 1);
+  u32 n = withSelfPairs ? PFA_TW / 2 : PFA_TW / 2 - 1;
+  return g / n * PFA_TW + g % n + (withSelfPairs ? 0 : 1);
 }
-u32 pfaTailPartner(u32 line) { u32 kx = line % WIDTH; return line - kx + (kx ? WIDTH - kx : WIDTH / 2); }
-// Where a tail line's trig values are, numbering the lines kx = 0..WIDTH/2 of each k3 (see genSmallTrigComboGF61)
-u32 pfaTailTrigIndex(u32 line) { return line / WIDTH * (WIDTH / 2 + 1) + line % WIDTH; }
+u32 pfaTailPartner(u32 line) { u32 kx = line % PFA_TW; return line - kx + (kx ? PFA_TW - kx : PFA_TW / 2); }
+// Where a tail line's trig values are, numbering the lines kx = 0..PFA_TW/2 of each k3 (see genSmallTrigComboGF61)
+u32 pfaTailTrigIndex(u32 line) { return line / PFA_TW * (PFA_TW / 2 + 1) + line % PFA_TW; }
 #define TAIL_PARTNER(line)      pfaTailPartner(line)
 #define TAIL_TRIG_LINE(line)    pfaTailTrigIndex(line)
-#define TAIL_SELF_PAIRED(line)  ((line) % WIDTH == 0)
+#define TAIL_SELF_PAIRED(line)  ((line) % PFA_TW == 0)
 #else
 // Stock tail: line pairs with H - line, lines 0 and H/2 pair with themselves (H = WIDTH * MIDDLE)
 #define TAIL_PARTNER(line)      ((line) ? WIDTH * MIDDLE - (line) : WIDTH * MIDDLE / 2)
@@ -317,8 +320,8 @@ u32 pfaTailTrigIndex(u32 line) { return line / WIDTH * (WIDTH / 2 + 1) + line % 
 #define LOG2_ROOT_TWO61 ((u32) (((1ULL << 60) / NWORDS) % 61))
 #define LOG2_ROOT_TWO31 ((u32) (((1ULL << 30) / NWORDS) % 31))
 #endif
-// log2 of MIDDLE's share of the NTT's output scale.  With PFA the factor 3 is removed in fftMiddleOut, see PFA_INV3_*.
-#define LOG2_MIDDLE_NTT (PFA ? 0 : MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4)
+// log2 of MIDDLE's share of the NTT's output scale.  With PFA the factor 3 is removed in fftMiddleOut, see PFA_INV3_*, leaving PFA_M2.
+#define LOG2_MIDDLE_NTT (PFA ? (MIDDLE == 12 ? 2 : MIDDLE == 6 ? 1 : 0) : MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4)
 
 // The host sets NO_FP64 for devices without cl_khr_fp64 (e.g. Mesa rusticl on AMD).  Such devices can still run the FFT types
 // that have no FP64 data (M31+M61, M61, and the FP32 hybrids).  All uses of double must then be compiled out.

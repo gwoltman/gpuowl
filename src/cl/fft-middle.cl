@@ -23,6 +23,7 @@
 #include "fft11.cl"
 #elif MIDDLE == 12
 #include "fft12.cl"
+#include "fft4.cl"           // PFA uses the GF fft4 (fft12.cl only includes it for FP64)
 #elif MIDDLE == 13
 #include "fft13.cl"
 #elif MIDDLE == 14
@@ -761,59 +762,69 @@ void OVERLOAD pfaDft3(GF31 *a, Z31 w) {
   a[0] = y0; a[1] = y1; a[2] = y2;
 }
 
-// The twiddle w^(x*y) between the width and height steps of a row, w a root of order WIDTH*SMALL_HEIGHT.  The tables are
-// laid out as for middleMul2, see genMiddleTrigGF31: trig1[k] = w^(SMALL_HEIGHT*k) for k < WIDTH, trig2[k] = w^k for k < SMALL_HEIGHT.
-GF31 OVERLOAD pfaTwiddle(u32 x, u32 y, TrigGF31 trig) {
+// The middle trig table for PFA, see genMiddleTrigGF31.  With w a root of order PFA_L (a row) and b < PFA_BH a binary line:
+//   at 0:                            trig2[k] = w^k for k < PFA_BH
+//   at PFA_BH:                       the middleMul twiddles of a row, w^(WIDTH*y*k) at (k - 1) * SMALL_HEIGHT + y for k < PFA_M2
+//   at SMALL_HEIGHT * (MIDDLE - 1):  trig1[k] = w^(PFA_BH*k) for k < WIDTH
+// The twiddle w^(x*b) between the width step and the middle step of a row:
+GF31 OVERLOAD pfaTwiddle(u32 x, u32 b, TrigGF31 trig) {
   TrigGF31 trig1 = trig + SMALL_HEIGHT * (MIDDLE - 1);
-  TrigGF31 trig2 = trig1 + WIDTH;
-  u32 desired_root = x * y;
-  return cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
+  u32 desired_root = x * b;
+  return cmul(TFLOAD(&trig[desired_root % PFA_BH]), TFLOAD(&trig1[desired_root / PFA_BH]));
 }
 
-// u[m] holds line m*SMALL_HEIGHT + y, which is row (m*SMALL_HEIGHT + y) % 3.  Return the rows in order.
-void OVERLOAD pfaRows(GF31 *a, GF31 *u, u32 y) {
-  u32 t = y % 3;
-  if (SMALL_HEIGHT % 3 == 1) {          // row r is u[(r - t) % 3]
-    a[0] = t == 0 ? u[0] : t == 1 ? u[2] : u[1];
-    a[1] = t == 0 ? u[1] : t == 1 ? u[0] : u[2];
-    a[2] = t == 0 ? u[2] : t == 1 ? u[1] : u[0];
-  } else {                              // row r is u[2(r - t) % 3]
-    a[0] = t == 0 ? u[0] : t == 1 ? u[1] : u[2];
-    a[1] = t == 0 ? u[2] : t == 1 ? u[0] : u[1];
-    a[2] = t == 0 ? u[1] : t == 1 ? u[2] : u[0];
-  }
+GF31 OVERLOAD pfaSel3(GF31 a0, GF31 a1, GF31 a2, u32 j) { return j == 0 ? a0 : j == 1 ? a1 : a2; }
+
+// The middle step of a row: radix-PFA_M2 on u[0..PFA_M2-1], then the twiddles w^(WIDTH*y*k), as fft_MIDDLE + middleMul of a
+// stock MIDDLE=PFA_M2 transform.  On SWAP_XY'd data (fftMiddleOut) the same code computes the inverse, in reverse order.
+void OVERLOAD pfaRowMiddle(GF31 *u, u32 y, TrigGF31 trig, bool inverse) {
+#if PFA_M2 > 1
+  TrigGF31 mm = trig + PFA_BH;
+  if (inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmul(u[k], TFLOAD(&mm[(k - 1) * SMALL_HEIGHT + y])); } }
+#if PFA_M2 == 2
+  X2(u[0], u[1]);
+#else
+  fft4(u);
+#endif
+  if (!inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmul(u[k], TFLOAD(&mm[(k - 1) * SMALL_HEIGHT + y])); } }
+#endif
 }
 
-// Inverse of pfaRows: u[m] = row (m*SMALL_HEIGHT + y) % 3
-void OVERLOAD pfaUnrows(GF31 *u, GF31 *a, u32 y) {
-  u32 t = y % 3;
-  u32 s = SMALL_HEIGHT % 3;
-  u[0] = t == 0 ? a[0] : t == 1 ? a[1] : a[2];
-  u[1] = (s + t) % 3 == 0 ? a[0] : (s + t) % 3 == 1 ? a[1] : a[2];
-  u[2] = (2 * s + t) % 3 == 0 ? a[0] : (2 * s + t) % 3 == 1 ? a[1] : a[2];
-}
-
-// fftMiddleIn for PFA: x is the width frequency, y the height position.  On output u[k3] is row frequency k3.
+// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line m*SMALL_HEIGHT + y, which is row
+// (m*SMALL_HEIGHT + y) % 3 at binary middle index m % PFA_M2.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
 void OVERLOAD pfaMiddleIn(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
-  GF31 base = pfaTwiddle(x, y, trig);
-  GF31 a[3];
-  for (u32 m = 0; m < 3; ++m) { u[m] = cmul(u[m], base); }
-  pfaRows(a, u, y);
-  pfaDft3(a, PFA_J31);
-  for (u32 k = 0; k < 3; ++k) { u[k] = a[k]; }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    GF31 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for the three rows
+    for (u32 j = 0; j < 3; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
+  }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    // u[m2 + PFA_M2*j] is row (t + j*s) % 3.  Put the rows in order, s being its own inverse mod 3.
+    u32 t = (m2 * SMALL_HEIGHT + y) % 3, s = PFA_BH % 3;
+    GF31 b0 = u[m2], b1 = u[m2 + PFA_M2], b2 = u[m2 + 2 * PFA_M2];
+    GF31 a[3];
+    for (u32 r = 0; r < 3; ++r) { a[r] = pfaSel3(b0, b1, b2, (r + 3 - t) * s % 3); }
+    pfaDft3(a, PFA_J31);
+    for (u32 k3 = 0; k3 < 3; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
+  }
+  for (u32 k3 = 0; k3 < 3; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, false); }
 }
 
 // fftMiddleOut for PFA, the inverse of pfaMiddleIn on the SWAP_XY'd data of the inverse transform.  The binary parts of the
 // inverse are forward transforms (conjugating a unit-circle root inverts it), but the cube root is in Z/pZ and is its own
-// conjugate, so the inverse radix-3 uses J^2 = J^-1.  1/3 is folded into the twiddle (multiplying by an element of Z/pZ
+// conjugate, so the inverse radix-3 uses J^2 = J^-1.  1/3 is folded into the row twiddle (multiplying by an element of Z/pZ
 // commutes with SWAP_XY), which leaves a power-of-two scale for the carry step to shift out.
 void OVERLOAD pfaMiddleOut(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
-  GF31 a[3];
-  for (u32 k = 0; k < 3; ++k) { a[k] = u[k]; }
-  pfaDft3(a, PFA_J31SQ);
-  pfaUnrows(u, a, y);
-  GF31 base = pfaScale(pfaTwiddle(x, y, trig), PFA_INV3_31);
-  for (u32 m = 0; m < 3; ++m) { u[m] = cmul(u[m], base); }
+  for (u32 k3 = 0; k3 < 3; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    u32 t = (m2 * SMALL_HEIGHT + y) % 3, s = PFA_BH % 3;
+    GF31 a[3] = { u[m2], u[m2 + PFA_M2], u[m2 + 2 * PFA_M2] };
+    pfaDft3(a, PFA_J31SQ);
+    for (u32 j = 0; j < 3; ++j) { u[m2 + PFA_M2 * j] = pfaSel3(a[0], a[1], a[2], (t + j * s) % 3); }
+  }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    GF31 w = pfaScale(pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig), PFA_INV3_31);
+    for (u32 j = 0; j < 3; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
+  }
 }
 
 #endif
@@ -974,59 +985,69 @@ void OVERLOAD pfaDft3(GF61 *a, Z61 w) {
   a[0] = y0; a[1] = y1; a[2] = y2;
 }
 
-// The twiddle w^(x*y) between the width and height steps of a row, w a root of order WIDTH*SMALL_HEIGHT.  The tables are
-// laid out as for middleMul2, see genMiddleTrigGF61: trig1[k] = w^(SMALL_HEIGHT*k) for k < WIDTH, trig2[k] = w^k for k < SMALL_HEIGHT.
-GF61 OVERLOAD pfaTwiddle(u32 x, u32 y, TrigGF61 trig) {
+// The middle trig table for PFA, see genMiddleTrigGF61.  With w a root of order PFA_L (a row) and b < PFA_BH a binary line:
+//   at 0:                            trig2[k] = w^k for k < PFA_BH
+//   at PFA_BH:                       the middleMul twiddles of a row, w^(WIDTH*y*k) at (k - 1) * SMALL_HEIGHT + y for k < PFA_M2
+//   at SMALL_HEIGHT * (MIDDLE - 1):  trig1[k] = w^(PFA_BH*k) for k < WIDTH
+// The twiddle w^(x*b) between the width step and the middle step of a row:
+GF61 OVERLOAD pfaTwiddle(u32 x, u32 b, TrigGF61 trig) {
   TrigGF61 trig1 = trig + SMALL_HEIGHT * (MIDDLE - 1);
-  TrigGF61 trig2 = trig1 + WIDTH;
-  u32 desired_root = x * y;
-  return cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
+  u32 desired_root = x * b;
+  return cmul(TFLOAD(&trig[desired_root % PFA_BH]), TFLOAD(&trig1[desired_root / PFA_BH]));
 }
 
-// u[m] holds line m*SMALL_HEIGHT + y, which is row (m*SMALL_HEIGHT + y) % 3.  Return the rows in order.
-void OVERLOAD pfaRows(GF61 *a, GF61 *u, u32 y) {
-  u32 t = y % 3;
-  if (SMALL_HEIGHT % 3 == 1) {          // row r is u[(r - t) % 3]
-    a[0] = t == 0 ? u[0] : t == 1 ? u[2] : u[1];
-    a[1] = t == 0 ? u[1] : t == 1 ? u[0] : u[2];
-    a[2] = t == 0 ? u[2] : t == 1 ? u[1] : u[0];
-  } else {                              // row r is u[2(r - t) % 3]
-    a[0] = t == 0 ? u[0] : t == 1 ? u[1] : u[2];
-    a[1] = t == 0 ? u[2] : t == 1 ? u[0] : u[1];
-    a[2] = t == 0 ? u[1] : t == 1 ? u[2] : u[0];
-  }
+GF61 OVERLOAD pfaSel3(GF61 a0, GF61 a1, GF61 a2, u32 j) { return j == 0 ? a0 : j == 1 ? a1 : a2; }
+
+// The middle step of a row: radix-PFA_M2 on u[0..PFA_M2-1], then the twiddles w^(WIDTH*y*k), as fft_MIDDLE + middleMul of a
+// stock MIDDLE=PFA_M2 transform.  On SWAP_XY'd data (fftMiddleOut) the same code computes the inverse, in reverse order.
+void OVERLOAD pfaRowMiddle(GF61 *u, u32 y, TrigGF61 trig, bool inverse) {
+#if PFA_M2 > 1
+  TrigGF61 mm = trig + PFA_BH;
+  if (inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmul(u[k], TFLOAD(&mm[(k - 1) * SMALL_HEIGHT + y])); } }
+#if PFA_M2 == 2
+  X2(u[0], u[1]);
+#else
+  fft4(u);
+#endif
+  if (!inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmul(u[k], TFLOAD(&mm[(k - 1) * SMALL_HEIGHT + y])); } }
+#endif
 }
 
-// Inverse of pfaRows: u[m] = row (m*SMALL_HEIGHT + y) % 3
-void OVERLOAD pfaUnrows(GF61 *u, GF61 *a, u32 y) {
-  u32 t = y % 3;
-  u32 s = SMALL_HEIGHT % 3;
-  u[0] = t == 0 ? a[0] : t == 1 ? a[1] : a[2];
-  u[1] = (s + t) % 3 == 0 ? a[0] : (s + t) % 3 == 1 ? a[1] : a[2];
-  u[2] = (2 * s + t) % 3 == 0 ? a[0] : (2 * s + t) % 3 == 1 ? a[1] : a[2];
-}
-
-// fftMiddleIn for PFA: x is the width frequency, y the height position.  On output u[k3] is row frequency k3.
+// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line m*SMALL_HEIGHT + y, which is row
+// (m*SMALL_HEIGHT + y) % 3 at binary middle index m % PFA_M2.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
 void OVERLOAD pfaMiddleIn(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
-  GF61 base = pfaTwiddle(x, y, trig);
-  GF61 a[3];
-  for (u32 m = 0; m < 3; ++m) { u[m] = cmul(u[m], base); }
-  pfaRows(a, u, y);
-  pfaDft3(a, PFA_J61);
-  for (u32 k = 0; k < 3; ++k) { u[k] = a[k]; }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    GF61 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for the three rows
+    for (u32 j = 0; j < 3; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
+  }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    // u[m2 + PFA_M2*j] is row (t + j*s) % 3.  Put the rows in order, s being its own inverse mod 3.
+    u32 t = (m2 * SMALL_HEIGHT + y) % 3, s = PFA_BH % 3;
+    GF61 b0 = u[m2], b1 = u[m2 + PFA_M2], b2 = u[m2 + 2 * PFA_M2];
+    GF61 a[3];
+    for (u32 r = 0; r < 3; ++r) { a[r] = pfaSel3(b0, b1, b2, (r + 3 - t) * s % 3); }
+    pfaDft3(a, PFA_J61);
+    for (u32 k3 = 0; k3 < 3; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
+  }
+  for (u32 k3 = 0; k3 < 3; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, false); }
 }
 
 // fftMiddleOut for PFA, the inverse of pfaMiddleIn on the SWAP_XY'd data of the inverse transform.  The binary parts of the
 // inverse are forward transforms (conjugating a unit-circle root inverts it), but the cube root is in Z/pZ and is its own
-// conjugate, so the inverse radix-3 uses J^2 = J^-1.  1/3 is folded into the twiddle (multiplying by an element of Z/pZ
+// conjugate, so the inverse radix-3 uses J^2 = J^-1.  1/3 is folded into the row twiddle (multiplying by an element of Z/pZ
 // commutes with SWAP_XY), which leaves a power-of-two scale for the carry step to shift out.
 void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
-  GF61 a[3];
-  for (u32 k = 0; k < 3; ++k) { a[k] = u[k]; }
-  pfaDft3(a, PFA_J61SQ);
-  pfaUnrows(u, a, y);
-  GF61 base = pfaScale(pfaTwiddle(x, y, trig), PFA_INV3_61);
-  for (u32 m = 0; m < 3; ++m) { u[m] = cmul(u[m], base); }
+  for (u32 k3 = 0; k3 < 3; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    u32 t = (m2 * SMALL_HEIGHT + y) % 3, s = PFA_BH % 3;
+    GF61 a[3] = { u[m2], u[m2 + PFA_M2], u[m2 + 2 * PFA_M2] };
+    pfaDft3(a, PFA_J61SQ);
+    for (u32 j = 0; j < 3; ++j) { u[m2 + PFA_M2 * j] = pfaSel3(a[0], a[1], a[2], (t + j * s) % 3); }
+  }
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    GF61 w = pfaScale(pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig), PFA_INV3_61);
+    for (u32 j = 0; j < 3; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
+  }
 }
 
 #endif
