@@ -76,12 +76,12 @@ u64 pfaRootOfUnity(u32 q, u32 R);
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of uint2 values)
 #define SMALLTRIG_GF31_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH))     // See genSmallTrigGF31
-#define SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / ((M) & (~(M) + 1)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF31
+#define SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / (((M) & (~(M) + 1)) + ((M) == 0)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF31
 #define MIDDLETRIG_GF31_SIZE(W,M,H)             ((H) * ((M) - 1) + (W) + (H))                                           // See genMiddleTrigGF31
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of ulong2 values)
 #define SMALLTRIG_GF61_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH))     // See genSmallTrigGF61
-#define SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / ((M) & (~(M) + 1)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF61
+#define SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / (((M) & (~(M) + 1)) + ((M) == 0)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF61
 #define MIDDLETRIG_GF61_SIZE(W,M,H)             ((H) * ((M) - 1) + (W) + (H))                                           // See genMiddleTrigGF61
 
 // Convert above sizes to distances (in units of double2)

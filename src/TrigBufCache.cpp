@@ -952,7 +952,13 @@ static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix) {
 }
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
-u64 pfaMulMod(u32 q, u64 a, u64 b) { u64 const p = (u64(1) << q) - 1; return u64((unsigned __int128) a * b % p); }
+u64 pfaMulMod(u32 q, u64 a, u64 b) {     // a, b < p = 2^q - 1, q = 31 or 61.  Portable: no __int128 (MSVC), Mersenne reduction as Z61::_mul.
+  u64 const p = (u64(1) << q) - 1;
+  u128 const t = a * u128(b);
+  u64 const lo = uint64_t(t), hi = uint64_t(t >> 64);
+  u64 r = (lo & p) + ((lo >> q) | (hi << (64 - q)));    // < 2p
+  return r >= p ? r - p : r;
+}
 u64 pfaPowMod(u32 q, u64 a, u64 e) { u64 r = 1; for (; e; e /= 2, a = pfaMulMod(q, a, a)) { if (e & 1) { r = pfaMulMod(q, r, a); } } return r; }
 u64 pfaRootOfUnity(u32 q, u32 R) {
   u64 const p = (u64(1) << q) - 1;
