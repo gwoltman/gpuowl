@@ -237,11 +237,15 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF61(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
   readMiddleOutLine(u, in61, y, x);
 
+#if PFA
+  pfaMiddleOut(u, y, x, trig61);       // y is the width position, x the height position
+#else
   middleMul(u, x, trig61);
 
   fft_MIDDLE(u);
 
   middleMul2(u, y, x, trig61);
+#endif
 
   dependentLaunch();       // Next kernel will be carryfused which must dependentLaunchWait before reading data
 

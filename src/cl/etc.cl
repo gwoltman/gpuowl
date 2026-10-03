@@ -9,8 +9,15 @@
 KERNEL(32) readResidue(P(Word2) out, CP(Word2) in) {
   u32 me = get_local_id(0);
   u32 k = (ND - 16 + me) % ND;
+#if PFA
+  // Logical pair k is at column x of the line that is row k % 3 and holds binary index k % PFA_L (see pfaPair)
+  u32 q = k % PFA_L;
+  u32 x = q / SMALL_HEIGHT;
+  u32 y = q % SMALL_HEIGHT + SMALL_HEIGHT * ((k % 3 + 3 - q % SMALL_HEIGHT % 3) * (SMALL_HEIGHT % 3) % 3);
+#else
   u32 y = k % BIG_HEIGHT;
   u32 x = k / BIG_HEIGHT;
+#endif
   out[me] = in[WIDTH * y + x];
 }
 #endif

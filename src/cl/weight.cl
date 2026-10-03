@@ -25,6 +25,17 @@ u64 comboFracBits(u32 i) {
 #endif
 }
 
+#if PFA
+// The NTT kernels' 64-bit weight counter (low 32 bits frac_bits, high 32 bits the weight shift) for the first word of the pair
+// at column x of line g, computed from scratch as the kernels do for their first pair.  With PFA a line's pairs are not a
+// constant word distance apart, so the kernels call this for every pair.  q is 31 or 61, extra_shift is added to the shift.
+u64 pfaCombo(u32 x, u32 g, u32 q, u32 bigword_weight_shift_minus1, u32 extra_shift) {
+  u32 word_index = pfaPair(x, g) * 2;
+  u64 c = comboFracBits(word_index) + make_u64(word_index % q * bigword_weight_shift_minus1, 0xFFFFFFFF);
+  return make_u64(((u32) (c >> 32) % q + extra_shift) % q, (u32) c);
+}
+#endif
+
 // Routines to acces the 8 precomputed step weights
 u32 weightStepIndex(u32 i) { return i * STEP % NW * (8 / NW); }
 u32 weightStepFracBits(u32 i) { return 0xFFFFFFFF - (weightStepIndex(i) << 29); }

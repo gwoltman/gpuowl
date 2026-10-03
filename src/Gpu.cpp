@@ -427,6 +427,14 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   }
 #endif
 
+  // PFA is only implemented for the not-in-place layout
+  if (fft.shape.isPfa() && in_place) {
+    log("MIDDLE=3 NTTs need INPLACE=0.  Changing to INPLACE=0.\n");
+    in_place = 0;
+    config["INPLACE"] = to_string(0);
+    args.flags["INPLACE"] = to_string(0);
+  }
+
   // L2_STRIPING is not allowed if INPLACE=0.  Maximum L2_STRIPING is WIDTH/64 if MULTI_Q=0 and WIDTH/128 if MULTI_Q=1.
   // Technically, L2_STRIPING of WIDTH/32, MULTI_Q=0 could be allowed but that is just a more complicated way to implement L2_STRIPING=0.
   // Also, WIDTH/64, MULTI_Q=1 could be allowed with some marker/sync code changes but that is very similar to L2_STRIPING=0.
@@ -521,6 +529,16 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   }
   if (fft.NTT_GF61) {
     defines += toDefine("TAILTGF61", root1GF61(fft.shape.height * 2, 1));
+  }
+  if (fft.shape.isPfa()) {
+    // MIDDLE=3 as a Good-Thomas transform (see base.cl).  J is a primitive cube root of unity in Z/qZ (a power of a
+    // primitive root) and must match the one in TrigBufCache.cpp.
+    defines += toDefine("PFA", 1);
+    if (fft.NTT_GF61) {
+      defines += toDefine("PFA_J61", 1669582390241348315ULL);
+      defines += toDefine("PFA_J61SQ", 636260618972345635ULL);
+      defines += toDefine("PFA_INV3_61", 1537228672809129301ULL);
+    }
   }
 
   // Send the FFT/NTT type and booleans that enable/disable code for each possible FP and NTT
@@ -980,70 +998,72 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
   K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDIN)),
+// With PFA every row frequency has its own pair of self-paired tail lines, see tailSquareZero
+#define PFA_ROWS (fft.shape.isPfa() ? 3u : 1u)
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP)),
-  K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2, kernelDefines(KFP)),
+  K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP)),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailSquare with two kernels
                                                hN / nH / 2, kernelDefines(KFP) + numRegisters(TAIL)),              // Single-wide tailSquare with one kernel
-  K(ktailMulZero,          "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP)),
-  K(ktailMulLowZero,       "tailmul.cl", "tailMulZero", SMALL_H / nH * 2, kernelDefines(KFP) + "-DMUL_LOW=1"),
+  K(ktailMulZero,          "tailmul.cl", "tailMulZero", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP)),
+  K(ktailMulLowZero,       "tailmul.cl", "tailMulZero", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP) + "-DMUL_LOW=1"),
   K(ktailMul,              "tailmul.cl", "tailMul",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP)),                                       // Single-wide tailMul with one kernel
   K(ktailMulLow,           "tailmul.cl", "tailMul",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDOUT)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
   K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDIN31)),
   K(kfftHinGF31,           "ffthin.cl",  "fftHinGF31",  hN / nH, kernelDefines(K31)),
-  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
+  K(ktailSquareZeroGF31,   "tailsquare.cl", "tailSquareZeroGF31", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K31)),
   K(ktailSquareGF31,       "tailsquare.cl", "tailSquareGF31",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailSquare with two kernels
                                                hN / nH / 2, kernelDefines(K31) + numRegisters(TAIL31)),            // Single-wide tailSquare with one kernel
-  K(ktailMulZeroGF31,      "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31)),
-  K(ktailMulLowZeroGF31,   "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2, kernelDefines(K31) + "-DMUL_LOW=1"),
+  K(ktailMulZeroGF31,      "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K31)),
+  K(ktailMulLowZeroGF31,   "tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K31) + "-DMUL_LOW=1"),
   K(ktailMulGF31,          "tailmul.cl", "tailMulGF31",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K31)),                                       // Single-wide tailMul with one kernel
   K(ktailMulLowGF31,       "tailmul.cl", "tailMulGF31",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDOUT31)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
   K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDIN61)),
   K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH, kernelDefines(K61)),
-  K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
+  K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K61)),
   K(ktailSquareGF61,       "tailsquare.cl", "tailSquareGF61",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailSquare with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailSquare with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailSquare with two kernels
                                                hN / nH / 2, kernelDefines(K61) + numRegisters(TAIL61)),            // Single-wide tailSquare with one kernel
-  K(ktailMulZeroGF61,      "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61)),
-  K(ktailMulLowZeroGF61,   "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2, kernelDefines(K61) + "-DMUL_LOW=1"),
+  K(ktailMulZeroGF61,      "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K61)),
+  K(ktailMulLowZeroGF61,   "tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K61) + "-DMUL_LOW=1"),
   K(ktailMulGF61,          "tailmul.cl", "tailMulGF61",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K61)),                                       // Single-wide tailMul with one kernel
   K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61",
-                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 : // Double-wide tailMul with two kernels
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
-                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH :                      // Single-wide tailMul with two kernels
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDOUT61)),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW, kernelDefines(K61)),
@@ -2119,14 +2139,41 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
   }
 }
 
+// With PFA (MIDDLE=3 NTT, see base.cl) the pair transposeOut puts at x * BIG_HEIGHT + line is logical pair pfaPair(x, line).
+// Return, for each such position, the logical pair it holds.
+static vector<u32> pfaPairMap(const FFTShape& shape) {
+  u32 const W = shape.width, SH = shape.height, BH = SH * shape.middle, L = W * SH;
+  vector<u32> map(W * BH);
+  for (u32 x = 0; x < W; ++x) {
+    for (u32 g = 0; g < BH; ++g) {
+      u32 const q = x * SH + g % SH;
+      map[x * BH + g] = q + L * ((g % 3 + 3 - q % 3) * (L % 3) % 3);
+    }
+  }
+  return map;
+}
+
 vector<Word> Gpu::readOut(Buffer<Word> &buf) {
   transpOut(bufAux, buf);
-  return readWords(bufAux);
+  vector<Word> words = readWords(bufAux);
+  if (fft.shape.isPfa()) {
+    vector<u32> const map = pfaPairMap(fft.shape);
+    vector<Word> logical(words.size());
+    for (u32 i = 0; i < map.size(); ++i) { logical[2 * map[i]] = words[2 * i]; logical[2 * map[i] + 1] = words[2 * i + 1]; }
+    words = std::move(logical);
+  }
+  return words;
 }
 
 void Gpu::writeIn(Buffer<Word>& buf, const vector<u32>& words) { writeIn(buf, expandBits(words, N, E)); }
 
 void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
+  if (fft.shape.isPfa()) {
+    vector<u32> const map = pfaPairMap(fft.shape);
+    vector<Word> stock(words.size());
+    for (u32 i = 0; i < map.size(); ++i) { stock[2 * i] = words[2 * map[i]]; stock[2 * i + 1] = words[2 * map[i] + 1]; }
+    words = std::move(stock);
+  }
   writeWords(bufAux, words);
   transpIn(buf, bufAux);
 }
