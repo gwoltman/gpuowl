@@ -19,6 +19,9 @@ class Tune {
 private:
   GpuCommon shared;
   Primes primes;
+  int workers = 1;              // -tune workers=N: time -use options with N concurrent workers
+
+  double timeOption(u64 exponent, FFTConfig fft, int quick);
 
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
