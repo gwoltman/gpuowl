@@ -266,29 +266,30 @@ typedef uint u32;
 typedef long i64;
 typedef ulong u64;
 
-// PFA: MIDDLE = 3 * PFA_M2 (PFA_M2 = 1, 2 or 4) on a pure-NTT type is done as a Good-Thomas prime-factor transform.  The ND pairs
-// of words are split into 3 rows of PFA_L pairs by the Chinese remainder theorem: pair p is in row p % 3 at binary index p % PFA_L.
-// Each row is an ordinary power-of-two transform of WIDTH * PFA_M2 * SMALL_HEIGHT pairs (width, middle radix PFA_M2, height).  The
-// radix-3 between the rows (fftMiddleIn/Out) uses only a cube root of unity, which lies in Z/pZ, and no twiddles.  The rows are
-// stored in the stock MIDDLE layout: line g holds row g % 3 at binary line g % PFA_BH, i.e. at the binary indices x * PFA_BH + g % PFA_BH.
-// Then the carry out of the pair at (x, g) goes to (x, g + 1), except that lines PFA_BH and 2*PFA_BH (like line 0) take their
-// carries from column x - 1.  The tail pairs each row with itself: line kx + PFA_TW*k3 (row frequency k3, kx < PFA_TW) pairs with
-// (PFA_TW - kx) + PFA_TW*k3.
+// PFA: MIDDLE = PFA * PFA_M2, with PFA = 3, 7, 9 or 11 and PFA_M2 a power of two, on a pure-NTT type is done as a Good-Thomas
+// prime-factor transform.  The ND pairs of words are split into PFA rows of PFA_L pairs by the Chinese remainder theorem: pair p is
+// in row p % PFA at binary index p % PFA_L.  Each row is an ordinary power-of-two transform of WIDTH * PFA_M2 * SMALL_HEIGHT pairs
+// (width, middle radix PFA_M2, height).  The radix-PFA between the rows (fftMiddleIn/Out) uses only a PFA-th root of unity, which
+// lies in Z/pZ for both M31 and M61, and no twiddles.  The rows are stored in the stock MIDDLE layout: line g holds row g % PFA at
+// binary line g % PFA_BH, i.e. at the binary indices x * PFA_BH + g % PFA_BH.  Then the carry out of the pair at (x, g) goes to
+// (x, g + 1), except that the lines at multiples of PFA_BH (like line 0) take their carries from column x - 1.  The tail pairs each
+// row with itself: line kx + PFA_TW*k3 (row frequency k3, kx < PFA_TW) pairs with (PFA_TW - kx) + PFA_TW*k3.
+// The host passes PFA_LINV = PFA_L^-1 mod PFA and PFA_BHINV = PFA_BH^-1 mod PFA.
 #if !defined(PFA)
 #define PFA 0
 #endif
 #if PFA
-#if (MIDDLE != 3 && MIDDLE != 6 && MIDDLE != 12) || FFT_FP64 || FFT_FP32
-#error PFA needs MIDDLE=3, 6 or 12 and a pure NTT type
+#if (PFA != 3 && PFA != 7 && PFA != 9 && PFA != 11) || MIDDLE % PFA || ((MIDDLE / PFA) & (MIDDLE / PFA - 1)) || FFT_FP64 || FFT_FP32
+#error PFA needs MIDDLE = 3, 7, 9 or 11 times a power of two and a pure NTT type
 #endif
-#define PFA_M2 (MIDDLE / 3)                     // The power-of-two part of MIDDLE
+#define PFA_M2 (MIDDLE / PFA)                   // The power-of-two part of MIDDLE
 #define PFA_BH (SMALL_HEIGHT * PFA_M2)          // The lines (BIG_HEIGHT) of a row
 #define PFA_TW (WIDTH * PFA_M2)                 // The tail lines of a row
 #define PFA_L (WIDTH * PFA_BH)                  // The pairs of a row
 // The logical pair stored at column x of line g
 u32 pfaPair(u32 x, u32 g) {
   u32 q = x * PFA_BH + g % PFA_BH;
-  return q + PFA_L * ((g % 3 + 3 - q % 3) * (PFA_L % 3) % 3);     // PFA_L % 3 is its own inverse mod 3
+  return q + PFA_L * ((g % PFA + PFA - q % PFA) * PFA_LINV % PFA);
 }
 // Does line g take its carries from column x - 1 of the previous line?
 bool pfaRotatedLine(u32 g) { return g % PFA_BH == 0; }
@@ -311,17 +312,17 @@ u32 pfaTailTrigIndex(u32 line) { return line / PFA_TW * (PFA_TW / 2 + 1) + line 
 #endif
 
 // 2 is a primitive q-th root of unity mod Mq, so the NWORDS-th root of two used by the IBDWT weights is 2^(NWORDS^-1 mod q).
-// For a power-of-two NWORDS that is 2^(2^(q-1) / NWORDS) as 2^(q-1) == 1 mod q.  With PFA, NWORDS is three times a power of two
-// and 3^-1 mod q is 41 for q = 61 and 21 for q = 31.
+// For a power-of-two NWORDS that is 2^(2^(q-1) / NWORDS) as 2^(q-1) == 1 mod q.  With PFA, NWORDS is PFA times a power of two
+// and the host passes PFA_RINV61 = PFA^-1 mod 61 and PFA_RINV31 = PFA^-1 mod 31.
 #if PFA
-#define LOG2_ROOT_TWO61 ((u32) ((((1ULL << 60) / (NWORDS / 3)) % 61) * 41 % 61))
-#define LOG2_ROOT_TWO31 ((u32) ((((1ULL << 30) / (NWORDS / 3)) % 31) * 21 % 31))
+#define LOG2_ROOT_TWO61 ((u32) ((((1ULL << 60) / (NWORDS / PFA)) % 61) * PFA_RINV61 % 61))
+#define LOG2_ROOT_TWO31 ((u32) ((((1ULL << 30) / (NWORDS / PFA)) % 31) * PFA_RINV31 % 31))
 #else
 #define LOG2_ROOT_TWO61 ((u32) (((1ULL << 60) / NWORDS) % 61))
 #define LOG2_ROOT_TWO31 ((u32) (((1ULL << 30) / NWORDS) % 31))
 #endif
-// log2 of MIDDLE's share of the NTT's output scale.  With PFA the factor 3 is removed in fftMiddleOut, see PFA_INV3_*, leaving PFA_M2.
-#define LOG2_MIDDLE_NTT (PFA ? (MIDDLE == 12 ? 2 : MIDDLE == 6 ? 1 : 0) : MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4)
+// log2 of MIDDLE's share of the NTT's output scale.  With PFA the factor PFA is removed in fftMiddleOut, see PFA_INVR_*, leaving PFA_M2.
+#define LOG2_MIDDLE_NTT (PFA ? (MIDDLE / PFA == 8 ? 3 : MIDDLE / PFA == 4 ? 2 : MIDDLE / PFA == 2 ? 1 : 0) : MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4)
 
 // The host sets NO_FP64 for devices without cl_khr_fp64 (e.g. Mesa rusticl on AMD).  Such devices can still run the FFT types
 // that have no FP64 data (M31+M61, M61, and the FP32 hybrids).  All uses of double must then be compiled out.

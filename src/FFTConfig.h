@@ -53,10 +53,13 @@ public:
   [[nodiscard]] float carry32BPW() const;
   [[nodiscard]] bool needsLargeCarry(u64 E) const;
   [[nodiscard]] bool isFavoredShape() const;
-  // MIDDLE=3, 6 or 12 on a pure-NTT type is done as a Good-Thomas prime-factor transform (3 rows of a power-of-two transform, the
-  // radix-3 in fftMiddleIn/Out uses only a cube root of unity and no twiddles).  The FP types use an ordinary radix-3.
+  // A MIDDLE with an odd factor (3, 7, 9 or 11 times a power of two) on a pure-NTT type is done as a Good-Thomas prime-factor
+  // transform: R = 3, 7, 9 or 11 rows of a power-of-two transform, the radix-R in fftMiddleIn/Out uses only an R-th root of unity
+  // (in Z/pZ for both M31 and M61) and no twiddles.  The FP types use ordinary odd radices.
   [[nodiscard]] static bool pfaType(enum FFT_TYPES t) { return t == FFT61 || t == FFT31 || t == FFT3161; }
-  [[nodiscard]] static bool pfaMiddle(u32 m) { return m == 3 || m == 6 || m == 12; }
+  [[nodiscard]] static u32 pfaRadix(u32 m) { return m / (m & (~m + 1)); }     // The odd part of m
+  [[nodiscard]] static bool pfaMiddle(u32 m) { u32 const r = pfaRadix(m); return r == 3 || r == 7 || r == 9 || r == 11; }
+  [[nodiscard]] u32 pfaRadix() const { return pfaRadix(middle); }
   [[nodiscard]] bool isPfa() const { return pfaMiddle(middle) && pfaType(fft_type); }
 };
 

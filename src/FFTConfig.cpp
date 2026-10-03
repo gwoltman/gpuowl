@@ -149,10 +149,13 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
   if (auto it = BPW.find(s); it != BPW.end()) {
     bpw = it->second;
   } else if (isPfa()) {
-    // An NTT has no roundoff, so its BPW depends only on its size.  Interpolate in log2(size) between the
-    // W:2M:H and W:4M:H shapes of the same type (M = MIDDLE/3): log2(3/2) of the way from the 2N/3 size to the 4N/3 size.
-    FFTShape const lo{t, w, 2 * m / 3, h}, hi{t, w, 4 * m / 3, h};
-    for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] = lo.bpw[j] + 0.585f * (hi.bpw[j] - lo.bpw[j]);
+    // An NTT has no roundoff, so its BPW depends only on its size.  Interpolate in log2(size) between the W:M0:H and
+    // W:2*M0:H shapes of the same type, M0 the largest power of two below MIDDLE.
+    u32 m0 = 1;
+    while (2 * m0 < m) m0 *= 2;
+    FFTShape const lo{t, w, m0, h}, hi{t, w, 2 * m0, h};
+    float const f = float(log2(double(m) / m0));
+    for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] = lo.bpw[j] + f * (hi.bpw[j] - lo.bpw[j]);
   } else {
     if (height > width) {
       bpw = FFTShape{t, h, m, w}.bpw;
@@ -259,7 +262,7 @@ FFTConfig::FFTConfig(const string& spec) {
       throw "Invalid FFT spec";
     }
     if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1)) && !(FFTShape::pfaMiddle(m) && FFTShape::pfaType(fft_type))) {
-      log("NTT middle must be a power of two (or 3, 6, 12 for the pure NTT types that support it).\n");
+      log("NTT middle must be a power of two (or 3, 6, 7, 9, 11, 12, 14 for the pure NTT types that support it).\n");
       throw "Invalid FFT spec";
     }
   }

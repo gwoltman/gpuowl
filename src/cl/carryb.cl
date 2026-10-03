@@ -30,7 +30,7 @@ KERNEL(G_W) carryB(P(Word2) io, CP(CarryABM) carryIn) {
   u32 prevLine = prev % HB;
   u32 prevCol  = prev / HB;
 #if PFA
-  // Chunks starting at line SMALL_HEIGHT or 2*SMALL_HEIGHT take their carry from column x - 1 (as the chunk at line 0 does).
+  // Chunks starting at a line that is a multiple of PFA_BH take their carry from column x - 1 (as the chunk at line 0 does).
   if (gy && pfaRotatedLine(line)) { prevCol = (G_W * gx + me + WIDTH - 1) % WIDTH; }
 #endif
 

@@ -429,7 +429,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
   // PFA is only implemented for the not-in-place layout
   if (fft.shape.isPfa() && in_place) {
-    log("MIDDLE=3, 6 and 12 NTTs need INPLACE=0.  Changing to INPLACE=0.\n");
+    log("NTTs with an odd MIDDLE factor need INPLACE=0.  Changing to INPLACE=0.\n");
     in_place = 0;
     config["INPLACE"] = to_string(0);
     args.flags["INPLACE"] = to_string(0);
@@ -531,18 +531,33 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
     defines += toDefine("TAILTGF61", root1GF61(fft.shape.height * 2, 1));
   }
   if (fft.shape.isPfa()) {
-    // MIDDLE=3 as a Good-Thomas transform (see base.cl).  J is a primitive cube root of unity in Z/qZ (a power of a
-    // primitive root) and must match the one in TrigBufCache.cpp.
-    defines += toDefine("PFA", 1);
-    if (fft.NTT_GF31) {
-      defines += toDefine("PFA_J31", 1513477735u);
-      defines += toDefine("PFA_J31SQ", 634005911u);
-      defines += toDefine("PFA_INV3_31", 1431655765u);
-    }
-    if (fft.NTT_GF61) {
-      defines += toDefine("PFA_J61", 1669582390241348315ULL);
-      defines += toDefine("PFA_J61SQ", 636260618972345635ULL);
-      defines += toDefine("PFA_INV3_61", 1537228672809129301ULL);
+    // MIDDLE = R * 2^k as a Good-Thomas transform (see base.cl).  The root of unity of the radix-R comes from pfaRootOfUnity,
+    // as the tail trig tables do (TrigBufCache.cpp).
+    u32 const R = fft.shape.pfaRadix();
+    u32 const rowL = fft.shape.width * fft.shape.height * (fft.shape.middle / R), rowBH = fft.shape.height * (fft.shape.middle / R);
+    auto invModR = [R](u32 a) { for (u32 x = 1; x < R; ++x) { if (a % R * x % R == 1) { return x; } } assert(false); return 0u; };
+    defines += toDefine("PFA", R);
+    defines += toDefine("PFA_LINV", invModR(rowL));
+    defines += toDefine("PFA_BHINV", invModR(rowBH));
+    // For each prime: R^-1 mod q (weights), R^-1 mod p (normalization), the powers of the root w of the radix-R, and for R = 7 and 11
+    // the coefficients (w^m + w^-m) / 2 and (w^m - w^-m) / 2 of the folded DFT
+    for (u32 q : {31u, 61u}) {
+      if ((q == 31 && !fft.NTT_GF31) || (q == 61 && !fft.NTT_GF61)) { continue; }
+      u64 const p = (u64(1) << q) - 1;
+      string const suffix = q == 61 ? "ull" : "u";
+      u64 const w = pfaRootOfUnity(q, R), half = pfaPowMod(q, 2, q - 1);         // 2^-1 = 2^(q-1) mod p
+      string wpow, c, s;
+      for (u32 m = 0; m < R; ++m) {
+        u64 const wm = pfaPowMod(q, w, m), wmi = pfaPowMod(q, w, (R - m) % R);
+        wpow += (m ? "," : "") + to_string(wm) + suffix;
+        c += (m ? "," : "") + to_string(pfaMulMod(q, (wm + wmi) % p, half)) + suffix;
+        s += (m ? "," : "") + to_string(pfaMulMod(q, (wm + p - wmi) % p, half)) + suffix;
+      }
+      defines += toDefine("PFA_RINV" + to_string(q), [&]{ for (u32 x = 1; x < q; ++x) { if (R * x % q == 1) { return x; } } return 0u; }());
+      defines += toDefine("PFA_INVR_" + to_string(q), to_string(pfaPowMod(q, R, p - 2)) + suffix);
+      defines += toDefine("PFA_WPOW" + to_string(q), wpow);
+      defines += toDefine("PFA_C" + to_string(q), c);
+      defines += toDefine("PFA_S" + to_string(q), s);
     }
   }
 
@@ -1004,7 +1019,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 
   K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDIN)),
 // With PFA every row frequency has its own pair of self-paired tail lines, see tailSquareZero
-#define PFA_ROWS (fft.shape.isPfa() ? 3u : 1u)
+#define PFA_ROWS (fft.shape.isPfa() ? fft.shape.pfaRadix() : 1u)
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP)),
   K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP)),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
@@ -2142,15 +2157,17 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
   }
 }
 
-// With PFA (MIDDLE=3, 6 or 12 NTT, see base.cl) the pair transposeOut puts at x * BIG_HEIGHT + line is logical pair pfaPair(x, line).
+// With PFA (an NTT with an odd MIDDLE factor, see base.cl) the pair transposeOut puts at x * BIG_HEIGHT + line is logical pair pfaPair(x, line).
 // Return, for each such position, the logical pair it holds.
 static vector<u32> pfaPairMap(const FFTShape& shape) {
-  u32 const W = shape.width, BH = shape.height * shape.middle, RBH = BH / 3, L = W * RBH;   // RBH: the lines of a row (PFA_BH)
+  u32 const R = shape.pfaRadix(), W = shape.width, BH = shape.height * shape.middle, RBH = BH / R, L = W * RBH;   // RBH: PFA_BH
+  u32 linv = 1;
+  while (L % R * linv % R != 1) { ++linv; }
   vector<u32> map(W * BH);
   for (u32 x = 0; x < W; ++x) {
     for (u32 g = 0; g < BH; ++g) {
       u32 const q = x * RBH + g % RBH;
-      map[x * BH + g] = q + L * ((g % 3 + 3 - q % 3) * (L % 3) % 3);
+      map[x * BH + g] = q + L * ((g % R + R - q % R) * linv % R);
     }
   }
   return map;

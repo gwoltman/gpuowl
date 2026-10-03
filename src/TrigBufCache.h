@@ -58,6 +58,12 @@ float2 root1FP32(u32 N, u32 k);
 uint2 root1GF31(u32 N, u32 k);
 ulong2 root1GF61(u32 N, u32 k);
 
+// PFA (see base.cl): arithmetic mod p = 2^q - 1 (q = 31 or 61), and the primitive R-th root of unity in Z/pZ that the radix-R
+// between the rows uses, g^((p - 1) / R) with g a primitive root mod p (37 for M61, 7 for M31).  Kernels and tables must agree on it.
+u64 pfaMulMod(u32 q, u64 a, u64 b);
+u64 pfaPowMod(u32 q, u64 a, u64 e);
+u64 pfaRootOfUnity(u32 q, u32 R);
+
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of double2 values)
 #define SMALLTRIG_FP64_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) * 5 : SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)) // See genSmallTrigFP64
 #define SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)      ((H) * 5 + ((W) * (M) / 2 + 1) * 2 * (H) / (nH))                          // See genSmallTrigComboFP64
@@ -70,12 +76,12 @@ ulong2 root1GF61(u32 N, u32 k);
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of uint2 values)
 #define SMALLTRIG_GF31_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH))     // See genSmallTrigGF31
-#define SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) % 3 == 0 ? 3 : 1)) * 2 * (H) / (nH))                            // See genSmallTrigComboGF31
+#define SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / ((M) & (~(M) + 1)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF31
 #define MIDDLETRIG_GF31_SIZE(W,M,H)             ((H) * ((M) - 1) + (W) + (H))                                           // See genMiddleTrigGF31
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of ulong2 values)
 #define SMALLTRIG_GF61_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH))     // See genSmallTrigGF61
-#define SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) % 3 == 0 ? 3 : 1)) * 2 * (H) / (nH))                            // See genSmallTrigComboGF61
+#define SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / ((M) & (~(M) + 1)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF61
 #define MIDDLETRIG_GF61_SIZE(W,M,H)             ((H) * ((M) - 1) + (W) + (H))                                           // See genMiddleTrigGF61
 
 // Convert above sizes to distances (in units of double2)
