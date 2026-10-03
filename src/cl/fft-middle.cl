@@ -1267,9 +1267,14 @@ void OVERLOAD pfaDftR(GF61 *a) {
   for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); y[0] = add(y[0], sum[k - 1]); }
   #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
-    GF61 pc = pfaScale(sum[0], c[j % PFA]), qs = pfaScale(dif[0], s[j % PFA]);
+    // Dot products accumulated in 128 bits and reduced once (sum and dif are reduced, so each product is below 2^122)
+    u128 pcx = mul64(sum[0].x, c[j % PFA]), pcy = mul64(sum[0].y, c[j % PFA]), qsx = mul64(dif[0].x, s[j % PFA]), qsy = mul64(dif[0].y, s[j % PFA]);
     #pragma unroll
-    for (u32 k = 2; k <= h; ++k) { pc = add(pc, pfaScale(sum[k - 1], c[j * k % PFA])); qs = add(qs, pfaScale(dif[k - 1], s[j * k % PFA])); }
+    for (u32 k = 2; k <= h; ++k) {
+      pcx = mad64(sum[k - 1].x, c[j * k % PFA], pcx); pcy = mad64(sum[k - 1].y, c[j * k % PFA], pcy);
+      qsx = mad64(dif[k - 1].x, s[j * k % PFA], qsx); qsy = mad64(dif[k - 1].y, s[j * k % PFA], qsy);
+    }
+    GF61 pc = U2(modM61(weakModM61(pcx, 125)), modM61(weakModM61(pcy, 125))), qs = U2(modM61(weakModM61(qsx, 125)), modM61(weakModM61(qsy, 125)));
     pc = add(a[0], pc);
     y[j] = add(pc, qs);
     y[PFA - j] = sub(pc, qs);
