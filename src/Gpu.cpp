@@ -2012,10 +2012,8 @@ pair<RoeInfo, RoeInfo> Gpu::readROE() {
     // it could be useful for debugging (in which case we could support getting roe for squarings or multipplications, but not both).
     auto [squareRoe, mulRoe] = split(roe, mulRoePos);
     // Delete first two used to calculate roePos on the GPU.  Do this after splitting the vector (mulRoePos recorded indices in "+ 2" format).
-    u32 squareRoeSize = u32(squareRoe.size()) - 2;
-    roe[0] = squareRoe[squareRoeSize];
-    roe[1] = squareRoe[squareRoeSize+1];
-    squareRoe.resize(squareRoeSize);
+    // They are not samples: left in, they add two near-zero values that inflate the spread and drag Z down.
+    squareRoe.erase(squareRoe.begin(), squareRoe.begin() + 2);
     // Clear the ROE buffer and mulRoePos vector
     bufROE.zero(roePos + 2);
     roePos = 0;
