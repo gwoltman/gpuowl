@@ -788,9 +788,14 @@ void OVERLOAD pfaDftR(GF31 *a) {
   const u32 h = (PFA - 1) / 2;
   GF31 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
   y[0] = a[0];
+  // Unrolled so that c[] and s[] are indexed by constants.  Otherwise NVIDIA's compiler kept the GF61 arrays on the stack
+  // for PFA = 11, making fftMiddleIn/Out 30% slower.
+  #pragma unroll
   for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); y[0] = add(y[0], sum[k - 1]); }
+  #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
     GF31 pc = pfaScale(sum[0], c[j % PFA]), qs = pfaScale(dif[0], s[j % PFA]);
+    #pragma unroll
     for (u32 k = 2; k <= h; ++k) { pc = add(pc, pfaScale(sum[k - 1], c[j * k % PFA])); qs = add(qs, pfaScale(dif[k - 1], s[j * k % PFA])); }
     pc = add(a[0], pc);
     y[j] = add(pc, qs);
@@ -1064,9 +1069,14 @@ void OVERLOAD pfaDftR(GF61 *a) {
   const u32 h = (PFA - 1) / 2;
   GF61 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
   y[0] = a[0];
+  // Unrolled so that c[] and s[] are indexed by constants.  Otherwise NVIDIA's compiler kept the GF61 arrays on the stack
+  // for PFA = 11, making fftMiddleIn/Out 30% slower.
+  #pragma unroll
   for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); y[0] = add(y[0], sum[k - 1]); }
+  #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
     GF61 pc = pfaScale(sum[0], c[j % PFA]), qs = pfaScale(dif[0], s[j % PFA]);
+    #pragma unroll
     for (u32 k = 2; k <= h; ++k) { pc = add(pc, pfaScale(sum[k - 1], c[j * k % PFA])); qs = add(qs, pfaScale(dif[k - 1], s[j * k % PFA])); }
     pc = add(a[0], pc);
     y[j] = add(pc, qs);
