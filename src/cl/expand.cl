@@ -38,7 +38,9 @@
 #define F2_GF31 F2
 #define T_F_Z31_Z61 F
 #define T2_F2_GF31_GF61 F2
+#define as_F2_GF31 as_float2
 #include INCLUDE_FILE
+#undef as_F2_GF31
 #undef F_Z31
 #undef F2_GF31
 #undef T_F_Z31_Z61
@@ -50,7 +52,9 @@
 #define F2_GF31 GF31
 #define T_F_Z31_Z61 Z31
 #define T2_F2_GF31_GF61 GF31
+#define as_F2_GF31 as_uint2
 #include INCLUDE_FILE
+#undef as_F2_GF31
 #undef F_Z31
 #undef F2_GF31
 #undef T_F_Z31_Z61

@@ -266,21 +266,22 @@ typedef uint u32;
 typedef long i64;
 typedef ulong u64;
 
-// PFA: MIDDLE = PFA * PFA_M2, with PFA = 3, 7, 9 or 11 and PFA_M2 a power of two, on a pure-NTT type is done as a Good-Thomas
+// PFA: MIDDLE = PFA * PFA_M2, with PFA = 3, 7, 9 or 11 and PFA_M2 a power of two, on an NTT or hybrid type is done as a Good-Thomas
 // prime-factor transform.  The ND pairs of words are split into PFA rows of PFA_L pairs by the Chinese remainder theorem: pair p is
 // in row p % PFA at binary index p % PFA_L.  Each row is an ordinary power-of-two transform of WIDTH * PFA_M2 * SMALL_HEIGHT pairs
 // (width, middle radix PFA_M2, height).  The radix-PFA between the rows (fftMiddleIn/Out) uses only a PFA-th root of unity, which
-// lies in Z/pZ for both M31 and M61, and no twiddles.  The rows are stored in the stock MIDDLE layout: line g holds row g % PFA at
-// binary line g % PFA_BH, i.e. at the binary indices x * PFA_BH + g % PFA_BH.  Then the carry out of the pair at (x, g) goes to
-// (x, g + 1), except that the lines at multiples of PFA_BH (like line 0) take their carries from column x - 1.  The tail pairs each
-// row with itself: line kx + PFA_TW*k3 (row frequency k3, kx < PFA_TW) pairs with (PFA_TW - kx) + PFA_TW*k3.
+// lies in Z/pZ for both M31 and M61 (it is complex for the FP part of a hybrid, see below), and no twiddles.  The rows are stored in
+// the stock MIDDLE layout: line g holds row g % PFA at binary line g % PFA_BH, i.e. at the binary indices x * PFA_BH + g % PFA_BH.
+// Then the carry out of the pair at (x, g) goes to (x, g + 1), except that the lines at multiples of PFA_BH (like line 0) take their
+// carries from column x - 1.  The NTT tail pairs each row with itself: line kx + PFA_TW*k3 (row frequency k3, kx < PFA_TW) pairs
+// with (PFA_TW - kx) + PFA_TW*k3.
 // The host passes PFA_LINV = PFA_L^-1 mod PFA and PFA_BHINV = PFA_BH^-1 mod PFA.
 #if !defined(PFA)
 #define PFA 0
 #endif
 #if PFA
-#if (PFA != 3 && PFA != 7 && PFA != 9 && PFA != 11) || MIDDLE % PFA || ((MIDDLE / PFA) & (MIDDLE / PFA - 1)) || FFT_FP64 || FFT_FP32
-#error PFA needs MIDDLE = 3, 7, 9 or 11 times a power of two and a pure NTT type
+#if (PFA != 3 && PFA != 7 && PFA != 9 && PFA != 11) || MIDDLE % PFA || ((MIDDLE / PFA) & (MIDDLE / PFA - 1))
+#error PFA needs MIDDLE = 3, 7, 9 or 11 times a power of two
 #endif
 #define PFA_M2 (MIDDLE / PFA)                   // The power-of-two part of MIDDLE
 #define PFA_BH (SMALL_HEIGHT * PFA_M2)          // The lines (BIG_HEIGHT) of a row
@@ -304,6 +305,23 @@ u32 pfaTailTrigIndex(u32 line) { return line / PFA_TW * (PFA_TW / 2 + 1) + line 
 #define TAIL_PARTNER(line)      pfaTailPartner(line)
 #define TAIL_TRIG_LINE(line)    pfaTailTrigIndex(line)
 #define TAIL_SELF_PAIRED(line)  ((line) % PFA_TW == 0)
+
+// The FP side of a hybrid FFT/NTT (FP32 or FP64) uses the same layout, but its PFA-th root of unity is complex: the conjugate of
+// row frequency k3 is PFA - k3, so the tail pairs line kx + PFA_TW*k3 with ((PFA_TW - kx) % PFA_TW) + PFA_TW*((PFA - k3) % PFA).
+// Only row 0 pairs with itself (its lines 0 and PFA_TW/2, as the stock lines 0 and H/2).  The other lines kx = 0 pair element ky
+// with element -ky of the partner line (offset by one, as the stock line 0), all the other pairs element ky with SMALL_HEIGHT-1-ky.
+// The FP tail runs as two kernels (TAIL_KERNELS 1 or 3): tailSquareZero does row 0's two self-paired lines and the (PFA-1)/2
+// pairs of kx = 0 lines, tailSquare the PFA_FP_TAIL_PAIRS other pairs.  The tail's t^2 is w^k3 * v^(kx + PFA_TW*ky) with w the
+// PFA-th and v the PFA_L-th root of unity, which is slowTrig_N(pfaFpTailTrigBase(line) + ky * WIDTH * MIDDLE).
+#define PFA_FP_ZERO_GROUPS (2 + (PFA - 1) / 2)
+#define PFA_FP_TAIL_PAIRS (PFA_TW / 2 - 1 + (PFA - 1) / 2 * (PFA_TW - 1))
+u32 pfaFpTailLine(u32 g) {
+  if (g < PFA_TW / 2 - 1) { return 1 + g; }
+  g -= PFA_TW / 2 - 1;
+  return (1 + g / (PFA_TW - 1)) * PFA_TW + 1 + g % (PFA_TW - 1);
+}
+u32 pfaFpTailPartner(u32 line) { return (PFA - line / PFA_TW) % PFA * PFA_TW + (PFA_TW - line % PFA_TW) % PFA_TW; }
+u32 pfaFpTailTrigBase(u32 line) { return (line / PFA_TW * PFA_L + PFA * (line % PFA_TW)) % ND; }
 #else
 // Stock tail: line pairs with H - line, lines 0 and H/2 pair with themselves (H = WIDTH * MIDDLE)
 #define TAIL_PARTNER(line)      ((line) ? WIDTH * MIDDLE - (line) : WIDTH * MIDDLE / 2)

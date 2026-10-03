@@ -132,6 +132,25 @@ void OVERLOAD reverseLine(local T2_GF61 *lds, T2_GF61 *u) {
   }
 }
 
+#if PFA
+// Reverse a whole line offset by one, u[p] = u[(SMALL_HEIGHT - p) % SMALL_HEIGHT] for p = i * WG + me.  The PFA FP tail pairs the
+// kx = 0 lines of rows k3 and PFA - k3 this way.  Moves 4 bytes at a time, which fits the LDS of any SHUFL_BYTES_H.
+void OVERLOAD reverseLineBump(local T2_GF61 *lds2, T2_GF61 *u) {
+  local int *lds = (local int *) lds2;
+  u32 me = get_local_id(0);
+  for (u32 c = 0; c < 4; ++c) {
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { int4 t = as_int4(u[i]); lds[(NH * WG - i * WG - me) % (NH * WG)] = c == 0 ? t.x : c == 1 ? t.y : c == 2 ? t.z : t.w; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) {
+      int4 t = as_int4(u[i]); int v = lds[i * WG + me];
+      if (c == 0) { t.x = v; } else if (c == 1) { t.y = v; } else if (c == 2) { t.z = v; } else { t.w = v; }
+      u[i] = as_T2_GF61(t);
+    }
+  }
+}
+#endif
+
 //
 // These versions are for the kernel(s) that use a double-wide workgroup (u in half the workgroup, v in the other half)
 //
@@ -300,6 +319,24 @@ void OVERLOAD reverseLine(local F2_GF31 *lds, F2_GF31 *u) {
     for (u32 i = 0; i < NH; ++i) { u[i].y = ldsIn[WG * i]; }
   }
 }
+
+#if PFA
+// 32-bit version of reverseLineBump above
+void OVERLOAD reverseLineBump(local F2_GF31 *lds2, F2_GF31 *u) {
+  local int *lds = (local int *) lds2;
+  u32 me = get_local_id(0);
+  for (u32 c = 0; c < 2; ++c) {
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { int2 t = as_int2(u[i]); lds[(NH * WG - i * WG - me) % (NH * WG)] = c == 0 ? t.x : t.y; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) {
+      int2 t = as_int2(u[i]); int v = lds[i * WG + me];
+      if (c == 0) { t.x = v; } else { t.y = v; }
+      u[i] = as_F2_GF31(t);
+    }
+  }
+}
+#endif
 
 //
 // These versions are for the kernel(s) that use a double-wide workgroup (u in half the workgroup, v in the other half)

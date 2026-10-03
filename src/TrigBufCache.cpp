@@ -1145,17 +1145,33 @@ static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u
   return tab;
 }
 
+// The FP middle trig table of a PFA hybrid, as genMiddleTrigGF61's PFA layout (see pfaTwiddle in fft-middle.cl).  A row has
+// bh = smallH * m2 lines and w is a root of order width * bh:  w^k for k < bh, then the row's middleMul twiddles w^(width*y*k) for
+// 0 < k < m2 and y < smallH, then at smallH * (middle - 1): w^(bh*k) for k < width.
+template<typename T2, typename Root>
+static vector<T2> genPfaMiddleTrigFP(u32 smallH, u32 middle, u32 width, Root root) {
+  vector<T2> tab;
+  u32 const m2 = middle & (~middle + 1), bh = smallH * m2;     // m2: the power-of-two part of middle
+  for (u32 k = 0; k < bh; ++k) { tab.push_back(root(width * bh, k)); }
+  for (u32 k = 1; k < m2; ++k) {
+    for (u32 y = 0; y < smallH; ++y) { tab.push_back(root(bh, y * k)); }
+  }
+  tab.resize(smallH * (middle - 1));
+  for (u32 k = 0; k < width; ++k) { tab.push_back(root(width, k)); }
+  return tab;
+}
+
 static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width) {
   vector<double2> tab;
   size_t tabsize;
 
   if (fft.FFT_FP64) {
-    tab = genMiddleTrigFP64(smallH, middle, width);
+    tab = fft.shape.isPfa() ? genPfaMiddleTrigFP<double2>(smallH, middle, width, root1) : genMiddleTrigFP64(smallH, middle, width);
     tab.resize(MIDDLETRIG_FP64_SIZE(width, middle, smallH));
   }
 
   if (fft.FFT_FP32) {
-    vector<float2> tab1 = genMiddleTrigFP32(smallH, middle, width);
+    vector<float2> tab1 = fft.shape.isPfa() ? genPfaMiddleTrigFP<float2>(smallH, middle, width, root1FP32) : genMiddleTrigFP32(smallH, middle, width);
     tab1.resize(MIDDLETRIG_FP32_SIZE(width, middle, smallH));
     // Append tab1 to tab
     tabsize = tab.size();

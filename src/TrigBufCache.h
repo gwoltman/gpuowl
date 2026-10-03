@@ -67,12 +67,12 @@ u64 pfaRootOfUnity(u32 q, u32 R);
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of double2 values)
 #define SMALLTRIG_FP64_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) * 5 : SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)) // See genSmallTrigFP64
 #define SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)      ((H) * 5 + ((W) * (M) / 2 + 1) * 2 * (H) / (nH))                          // See genSmallTrigComboFP64
-#define MIDDLETRIG_FP64_SIZE(W,M,H)             ((H) + (W) + (H))                                                     // See genMiddleTrigFP64
+#define MIDDLETRIG_FP64_SIZE(W,M,H)             ((M) & ((M) - 1) ? (H) * ((M) - 1) + (W) + (H) : (H) + (W) + (H))  // Larger for a PFA hybrid                                                     // See genMiddleTrigFP64
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of float2 values)
 #define SMALLTRIG_FP32_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) * 5 : SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)) // See genSmallTrigFP32
 #define SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)      ((H) * 5 + ((W) * (M) / 2 + 1) * 2 * (H) / (nH))                          // See genSmallTrigComboFP32
-#define MIDDLETRIG_FP32_SIZE(W,M,H)             ((H) + (W) + (H))                                                     // See genMiddleTrigFP32
+#define MIDDLETRIG_FP32_SIZE(W,M,H)             ((M) & ((M) - 1) ? (H) * ((M) - 1) + (W) + (H) : (H) + (W) + (H))  // Larger for a PFA hybrid                                                     // See genMiddleTrigFP32
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of uint2 values)
 #define SMALLTRIG_GF31_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH))     // See genSmallTrigGF31

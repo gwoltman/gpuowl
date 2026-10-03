@@ -1190,9 +1190,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   T invBase = optionalDouble(weights.x);
   for (u32 i = 0; i < NW; ++i) {
+#if PFA
+    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
+#endif
     // Generate the FP64 weights and second GF31 weight shift
     T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
     T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
+#if PFA
+    { T2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -1255,6 +1261,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
+#if PFA
+  bool rotatedCarries = pfaRotatedLine(gr * WMUL);
+#else
+  bool rotatedCarries = gr >= H / WMUL;
+#endif
+
   // Do some work while our carries may not be ready
   setPriority(0);
 
@@ -1269,6 +1282,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   for (u32 i = 0; i < NW; ++i) {
     T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
     T weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
+#if PFA
+    { T2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+#endif
     u[i] = U2(weight1, weight2);
   }
 
@@ -1303,14 +1319,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // For the last group the carry reading is shifted, so the per-wavefront ready flags are not enough and a
   // barrier is needed.  gr is uniform but "me < G_W" is not, so the barrier is taken outside that guard and
   // the shuttle reads resume in a second "me < G_W" block.
-  if (gr >= H / WMUL) { bar(); }
+  if (rotatedCarries) { bar(); }
 #endif
 
   if (me < G_W) {
 
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
-    if (gr < H / WMUL) {
+    if (!rotatedCarries) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
@@ -1330,6 +1346,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   for (i32 i = 0; i < NW; ++i) {
+#if PFA
+    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, 0);
+#endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -1473,9 +1492,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   F invBase = weights.x;
   for (u32 i = 0; i < NW; ++i) {
+#if PFA
+    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
+#endif
     // Generate the FP32 weights and second GF31 weight shift
     F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -1538,6 +1563,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
+#if PFA
+  bool rotatedCarries = pfaRotatedLine(gr * WMUL);
+#else
+  bool rotatedCarries = gr >= H / WMUL;
+#endif
+
   // Do some work while our carries may not be ready
   setPriority(0);
 
@@ -1578,14 +1610,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // For the last group the carry reading is shifted, so the per-wavefront ready flags are not enough and a
   // barrier is needed.  gr is uniform but "me < G_W" is not, so the barrier is taken outside that guard and
   // the shuttle reads resume in a second "me < G_W" block.
-  if (gr >= H / WMUL) { bar(); }
+  if (rotatedCarries) { bar(); }
 #endif
 
   if (me < G_W) {
 
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
-    if (gr < H / WMUL) {
+    if (!rotatedCarries) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
@@ -1606,8 +1638,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y;
   for (i32 i = 0; i < NW; ++i) {
+#if PFA
+    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, 0);
+#endif
     F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+#endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -1746,9 +1784,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   F invBase = weights.x;
   for (u32 i = 0; i < NW; ++i) {
+#if PFA
+    combo_counter = pfaCombo(lowMe + i * G_W, line, 61, bigword_weight_shift_minus1, log2_NWORDS + 1);
+#endif
     // Generate the FP32 weights and second GF61 weight shift
     F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+#endif
 
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -1812,6 +1856,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
+#if PFA
+  bool rotatedCarries = pfaRotatedLine(gr * WMUL);
+#else
+  bool rotatedCarries = gr >= H / WMUL;
+#endif
+
   // Do some work while our carries may not be ready
   setPriority(0);
 
@@ -1852,14 +1903,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // For the last group the carry reading is shifted, so the per-wavefront ready flags are not enough and a
   // barrier is needed.  gr is uniform but "me < G_W" is not, so the barrier is taken outside that guard and
   // the shuttle reads resume in a second "me < G_W" block.
-  if (gr >= H / WMUL) { bar(); }
+  if (rotatedCarries) { bar(); }
 #endif
 
   if (me < G_W) {
 
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
-    if (gr < H / WMUL) {
+    if (!rotatedCarries) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
@@ -1880,9 +1931,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y;
   for (i32 i = 0; i < NW; ++i) {
+#if PFA
+    combo_counter = pfaCombo(lowMe + i * G_W, line, 61, bigword_weight_shift_minus1, 0);
+#endif
     // Calculate inverse weights
     F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+#endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -2325,9 +2382,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   F invBase = weights.x;
   for (u32 i = 0; i < NW; ++i) {
+#if PFA
+    m31_combo_counter = pfaCombo(lowMe + i * G_W, line, 31, m31_bigword_weight_shift_minus1, log2_NWORDS + 1);
+    m61_combo_counter = pfaCombo(lowMe + i * G_W, line, 61, m61_bigword_weight_shift_minus1, log2_NWORDS + 1);
+#endif
     // Generate the FP32 weights and second GF31 and GF61 weight shift
     F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+#endif
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
     m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
@@ -2397,6 +2461,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
+#if PFA
+  bool rotatedCarries = pfaRotatedLine(gr * WMUL);
+#else
+  bool rotatedCarries = gr >= H / WMUL;
+#endif
+
   // Do some work while our carries may not be ready
   setPriority(0);
 
@@ -2437,14 +2508,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // For the last group the carry reading is shifted, so the per-wavefront ready flags are not enough and a
   // barrier is needed.  gr is uniform but "me < G_W" is not, so the barrier is taken outside that guard and
   // the shuttle reads resume in a second "me < G_W" block.
-  if (gr >= H / WMUL) { bar(); }
+  if (rotatedCarries) { bar(); }
 #endif
 
   if (me < G_W) {
 
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
-    if (gr < H / WMUL) {
+    if (!rotatedCarries) {
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
@@ -2465,9 +2536,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y;
   for (i32 i = 0; i < NW; ++i) {
+#if PFA
+    m31_combo_counter = pfaCombo(lowMe + i * G_W, line, 31, m31_bigword_weight_shift_minus1, 0);
+    m61_combo_counter = pfaCombo(lowMe + i * G_W, line, 61, m61_bigword_weight_shift_minus1, 0);
+#endif
     // Calculate inverse weights
     F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+#endif
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;

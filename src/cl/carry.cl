@@ -298,7 +298,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   float roundMax = 0;
   float carryMax = 0;
 
+#if PFA
+  // A chunk of CARRY_LEN lines never crosses a multiple of SMALL_HEIGHT, so its pairs are consecutive as in the stock layout
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
 
   T base = optionalDouble(fancyMul(THREAD_WEIGHTS[me].x, iweightStep(gx)));
 
@@ -329,6 +334,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     // Generate the FP64 and second GF31 weight shift
     T w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + gy * CARRY_LEN + i].x));
     T w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP));
+#if PFA
+    { T2 pw0, pw1; pfaWeights(G_W * gx + me, line + i, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.x; w2 = pw1.x; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -379,7 +387,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   float roundMax = 0;
   float carryMax = 0;
 
+#if PFA
+  // A chunk of CARRY_LEN lines never crosses a multiple of SMALL_HEIGHT, so its pairs are consecutive as in the stock layout
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
 
   F base = fancyMul(THREAD_WEIGHTS[me].x, iweightStep(gx));
   u32 me_frac_bits = fracBits(me * H * 2);
@@ -414,6 +427,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     // Generate the FP32 and second GF31 weight shift
     F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
     F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(G_W * gx + me, line + i, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.x; w2 = pw1.x; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 31) weight_shift -= 31;
@@ -464,7 +480,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   float roundMax = 0;
   float carryMax = 0;
 
+#if PFA
+  // A chunk of CARRY_LEN lines never crosses a multiple of SMALL_HEIGHT, so its pairs are consecutive as in the stock layout
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
 
   F base = fancyMul(THREAD_WEIGHTS[me].x, iweightStep(gx));
   u32 me_frac_bits = fracBits(me * H * 2);
@@ -500,6 +521,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     // Generate the FP32 and second GF61 weight shift
     F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
     F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(G_W * gx + me, line + i, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.x; w2 = pw1.x; }
+#endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
     if (weight_shift > 61) weight_shift -= 61;
@@ -651,7 +675,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   float roundMax = 0;
   float carryMax = 0;
 
+#if PFA
+  // A chunk of CARRY_LEN lines never crosses a multiple of SMALL_HEIGHT, so its pairs are consecutive as in the stock layout
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
 
   F base = fancyMul(THREAD_WEIGHTS[me].x, iweightStep(gx));
   u32 me_frac_bits = fracBits(me * H * 2);
@@ -695,6 +724,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     // Generate the FP32 and second GF31 and GF61 weight shift
     F w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + line + i].x), frac_bits > base_frac_bits);
     F w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
+#if PFA
+    { F2 pw0, pw1; pfaWeights(G_W * gx + me, line + i, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.x; w2 = pw1.x; }
+#endif
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
     m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
