@@ -1088,9 +1088,11 @@ void Tune::tune() {
       args->flags["WMUL"] = to_string(best_wmul);
     }
 
-    // Find best MULTI_Q setting
-    if (1) {
-      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+    // Find best MULTI_Q setting (MULTI_Q can only be advantageous when using multiple data types such as FFT3161, FFT6431, etc).
+    // Since FFT6431 is rarely used and FFT3161 is very common, we case off the time_NTTs boolean.
+    if (time_NTTs) {
+      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
+      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_multi_q = 0;
       u32 current_multi_q = args->value("MULTI_Q", 0);
