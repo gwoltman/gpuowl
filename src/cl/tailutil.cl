@@ -133,21 +133,46 @@ void OVERLOAD reverseLine(local T2_GF61 *lds, T2_GF61 *u) {
 }
 
 #if PFA
-// Reverse a whole line offset by one, u[p] = u[(SMALL_HEIGHT - p) % SMALL_HEIGHT] for p = i * WG + me.  The PFA FP tail pairs the
-// kx = 0 lines of rows k3 and PFA - k3 this way.  Moves 4 bytes at a time, which fits the LDS of any SHUFL_BYTES_H.
-void OVERLOAD reverseLineBump(local T2_GF61 *lds2, T2_GF61 *u) {
-  local int *lds = (local int *) lds2;
+// reverseLine, optionally offset by one: u[p] = u[(SMALL_HEIGHT - p) % SMALL_HEIGHT] for p = i * WG + me.  The PFA FP tail pairs
+// the kx = 0 lines of rows k3 and PFA - k3 this way.  Only the LDS index differs from reverseLine.
+void OVERLOAD reverseLineMaybeBump(local T2_GF61 *lds, T2_GF61 *u, bool bump) {
   u32 me = get_local_id(0);
-  for (u32 c = 0; c < 4; ++c) {
+  u32 revMe = WG - 1 - me + bump;
+#define REV_IDX(i) ((WG * (NH - 1 - (i)) + revMe) % (NH * WG))
+
+  if (SHUFL_BYTES_H == 16) {
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) { int4 t = as_int4(u[i]); lds[(NH * WG - i * WG - me) % (NH * WG)] = c == 0 ? t.x : c == 1 ? t.y : c == 2 ? t.z : t.w; }
+    for (u32 i = 0; i < NH; ++i) { lds[REV_IDX(i)] = u[i]; }
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) {
-      int4 t = as_int4(u[i]); int v = lds[i * WG + me];
-      if (c == 0) { t.x = v; } else if (c == 1) { t.y = v; } else if (c == 2) { t.z = v; } else { t.w = v; }
-      u[i] = as_T2_GF61(t);
+    for (u32 i = 0; i < NH; ++i) { u[i] = lds[WG * i + me]; }
+  }
+
+  else if (SHUFL_BYTES_H == 8) {
+    local T_Z61 *ldsZ = (local T_Z61 *) lds;
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { ldsZ[REV_IDX(i)] = u[i].x; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { u[i].x = ldsZ[WG * i + me]; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { ldsZ[REV_IDX(i)] = u[i].y; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { u[i].y = ldsZ[WG * i + me]; }
+  }
+
+  else if (SHUFL_BYTES_H == 4) {
+    local int *ldsI = (local int *) lds;
+    for (u32 c = 0; c < 4; ++c) {
+      bar(WG);
+      for (u32 i = 0; i < NH; ++i) { int4 t = as_int4(u[i]); ldsI[REV_IDX(i)] = c == 0 ? t.x : c == 1 ? t.y : c == 2 ? t.z : t.w; }
+      bar(WG);
+      for (u32 i = 0; i < NH; ++i) {
+        int4 t = as_int4(u[i]); int v = ldsI[WG * i + me];
+        if (c == 0) { t.x = v; } else if (c == 1) { t.y = v; } else if (c == 2) { t.z = v; } else { t.w = v; }
+        u[i] = as_T2_GF61(t);
+      }
     }
   }
+#undef REV_IDX
 }
 #endif
 
@@ -226,6 +251,54 @@ void OVERLOAD revLineOrSelf(local T2_GF61 *lds2, T2_GF61 *u, bool line0) {
   // One last bar() is needed when sharing LDS memory, as in revCrossLine.
   if (SHARING_LDS(2)) bar();
 }
+
+#if PFA
+// revLineOrSelf for the double-wide PFA FP tail, which has a third kind of line pair: the kx = 0 lines of rows k3 and PFA - k3 (bump)
+// pair element ky with element -ky of the other line, i.e. cross the halves offset by one.  That leaves element 0 of the first half's
+// line next to element SMALL_HEIGHT/2 of the second's (and vice versa) instead of next to element 0.  So on the way in (fwd) the
+// second half's lane 0 sends its element 0 in place of its element SMALL_HEIGHT/2, which it keeps in u[0]: the first half then pairs
+// the two elements 0, the second half the two elements SMALL_HEIGHT/2 (with -t^2, see pairSq).  On the way back it swaps u[0] and
+// u[NH/2] to restore its line.  The same code path handles all three kinds of pair; only selects differ.
+void OVERLOAD revLinePfa(local T2_GF61 *lds2, T2_GF61 *u, bool line0, bool bump, bool fwd) {
+  u32 me = get_local_id(0);
+  u32 lowMe = me % WG;
+  u32 myHalf = me / WG;
+  u32 outHalf = line0 ? myHalf : myHalf ^ 1;
+  u32 off = line0 ? myHalf : !bump;
+  bool fix = !line0 && bump && myHalf && lowMe == 0;
+  T2_GF61 keep = u[NH/2];
+  u[NH/2] = (fix && fwd) ? u[0] : keep;     // Sent in place of element SMALL_HEIGHT/2.  Unconditional assignments, no stack.
+
+  if (SHUFL_BYTES_H >= 8) {
+    local T2_GF61 *ldsOut = lds2 + outHalf * (LDS_SHUFL_BYTES(2) / sizeof(T2_GF61));
+    local T2_GF61 *ldsIn  = lds2 + myHalf * (LDS_SHUFL_BYTES(2) / sizeof(T2_GF61));
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[(WG * (NH/2 - 1 - i) + WG - lowMe - off) % (NH/2 * WG)] = u[i + NH/2]; }
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[WG * i + lowMe]; }
+  }
+
+  else if (SHUFL_BYTES_H == 4) {
+    local T_Z61 *ldsOut = (local T_Z61 *) lds2 + outHalf * (LDS_SHUFL_BYTES(2) / sizeof(T_Z61));
+    local T_Z61 *ldsIn  = (local T_Z61 *) lds2 + myHalf * (LDS_SHUFL_BYTES(2) / sizeof(T_Z61));
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[(WG * (NH/2 - 1 - i) + WG - lowMe - off) % (NH/2 * WG)] = u[i + NH/2].x; }
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2].x = ldsIn[WG * i + lowMe]; }
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[(WG * (NH/2 - 1 - i) + WG - lowMe - off) % (NH/2 * WG)] = u[i + NH/2].y; }
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2].y = ldsIn[WG * i + lowMe]; }
+  }
+
+  T2_GF61 a0 = u[0], h0 = u[NH/2];
+  u[0] = fix ? (fwd ? keep : h0) : a0;
+  u[NH/2] = (fix && !fwd) ? a0 : h0;
+
+  // One last bar() is needed when sharing LDS memory, as in revCrossLine.
+  if (SHARING_LDS(2)) bar();
+}
+#endif
 
 // This is used to reverse the second part of a line, and cross the reversed parts between the halves.
 void OVERLOAD revCrossLine(local T2_GF61 *lds2, T2_GF61 *u) {
@@ -321,20 +394,31 @@ void OVERLOAD reverseLine(local F2_GF31 *lds, F2_GF31 *u) {
 }
 
 #if PFA
-// 32-bit version of reverseLineBump above.  Each component is a single 32-bit F_Z31, so it goes through LDS as is (no
-// as_int2 / as_F2_GF31 reinterpretation, which the CUDA backend does not provide for these types).
-void OVERLOAD reverseLineBump(local F2_GF31 *lds2, F2_GF31 *u) {
-  local F_Z31 *lds = (local F_Z31 *) lds2;
+// 32-bit version of reverseLineMaybeBump above
+void OVERLOAD reverseLineMaybeBump(local F2_GF31 *lds, F2_GF31 *u, bool bump) {
   u32 me = get_local_id(0);
-  for (u32 c = 0; c < 2; ++c) {
+  u32 revMe = WG - 1 - me + bump;
+#define REV_IDX(i) ((WG * (NH - 1 - (i)) + revMe) % (NH * WG))
+
+  if (SHUFL_BYTES_H >= 8) {
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) { lds[(NH * WG - i * WG - me) % (NH * WG)] = c == 0 ? u[i].x : u[i].y; }
+    for (u32 i = 0; i < NH; ++i) { lds[REV_IDX(i)] = u[i]; }
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) {
-      F_Z31 v = lds[i * WG + me];
-      if (c == 0) { u[i].x = v; } else { u[i].y = v; }
-    }
+    for (u32 i = 0; i < NH; ++i) { u[i] = lds[WG * i + me]; }
   }
+
+  else if (SHUFL_BYTES_H == 4) {
+    local F_Z31 *ldsZ = (local F_Z31 *) lds;
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { ldsZ[REV_IDX(i)] = u[i].x; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { u[i].x = ldsZ[WG * i + me]; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { ldsZ[REV_IDX(i)] = u[i].y; }
+    bar(WG);
+    for (u32 i = 0; i < NH; ++i) { u[i].y = ldsZ[WG * i + me]; }
+  }
+#undef REV_IDX
 }
 #endif
 
@@ -384,6 +468,36 @@ void OVERLOAD revLineOrSelf(local F2_GF31 *lds2, F2_GF31 *u, bool line0) {
   // One last bar() is needed when sharing LDS memory, as in revCrossLine.
   if (SHARING_LDS(2)) bar();
 }
+
+#if PFA
+// 32-bit version of revLinePfa above
+void OVERLOAD revLinePfa(local F2_GF31 *lds2, F2_GF31 *u, bool line0, bool bump, bool fwd) {
+  u32 me = get_local_id(0);
+  u32 lowMe = me % WG;
+  u32 myHalf = me / WG;
+  u32 outHalf = line0 ? myHalf : myHalf ^ 1;
+  u32 off = line0 ? myHalf : !bump;
+  bool fix = !line0 && bump && myHalf && lowMe == 0;
+  F2_GF31 keep = u[NH/2];
+  u[NH/2] = (fix && fwd) ? u[0] : keep;     // Sent in place of element SMALL_HEIGHT/2.  Unconditional assignments, no stack.
+
+  if (SHUFL_BYTES_H >= 4) {
+    local F2_GF31 *ldsOut = lds2 + outHalf * (LDS_SHUFL_BYTES(2) / sizeof(F2_GF31));
+    local F2_GF31 *ldsIn  = lds2 + myHalf * (LDS_SHUFL_BYTES(2) / sizeof(F2_GF31));
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { ldsOut[(WG * (NH/2 - 1 - i) + WG - lowMe - off) % (NH/2 * WG)] = u[i + NH/2]; }
+    bar();
+    for (u32 i = 0; i < NH/2; ++i) { u[i + NH/2] = ldsIn[WG * i + lowMe]; }
+  }
+
+  F2_GF31 a0 = u[0], h0 = u[NH/2];
+  u[0] = fix ? (fwd ? keep : h0) : a0;
+  u[NH/2] = (fix && !fwd) ? a0 : h0;
+
+  // One last bar() is needed when sharing LDS memory, as in revCrossLine.
+  if (SHARING_LDS(2)) bar();
+}
+#endif
 
 // This is used to reverse the second part of a line, and cross the reversed parts between the halves.
 void OVERLOAD revCrossLine(local F2_GF31 *lds2, F2_GF31 *u) {

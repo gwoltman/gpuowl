@@ -47,10 +47,6 @@ u32 get_line_number(u32 base) {
 
 #if FFT_FP64
 
-#if PFA && SINGLE_KERNEL
-#error The PFA FP tail needs two tail kernels (TAIL_KERNELS 1 or 3)
-#endif
-
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
 // We used to conjugate the results, but swapping real and imaginary can save some negations in carry propagation.
 void OVERLOAD onePairSq(T2* pa, T2* pb, T2 t_squared) {
@@ -72,7 +68,7 @@ void OVERLOAD onePairSq(T2* pa, T2* pb, T2 t_squared) {
   *pa = SWAP_XY(*pa), *pb = SWAP_XY(*pb);
 }
 
-void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special) {
+void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special, bool negFirst) {
   u32 me = get_local_id(0);
 
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
@@ -80,7 +76,7 @@ void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special) {
       u[i] = SWAP_XY(2 * foo(u[i]));
       v[i] = SWAP_XY(4 * csq(v[i]));
     } else {
-      onePairSq(&u[i], &v[i], base_squared);
+      onePairSq(&u[i], &v[i], (i == 0 && negFirst) ? -base_squared : base_squared);   // negFirst: see revLinePfa
     }
 
     if (N == NH) {
@@ -141,9 +137,9 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
     readTailFusedLine(in, v, line2, me);
     fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
     fft_HEIGHT1(lds, v, smallTrig, w, 1, me);
-    reverseLineBump(lds, v);
-    pairSq(NH, u, v, trig, false);
-    reverseLineBump(lds, v);
+    reverseLineMaybeBump(lds, v, true);
+    pairSq(NH, u, v, trig, false, false);
+    reverseLineMaybeBump(lds, v, true);
     fft_HEIGHT2(lds, v, smallTrig, w, 1, me);
     fft_HEIGHT2(lds, u, smallTrig, w, 1, me);
     writeTailFusedLine(v, out, transPos(line2, MIDDLE, WIDTH), me);
@@ -156,7 +152,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
   reverse(lds, u + NH/2, !which);
-  pairSq(NH/2, u,   u + NH/2, trig, !which);
+  pairSq(NH/2, u,   u + NH/2, trig, !which, false);
   reverse(lds, u + NH/2, !which);
 
   fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
@@ -175,8 +171,8 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   T2 u[NH], v[NH];
 
 #if PFA
-  u32 line1 = pfaFpTailLine(get_group_id(0));
-  u32 line2 = pfaFpTailPartner(line1);
+  u32 line1 = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line2 = line1 ? pfaFpTailPartner(line1) : PFA_TW / 2;
 #else
   u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
@@ -232,22 +228,29 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   if (line1 == 0) {
     // Line 0 is special: it pairs with itself, offseted by 1.
     reverse(lds, u + NH/2, true);
-    pairSq(NH/2, u,   u + NH/2, trig, true);
+    pairSq(NH/2, u,   u + NH/2, trig, true, false);
     reverse(lds, u + NH/2, true);
 
     // Line H/2 also pairs with itself (but without offset).
     T2 trig2 = cmulFancy(trig, TAILT);
     reverse(lds, v + NH/2, false);
-    pairSq(NH/2, v,   v + NH/2, trig2, false);
+    pairSq(NH/2, v,   v + NH/2, trig2, false, false);
     reverse(lds, v + NH/2, false);
   }
   else {
 #else
   if (1) {
 #endif
+#if PFA
+    bool bump = line1 % PFA_TW == 0;       // The kx = 0 lines of rows k3 and PFA - k3 pair offset by one
+    reverseLineMaybeBump(lds, v, bump);
+    pairSq(NH, u, v, trig, false, false);
+    reverseLineMaybeBump(lds, v, bump);
+#else
     reverseLine(lds, v);
-    pairSq(NH, u, v, trig, false);
+    pairSq(NH, u, v, trig, false, false);
     reverseLine(lds, v);
+#endif
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
@@ -276,8 +279,8 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   T2 u[NH];
 
 #if PFA
-  u32 line_u = pfaFpTailLine(get_group_id(0));
-  u32 line_v = pfaFpTailPartner(line_u);
+  u32 line_u = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line_v = line_u ? pfaFpTailPartner(line_u) : PFA_TW / 2;
 #else
   u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
@@ -334,12 +337,20 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #if SINGLE_KERNEL
   // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
   // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+#if PFA
+  // A third kind of pair, the kx = 0 lines of rows k3 and PFA - k3, still on the same code path (see revLinePfa)
+  bool bump = line_u % PFA_TW == 0;
+  revLinePfa(lds, u, line_u == 0, bump, true);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0, line_u && bump && me == G_H);
+  revLinePfa(lds, u, line_u == 0, bump, false);
+#else
   revLineOrSelf(lds, u, line_u == 0);
-  pairSq(NH/2, u, u + NH/2, trig, line_u == 0);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0, false);
   revLineOrSelf(lds, u, line_u == 0);
+#endif
 #else
   revCrossLine(lds, u);
-  pairSq(NH/2, u, u + NH/2, trig, false);
+  pairSq(NH/2, u, u + NH/2, trig, false, false);
   revCrossLine(lds, u);
 #endif
 
@@ -362,10 +373,6 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #if FFT_FP32
 
-#if PFA && SINGLE_KERNEL
-#error The PFA FP tail needs two tail kernels (TAIL_KERNELS 1 or 3)
-#endif
-
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
 // We used to conjugate the results, but swapping real and imaginary can save some negations in carry propagation.
 void OVERLOAD onePairSq(F2* pa, F2* pb, F2 t_squared) {
@@ -380,7 +387,7 @@ void OVERLOAD onePairSq(F2* pa, F2* pb, F2 t_squared) {
   *pa = SWAP_XY(*pa), *pb = SWAP_XY(*pb);
 }
 
-void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special) {
+void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special, bool negFirst) {
   u32 me = get_local_id(0);
 
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
@@ -388,7 +395,7 @@ void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special) {
       u[i] = SWAP_XY(2 * foo(u[i]));
       v[i] = SWAP_XY(4 * csq(v[i]));
     } else {
-      onePairSq(&u[i], &v[i], base_squared);
+      onePairSq(&u[i], &v[i], (i == 0 && negFirst) ? -base_squared : base_squared);   // negFirst: see revLinePfa
     }
 
     if (N == NH) {
@@ -445,9 +452,9 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
     readTailFusedLine(inF2, v, line2, me);
     fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
     fft_HEIGHT1(lds, v, smallTrigF2, 1, me);
-    reverseLineBump(lds, v);
-    pairSq(NH, u, v, trig, false);
-    reverseLineBump(lds, v);
+    reverseLineMaybeBump(lds, v, true);
+    pairSq(NH, u, v, trig, false, false);
+    reverseLineMaybeBump(lds, v, true);
     fft_HEIGHT2(lds, v, smallTrigF2, 1, me);
     fft_HEIGHT2(lds, u, smallTrigF2, 1, me);
     writeTailFusedLine(v, outF2, transPos(line2, MIDDLE, WIDTH), me);
@@ -460,7 +467,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
   reverse(lds, u + NH/2, !which);
-  pairSq(NH/2, u,   u + NH/2, trig, !which);
+  pairSq(NH/2, u,   u + NH/2, trig, !which, false);
   reverse(lds, u + NH/2, !which);
 
   fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
@@ -483,8 +490,8 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   F2 u[NH], v[NH];
 
 #if PFA
-  u32 line1 = pfaFpTailLine(get_group_id(0));
-  u32 line2 = pfaFpTailPartner(line1);
+  u32 line1 = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line2 = line1 ? pfaFpTailPartner(line1) : PFA_TW / 2;
 #else
   u32 line1 = get_line_number(base);
   u32 line2 = line1 ? H - line1 : (H / 2);
@@ -532,22 +539,29 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   if (line1 == 0) {
     // Line 0 is special: it pairs with itself, offseted by 1.
     reverse(lds, u + NH/2, true);
-    pairSq(NH/2, u,   u + NH/2, trig, true);
+    pairSq(NH/2, u,   u + NH/2, trig, true, false);
     reverse(lds, u + NH/2, true);
 
     // Line H/2 also pairs with itself (but without offset).
     F2 trig2 = cmulFancy(trig, TAILT);
     reverse(lds, v + NH/2, false);
-    pairSq(NH/2, v,   v + NH/2, trig2, false);
+    pairSq(NH/2, v,   v + NH/2, trig2, false, false);
     reverse(lds, v + NH/2, false);
   }
   else {
 #else
   if (1) {
 #endif
+#if PFA
+    bool bump = line1 % PFA_TW == 0;       // The kx = 0 lines of rows k3 and PFA - k3 pair offset by one
+    reverseLineMaybeBump(lds, v, bump);
+    pairSq(NH, u, v, trig, false, false);
+    reverseLineMaybeBump(lds, v, bump);
+#else
     reverseLine(lds, v);
-    pairSq(NH, u, v, trig, false);
+    pairSq(NH, u, v, trig, false, false);
     reverseLine(lds, v);
+#endif
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP32 which must dependentLaunchWait before reading data
@@ -580,8 +594,8 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   F2 u[NH];
 
 #if PFA
-  u32 line_u = pfaFpTailLine(get_group_id(0));
-  u32 line_v = pfaFpTailPartner(line_u);
+  u32 line_u = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line_v = line_u ? pfaFpTailPartner(line_u) : PFA_TW / 2;
 #else
   u32 line_u = get_line_number(base);
   u32 line_v = line_u ? H - line_u : (H / 2);
@@ -630,12 +644,20 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #if SINGLE_KERNEL
   // Lines 0 and H/2 are special: they pair with themselves, line 0 is offseted by 1.  They are handled by the same code as the
   // other line pairs (see revLineOrSelf) so the compiler does not size the kernel's registers for a separate line-0 path.
+#if PFA
+  // A third kind of pair, the kx = 0 lines of rows k3 and PFA - k3, still on the same code path (see revLinePfa)
+  bool bump = line_u % PFA_TW == 0;
+  revLinePfa(lds, u, line_u == 0, bump, true);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0, line_u && bump && me == G_H);
+  revLinePfa(lds, u, line_u == 0, bump, false);
+#else
   revLineOrSelf(lds, u, line_u == 0);
-  pairSq(NH/2, u, u + NH/2, trig, line_u == 0);
+  pairSq(NH/2, u, u + NH/2, trig, line_u == 0, false);
   revLineOrSelf(lds, u, line_u == 0);
+#endif
 #else
   revCrossLine(lds, u);
-  pairSq(NH/2, u, u + NH/2, trig, false);
+  pairSq(NH/2, u, u + NH/2, trig, false, false);
   revCrossLine(lds, u);
 #endif
 

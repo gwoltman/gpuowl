@@ -310,9 +310,10 @@ u32 pfaTailTrigIndex(u32 line) { return line / PFA_TW * (PFA_TW / 2 + 1) + line 
 // row frequency k3 is PFA - k3, so the tail pairs line kx + PFA_TW*k3 with ((PFA_TW - kx) % PFA_TW) + PFA_TW*((PFA - k3) % PFA).
 // Only row 0 pairs with itself (its lines 0 and PFA_TW/2, as the stock lines 0 and H/2).  The other lines kx = 0 pair element ky
 // with element -ky of the partner line (offset by one, as the stock line 0), all the other pairs element ky with SMALL_HEIGHT-1-ky.
-// The FP tail runs as two kernels (TAIL_KERNELS 1 or 3): tailSquareZero does row 0's two self-paired lines and the (PFA-1)/2
-// pairs of kx = 0 lines, tailSquare the PFA_FP_TAIL_PAIRS other pairs.  The tail's t^2 is w^k3 * v^(kx + PFA_TW*ky) with w the
-// PFA-th and v the PFA_L-th root of unity, which is slowTrig_N(pfaFpTailTrigBase(line) + ky * WIDTH * MIDDLE).
+// With two tail kernels (TAIL_KERNELS 1 or 3) tailSquareZero does row 0's two self-paired lines and the (PFA-1)/2 pairs of
+// kx = 0 lines, tailSquare the PFA_FP_TAIL_PAIRS other pairs.  With one kernel tailSquare does all H/2 pairs (pfaFpTailLineAll,
+// see revLinePfa).  The tail's t^2 is w^k3 * v^(kx + PFA_TW*ky) with w the PFA-th and v the PFA_L-th root of unity, which is
+// slowTrig_N(pfaFpTailTrigBase(line) + ky * WIDTH * MIDDLE).
 #define PFA_FP_ZERO_GROUPS (2 + (PFA - 1) / 2)
 #define PFA_FP_TAIL_PAIRS (PFA_TW / 2 - 1 + (PFA - 1) / 2 * (PFA_TW - 1))
 u32 pfaFpTailLine(u32 g) {
@@ -320,6 +321,9 @@ u32 pfaFpTailLine(u32 g) {
   g -= PFA_TW / 2 - 1;
   return (1 + g / (PFA_TW - 1)) * PFA_TW + 1 + g % (PFA_TW - 1);
 }
+// The u line of the g-th of all H/2 tail pairs, for the single-kernel FP tail (TAIL_KERNELS 0 or 2): pair 0 is row 0's self-paired
+// lines 0 and PFA_TW/2, then row 0's lines 1..PFA_TW/2-1, then for each k3 = 1..(PFA-1)/2 the lines kx = 0..PFA_TW-1 of row k3.
+u32 pfaFpTailLineAll(u32 g) { return g < PFA_TW / 2 ? g : (1 + (g - PFA_TW / 2) / PFA_TW) * PFA_TW + (g - PFA_TW / 2) % PFA_TW; }
 u32 pfaFpTailPartner(u32 line) { return (PFA - line / PFA_TW) % PFA * PFA_TW + (PFA_TW - line % PFA_TW) % PFA_TW; }
 u32 pfaFpTailTrigBase(u32 line) { return (line / PFA_TW * PFA_L + PFA * (line % PFA_TW)) % ND; }
 #else

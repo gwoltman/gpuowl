@@ -271,7 +271,7 @@ CARRY_SIZE = 100000
 
 // Any setting adjusted here for this FFT or device (INPLACE, TAIL_KERNELS, WMUL, LDSPAD_W, L2_STRIPING, MULTI_Q, GRAPHS...) is changed
 // only in the local config and in the out-parameters.  args is const: writing such a change back into args.flags would carry it into
-// every later Gpu, e.g. once -tune timed a PFA hybrid (which needs a two-kernel tail) every later timing would also use TAIL_KERNELS 1 or 3.
+// every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
                  u32 &multi_q, u32 &l2_striping, bool &graphs) {
@@ -468,13 +468,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     config["L2_STRIPING"] = to_string(0);
   }
 
-  // The FP side of a PFA hybrid FFT/NTT has more than two special tail lines, which only the two-kernel tails handle
-  if (fft.shape.isPfa() && (fft.FFT_FP64 || fft.FFT_FP32) && tail_single_kernel) {
-    u32 const tailKernels = tail_single_wide ? 1 : 3;
-    log("Hybrid FFTs with non-power-of-two MIDDLE factor need two tail kernels.  Changing to TAIL_KERNELS=%u.\n", tailKernels);
-    tail_single_kernel = false;
-    config["TAIL_KERNELS"] = to_string(tailKernels);
-  }
 
   // L2_STRIPING is not allowed if INPLACE=0.  Maximum L2_STRIPING is WIDTH/64 if MULTI_Q=0 and WIDTH/128 if MULTI_Q=1.
   // Technically, L2_STRIPING of WIDTH/32, MULTI_Q=0 could be allowed but that is just a more complicated way to implement L2_STRIPING=0.
@@ -1076,13 +1069,14 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 // The FP side of a PFA hybrid pairs the tail rows k3 and R - k3 (see base.cl): tailSquareZero does 2 + (R - 1) / 2 workgroups, the
 // two-kernel tailSquare PFA_FP_TAIL_PAIRS pairs of lines
 #define PFA_FP (fft.shape.isPfa() && (fft.FFT_FP64 || fft.FFT_FP32))
+#define PFA_FP2 (PFA_FP && !tail_single_kernel)      // The two-kernel FP tail; with one kernel the stock H/2 pairs apply
 #define PFA_FP_TW (WIDTH * (fft.shape.middle / fft.shape.pfaRadix()))
 #define PFA_FP_ZERO_THREADS (SMALL_H / nH * (2 + (fft.shape.pfaRadix() - 1) / 2))
 #define PFA_FP_MAIN_THREADS (SMALL_H / nH * (tail_single_wide ? 1 : 2) * (PFA_FP_TW / 2 - 1 + (fft.shape.pfaRadix() - 1) / 2 * (PFA_FP_TW - 1)))
   K(kfftHin,               "ffthin.cl",  "fftHin",  hN / nH, kernelDefines(KFP)),
   K(ktailSquareZero,       "tailsquare.cl", "tailSquareZero", PFA_FP ? PFA_FP_ZERO_THREADS : SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP)),
   K(ktailSquare,           "tailsquare.cl", "tailSquare",
-                                               PFA_FP ? PFA_FP_MAIN_THREADS :
+                                               PFA_FP2 ? PFA_FP_MAIN_THREADS :
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailSquare with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailSquare with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailSquare with two kernels
@@ -1090,13 +1084,13 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   K(ktailMulZero,          "tailmul.cl", "tailMulZero", PFA_FP ? PFA_FP_ZERO_THREADS : SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP)),
   K(ktailMulLowZero,       "tailmul.cl", "tailMulZero", PFA_FP ? PFA_FP_ZERO_THREADS : SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP) + "-DMUL_LOW=1"),
   K(ktailMul,              "tailmul.cl", "tailMul",
-                                               PFA_FP ? PFA_FP_MAIN_THREADS :
+                                               PFA_FP2 ? PFA_FP_MAIN_THREADS :
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP)),                                       // Single-wide tailMul with one kernel
   K(ktailMulLow,           "tailmul.cl", "tailMul",
-                                               PFA_FP ? PFA_FP_MAIN_THREADS :
+                                               PFA_FP2 ? PFA_FP_MAIN_THREADS :
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
