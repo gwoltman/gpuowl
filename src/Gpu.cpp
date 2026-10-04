@@ -549,10 +549,20 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (fft.FFT_FP64) defines += toDefine("TAILT", root1Fancy(fft.shape.height * 2, 1));
     else defines += toDefine("TAILT", root1FancyFP32(fft.shape.height * 2, 1));
 
-    TrigCoefs const coefs = trigCoefs(fft.shape.size() / 4);
-    defines += toDefine("TRIG_SCALE", int(coefs.scale));
-    defines += toDefine("TRIG_SIN",  coefs.sinCoefs);
-    defines += toDefine("TRIG_COS",  coefs.cosCoefs);
+    if (fft.FFT_FP64) {
+      TrigCoefs const coefs = trigCoefs(fft.shape.size() / 4);
+      defines += toDefine("TRIG_SCALE", int(coefs.scale));
+      defines += toDefine("TRIG_SIN",  coefs.sinCoefs);
+      defines += toDefine("TRIG_COS",  coefs.cosCoefs);
+    } else {
+      TrigCoefsFP32 const coefs = trigCoefsFP32(fft.shape.size() / 4);
+      auto lit = [](double v) { char buf[48]; snprintf(buf, sizeof(buf), "%#.9gf", (double) (float) v); return string(buf); };
+      string sinCoefs = "{", cosCoefs = "{";
+      for (u32 i = 0; i < 8; ++i) { sinCoefs += lit(coefs.sinCoefs[i]) + ','; cosCoefs += lit(coefs.cosCoefs[i]) + ','; }
+      defines += toDefine("TRIG_SCALE", lit(coefs.scale));
+      defines += toDefine("TRIG_SIN", sinCoefs + '}');
+      defines += toDefine("TRIG_COS", cosCoefs + '}');
+    }
   }
   if (fft.NTT_GF31) {
     defines += toDefine("TAILTGF31", root1GF31(fft.shape.height * 2, 1));

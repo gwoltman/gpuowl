@@ -4,6 +4,7 @@
 #include "log.h"
 
 #include <cassert>
+#include <cmath>
 
 using namespace std;
 
@@ -84,6 +85,29 @@ TrigCoefs trigCoefs(u32 n) {
   for (u32 i = 0; i < MUL_TAB.size(); ++i) {
     if (MUL_TAB[i] % mid == 0) {
       return {.scale=MUL_TAB[i] / mid, .sinCoefs=scaleSin(SIN[i], scale), .cosCoefs=scaleCos(COS[i], scale)};
+    }
+  }
+  log("Trig tab not found for %u (%u * %u)\n", n, mid, twos);
+  throw "Trig tab not found";
+}
+
+// trigCoefs folds the power-of-two part of n into the coefficients, which is fine in double but in float makes the higher order
+// coefficients of large FFTs denormal or zero (hundreds of ulps of error).  Instead scale k (exactly, by an integer times a power
+// of two) to x in [0, 2) and scale the coefficients only by the matching power of two, which keeps them all normal floats.
+TrigCoefsFP32 trigCoefsFP32(u32 n) {
+  auto [mid, twos] = splitTwos(n);
+  assert(twos >= 1 && (twos & (twos - 1)) == 0 && (twos % 4 == 0));
+  assert(mid % 2 == 1);
+  assert(mid <= 15 || (mid % 625 == 0 && mid / 625 <= 13));
+
+  for (u32 i = 0; i < MUL_TAB.size(); ++i) {
+    if (MUL_TAB[i] % mid == 0) {
+      // x = k * (MUL_TAB[i] / mid) / (twos / 4) is at most MUL_TAB[i]; bring it under 2 with 2^-q
+      int q = 0;
+      while ((2u << q) <= MUL_TAB[i]) { ++q; }
+      double const pow2q = ldexp(1.0, q);
+      double const scale = double(MUL_TAB[i] / mid) / (twos / 4) / pow2q;
+      return {.scale=scale, .sinCoefs=scaleSin(SIN[i], pow2q), .cosCoefs=scaleCos(COS[i], pow2q)};
     }
   }
   log("Trig tab not found for %u (%u * %u)\n", n, mid, twos);

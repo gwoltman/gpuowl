@@ -83,7 +83,7 @@ F2 reducedCosSin(int k, float cosBase) {
   const float S[] = TRIG_SIN;
   const float C[] = TRIG_COS;
 
-  float x = k * TRIG_SCALE;
+  float x = k * TRIG_SCALE;      // TRIG_SCALE is an integer times a power of two, so x is exact and in [0, 2)
   float z = x * x;
 
   float r1 = fma(S[7], z, S[6]);
