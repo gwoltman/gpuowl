@@ -100,20 +100,23 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
   for (const string& s : split(options, ',')) {
-    if (s.empty() || s == "noconfig" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace") { continue; }
+    if (s.empty() || s == "noconfig" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace"
+        || s == "1k256" || s == "m61" || s == "pfa") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
-    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp")) {
+    bool const isGroup = key == "1k256" || key == "m61" || key == "pfa";
+    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp" || isGroup)) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
       auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
-      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10))) {
-        log("-tune %s expects %s (found '%s')\n", key.c_str(), key == "quick" ? "a value from 1 to 10" : "a whole number, e.g. 5000000000", val.c_str());
+      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (isGroup && n > 2)) {
+        log("-tune %s expects %s (found '%s')\n", key.c_str(),
+            key == "quick" ? "a value from 1 to 10" : isGroup ? "0 or 1" : "a whole number, e.g. 5000000000", val.c_str());
         throw "-tune option value";
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -257,6 +260,9 @@ named "config.txt" in the prpll run directory.
                                         for a small exponent (e.g. PRP-CF at 18M) needs both ends set low, e.g.
                                         -tune minexp=10000000,maxexp=20000000
                          fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
+                         1k256        - Also time the 1K:256 and 256:1K shapes.  512:512 is almost always better.
+                         m61          - Also time M61-only NTTs (FFT type 3).
+                         pfa          - Also time hybrid FFTs (FP32 or FP64 with M31 and/or M61) with a non-power-of-two middle.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
 -device <N>        : select the GPU at position N in the list of devices
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)

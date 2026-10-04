@@ -377,6 +377,10 @@ void Tune::tune() {
   bool time_NTTs = false;
   bool time_FP32 = true;
   bool time_FFT6431 = false;
+  // Optional groups of FFTs: 0 = don't time them, 1 = time them, 2 = time only the groups set to 2.  A bare name means 1.
+  u32 time_1K_256 = 0;                          // 1K:256 and 256:1K shapes (512:512 is almost always better)
+  u32 time_M61 = 0;                             // Type 3, M61-only NTTs
+  u32 time_PFA = 0;                             // Hybrid FFT/NTTs (an FP32 or FP64 part) with a non-power-of-two middle
   bool time_inplace_only = NVIDIAGPU;           // Default is nVidia is better off with INPLACE=1, AMD GPUs need to time extra options used when INPLACE=0
   int quick = 7;                                // Run config from slowest (quick=1) to fastest (quick=10)
   u64 min_exponent = 75000000;
@@ -392,11 +396,17 @@ void Tune::tune() {
     if (s == "fp6431") time_FFT6431 = true;      // It is rare to have a GPU good at both FP64 and integer ops.  TitanV is one.  Allow tuning FFT6431.
     if (s == "nofp32") time_FP32 = false;        // Workaround bug in some openCL compilers that cannot compile our FP32 openCL code
     if (s == "inplace") time_inplace_only = true;
+    if (s == "1k256") time_1K_256 = 1;
+    if (s == "m61") time_M61 = 1;
+    if (s == "pfa") time_PFA = 1;
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
       if (keyVal.front() == "quick") quick = stoi(keyVal.back());
       if (keyVal.front() == "minexp") min_exponent = stoull(keyVal.back());
       if (keyVal.front() == "maxexp") max_exponent = stoull(keyVal.back());
+      if (keyVal.front() == "1k256") time_1K_256 = stoi(keyVal.back());
+      if (keyVal.front() == "m61") time_M61 = stoi(keyVal.back());
+      if (keyVal.front() == "pfa") time_PFA = stoi(keyVal.back());
     }
   }
   quick = std::max(quick, 1);
@@ -1238,13 +1248,11 @@ void Tune::tune() {
   int skip_some_WH_variants = 1;                // 0 = skip nothing, 1 = skip slower widths/heights unless they have better Z, 2 = only run fastest widths/heights
 
   // The width = height = 512 FFT shape is so good, we probably don't need to time the width = 1024, height = 256 shape.  Even more true for 2K and 256!
-  bool skip_1K_256 = true;
   bool skip_2K_256 = true;
   bool skip_2K_512 = true;
 
 // make command line args for this? 
 skip_some_WH_variants = 2;   // should default be 1??
-skip_1K_256 = false;
 
   // For each width, time the 001, 101, and 201 FP64 variants to find the fastest width variant.
   // In an ideal world we'd use the -time feature and look at the kCarryFused timing.  Then we'd save this info in config.txt or tune.txt.
@@ -1267,6 +1275,22 @@ skip_1K_256 = false;
     if (shape.fft_type == FFT6431 && !time_FFT6431) continue;
     if (shape.fft_type != FFT64 && shape.fft_type != FFT6431 && !time_NTTs) continue;
     if ((shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231 || shape.fft_type == FFT32) && !time_FP32) continue;
+
+    // Skip the optional groups that are not wanted (a single -fft shape is always timed).  A shape in a group set to 0 is
+    // skipped.  If any group is set to 2, only shapes in a group set to 2 are timed.
+    if (shapes.size() > 1) {
+      FFTConfig const anyVariant{shape, 202, CARRY_AUTO};
+      bool const onlyGroups = time_1K_256 == 2 || time_M61 == 2 || time_PFA == 2;
+      bool skip = false, inOnlyGroup = false;
+      for (auto [inGroup, setting] : {pair{(shape.width == 256 && shape.height == 1024) || (shape.width == 1024 && shape.height == 256), time_1K_256},
+                                      pair{shape.fft_type == FFT61, time_M61},
+                                      pair{shape.isPfa() && (anyVariant.FFT_FP64 || anyVariant.FFT_FP32), time_PFA}}) {
+        if (!inGroup) continue;
+        if (setting == 0) skip = true;
+        if (setting == 2) inOnlyGroup = true;
+      }
+      if (skip || (onlyGroups && !inOnlyGroup)) continue;
+    }
 
     // Time an exponent that's good for all variants and carry-config.
     u64 const exponent = primes.prevPrime(FFTConfig{shape, shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
@@ -1310,8 +1334,6 @@ skip_1K_256 = false;
         if (!shape.isFavoredShape()) continue;
 
         // Skip some combinations that are unlikely to be fruitful
-        if (shape.width == 256 && shape.height == 1024 && skip_1K_256) continue;
-        if (shape.width == 1024 && shape.height == 256 && skip_1K_256) continue;
         if (shape.width == 256 && shape.height == 2048 && skip_2K_256) continue;
         if (shape.width == 2048 && shape.height == 256 && skip_2K_256) continue;
         if (shape.width == 512 && shape.height == 2048 && skip_2K_512) continue;
