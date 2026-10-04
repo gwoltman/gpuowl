@@ -459,7 +459,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
 
   // PFA is only implemented for the not-in-place layout
   if (fft.shape.isPfa() && in_place) {
-    log("NTTs with an odd MIDDLE factor need INPLACE=0.  Changing to INPLACE=0.\n");
+    log("NTTs and hybrid FFTs with non-power-of-two MIDDLE factor need INPLACE=0.  Changing to INPLACE=0.\n");
     in_place = 0;
     config["INPLACE"] = to_string(0);
     args.flags["INPLACE"] = to_string(0);
@@ -468,7 +468,7 @@ string clDefines(Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal
   // The FP side of a PFA hybrid FFT/NTT has more than two special tail lines, which only the two-kernel tails handle
   if (fft.shape.isPfa() && (fft.FFT_FP64 || fft.FFT_FP32) && tail_single_kernel) {
     u32 const tailKernels = tail_single_wide ? 1 : 3;
-    log("Hybrid FFTs with an odd MIDDLE factor need two tail kernels.  Changing to TAIL_KERNELS=%u.\n", tailKernels);
+    log("Hybrid FFTs with non-power-of-two MIDDLE factor need two tail kernels.  Changing to TAIL_KERNELS=%u.\n", tailKernels);
     tail_single_kernel = false;
     config["TAIL_KERNELS"] = to_string(tailKernels);
     args.flags["TAIL_KERNELS"] = to_string(tailKernels);
