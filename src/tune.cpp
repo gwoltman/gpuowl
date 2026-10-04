@@ -107,9 +107,12 @@ string formatConfigResults(const vector<Entry>& results) {
 // Time one tune candidate.  A candidate the GPU can't run (a kernel that fails to compile or link, an
 // out-of-memory or out-of-resources error) is logged and costs infinity, so it never wins and the tune
 // moves on to the next candidate instead of aborting.  Deliberate stops ("stop requested") still propagate.
-double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& config, int quick = 7) {
+// usedWmul, if given, receives the WMUL the candidate actually ran with (clDefines lowers one the FFT or device cannot use).
+double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& config, int quick = 7, u32* usedWmul = nullptr) {
   try {
-    return Gpu::make(exponent, shared, fft, config, false)->timePRP(quick);
+    auto gpu = Gpu::make(exponent, shared, fft, config, false);
+    if (usedWmul) { *usedWmul = gpu->effectiveWmul(); }
+    return gpu->timePRP(quick);
   } catch (const std::exception& e) {
     log("%s failed: %s\n", fft.spec().c_str(), e.what());
   } catch (const string& mes) {
@@ -1078,10 +1081,12 @@ void Tune::tune() {
       double current_cost = -1.0;
       for (u32 const wmul : {1, 2, 4}) {
         args->flags["WMUL"] = to_string(wmul);
-        double const cost = timeConfig(exponent, shared, fft, {}, quick);
-        log("Time for %12s using WMUL=%u is %6.1f\n", fft.spec().c_str(), wmul, cost);
+        // A WMUL this FFT or device cannot use is lowered (e.g. 4 to 2 for a 1K width).  Score and save the value that ran.
+        u32 used = wmul;
+        double const cost = timeConfig(exponent, shared, fft, {}, quick, &used);
+        log("Time for %12s using WMUL=%u is %6.1f\n", fft.spec().c_str(), used, cost);
         if (wmul == current_wmul) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_wmul = wmul; }
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_wmul = used; }
       }
       log("Best WMUL is %u.  Default WMUL is 2.\n", best_wmul);
       configsUpdate(current_cost, best_cost, 0.000, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
