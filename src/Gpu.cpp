@@ -271,7 +271,7 @@ CARRY_SIZE = 100000
 
 // Any setting adjusted here for this FFT or device (INPLACE, TAIL_KERNELS, WMUL, LDSPAD_W, L2_STRIPING, MULTI_Q, GRAPHS...) is changed
 // only in the local config and in the out-parameters.  args is const: writing such a change back into args.flags would carry it into
-// every later Gpu, e.g. once -tune timed a PFA FFT (which needs INPLACE=0) every later timing would also run with INPLACE=0.
+// every later Gpu, e.g. once -tune timed a PFA hybrid (which needs a two-kernel tail) every later timing would also use TAIL_KERNELS 1 or 3.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
                  u32 &multi_q, u32 &l2_striping, bool &graphs) {
@@ -462,11 +462,10 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   }
 #endif
 
-  // PFA is only implemented for the not-in-place layout
-  if (fft.shape.isPfa() && in_place) {
-    log("NTTs and hybrid FFTs with non-power-of-two MIDDLE factor need INPLACE=0.  Changing to INPLACE=0.\n");
-    in_place = 0;
-    config["INPLACE"] = to_string(0);
+  // L2_STRIPING's stripe order and special lines assume the stock tail pairing (line with H - line), not PFA's
+  if (fft.shape.isPfa() && configValue("L2_STRIPING", 0)) {
+    log("L2_STRIPING does not support a non-power-of-two MIDDLE.  Changing to L2_STRIPING=0.\n");
+    config["L2_STRIPING"] = to_string(0);
   }
 
   // The FP side of a PFA hybrid FFT/NTT has more than two special tail lines, which only the two-kernel tails handle
