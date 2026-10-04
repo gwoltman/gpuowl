@@ -388,7 +388,7 @@ Program loadBinary(cl_context context, cl_device_id id, string_view fileName) {
 }
 
 static string getBinary(cl_program program) {
-  size_t size;
+  size_t size = 0;
   CHECK1(clGetProgramInfo(program, CL_PROGRAM_BINARY_SIZES, sizeof(size), &size, nullptr));
   auto buf = make_unique<char[]>(size + 1);
   char  const*ptr = buf.get();
