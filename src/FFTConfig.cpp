@@ -223,12 +223,14 @@ bool FFTShape::needsLargeCarry(u64 E) const {
 // Return TRUE for "favored" shapes.  That is, those that are most likely to be useful.  To save time in generating bpw data, only these favored
 // shapes have their bpw data pre-computed.  Bpw for non-favored shapes is guessed from the bpw data we do have.  Also. -tune will normally only
 // time favored shapes.  These are the rules for deciding favored shapes:
-//      WIDTH=4K:  HEIGHT>=512, MIDDLE>=9       (2*8 combos)
+//      WIDTH=4K:  HEIGHT>=1K, MIDDLE>=9        (2*8 combos)
+//      WIDTH=2K:  HEIGHT>=1K, MIDDLE>=9        (2*8 combos)
 //      WIDTH=1K:  MIDDLE>=5                    (3*12 combos)
 //      WIDTH=512: MIDDLE>=4                    (2*13 combos)
 //      WIDTH=256: MIDDLE>=1                    (16 combos)
 bool FFTShape::isFavoredShape() const {
-  return ((width == 4096 && height >= 512 && middle >= 9) ||
+  return ((width == 4096 && height >= 1024 && middle >= 9) ||
+          (width == 2048 && height >= 1024 && middle >= 9) ||
           (width == 1024 && middle >= 5) ||
           (width == 512 && middle >= 4) ||
           (width == 256 && middle >= 1));

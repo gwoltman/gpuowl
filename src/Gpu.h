@@ -187,6 +187,9 @@ private:
   u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly.
   u32 wmul;                             // Number of workgroups carryFused kernel should process ("width multiplier").
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
+  u32 multi_q;                          // MULTI_Q, L2_STRIPING and GRAPHS as adjusted for this FFT and device (see clDefines)
+  u32 l2_striping;
+  bool graphs;
 
   // Twiddles: trigonometry constant buffers, used in FFTs.
   // The twiddles depend only on FFT config and do not depend on the exponent.
@@ -317,6 +320,9 @@ public:
   static unique_ptr<Gpu> make(u64 E, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& extraConf = {}, bool logFftSize = true);
 
   ~Gpu();
+
+  // The WMUL this Gpu runs with, after clDefines lowered a requested value the FFT or device cannot use
+  [[nodiscard]] u32 effectiveWmul() const { return wmul; }
 
   PRPResult isPrimePRP(const Task& task);
   LLResult isPrimeLL(const Task& task);
