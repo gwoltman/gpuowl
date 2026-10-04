@@ -321,18 +321,18 @@ void OVERLOAD reverseLine(local F2_GF31 *lds, F2_GF31 *u) {
 }
 
 #if PFA
-// 32-bit version of reverseLineBump above
+// 32-bit version of reverseLineBump above.  Each component is a single 32-bit F_Z31, so it goes through LDS as is (no
+// as_int2 / as_F2_GF31 reinterpretation, which the CUDA backend does not provide for these types).
 void OVERLOAD reverseLineBump(local F2_GF31 *lds2, F2_GF31 *u) {
-  local int *lds = (local int *) lds2;
+  local F_Z31 *lds = (local F_Z31 *) lds2;
   u32 me = get_local_id(0);
   for (u32 c = 0; c < 2; ++c) {
     bar(WG);
-    for (u32 i = 0; i < NH; ++i) { int2 t = as_int2(u[i]); lds[(NH * WG - i * WG - me) % (NH * WG)] = c == 0 ? t.x : t.y; }
+    for (u32 i = 0; i < NH; ++i) { lds[(NH * WG - i * WG - me) % (NH * WG)] = c == 0 ? u[i].x : u[i].y; }
     bar(WG);
     for (u32 i = 0; i < NH; ++i) {
-      int2 t = as_int2(u[i]); int v = lds[i * WG + me];
-      if (c == 0) { t.x = v; } else { t.y = v; }
-      u[i] = as_F2_GF31(t);
+      F_Z31 v = lds[i * WG + me];
+      if (c == 0) { u[i].x = v; } else { u[i].y = v; }
     }
   }
 }
