@@ -52,6 +52,32 @@
 #define WADDF(i, w) u[i] = cmulFancy(u[i], w)
 #define WSUBF(i, w) u[i] = cmulFancy(u[i], conjugate(w))
 
+// The LDS write (p1idx) and read (p2idx) element indices of this thread for middleShuffle's partial transpose: the plain transpose
+// writes at (me % blockSize) * (workgroupSize / blockSize) + me / blockSize, which conflicts badly at the default IN_SIZEX/OUT_SIZEX.
+// The "diagonal" address outer*BIG + (inner + k*outer) % BIG, where BIG/ROWS are blockSize and workgroupSize/blockSize in whichever
+// order is larger, "outer" is whichever of row/col has the smaller range, and k is 1 (square) or 2 (2:1 ratio), moves the same values
+// without bank conflicts, for 4-byte as well as whole 8-byte elements (verified by simulation).  Other ratios fall back to the plain
+// transpose.
+void middleShuffleIdx(u32 workgroupSize, u32 blockSize, u32 *p1idx, u32 *p2idx) {
+  u32 me = get_local_id(0);
+  u32 ROWS = workgroupSize / blockSize;
+  u32 row = me / blockSize, col = me % blockSize;
+  u32 row_w = me % ROWS, col_w = me / ROWS;
+  if (blockSize == 2 * ROWS) {
+    *p1idx = row * blockSize + (col + 2 * row) % blockSize;
+    *p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
+  } else if (ROWS == 2 * blockSize) {
+    *p1idx = col * ROWS + (row + 2 * col) % ROWS;
+    *p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
+  } else if (blockSize == ROWS) {
+    *p1idx = row * blockSize + (col + row) % blockSize;
+    *p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
+  } else {
+    *p1idx = col * ROWS + row;
+    *p2idx = me;
+  }
+}
+
 #if FFT_FP64
 
 void OVERLOAD fft2(T2* u) { X2(u[0], u[1]); }
@@ -307,8 +333,10 @@ void OVERLOAD middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
 void OVERLOAD middleShuffle(local T *lds, T2 *u, u32 workgroupSize, u32 blockSize) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 8) {
-    local T *p1 = lds + (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
-    local T *p2 = lds + me;
+    u32 p1idx, p2idx;
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
+    local T *p1 = lds + p1idx;
+    local T *p2 = lds + p2idx;
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
@@ -317,34 +345,9 @@ void OVERLOAD middleShuffle(local T *lds, T2 *u, u32 workgroupSize, u32 blockSiz
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
-    // The plain write index below -- (me%blockSize)*(workgroupSize/blockSize)+me/blockSize -- is a classic
-    // shared-memory transpose and conflicts badly: verified via simulation, every 32-lane phase group collides
-    // (workgroupSize=128, blockSize=16, the default IN_SIZEX/OUT_SIZEX). Replace it with a "diagonal" address,
-    // addr(outer,inner) = outer*BIG + (inner + k*outer) % BIG, where BIG/ROWS are blockSize and
-    // workgroupSize/blockSize in whichever order is larger, "outer" is whichever of row/col has the smaller
-    // range, and k is 1 (square: blockSize==ROWS) or 2 (2:1 ratio, e.g. 16 vs 8, or 8 vs 16) -- the only ratios
-    // verified conflict-free (on both the write and the read below) by exhaustive simulation, and also verified
-    // to reproduce the exact same per-thread values as the plain formula (a correctness round trip, not just a
-    // conflict count -- see the shufl_and_fft2 fix earlier for why that distinction matters). Falls back to the
-    // plain, possibly-conflicting formula for any other ratio so an unusual -use combination still computes the
-    // right answer, just without the guaranteed fix.
-    u32 ROWS = workgroupSize / blockSize;
-    u32 row = me / blockSize, col = me % blockSize;
-    u32 row_w = me % ROWS, col_w = me / ROWS;
+    // Half the LDS of the MIDDLE <= 8 case: move 4-byte pieces.  middleShuffleIdx's diagonal addressing is conflict-free for both.
     u32 p1idx, p2idx;
-    if (blockSize == 2 * ROWS) {
-      p1idx = row * blockSize + (col + 2 * row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
-    } else if (ROWS == 2 * blockSize) {
-      p1idx = col * ROWS + (row + 2 * col) % ROWS;
-      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
-    } else if (blockSize == ROWS) {
-      p1idx = row * blockSize + (col + row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
-    } else {
-      p1idx = col * ROWS + row;
-      p2idx = me;
-    }
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local int *p1 = ((local int*) lds) + p1idx;
     local int *p2 = ((local int*) lds) + p2idx;
     int4 *pu = (int4 *)u;
@@ -729,26 +732,9 @@ void OVERLOAD middleMul2(F2 *u, u32 x, u32 y, float factor, TrigFP32 trig) {
 void OVERLOAD middleShuffle(local F *lds, F2 *u, u32 workgroupSize, u32 blockSize) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 16) {
-    // See the T2 overload of middleShuffle (in the T2_GF61 section above) for the derivation of this
-    // diagonal addressing, which replaces the plain (me%blockSize)*(workgroupSize/blockSize)+me/blockSize
-    // write index -- a classic shared-memory transpose that conflicts badly at the default IN_SIZEX/OUT_SIZEX.
-    u32 ROWS = workgroupSize / blockSize;
-    u32 row = me / blockSize, col = me % blockSize;
-    u32 row_w = me % ROWS, col_w = me / ROWS;
+    // Diagonal addressing, conflict-free at the default IN_SIZEX/OUT_SIZEX (see middleShuffleIdx)
     u32 p1idx, p2idx;
-    if (blockSize == 2 * ROWS) {
-      p1idx = row * blockSize + (col + 2 * row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
-    } else if (ROWS == 2 * blockSize) {
-      p1idx = col * ROWS + (row + 2 * col) % ROWS;
-      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
-    } else if (blockSize == ROWS) {
-      p1idx = row * blockSize + (col + row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
-    } else {
-      p1idx = col * ROWS + row;
-      p2idx = me;
-    }
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local F *p1 = lds + p1idx;
     local F *p2 = lds + p2idx;
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
@@ -1105,26 +1091,9 @@ void OVERLOAD middleMul2(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
 void OVERLOAD middleShuffle(local Z31 *lds, GF31 *u, u32 workgroupSize, u32 blockSize) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 16) {
-    // See the T2 overload of middleShuffle (in the T2_GF61 section above) for the derivation of this
-    // diagonal addressing, which replaces the plain (me%blockSize)*(workgroupSize/blockSize)+me/blockSize
-    // write index -- a classic shared-memory transpose that conflicts badly at the default IN_SIZEX/OUT_SIZEX.
-    u32 ROWS = workgroupSize / blockSize;
-    u32 row = me / blockSize, col = me % blockSize;
-    u32 row_w = me % ROWS, col_w = me / ROWS;
+    // Diagonal addressing, conflict-free at the default IN_SIZEX/OUT_SIZEX (see middleShuffleIdx)
     u32 p1idx, p2idx;
-    if (blockSize == 2 * ROWS) {
-      p1idx = row * blockSize + (col + 2 * row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
-    } else if (ROWS == 2 * blockSize) {
-      p1idx = col * ROWS + (row + 2 * col) % ROWS;
-      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
-    } else if (blockSize == ROWS) {
-      p1idx = row * blockSize + (col + row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
-    } else {
-      p1idx = col * ROWS + row;
-      p2idx = me;
-    }
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local Z31 *p1 = lds + p1idx;
     local Z31 *p2 = lds + p2idx;
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
@@ -1402,8 +1371,10 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
 void OVERLOAD middleShuffle(local Z61 *lds, GF61 *u, u32 workgroupSize, u32 blockSize) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 8) {
-    local Z61 *p1 = lds + (me % blockSize) * (workgroupSize / blockSize) + me / blockSize;
-    local Z61 *p2 = lds + me;
+    u32 p1idx, p2idx;
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
+    local Z61 *p1 = lds + p1idx;
+    local Z61 *p2 = lds + p2idx;
     for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
@@ -1412,24 +1383,9 @@ void OVERLOAD middleShuffle(local Z61 *lds, GF61 *u, u32 workgroupSize, u32 bloc
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
-    // See the T2 overload of middleShuffle above for the derivation of this diagonal addressing.
-    u32 ROWS = workgroupSize / blockSize;
-    u32 row = me / blockSize, col = me % blockSize;
-    u32 row_w = me % ROWS, col_w = me / ROWS;
+    // Half the LDS of the MIDDLE <= 8 case: move 4-byte pieces, see middleShuffleIdx.
     u32 p1idx, p2idx;
-    if (blockSize == 2 * ROWS) {
-      p1idx = row * blockSize + (col + 2 * row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + 2 * row_w) % blockSize;
-    } else if (ROWS == 2 * blockSize) {
-      p1idx = col * ROWS + (row + 2 * col) % ROWS;
-      p2idx = col_w * ROWS + (row_w + 2 * col_w) % ROWS;
-    } else if (blockSize == ROWS) {
-      p1idx = row * blockSize + (col + row) % blockSize;
-      p2idx = row_w * blockSize + (col_w + row_w) % blockSize;
-    } else {
-      p1idx = col * ROWS + row;
-      p2idx = me;
-    }
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local int *p1 = ((local int*) lds) + p1idx;
     local int *p2 = ((local int*) lds) + p2idx;
     int4 *pu = (int4 *)u;
