@@ -1219,8 +1219,9 @@ void Tune::tune() {
     if (args->workers < 2) {
       config.write("\n# Running two workers sometimes gives better throughput.  AutoPrimeNet will need to create a second worktodo file (use --num-workers 2).");
       config.write("\n#  -workers 2\n");
-      config.write("\n# Changing TAIL_KERNELS to 3 when running two workers may be better.");
-      config.write("\n#  -use TAIL_KERNELS=3\n");
+// Recent change (October 2026) to tailSquare's reverseLine may make TAIL_KERNELS=3 obsolete
+//      config.write("\n# Changing TAIL_KERNELS to 3 when running two workers may be better.");
+//      config.write("\n#  -use TAIL_KERNELS=3\n");
     }
   }
 
@@ -1231,8 +1232,10 @@ void Tune::tune() {
   // A command line option to run more combinations (higher number skips more combos)
   int skip_some_WH_variants = 1;                // 0 = skip nothing, 1 = skip slower widths/heights unless they have better Z, 2 = only run fastest widths/heights
 
-  // The width = height = 512 FFT shape is so good, we probably don't need to time the width = 1024, height = 256 shape.
+  // The width = height = 512 FFT shape is so good, we probably don't need to time the width = 1024, height = 256 shape.  Even more true for 2K and 256!
   bool skip_1K_256 = true;
+  bool skip_2K_256 = true;
+  bool skip_2K_512 = true;
 
 // make command line args for this? 
 skip_some_WH_variants = 2;   // should default be 1??
@@ -1301,8 +1304,13 @@ skip_1K_256 = false;
         // Skip less-favored shapes
         if (!shape.isFavoredShape()) continue;
 
-        // Skip width = 1K, height = 256
+        // Skip some combinations that are unlikely to be fruitful
+        if (shape.width == 256 && shape.height == 1024 && skip_1K_256) continue;
         if (shape.width == 1024 && shape.height == 256 && skip_1K_256) continue;
+        if (shape.width == 256 && shape.height == 2048 && skip_2K_256) continue;
+        if (shape.width == 2048 && shape.height == 256 && skip_2K_256) continue;
+        if (shape.width == 512 && shape.height == 2048 && skip_2K_512) continue;
+        if (shape.width == 2048 && shape.height == 512 && skip_2K_512) continue;
 
         // Skip variants where width or height are not using the fastest variant.
         // NOTE: We ought to offer a tune=option where we also test more accurate variants to extend the FFT's max exponent.
