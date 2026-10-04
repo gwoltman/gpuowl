@@ -414,7 +414,7 @@ void Tune::tune() {
 
   // Giving only one of minexp=/maxexp= leaves the other at its default (75M/350M), so e.g. "-tune maxexp=50000000"
   // alone leaves min_exponent at 75M above it.  The FFT-selection loop below (fft.maxExp() < min_exponent /
-  // fft.maxExp() > 2*max_exponent) would then silently time nothing useful instead of the small-exponent FFTs the
+  // fft.maxExp() > 1.25*max_exponent) would then silently time nothing useful instead of the small-exponent FFTs the
   // user asked for.  Fail loudly instead of leaving the user staring at an empty tune.txt.
   if (min_exponent > max_exponent) {
     log("-tune: minexp=%" PRIu64 " is greater than maxexp=%" PRIu64 "; give both minexp= and maxexp= to tune a "
@@ -1319,11 +1319,12 @@ skip_some_WH_variants = 2;   // should default be 1??
         if (shape.height > 1024) continue;
       }
 
-      // Reject shapes that won't be used to test exponents in the user's desired range
+      // Reject shapes that won't be used to test exponents in the user's desired range.
+      // We need to test significantly higher than max_exponent in search of a favored FFT shape that produces the best timing.
       {
         FFTConfig const fft{shape, variant, CARRY_AUTO};
         if (fft.maxExp() < min_exponent) continue;
-        if (fft.maxExp() > 2*max_exponent) continue;
+        if (fft.maxExp() > 1.3*max_exponent) continue;
         if (shape.fft_type == FFT64 && fft.maxExp() > 1.2*max_exponent) continue;
       }
 

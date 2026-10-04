@@ -166,7 +166,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
       u32 const orig_h = h;
       while (m < 9) { m *= 2; w /= 2; }
       while (w >= 4*h) { w /= 2; h *= 2; }
-      while (w < h || w < 256 || w == 2048) { w *= 2; h /= 2; }
+      while (w < h || w < 256) { w *= 2; h /= 2; }
       while (h < 256) { h *= 2; m /= 2; }
       if (m < 2) m = 2;
 
