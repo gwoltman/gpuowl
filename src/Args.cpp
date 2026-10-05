@@ -239,8 +239,9 @@ named "config.txt" in the prpll run directory.
   -use MIDDLE_IN_LDS_TRANSPOSE=0|1  : Transpose values in local memory before writing to global memory
   -use MIDDLE_OUT_LDS_TRANSPOSE=0|1 : Transpose values in local memory before writing to global memory
   -use TABMUL_CHAIN=<val>: Controls how trig values are obtained in WIDTH and HEIGHT when FFT-spec is 1.
-                     0 = Read one trig value and compute the next 3 or 7.
-                     1 = All trig values are pre-computed and read from memmory.
+                     0 = All trig values are pre-computed and read from memory.
+                     1 = Read one trig value and compute the next 3 or 7 (chained multiplies, slightly less accurate).
+                     TABMUL_CHAIN31, TABMUL_CHAIN32 and TABMUL_CHAIN61 do the same for the M31, FP32 and M61 parts.
 
   -use DEBUG       : enable asserts in OpenCL kernels (slow, developers)
   -use STATS=<val> : enable carry statistics collection & logging (developers), for the kernel according to <val>:
