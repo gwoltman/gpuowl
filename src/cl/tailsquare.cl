@@ -71,6 +71,9 @@ void OVERLOAD onePairSq(T2* pa, T2* pb, T2 t_squared) {
 void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special, bool negFirst) {
   u32 me = get_local_id(0);
 
+  // Always unroll: NH / 4 is a compile-time constant, and a rolled loop indexes u[] and v[] at run time, which puts them in local memory
+  // (NVRTC 12.8 left the GF61 version rolled: 128 bytes of local memory in tailSquareGF61).
+  #pragma unroll
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
     if (special && i == 0 && me == 0) {
       u[i] = SWAP_XY(2 * foo(u[i]));
@@ -390,6 +393,9 @@ void OVERLOAD onePairSq(F2* pa, F2* pb, F2 t_squared) {
 void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special, bool negFirst) {
   u32 me = get_local_id(0);
 
+  // Always unroll: NH / 4 is a compile-time constant, and a rolled loop indexes u[] and v[] at run time, which puts them in local memory
+  // (NVRTC 12.8 left the GF61 version rolled: 128 bytes of local memory in tailSquareGF61).
+  #pragma unroll
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
     if (special && i == 0 && me == 0) {
       u[i] = SWAP_XY(2 * foo(u[i]));
@@ -702,6 +708,9 @@ void OVERLOAD onePairSq(GF31* pa, GF31* pb, GF31 t_squared, const u32 t_squared_
 void OVERLOAD pairSq(u32 N, GF31 *u, GF31 *v, GF31 base_squared, bool special) {
   u32 me = get_local_id(0);
 
+  // Always unroll: NH / 4 is a compile-time constant, and a rolled loop indexes u[] and v[] at run time, which puts them in local memory
+  // (NVRTC 12.8 left the GF61 version rolled: 128 bytes of local memory in tailSquareGF61).
+  #pragma unroll
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
     if (special && i == 0 && me == 0) {
 #if PFA
@@ -1046,6 +1055,9 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_
 void OVERLOAD pairSq(u32 N, GF61 *u, GF61 *v, GF61 base_squared, bool special) {
   u32 me = get_local_id(0);
 
+  // Always unroll: NH / 4 is a compile-time constant, and a rolled loop indexes u[] and v[] at run time, which puts them in local memory
+  // (NVRTC 12.8 left the GF61 version rolled: 128 bytes of local memory in tailSquareGF61).
+  #pragma unroll
   for (i32 i = 0; i < NH / 4; ++i, base_squared = mul_t8(base_squared)) {
     if (special && i == 0 && me == 0) {
 #if PFA
