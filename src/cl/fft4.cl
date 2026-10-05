@@ -141,6 +141,17 @@ void OVERLOAD fft4by(F2 *u, u32 base, u32 step, u32 M) {
 
 void OVERLOAD fft4(F2 *u) { fft4by(u, 0, 1, 4); }
 
+// For FUSE_WEIGHT_BUTTERFLY, see the FP64 version above
+void OVERLOAD fft4Core_skip1(F2 *u) {
+  u[3] = mul_t4(u[3]);
+  X2(u[0], u[1]);
+  X2(u[2], u[3]);
+}
+void OVERLOAD fft4_skip1(F2 *u) {
+  fft4Core_skip1(u);
+  SWAP(u[1], u[2]);
+}
+
 #endif
 
 

@@ -1225,6 +1225,20 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 
   // Old / original version
 
+  // With FUSE_WEIGHT_BUTTERFLY carryFused has already done the first radix step's first butterfly.  Do that step ahead of the loop:
+  // in a rolled loop (UNROLL = 0) an "s == 1" test would compile both versions of the radix step into the loop body, plus a branch.
+  u32 s0 = 1;
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) {
+    u32 me = lowMe;
+    if (HOIST >= 1) OPAQUE(me);
+    if (HOIST >= 1 && VARIANT == 0) { OPAQUE_F64(w.x); OPAQUE_F64(w.y); }
+    fft_RADIX_skip1(u);
+    if (VARIANT == 0) chainMul(u, w = bcast(w, 1));
+    else tabMul(trig, u, 1, me);
+    shufl(lds, u, 1, numWG, me);
+    s0 = RADIX;
+  }
+
   // UNROLL (UNROLL_W / UNROLL_H) = 1 always unrolls this loop completely, 0 never unrolls it.  The pragmas work for both
   // OpenCL and NVRTC.  (Without them the compiler decides; ROCm kept this loop rolled even with UNROLL = 1.)
 #if UNROLL
@@ -1232,11 +1246,11 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
 #else
   #pragma unroll 1
 #endif
-  for (u32 s = 1; s < WG; s *= RADIX) {
+  for (u32 s = s0; s < WG; s *= RADIX) {
     u32 me = lowMe;
     if (HOIST >= 1) OPAQUE(me);     // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
     if (HOIST >= 1 && VARIANT == 0) { OPAQUE_F64(w.x); OPAQUE_F64(w.y); }   // Nor its twiddle power chain
-    if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2 && s == 1) fft_RADIX_skip1(u); else fft_RADIX(u);
+    fft_RADIX(u);
     if (VARIANT == 0) chainMul(u, w = bcast(w, s));
     else tabMul(trig, u, s, me);
     shufl(lds, u, s, numWG, me);
@@ -1262,6 +1276,17 @@ void OVERLOAD fft_RADIX(F2 *u) {
   fft8(u);
 #else
 #error RADIX
+#endif
+}
+
+// For FUSE_WEIGHT_BUTTERFLY, see the FP64 version above
+void OVERLOAD fft_RADIX_skip1(F2 *u) {
+#if RADIX == 4
+  fft4_skip1(u);
+#elif RADIX == 8
+  fft8_skip1(u);
+#else
+#error FUSE_WEIGHT_BUTTERFLY not implemented for this RADIX
 #endif
 }
 
@@ -1710,7 +1735,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
   preload_tabMul4_trig(trig, preloads, 1, numWG, lowMe);
 
   // Do first fft4, partial tabMul, and shufl.
-  fft4(u);
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft4_skip1(u); else fft4(u);
   partial_tabMul4(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
   shufl(lds, u, 1, numWG, lowMe);
 
@@ -1737,7 +1762,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
   preload_tabMul8_trig(trig, preloads, 1, numWG, lowMe);
 
   // Do first fft8, partial tabMul, and shufl.
-  fft8(u);
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
   partial_tabMul8(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
   shufl(lds, u, 1, numWG, lowMe);
 
@@ -1759,7 +1784,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
   preload_tabMul4_trig(trig, preloads, 1, numWG, lowMe);
 
   // Do first fft4, partial tabMul, and shufl.
-  fft4(u);
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft4_skip1(u); else fft4(u);
   partial_tabMul4(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
   shufl(lds, u, 1, numWG, lowMe);
 
@@ -1791,7 +1816,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
   preload_tabMul8_trig(trig, preloads, 1, numWG, lowMe);
 
   // Do first fft8, partial tabMul, and shufl.
-  fft8(u);
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
   partial_tabMul8(partitioned_lds, trig, preloads, u, 1, numWG, lowMe);
   shufl(lds, u, 1, numWG, lowMe);
 
@@ -1811,6 +1836,9 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 // Code for SIZE=256, RADIX=8
 #elif WG == 32 && NW == 8
 
+#if FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH
+#error FUSE_WEIGHT_BUTTERFLY not implemented for SIZE=256, RADIX=8
+#endif
   fft8_4(u);
   tabMul8_4a(trig, u, 1, lowMe);
   shufl(lds, u, 1, 4, numWG, lowMe);
@@ -1826,7 +1854,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 
   u32 me = lowMe;
   if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
-  fft8(u);
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
   tabMul(trig, u, 1, me);
   shufl(lds, u, 1, numWG, me);
 
@@ -1844,7 +1872,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 
   u32 me = lowMe;
   if (HOIST >= 1) OPAQUE(me);       // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
-  fft8(u);
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
   tabMul(trig, u, 1, me);
   shufl_and_fft2(lds, u, 1, numWG, me);
 
@@ -1860,6 +1888,18 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 
   // Old / original version
 
+  // With FUSE_WEIGHT_BUTTERFLY carryFused has already done the first radix step's first butterfly.  Do that step ahead of the loop:
+  // in a rolled loop (UNROLL = 0) an "s == 1" test would compile both versions of the radix step into the loop body, plus a branch.
+  u32 s0 = 1;
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) {
+    u32 me = lowMe;
+    if (HOIST >= 1) OPAQUE(me);
+    fft_RADIX_skip1(u);
+    tabMul(trig, u, 1, me);
+    shufl(lds, u, 1, numWG, me);
+    s0 = RADIX;
+  }
+
   // UNROLL (UNROLL_W / UNROLL_H) = 1 always unrolls this loop completely, 0 never unrolls it.  The pragmas work for both
   // OpenCL and NVRTC.  (Without them the compiler decides; ROCm kept this loop rolled even with UNROLL = 1.)
 #if UNROLL
@@ -1867,7 +1907,7 @@ void OVERLOAD fft_common(local F2 *lds, F2 *u, TrigFP32 trig, u32 numWG, u32 low
 #else
   #pragma unroll 1
 #endif
-  for (u32 s = 1; s < WG; s *= RADIX) {
+  for (u32 s = s0; s < WG; s *= RADIX) {
     u32 me = lowMe;
     if (HOIST >= 1) OPAQUE(me);     // This step's LDS addresses and twiddle loads are not computed before the step starts (see HOIST_W/H)
     fft_RADIX(u);

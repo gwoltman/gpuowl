@@ -80,6 +80,22 @@ void OVERLOAD fft8(F2 *u) {
   SWAP(u[3], u[6]);
 }
 
+// For FUSE_WEIGHT_BUTTERFLY, see the FP64 version above
+void OVERLOAD fft8Core_skip1(F2 *u) {
+  u[5] = mul_t8_delayed(u[5]);
+  u[6] = mul_t4(u[6]);
+  u[7] = mul_t8_delayed(u[7]);
+  fft4Core(u);
+  fft4CoreSpecial(u + 4);
+}
+
+void OVERLOAD fft8_skip1(F2 *u) {
+  fft8Core_skip1(u);
+  // revbin [0, 4, 2, 6, 1, 5, 3, 7] undo
+  SWAP(u[1], u[4]);
+  SWAP(u[3], u[6]);
+}
+
 #endif
 
 

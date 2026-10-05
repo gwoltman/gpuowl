@@ -386,23 +386,23 @@ typedef ulong2 GF61;        // A complex value using two Z61s.  For a GF(M61^2) 
 #error - unsupported FFT/NTT
 #endif
 
-// The FP64 FFT can save a few FP64 ops by applying some of the weights using FMA.  nVidia compilers are clever enough to do this automatically.
-// AMD's rocm compiler needs us to do this explicitly (see carryfused.cl's precompute and fft_common's use of it below).  Only wired up
-// for FFT_TYPE==FFT64 with fft_WIDTH's RADIX 4 or 8 (fft4_skip1 / fft8_skip1 in fft4.cl / fft8.cl); not the 32-thread
-// WIDTH=256 special case (WIDTH==256, NW==8, fft8_4-based, see fft_common).
+// The FP64 and FP32 FFTs can save a few FP ops by applying half of the forward weights with FMAs in the first butterfly of fft_WIDTH.
+// nVidia compilers are clever enough to do this automatically.  AMD's rocm compiler needs us to do this explicitly (see the fused
+// weighting in each carryFused with an FP64 or FP32 part, and fft_common's use of it below).  Only wired up for fft_WIDTH's RADIX 4
+// or 8 (fft4_skip1 / fft8_skip1 in fft4.cl / fft8.cl); not the 32-thread WIDTH=256 special case (WIDTH==256, NW==8, fft8_4-based).
 #if !defined(FUSE_WEIGHT_BUTTERFLY)
-#if AMDGPU && FFT_TYPE == FFT64 && !(WIDTH == 256 && NW == 8)
+#if AMDGPU && (FFT_FP64 || FFT_FP32) && !(WIDTH == 256 && NW == 8)
 #define FUSE_WEIGHT_BUTTERFLY 1
 #else
 #define FUSE_WEIGHT_BUTTERFLY 0
 #endif
 #endif
 
-// The fused precompute above only exists in the FFT64 carryFused (see carryfused.cl).  An explicit
-// -use FUSE_WEIGHT_BUTTERFLY=1 override on any other FFT type would skip the first WIDTH butterfly
-// without ever applying its weight, silently corrupting the result.
-#if FUSE_WEIGHT_BUTTERFLY && FFT_TYPE != FFT64
-#error FUSE_WEIGHT_BUTTERFLY is only implemented for FFT_TYPE == FFT64
+// FUSE_WEIGHT_BUTTERFLY only applies to the FP64 and FP32 parts of an FFT.  A kernel with no FP part (an NTT, or a hybrid's NTT-only
+// kernels) has no FP weights to fuse, so an explicit -use FUSE_WEIGHT_BUTTERFLY=1 has no effect there.
+#if !FFT_FP64 && !FFT_FP32
+#undef FUSE_WEIGHT_BUTTERFLY
+#define FUSE_WEIGHT_BUTTERFLY 0
 #endif
 
 // Word and Word2 define the data type for FFT integers passed between the CPU and GPU.

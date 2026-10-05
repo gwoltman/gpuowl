@@ -585,10 +585,20 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
     frac_bits += FRAC_BPW_HI;
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    u[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
+    // With FUSE_WEIGHT_BUTTERFLY the "high" half's weights are parked here and applied by FMA in the first butterfly below
+    if (!FUSE_WEIGHT_BUTTERFLY || i < NW/2) u[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y); else u[i] = U2(weight1, weight2);
 
     // Generate frac_bits for next pair
     frac_bits += frac_bits_bigstep;
+  }
+
+  // To save a few F32 ops we do the first butterfly of the radix-4 or radix-8 step here using FMA to apply half of the weights (see FFT64 above).
+  if (FUSE_WEIGHT_BUTTERFLY) {
+    for (i32 i = 0; i < NW/2; ++i) {
+      F2 weights = u[i + NW/2];                                   // The weights of the high half, parked in u above
+      u[i + NW/2] = U2((F) wu[i + NW/2].x, (F) wu[i + NW/2].y);   // The FFT values to apply the weights to are in wu.
+      X2ad(u[i], u[i + NW/2], weights);                         // Compute u[i] +/- weights * u[i+NW/2]
+    }
   }
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
@@ -1357,12 +1367,21 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);
+    if (!FUSE_WEIGHT_BUTTERFLY || i < NW/2) u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);    // else applied in the first butterfly below
     u31[i] = U2(shl(make_Z31(wu[i].x), weight_shift0), shl(make_Z31(wu[i].y), weight_shift1));
 
     // Generate weight shifts and frac_bits for next pair
     combo_counter += combo_bigstep;
     if (weight_shift > 31) weight_shift -= 31;
+  }
+
+  // To save a few F64 ops we do the first butterfly of the radix-4 or radix-8 step here using FMA to apply half of the weights (see FFT64 above).
+  if (FUSE_WEIGHT_BUTTERFLY) {
+    for (i32 i = 0; i < NW/2; ++i) {
+      T2 weights = u[i + NW/2];                                     // The weights are still in the high half of u
+      u[i + NW/2] = U2((T) wu[i + NW/2].x, (T) wu[i + NW/2].y);     // The FFT values to apply the weights to are in wu.
+      X2ad(u[i], u[i + NW/2], weights);                             // Compute u[i] +/- weights * u[i+NW/2]
+    }
   }
 
   fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
@@ -1654,12 +1673,22 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
+    // With FUSE_WEIGHT_BUTTERFLY the "high" half's weights are parked here and applied by FMA in the first butterfly below
+    if (!FUSE_WEIGHT_BUTTERFLY || i < NW/2) uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y); else uF2[i] = U2(weight1, weight2);
     u31[i] = U2(shl(make_Z31(wu[i].x), weight_shift0), shl(make_Z31(wu[i].y), weight_shift1));
 
     // Generate weight shifts and frac_bits for next pair
     combo_counter += combo_bigstep;
     if (weight_shift > 31) weight_shift -= 31;
+  }
+
+  // To save a few F32 ops we do the first butterfly of the radix-4 or radix-8 step here using FMA to apply half of the weights (see FFT64 above).
+  if (FUSE_WEIGHT_BUTTERFLY) {
+    for (i32 i = 0; i < NW/2; ++i) {
+      F2 weights = uF2[i + NW/2];                                   // The weights of the high half, parked in uF2 above
+      uF2[i + NW/2] = U2((F) wu[i + NW/2].x, (F) wu[i + NW/2].y);   // The FFT values to apply the weights to are in wu.
+      X2ad(uF2[i], uF2[i + NW/2], weights);                         // Compute uF2[i] +/- weights * uF2[i+NW/2]
+    }
   }
 
   fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
@@ -1948,12 +1977,22 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
+    // With FUSE_WEIGHT_BUTTERFLY the "high" half's weights are parked here and applied by FMA in the first butterfly below
+    if (!FUSE_WEIGHT_BUTTERFLY || i < NW/2) uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y); else uF2[i] = U2(weight1, weight2);
     u61[i] = U2(shl(make_Z61(wu[i].x), weight_shift0), shl(make_Z61(wu[i].y), weight_shift1));
 
     // Generate weight shifts and frac_bits for next pair
     combo_counter += combo_bigstep;
     if (weight_shift > 61) weight_shift -= 61;
+  }
+
+  // To save a few F32 ops we do the first butterfly of the radix-4 or radix-8 step here using FMA to apply half of the weights (see FFT64 above).
+  if (FUSE_WEIGHT_BUTTERFLY) {
+    for (i32 i = 0; i < NW/2; ++i) {
+      F2 weights = uF2[i + NW/2];                                   // The weights of the high half, parked in uF2 above
+      uF2[i + NW/2] = U2((F) wu[i + NW/2].x, (F) wu[i + NW/2].y);   // The FFT values to apply the weights to are in wu.
+      X2ad(uF2[i], uF2[i + NW/2], weights);                         // Compute uF2[i] +/- weights * uF2[i+NW/2]
+    }
   }
 
   fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
@@ -2558,7 +2597,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
-    uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y);
+    // With FUSE_WEIGHT_BUTTERFLY the "high" half's weights are parked here and applied by FMA in the first butterfly below
+    if (!FUSE_WEIGHT_BUTTERFLY || i < NW/2) uF2[i] = U2(weight1 * wu[i].x, weight2 * wu[i].y); else uF2[i] = U2(weight1, weight2);
     u31[i] = U2(shl(make_Z31(wu[i].x), m31_weight_shift0), shl(make_Z31(wu[i].y), m31_weight_shift1));
     u61[i] = U2(shl(make_Z61(wu[i].x), m61_weight_shift0), shl(make_Z61(wu[i].y), m61_weight_shift1));
 
@@ -2567,6 +2607,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     m31_weight_shift = adjust_m31_weight_shift(m31_weight_shift);
     m61_combo_counter += m61_combo_bigstep;
     m61_weight_shift = adjust_m61_weight_shift(m61_weight_shift);
+  }
+
+  // To save a few F32 ops we do the first butterfly of the radix-4 or radix-8 step here using FMA to apply half of the weights (see FFT64 above).
+  if (FUSE_WEIGHT_BUTTERFLY) {
+    for (i32 i = 0; i < NW/2; ++i) {
+      F2 weights = uF2[i + NW/2];                                   // The weights of the high half, parked in uF2 above
+      uF2[i + NW/2] = U2((F) wu[i + NW/2].x, (F) wu[i + NW/2].y);   // The FFT values to apply the weights to are in wu.
+      X2ad(uF2[i], uF2[i + NW/2], weights);                         // Compute uF2[i] +/- weights * uF2[i+NW/2]
+    }
   }
 
   fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
