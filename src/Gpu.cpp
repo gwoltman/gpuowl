@@ -2930,13 +2930,13 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   // rolling "unverified" savefile instead.  When checkStep exceeds the exponent that condition is
   // never met, so the only durable savefile is the one from the very first check at k = 2 * blockSize
   // and one error costs the whole run.  Scale the step down so a short run still gets several
-  // checkpoints.  Staying on a multiple of logStep preserves both invariants asserted here, because
-  // logStep % blockSize == 0 was asserted just above.
+  // checkpoints.  It stays on a multiple of logStep, so a multiple of blockSize (logStep % blockSize == 0 was asserted just above).
+  // checkStep need not be a multiple of logStep: after an error it is halved (e.g. 500000 with -log 1000000), and a check that is
+  // not at a log point still logs and writes its verified savefile.
   if (checkStep > E / 8) {
     checkStep = std::max(logStep, u32(std::min<u64>(checkStep, E / 8) / logStep) * logStep);
   }
 
-  assert(checkStep % logStep == 0);
   assert(checkStep % blockSize == 0);
 
   u32 const power = getProofPower(k);
