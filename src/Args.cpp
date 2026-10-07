@@ -100,11 +100,11 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
   for (const string& s : split(options, ',')) {
-    if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace"
+    if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "fp32" || s == "inplace"
         || s == "1k256" || s == "m61" || s == "pfa") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
-    bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431";
+    bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431" || key == "fp32";
     if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp" || key == "fine" || isGroup)) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
@@ -117,7 +117,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, nofp32, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -277,7 +277,8 @@ named "config.txt" in the prpll run directory.
                          inplace      - Skip timings for not-in-place FFTs and NTTs.  All nVidia GPUs seem to prefer in-place FFTs and NTTs.
                          fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
                          ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
-                         nofp32       - Do not tune for settings that affect FP32 FFTs.  Some openCL compilers have trouble with FP32.
+                         fp32=0       - Do not time FFTs with an FP32 part, nor tune settings that affect them.  Some openCL compilers
+                                        have trouble with FP32.
                          minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.  Default 75000000.
                          maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.  Default 350000000.
                                         Without an -fft <spec>, only FFTs in [minexp, maxexp] are timed, so tuning
@@ -288,7 +289,7 @@ named "config.txt" in the prpll run directory.
                          1k256        - Also time the 1K:256 and 256:1K shapes.  512:512 is almost always better.
                          m61          - Also time M61-only NTTs (FFT type 3).
                          pfa=0        - Do not time hybrid FFTs (FP32 or FP64 with M31 and/or M61) with a non-power-of-two middle.  By default they are timed.
-                                        The groups fp6431, 1k256, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
+                                        The groups fp32, fp6431, 1k256, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
                                         config.txt settings are then not tuned, and the FFTs already in tune.txt are kept.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
                          regs         - (CUDA) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,

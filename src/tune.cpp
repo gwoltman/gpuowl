@@ -383,7 +383,7 @@ void Tune::tune() {
   double fine_pct = 0;                          // -tune fine: FFTs within this percent of earning a tune.txt entry get their register limits tuned
   bool time_FFTs = false;
   bool time_NTTs = false;
-  bool time_FP32 = true;
+  u32 time_FP32 = 1;                            // FFTs with an FP32 part, an optional group (fp32=0 is the old nofp32)
   u32 time_FFT6431 = 0;                         // FP64+M31 FFTs, an optional group like the ones below
   // Optional groups of FFTs: 0 = don't time them, 1 = time them, 2 = time only the groups set to 2.  A bare name means 1.
   u32 time_1K_256 = 0;                          // 1K:256 and 256:1K shapes (512:512 is almost always better)
@@ -406,7 +406,8 @@ void Tune::tune() {
     if (s == "fp64") time_FFTs = true;
     if (s == "ntt") time_NTTs = true;
     if (s == "fp6431") time_FFT6431 = 1;         // It is rare to have a GPU good at both FP64 and integer ops.  TitanV is one.  Allow tuning FFT6431.
-    if (s == "nofp32") time_FP32 = false;        // Workaround bug in some openCL compilers that cannot compile our FP32 openCL code
+    if (s == "nofp32") time_FP32 = 0;            // Workaround bug in some openCL compilers that cannot compile our FP32 openCL code.  Same as fp32=0.
+    if (s == "fp32") time_FP32 = 1;
     if (s == "inplace") time_inplace_only = true;
     if (s == "1k256") time_1K_256 = 1;
     if (s == "m61") time_M61 = 1;
@@ -420,6 +421,7 @@ void Tune::tune() {
       if (keyVal.front() == "m61") time_M61 = stoi(keyVal.back());
       if (keyVal.front() == "pfa") time_PFA = stoi(keyVal.back());
       if (keyVal.front() == "fp6431") time_FFT6431 = stoi(keyVal.back());
+      if (keyVal.front() == "fp32") time_FP32 = stoi(keyVal.back());
       if (keyVal.front() == "fine") fine_pct = stod(keyVal.back());
     }
   }
@@ -473,7 +475,11 @@ void Tune::tune() {
 
   // A group set to 2 asks to time only those FFTs, e.g. fp6431=2 to add FFT6431 to a tune.txt made with -tune fp64.  The config.txt
   // settings are left as they are.
-  bool const onlyGroups = time_1K_256 == 2 || time_M61 == 2 || time_PFA == 2 || time_FFT6431 == 2;
+  bool const onlyGroups = time_1K_256 == 2 || time_M61 == 2 || time_PFA == 2 || time_FFT6431 == 2 || time_FP32 == 2;
+  // A group set to 2 must not be left out by the FFT types timed: the FFTs with an FP32 part are NTT hybrids, and the PFA hybrids
+  // are FP32 (NTT) or FP64+M31 FFTs
+  if (time_FP32 == 2 || time_PFA == 2) { time_NTTs = true; }
+  if (time_PFA == 2 && !time_FFT6431 && hasFP64(shared.context->deviceId())) { time_FFT6431 = 1; }
   if (onlyGroups && tune_config) {
     log("Only timing the FFTs of the groups set to 2.  The config.txt settings are not tuned.\n");
     tune_config = false;
@@ -1318,6 +1324,7 @@ skip_some_WH_variants = 2;   // should default be 1??
       for (auto [inGroup, setting] : {pair{(shape.width == 256 && shape.height == 1024) || (shape.width == 1024 && shape.height == 256), time_1K_256},
                                       pair{shape.fft_type == FFT61, time_M61},
                                       pair{shape.fft_type == FFT6431, time_FFT6431},
+                                      pair{shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231 || shape.fft_type == FFT32, time_FP32},
                                       pair{shape.isPfa() && (anyVariant.FFT_FP64 || anyVariant.FFT_FP32), time_PFA}}) {
         if (!inGroup) continue;
         if (setting == 0) skip = true;
