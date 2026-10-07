@@ -1479,9 +1479,9 @@ skip_some_WH_variants = 2;   // should default be 1??
   };
   pruneAbove();
 
-  // Middle variant 1 handles a slightly higher max exponent than middle variant 0, at a cost that varies a lot (on a TITAN V from 1%
-  // for 512:16:512 to 99% for 1K:8:512).  Time it for the middle variant 0 FFTs below max_exponent that earned an entry above: it
-  // may earn the next one.
+  // Middle variant 1 handles a slightly higher max exponent than middle variant 0, usually at a small cost (on a TITAN V about 1%
+  // in the middle kernels).  Time it for the middle variant 0 FFTs below max_exponent that earned an entry above: it may earn the
+  // next one.
   {
     vector<FFTConfig> m1;
     for (const TuneEntry& e : results) {
