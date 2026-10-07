@@ -141,14 +141,16 @@ void Args::readConfig(const fs::path& path) {
 
 Args Args::withFftUses(const string& fftSpec, const vector<KeyVal>& uses) const {
   Args ret{*this};
+  string applied;
   for (const auto& [key, val] : uses) {
     if (cmdlineUses.contains(key)) {
       if (flags.at(key) != val) { log("%s: tune.txt %s=%s overridden by command line %s=%s\n", fftSpec.c_str(), key.c_str(), val.c_str(), key.c_str(), flags.at(key).c_str()); }
       continue;
     }
-    log("%s: tune.txt sets %s=%s\n", fftSpec.c_str(), key.c_str(), val.c_str());
+    applied += (applied.empty() ? "" : ", ") + key + '=' + val;
     ret.flags[key] = val;
   }
+  if (!applied.empty()) { log("%s: tune.txt sets %s\n", fftSpec.c_str(), applied.c_str()); }
   return ret;
 }
 
