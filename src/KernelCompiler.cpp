@@ -435,22 +435,45 @@ static string to_hex(u64 d) {
   return buf;
 }
 
+#ifdef CUDA_BACKEND
+// The register limit options from Gpu::numRegisters (--maxrregcount=N, --minblocks=K) are not compiler options on CUDA: they are
+// applied to the compiled PTX when the kernel is loaded (cudaSetKernelRegLimit).  Returns args without them.
+static string takeRegLimit(const string& args, int& maxRegs, int& minBlocks) {
+  maxRegs = minBlocks = 0;
+  string rest;
+  istringstream iss{args};
+  for (string tok; iss >> tok; ) {
+    if (tok.starts_with("--maxrregcount=")) { maxRegs = atoi(tok.c_str() + 15); continue; }
+    if (tok.starts_with("--minblocks=")) { minBlocks = atoi(tok.c_str() + 12); continue; }
+    rest += tok + ' ';
+  }
+  return rest;
+}
+#endif
+
 KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kernelName, const string& args) const {
   Timer const timer;
   bool fromCache = true;
+
+  // The arguments the kernel is compiled (and cached) with
+  string compileArgs = args;
+#ifdef CUDA_BACKEND
+  int maxRegs = 0, minBlocks = 0;
+  compileArgs = takeRegLimit(args, maxRegs, minBlocks);
+#endif
 
   Program program;
   string cacheFile;
 
   if (useCache) {
-    string const f = kernelName + '-' + to_hex(SHA3::hash(contextHash, fileName, kernelName, args)[0]);
+    string const f = kernelName + '-' + to_hex(SHA3::hash(contextHash, fileName, kernelName, compileArgs)[0]);
     cacheFile = cacheDir + '/' + f;
     program = loadBinary(context, deviceId, cacheFile);
   }
 
   if (!program) {
     fromCache = false;
-    program = compile(fileName, kernelName, args);
+    program = compile(fileName, kernelName, compileArgs);
   } else if (asmDump && !asmCacheNoted) {
     asmCacheNoted = true;
     log("-v 10: %s and possibly more kernels come from the cache '%s' and so have no assembly; "
@@ -462,6 +485,19 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
     throw "Can't compile " + fileName;
   }
 
+  // Cache the program before any register limit is applied to it
+  if (!fromCache && useCache) {
+    if (verbose) { log("saving binary to '%s'\n", cacheFile.c_str()); }
+    saveBinary(program.get(), cacheFile);
+  }
+
+#ifdef CUDA_BACKEND
+  if ((maxRegs > 0 || minBlocks > 0) && !cudaSetKernelRegLimit(program.get(), kernelName.c_str(), maxRegs, minBlocks)) {
+    log("Can't apply the register limit (maxrregcount %d, minblocks %d) to %s\n", maxRegs, minBlocks, kernelName.c_str());
+    throw "Can't apply register limit to " + kernelName;
+  }
+#endif
+
   KernelHolder ret{loadKernel(program.get(), kernelName.c_str())};
   if (!ret) {
     log("Can't find %s in %s\n", kernelName.c_str(), fileName.c_str());
@@ -469,10 +505,6 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
   }
 
   if (!fromCache) {
-    if (useCache) {
-      if (verbose) { log("saving binary to '%s'\n", cacheFile.c_str()); }
-      saveBinary(program.get(), cacheFile);
-    }
     // At -v 10, keep this line as filtered as the assembly/PTX dump itself -- otherwise every
     // uninteresting kernel still gets logged even though it never gets a dump (see isImportantKernel).
     if (verbose && (verbose != 10 || isImportantKernel(kernelName, args))) {

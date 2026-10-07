@@ -44,6 +44,10 @@ public:
   void startLoad(KernelCompiler* compiler);
   void finishLoad();
 
+  [[nodiscard]] bool isLoaded() const { return bool(kernel); }
+  [[nodiscard]] cl_kernel handle() const { return kernel.get(); }
+  [[nodiscard]] const TimeInfo* getTimeInfo() const { return timeInfo; }
+
   // Change which queue is used to run a kernel
   void setQueue(Queue *q) { if (q != NULL) queue = q; }
 

@@ -82,7 +82,8 @@ enum CARRY_KIND {CARRY_32=0, CARRY_64=1, CARRY_AUTO=2};
 
 struct FFTConfig {
 public:
-  static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec);
+  // uses, if given, receives the -use settings from the chosen FFT's tune.txt line
+  static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr);
 
   // Which FP and NTT primes are involved in the FFT
   bool FFT_FP64;

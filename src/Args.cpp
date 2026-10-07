@@ -100,23 +100,24 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
   for (const string& s : split(options, ',')) {
-    if (s.empty() || s == "noconfig" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace"
+    if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "inplace"
         || s == "1k256" || s == "m61" || s == "pfa") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
-    bool const isGroup = key == "1k256" || key == "m61" || key == "pfa";
-    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp" || isGroup)) {
+    bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431";
+    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp" || key == "fine" || isGroup)) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
       auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
-      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (isGroup && n > 2)) {
+      if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (isGroup && n > 2)
+          || (key == "fine" && (n < 1 || n > 50))) {
         log("-tune %s expects %s (found '%s')\n", key.c_str(),
-            key == "quick" ? "a value from 1 to 10" : isGroup ? "0 or 1" : "a whole number, e.g. 5000000000", val.c_str());
+            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : key == "fine" ? "a percentage from 1 to 50" : "a whole number, e.g. 5000000000", val.c_str());
         throw "-tune option value";
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, inplace, fp64, ntt, nofp32, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, nofp32, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -124,11 +125,31 @@ static void checkTuneOptions(const string& options) {
 void Args::readConfig(const fs::path& path) {
   if (File file = File::openRead(path)) {
     file.allowUnterminatedLastLine();
-    for (string line : file) {
-      line = rstripNewline(line);
-      parse(line);
+    readingConfig = true;
+    try {
+      for (string line : file) {
+        line = rstripNewline(line);
+        parse(line);
+      }
+    } catch (...) {
+      readingConfig = false;
+      throw;
     }
+    readingConfig = false;
   }
+}
+
+Args Args::withFftUses(const string& fftSpec, const vector<KeyVal>& uses) const {
+  Args ret{*this};
+  for (const auto& [key, val] : uses) {
+    if (cmdlineUses.contains(key)) {
+      if (flags.at(key) != val) { log("%s: tune.txt %s=%s overridden by command line %s=%s\n", fftSpec.c_str(), key.c_str(), val.c_str(), key.c_str(), flags.at(key).c_str()); }
+      continue;
+    }
+    log("%s: tune.txt sets %s=%s\n", fftSpec.c_str(), key.c_str(), val.c_str());
+    ret.flags[key] = val;
+  }
+  return ret;
 }
 
 u32 Args::getProofPow(u64 exponent) const {
@@ -261,10 +282,24 @@ named "config.txt" in the prpll run directory.
                                         for a small exponent (e.g. PRP-CF at 18M) needs both ends set low, e.g.
                                         -tune minexp=10000000,maxexp=20000000
                          fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
+                                        fp6431=2 times only them, e.g. to add them to a tune.txt made with -tune fp64.
                          1k256        - Also time the 1K:256 and 256:1K shapes.  512:512 is almost always better.
                          m61          - Also time M61-only NTTs (FFT type 3).
-                         pfa          - Also time hybrid FFTs (FP32 or FP64 with M31 and/or M61) with a non-power-of-two middle.
-                         quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.
+                         pfa=0        - Do not time hybrid FFTs (FP32 or FP64 with M31 and/or M61) with a non-power-of-two middle.  By default they are timed.
+                                        The groups fp6431, 1k256, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
+                                        config.txt settings are then not tuned, and the FFTs already in tune.txt are kept.
+                         quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
+                         regs         - (CUDA) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,
+                                        if given).  -tune does this after timing the FFTs.  Rerun it after a new CUDA driver/toolkit or
+                                        PRPLL version.  The best limits are added to each tune.txt line as REGxxxx=<val> settings.
+                         variants     - Time all the other variants of FFT shapes already in tune.txt.  Only FFTs with an FP64
+                                        part (FP64 and FP64+M31) have variants.  More accurate variants extend an entry's
+                                        max exponent a bit.  Variants that earn a tune.txt entry then get their register usage tuned (CUDA).
+                                        Only variants with a max exponent from minexp to maxexp (if given) are timed.  Warning: this
+                                        can take a long time, so a narrow minexp/maxexp range is recommended.
+                         fine         - (CUDA) Time FFTs as -tune does, but an FFT within 2%% of earning a tune.txt entry gets its register
+                                        limits tuned, and is added if it then earns the entry.  config.txt settings are not tuned.
+                         fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
 -device <N>        : select the GPU at position N in the list of devices
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
 -pci    <BDF>      : select the GPU with the given PCI BDF, e.g. "0c:00.0"
@@ -535,6 +570,7 @@ void Args::parse(const string& line) {
           log("warning: -use %s=%s overrides %s=%s\n", key.c_str(), val.c_str(), it->first.c_str(), it->second.c_str());
         }
         flags[key] = val;
+        if (!readingConfig) { cmdlineUses.insert(key); }
       }
     } else if (key == "-unsafeMath") {                                  // DEPRECATED, not in -help.  The flag has not reached the compiler since 424a54e,
       safeMath = false;                                                 // and measured on gfx1100 -cl-unsafe-math-optimizations gives no speedup and a lower

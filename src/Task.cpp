@@ -242,9 +242,10 @@ void Task::execute(GpuCommon shared, u32 instance) {
 
   LogContext const pushContext(std::to_string(exponent));
 
-  FFTConfig const fft = FFTConfig::bestFit(*shared.args, exponent, shared.args->fftSpec);
+  vector<KeyVal> fftUses;
+  FFTConfig const fft = FFTConfig::bestFit(*shared.args, exponent, shared.args->fftSpec, &fftUses);
 
-  auto gpu = Gpu::make(exponent, shared, fft);
+  auto gpu = Gpu::make(exponent, shared, fft, {}, true, fftUses);
 
   if (kind == VERIFY) {
     Proof const proof{Proof::load(verifyPath)};

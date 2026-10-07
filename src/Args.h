@@ -7,6 +7,7 @@
 
 #include <string>
 #include <map>
+#include <set>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -16,6 +17,8 @@ using KeyVal = std::pair<std::string, std::string>;
 class Args {
 private:
   int proofPow = -1;
+  bool readingConfig = false;          // true while readConfig() parses config.txt lines, so -use keys there aren't taken as command line
+  std::set<std::string> cmdlineUses;   // -use keys given on the command line; these beat a tune.txt line's settings
 
 public:
   static vector<KeyVal> splitArgLine(const std::string& inputLine);
@@ -29,6 +32,12 @@ public:
   [[nodiscard]] bool uses(const std::string& key) const { return flags.contains(key); }
   [[nodiscard]] int value(const std::string& key, int valNotFound = -1) const;
   void readConfig(const fs::path& path);
+  // The REGxxxx register limit keys (see Gpu::numRegisters) and NOREG.  The C++ code reads them, never the .cl code.
+  [[nodiscard]] static bool isRegisterKey(const string& k) {
+    return k == "NOREG" || k.starts_with("REGCF") || k.starts_with("REGMI") || k.starts_with("REGMO") || k.starts_with("REGTS");
+  }
+  // A copy of these args with a tune.txt line's -use settings for one FFT applied on top of config.txt, but not over the command line.
+  [[nodiscard]] Args withFftUses(const string& fftSpec, const vector<KeyVal>& uses) const;
   [[nodiscard]] u32 getProofPow(u64 exponent) const;
   [[nodiscard]] string tailDir() const;
 

@@ -164,6 +164,30 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 // Without this call the driver uses its own (usually small) default, which limits how much of an
 // access-policy window's "persisting" hint actually takes effect.
 void cudaSetL2PersistLimit(int pct);
+
+// Limit the registers of one kernel of a built program: maxRegs > 0 is a maximum register count, otherwise minBlocks > 0 is the
+// launch bounds minimum blocks per SM.  The program's module is rebuilt from its PTX.  Returns false on failure.
+bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs, int minBlocks);
+
+// A compiled kernel's resource use, as it limits occupancy
+struct CudaKernelResources {
+  int regs;            // registers per thread
+  int localBytes;      // local memory per thread, i.e. spilled registers
+  int sharedBytes;     // static shared memory per block
+  int threads;         // threads per block
+};
+CudaKernelResources cudaKernelResources(cl_kernel k);
+
+// The current device's per-SM limits
+struct CudaSmLimits {
+  int regsPerSM;
+  int regsPerBlock;
+  int maxThreadsPerSM;
+  int maxBlocksPerSM;
+  int sharedPerSM;
+  int reservedSharedPerBlock;
+};
+CudaSmLimits cudaSmLimits();
 #endif
 
 

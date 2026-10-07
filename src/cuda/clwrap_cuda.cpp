@@ -5,6 +5,7 @@
 #include "tinycuda.h"
 #include "cudawrap.h"  // For NvrtcProgram::preprocessOpenCL and compile
 #include "../log.h"
+#include "../clwrap.h"  // For the CUDA-only helper declarations (cudaKernelResources etc.)
 
 #include <cstdio>
 #include <cstring>
@@ -392,7 +393,6 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   // errors — some PRPLL kernels use in-place operations where in/out buffers alias.
   // Do NOT enable globally. The compiler still auto-uses __ldg() for const pointers on sm_35+.
 
-  int maxregcount = 0;
   if (options) {
     istringstream iss(options);
     string tok;
@@ -403,9 +403,6 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
         // FMA contraction already enabled above via --fmad=true.
         // Do NOT use -use_fast_math here — it enables flush-to-zero and
         // reduced-precision division/sqrt which breaks tailMul accuracy.
-      } else if (tok.starts_with("--maxrregcount")) {
-        nvrtcOpts.push_back(tok);
-        maxregcount = atoi(tok.substr(15, 3).c_str());
       }
       // Skip other -cl-* options (not applicable to NVRTC)
     }
@@ -474,26 +471,6 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
       }
     }
     return CL_COMPILE_PROGRAM_FAILURE;
-  }
-
-  // --maxrregcount is supposed to be applied by NVRTC's own ptxas when it builds the CUBIN, with the PTX
-  // fallback getting a spliced-in .maxnreg directive for the driver JIT path instead. In practice (verified
-  // against this toolkit/driver: CUDA 13.0, NVRTC accepts --maxrregcount without warning but the resulting
-  // CUBIN's register usage is unaffected by it -- e.g. requesting 24 regs for carryFused still yields 64).
-  // The .maxnreg-spliced PTX + driver JIT does honor the cap correctly. So for any kernel that asked for a
-  // register cap, drop the (silently non-compliant) CUBIN and force the PTX path, which is known to work.
-  // Kernels with no cap requested keep using the CUBIN fast path this shim was added for.
-
-  if (maxregcount) {
-    string const maxntidPattern = ".maxntid ";
-    string const maxnregPattern = ".maxnreg " + to_string(maxregcount) + "\n";
-    for (size_t startpos = 0; ; ) {
-      size_t const pos = prog->ptx.find(maxntidPattern, startpos);
-      if (pos == string::npos) break;
-      prog->ptx.insert(pos, maxnregPattern);
-      startpos = pos + 20;
-    }
-    prog->cubin.clear();
   }
 
   return CL_SUCCESS;
@@ -1371,6 +1348,68 @@ int clSetKernelArgSVMPointer(cl_kernel k, unsigned pos, const void* ptr) {
 
 } // extern "C"
 
+CudaKernelResources cudaKernelResources(cl_kernel k) {
+  ensureContextCurrent();
+  CudaKernelResources r{};
+  cuFuncGetAttribute(&r.regs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
+  cuFuncGetAttribute(&r.localBytes, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, k->func);
+  cuFuncGetAttribute(&r.sharedBytes, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);
+  r.threads = k->reqWorkGroupSize;
+  return r;
+}
+
+CudaSmLimits cudaSmLimits() {
+  ensureContextCurrent();
+  CUdevice dev{};
+  cuCtxGetDevice(&dev);
+  CudaSmLimits m{};
+  cuDeviceGetAttribute(&m.regsPerSM, CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_MULTIPROCESSOR, dev);
+  cuDeviceGetAttribute(&m.regsPerBlock, CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_BLOCK, dev);
+  cuDeviceGetAttribute(&m.maxThreadsPerSM, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR, dev);
+  cuDeviceGetAttribute(&m.sharedPerSM, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR, dev);
+#if CUDA_VERSION >= 11000
+  cuDeviceGetAttribute(&m.maxBlocksPerSM, CU_DEVICE_ATTRIBUTE_MAX_BLOCKS_PER_MULTIPROCESSOR, dev);
+  cuDeviceGetAttribute(&m.reservedSharedPerBlock, CU_DEVICE_ATTRIBUTE_RESERVED_SHARED_MEMORY_PER_BLOCK, dev);
+#endif
+  if (m.maxBlocksPerSM <= 0) { m.maxBlocksPerSM = 16; }   // the smallest limit of any architecture since Kepler
+  return m;
+}
+
+// Register limits are not NVRTC options: NVRTC accepts --maxrregcount without warning, but the CUBIN its ptxas builds ignores it
+// (verified on CUDA 13.0: requesting 24 regs for carryFused still yields 64).  The driver JIT does honor PTX performance directives,
+// so the limit is added to this kernel's entry in the PTX -- .maxnreg for a register count, .minnctapersm for the launch bounds
+// minimum blocks per SM -- and the module is reloaded from the PTX through the JIT.  Only the named kernel's entry is changed.
+// Done after compiling and after the kernel cache, so that a kernel compiles (and is cached) once whatever its register limit.
+bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs, int minBlocks) {
+  if (!prog || !prog->moduleLoaded || (maxRegs <= 0 && minBlocks <= 0)) { return false; }
+  ensureContextCurrent();
+  string& ptx = prog->ptx;
+  size_t const entry = ptx.find(".entry "s + kernelName + "(");
+  if (entry == string::npos) { return false; }
+  // The performance directives sit between the entry's parameter list and its body.
+  size_t const body = ptx.find('{', entry);
+  size_t const maxntid = ptx.find(".maxntid ", entry);
+  if (body == string::npos || maxntid == string::npos || maxntid > body) { return false; }
+  string const directive = maxRegs > 0 ? ".maxnreg " + to_string(maxRegs) + "\n" : ".minnctapersm " + to_string(minBlocks) + "\n";
+  ptx.insert(maxntid, directive);
+
+  prog->cubin.clear();
+  moduleRelease(prog->module);   // the program's reference; kernels already created from it keep theirs
+  prog->module = nullptr;
+  prog->moduleLoaded = false;
+  char jitErrorLog[8192] = {};
+  CUjit_option jitOpts[] = { CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES, CU_JIT_ERROR_LOG_BUFFER };
+  void* jitOptVals[] = { (void*)(size_t)sizeof(jitErrorLog), (void*)jitErrorLog };
+  CUresult const r = loadModule(prog, 2, jitOpts, jitOptVals);
+  if (r != CUDA_SUCCESS) {
+    fprintf(stderr, "cuModuleLoadData for %s with maxnreg %d minnctapersm %d failed: %d %s\n", kernelName, maxRegs, minBlocks, (int)r, jitErrorLog);
+    return false;
+  }
+  prog->moduleLoaded = true;
+  moduleRetain(prog->module);    // program owns one reference
+  return true;
+}
+
 // C++ linkage — must be outside the extern "C" block above.
 
 // Set L1 cache configuration
@@ -1433,7 +1472,7 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
   CUresult const r = cuStreamSetAttribute(q->stream, CU_STREAM_ATTRIBUTE_ACCESS_POLICY_WINDOW, &attr);
   if (r != CUDA_SUCCESS) {
     fprintf(stderr, "L2 persist: cuStreamSetAttribute failed (%d)\n", (int)r);
-  } else {
+  } else if (prpll_verbose) {
     fprintf(stderr, "L2 persist: window %zuMB (%.1f%% hit ratio), %zuMB actual data, %zu buffers\n",
             spanBytes / (1024*1024), hitRatio * 100.0f, totalDataBytes / (1024*1024),
             buffers.size());
@@ -1462,7 +1501,7 @@ void cudaSetL2PersistLimit(int pct) {
   CUresult const r = cuCtxSetLimit(CU_LIMIT_PERSISTING_L2_CACHE_SIZE, target);
   if (r != CUDA_SUCCESS) {
     fprintf(stderr, "L2 persist limit: cuCtxSetLimit failed (%d)\n", (int)r);
-  } else {
+  } else if (prpll_verbose) {
     fprintf(stderr, "L2 persist limit: reserved %zuMB of %dMB max (%d%%)\n",
             target / (1024*1024), maxPersist / (1024*1024), pct);
   }

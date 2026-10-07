@@ -93,7 +93,7 @@ class Gpu {
   std::atomic<bool> proofSaveFailed{false};
 
 public:
-  Args& args;
+  Args args;     // This Gpu's own copy: the shared args plus the FFT's tune.txt settings (see withFftUses)
 
 private:
   std::unique_ptr<Saver<PRPState>> saver;
@@ -316,8 +316,11 @@ private:
   void selftestTrig();
 
 public:
-  Gpu(GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize);
-  static unique_ptr<Gpu> make(u64 E, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& extraConf = {}, bool logFftSize = true);
+  // fftUses are the -use settings from the FFT's tune.txt line: they apply to this Gpu only, over config.txt but not over the command line.
+  // extraConf (used by -tune for the settings it is timing) takes priority over everything.
+  Gpu(GpuCommon shared, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize, const vector<KeyVal>& fftUses);
+  static unique_ptr<Gpu> make(u64 E, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& extraConf = {}, bool logFftSize = true,
+                              const vector<KeyVal>& fftUses = {});
 
   ~Gpu();
 
@@ -329,6 +332,19 @@ public:
   array<u64, 4> isCERT(const Task& task);
 
   double timePRP(int quick = 7);
+
+#ifdef CUDA_BACKEND
+  // A kernel whose registers a REGxxxx key limits, as it ran on this Gpu: its resources and average time per call.
+  // The time needs a Gpu made with args.profile (-time).
+  struct RegTunable {
+    string key;
+    string kernelName;
+    double usPerCall;
+    CudaKernelResources res;
+  };
+  // The REGxxxx keys of this FFT, each with the main kernel it limits, for the kernels that have run (e.g. in timePRP)
+  [[nodiscard]] vector<RegTunable> regTunables() const;
+#endif
 
   tuple<bool, u64, RoeInfo, RoeInfo> measureROE(bool quick);
   tuple<bool, RoeInfo> measureCarry();
@@ -369,6 +385,7 @@ private:
   u32 getProofPower(u64 k);
   void doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors);
   enum WHICH_KERNEL {CARRYFUSED=0, MIDIN=1, MIDIN31=2, MIDIN61=3, TAIL=4, TAIL31=5, TAIL61=6, MIDOUT=7, MIDOUT31=8, MIDOUT61=9};
+  [[nodiscard]] string regKey(enum WHICH_KERNEL which_kernel) const;
   string numRegisters(enum WHICH_KERNEL which_kernel);
   string amdRegisterOption(enum WHICH_KERNEL which_kernel, int override_regs);
   enum WHICH_KERNEL_TYPE {KFP=0, K31=1, K61=2, KALL=3};

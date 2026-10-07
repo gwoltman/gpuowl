@@ -148,6 +148,17 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
   string const s = spec();
   if (auto it = BPW.find(s); it != BPW.end()) {
     bpw = it->second;
+    // FFT6431's table was measured with variant 202 alone and repeats that value for every variant (see fftbpw.h).  The round-off
+    // of its FP64 part depends on the variant as FFT64's does (variant 0, for one, computes its trig values less accurately), so
+    // adjust each variant by FFT64's difference from 202 for the same shape.  Without this variant 000 fails at its max exponent.
+    // A middle variant 0 is only ever lowered.  A middle variant 1 (entries 3..5) also gets FFT64's gain: on a TITAN V
+    // 51:512:8:512:111 and 212 had the round-off of 202 (ROEmax 0.35) at the max exponents this gives.
+    if (t == FFT6431) {
+      if (auto it64 = BPW.find(s.substr(s.find(':') + 1)); it64 != BPW.end()) {
+        auto const& b64 = it64->second;
+        for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) { bpw[j] += j < 3 ? std::min(0.0f, b64[j] - b64[2]) : b64[j] - b64[2]; }
+      }
+    }
   } else if (isPfa()) {
     // An NTT has no roundoff, so its BPW depends only on its size.  Interpolate in log2(size) between the W:M0:H and
     // W:2*M0:H shapes of the same type, M0 the largest power of two below MIDDLE.
@@ -339,13 +350,16 @@ float FFTConfig::maxBpw() const {
   return (carry == CARRY_32 && (shape.fft_type == FFT64 || shape.fft_type == FFT3231)) ? std::min(shape.carry32BPW(), b) : b;
 }
 
-FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
+FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses) {
+  if (uses) { uses->clear(); }
+
   // A FFT-spec was given, simply take the first FFT from the spec that can handle E
   if (!spec.empty()) {
     FFTConfig fft{spec};
     if (fft.maxExp() * args.fftOverdrive < E) {
       log("Warning: %s (max %" PRIu64 ") may be too small for %" PRIu64 "\n", fft.spec().c_str(), fft.maxExp(), E);
     }
+    if (uses) { *uses = TuneEntry::usesFor(args, fft); }
     return fft;
   }
 
@@ -359,7 +373,10 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec) {
   vector<TuneEntry> const tunes = TuneEntry::readTuneFile(args);
   for (const TuneEntry& e : tunes) {
     // The first acceptable is the best as they're sorted by cost
-    if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) { return e.fft; }
+    if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) {
+      if (uses) { *uses = e.uses; }
+      return e.fft;
+    }
   }
 
   log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);

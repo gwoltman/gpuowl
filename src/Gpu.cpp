@@ -306,7 +306,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
-    bool const isValid = isCudaOnly || isInList(k, {
+    bool const isValid = isCudaOnly || Args::isRegisterKey(k) || isInList(k, {
                               "FAST_BARRIER",
                               "STATS",
                               "IN_SIZEX",
@@ -337,7 +337,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "TABMUL_CHAIN61",
                               "MODM31",
                               "LOADS","STORES",
-                              "NOREG",                  // CUDA - experimental
                               "WMUL",
                               "MULTI_Q"
                             });
@@ -435,7 +434,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   };
   if (args.profile && configValue("MULTI_Q", 0)) {
     config["MULTI_Q"] = to_string(0);
-    log("MULTI_Q is disabled when profiling with -time.\n");
+    if (doLog) { log("MULTI_Q is disabled when profiling with -time.\n"); }     // Not for -tune regs, which profiles every timing
   }
   // The !OLD_FENCE carry hand-off in carryFused coordinates the lanes of a wavefront with sync() and nothing
   // else, from inside a divergent branch, so a workgroup barrier is not a substitute.  sync() is bar.warp.sync
@@ -458,7 +457,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 #if CUDA_BACKEND
   if (args.profile && graphs) {
     graphs = false;
-    log("GRAPHS are disabled when profiling with -time.\n");
+    if (doLog) { log("GRAPHS are disabled when profiling with -time.\n"); }
   }
 #endif
 
@@ -504,6 +503,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     }
   }
 
+  // The register limits are applied per kernel (numRegisters), not as defines: as defines they would change every kernel's
+  // compile options, and so its kernel cache entry, whenever one kernel's limit changed.
+  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first); });
   string defines = toDefine(config);
   if (doLog) { log("config: %s\n", defines.c_str()); }
 
@@ -797,7 +799,8 @@ string formatSecsPerIter(float secsPerIter) {
 
 // --------
 
-unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize) {
+unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize,
+                          const vector<KeyVal>& fftUses) {
   if (fftConfig.FFT_FP64 && !hasFP64(shared.context->deviceId())) {
     log("FFT %s needs FP64, which this device does not support.  Use an FFT type without FP64 (e.g. 1 = M31+M61).\n", fftConfig.spec().c_str());
     throw "FP64 not supported";
@@ -814,7 +817,7 @@ unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const ve
     log("%s: this OpenCL compiler lacks what FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
     fftConfig = fallback;
   }
-  return make_unique<Gpu>(shared, fftConfig, E, extraConf, logFftSize);
+  return make_unique<Gpu>(shared, fftConfig, E, extraConf, logFftSize, fftUses);
 }
 
 Gpu::~Gpu() {
@@ -822,9 +825,9 @@ Gpu::~Gpu() {
   background->waitEmpty();
 }
 
-// Part of GPU initialization is to compute the default number of registers each kernel should target during compilation.
-// Kernel register usage is critical for maximizing GPU occupancy.  The default values can be overrriden with command line arguments.
-// On CUDA this sets --maxrregcount (or launch bounds).  On AMD the same REGxxxx options select waves per SIMD or a VGPR count, see amdRegisterOption below.
+// Each important kernel's register usage can be limited with a REGxxxx -use option, normally set per FFT on its tune.txt line.
+// Kernel register usage is critical for maximizing GPU occupancy.  Unless a REGxxxx option is given, the compiler chooses.
+// On CUDA this sets a maximum register count (or launch bounds).  On AMD the same REGxxxx options select waves per SIMD or a VGPR count, see amdRegisterOption below.
 // Most kernels have occupancy limited by register usage.  For reference, the following guidelines dictate where an "uptick" in occupancy occurs.
 //
 // CUDA: the register file is 65536 32-bit regs/SM, split into 4 independent 16384-reg partitions (true from Volta through at least
@@ -845,154 +848,67 @@ Gpu::~Gpu() {
 // AMD CDNA2 (MI200, gfx90a): 4 EUs/CU, max 8 wavefronts/EU (32/CU total, vs GCN's 10/SIMD).
 // Table taken from AMD's own article (rocm.blogs.amd.com/software-tools-optimization/register-pressure):
 //   max VGPRs for 1..8 waves/EU = 512, 256, 168, 128, 96, 80, 72, 64
+// The REGxxxx option that limits a kernel's registers.  It's needed on AMD too (see amdRegisterOption).
+string Gpu::regKey(enum WHICH_KERNEL which_kernel) const {
+  string fftTypeName;
+  switch (fft.shape.fft_type) {
+  case FFT64:     fftTypeName = "64"; break;
+  case FFT3161:   fftTypeName = "3161"; break;
+  case FFT3261:   fftTypeName = "3261"; break;
+  case FFT61:     fftTypeName = "61"; break;
+  case FFT323161: fftTypeName = "323161"; break;
+  case FFT3231:   fftTypeName = "3231"; break;
+  case FFT6431:   fftTypeName = "6431"; break;
+  case FFT31:     fftTypeName = "31"; break;
+  case FFT32:     fftTypeName = "32"; break;
+  }
+  string const fpName = fft.FFT_FP64 ? "64" : "32";
+  switch (which_kernel) {
+  case CARRYFUSED: return "REGCF" + fftTypeName;   // Register usage depends on NW, WMUL, the FFT/NTT type, and perhaps the long carry setting
+  case MIDIN:      return "REGMI" + fpName;        // Register usage depends on MIDDLE, PFA, and FP32/FP64
+  case MIDIN31:    return "REGMI31";
+  case MIDIN61:    return "REGMI61";
+  case TAIL:       return "REGTS" + fpName;        // Register usage depends on NH and FP32/FP64
+  case TAIL31:     return "REGTS31";
+  case TAIL61:     return "REGTS61";
+  case MIDOUT:     return "REGMO" + fpName;
+  case MIDOUT31:   return "REGMO31";
+  case MIDOUT61:   return "REGMO61";
+  }
+  return "";
+}
+
 string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
-  [[maybe_unused]] int regs = 0;         // Default CUDA maximum register count (the AMD path only uses the override value)
-  const char *use_override = "";
   // Allow command line to prefer the compiler's default number of registers
   if (args.value("NOREG", 0)) return string("");
-  // Determine a CUDA kernel specific default maximum number of GPU registers (values set to -1 have not been tuned for best default value).
-  // This switch also selects which REGxxxx option applies to the kernel, and that selection is needed on AMD too (see amdRegisterOption),
-  // so it must not be compiled out for non-CUDA backends.  The default register counts below are only used by CUDA.
-  switch (which_kernel) {
-  case CARRYFUSED:         // Register usage depends on NW, the FFT/NTT type, and perhaps the long carry setting
-    switch (fft.shape.fft_type) {
-    case FFT64:
-      regs = nW == 8 ? 64 : 56;                        // Tested on TitanV, CUDA 13.0, nW=8 nvrtc default is 64.
-      use_override = "REGCF64";
-      break;
-    case FFT3161:
-      regs = nW == 8 ? 96 : 64;                        // Tested on 5070Ti, CUDA 13.2, nW=8 nvrtc default is 84.
-      use_override = "REGCF3161";
-      break;
-    case FFT3261:
-      regs = nW == 8 ? 96 : 64;
-      use_override = "REGCF3261";
-      break;
-    case FFT61:
-      regs = nW == 8 ? 80 : 64;
-      use_override = "REGCF61";
-      break;
-    case FFT323161:
-      regs = nW == 8 ? 128 : 80;
-      use_override = "REGCF323161";
-      break;
-    case FFT3231:
-      regs = -1;
-      use_override = "REGCF3231";
-      break;
-    case FFT6431:
-      regs = nW == 8 ? -1 : -1;                        // (not checked recently) Tested on TitanV, NW=8, CUDA 13.0.  NW=4 not tested.
-      use_override = "REGCF6431";
-      break;
-    case FFT31:
-      regs = -1;
-      use_override = "REGCF31";
-      break;
-    case FFT32:
-      regs = -1;
-      use_override = "REGCF32";
-      break;
-    }
-    break;
-  case MIDIN:              // Register usage depends on MIDDLE and the FP32/FP64
-    if (fft.FFT_FP64) {
-      if (fft.shape.middle >= 16) regs = 96;
-      else if (fft.shape.middle >= 14) regs = 88;
-      else if (fft.shape.middle >= 13) regs = 80;
-      else if (fft.shape.middle >= 10) regs = 72;
-      else if (fft.shape.middle >= 7) regs = 64;
-      else if (fft.shape.middle >= 5) regs = 56;
-      else if (fft.shape.middle >= 4) regs = 48;
-      else regs = -1;
-      use_override = "REGMI64";
-    } else {
-      if (fft.shape.middle == 16) regs = 56;
-      else if (fft.shape.middle == 8) regs = 40;
-      else if (fft.shape.middle == 4) regs = 32;
-      else regs = -1;
-      use_override = "REGMI32";
-    }
-    break;
-  case MIDIN31:            // Register usage depends on MIDDLE
-    if (fft.shape.middle == 16) regs = 56;
-    else if (fft.shape.middle == 8) regs = 48;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 44.
-    else if (fft.shape.middle == 4) regs = 32;         // (not checked recently) Tested on 5070Ti, CUDA 13.2.
-    else regs = -1;  
-    use_override = "REGMI31";
-    break;
-  case MIDIN61:            // Register usage depends on MIDDLE
-    if (fft.shape.middle == 16) regs = 96;
-    else if (fft.shape.middle == 8) regs = -1;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 68.
-    else if (fft.shape.middle == 4) regs = -1;         // (not checked recently) Tested on 5070Ti, CUDA 13.2 (48 regs is possible without spilling but is slower), best is -1.
-    else regs = -1;  
-    use_override = "REGMI61";
-    break;
-  case TAIL:               // Register usage depends on NH and the FP32/FP64 (assumes double-wide kernel)
-    if (fft.FFT_FP64) {
-      regs = nH == 8 ? 72 : 56;                        // Tested on TitanV, CUDA 13.0, nH=8 nvrtc default is 70.
-      use_override = "REGTS64";
-    } else {
-      regs = nH == 8 ? 64 : 48;
-      use_override = "REGTS32";
-    }
-    break;
-  case TAIL31:             // Register usage depends on NH (assumes double-wide kernel)
-    regs = nH == 8 ? -1 : 48;                          // Tested on 5070Ti, CUDA 13.2, nH=8 nvrtc default is 64.
-    use_override = "REGTS31";
-    break;
-  case TAIL61:             // Register usage depends on NH (assumes double-wide kernel)
-    regs = nH == 8 ? -1 : 64;                          // Tested on 5070Ti, CUDA 13.2, nH=8 nvrtc default is 80.
-    use_override = "REGTS61";
-    break;
-  case MIDOUT:             // Register usage depends on MIDDLE and the FFT/NTT type
-    if (fft.FFT_FP64) {
-      if (fft.shape.middle >= 15) regs = 96;
-      else if (fft.shape.middle >= 14) regs = 88;
-      else if (fft.shape.middle >= 11) regs = 80;
-      else if (fft.shape.middle >= 10) regs = 72;
-      else if (fft.shape.middle >= 7) regs = 64;
-      else if (fft.shape.middle >= 5) regs = 56;
-      else if (fft.shape.middle >= 4) regs = 48;
-      else regs = -1;
-      use_override = "REGMO64";
-    } else {
-      if (fft.shape.middle == 16) regs = 56;
-      else if (fft.shape.middle == 8) regs = 40;
-      else if (fft.shape.middle == 4) regs = 32;
-      else regs = -1;
-      use_override = "REGMO32";
-    }
-    break;
-  case MIDOUT31:           // Register usage depends on MIDDLE
-    if (fft.shape.middle == 16) regs = 48;
-    else if (fft.shape.middle == 8) regs = 48;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 44.
-    else if (fft.shape.middle == 4) regs = -1;         // (not checked recently) Tested on 5070Ti, CUDA 13.2 (32 regs is possible without spilling but is slower), best is -1.
-    else regs = -1;
-    use_override = "REGMO31";
-    break;
-  case MIDOUT61:           // Register usage depends on MIDDLE
-    if (fft.shape.middle == 16) regs = 96;
-    else if (fft.shape.middle == 8) regs = -1;         // Tested on 5070Ti, CUDA 13.2, nvrtc default is 64.
-    else if (fft.shape.middle == 4) regs = 64;         // (not checked recently) Tested on 5070Ti, CUDA 13.2 (48 regs is possible without spilling but is slower), best is 64.
-    else regs = -1;
-    use_override = "REGMO61";
-    break;
-  }
-  // Get the optional override register count
-  int const override_regs = args.value(use_override, 0);
+  string const use_override = regKey(which_kernel);
 #if CUDA_BACKEND
-  // If a specified override is small, use the count as a CUDA launch_bounds rather than a maximum register count
-  if (override_regs && (override_regs > 0 && override_regs <= 16)) return string("-DCUDA_MIN_BLOCKS=") + to_string(override_regs) + " ";
-  // If specified, override the default maximum register count
-  if (override_regs) regs = override_regs;
-  // Sometimes the results using CUDA compiler's default launch_bounds without setting an explicit launch bounds or maxrrregcount can't be beat
-  if (regs == -1) return string("");
-  // Format an explicit register count setting
-  return string("--maxrregcount=") + to_string(regs) + " ";
+  // 0 or -1 = compiler default, 1..16 = launch bounds minimum blocks per SM, more than 16 = maximum register count.
+  // These are not NVRTC options: KernelCompiler applies them to the compiled PTX (see cudaSetKernelRegLimit).
+  int const regs = args.value(use_override, -1);
+  if (regs > 0 && regs <= 16) return string("--minblocks=") + to_string(regs) + " ";
+  if (regs > 16) return string("--maxrregcount=") + to_string(regs) + " ";
+  return string("");
 #else
-  return amdRegisterOption(which_kernel, override_regs);
+  return amdRegisterOption(which_kernel, args.value(use_override, 0));
 #endif
 }
+
+#ifdef CUDA_BACKEND
+vector<Gpu::RegTunable> Gpu::regTunables() const {
+  vector<RegTunable> ret;
+  for (auto [which, kernel] : initializer_list<pair<WHICH_KERNEL, const Kernel*>>{
+         {CARRYFUSED, &kCarryFused},
+         {MIDIN, &kfftMidIn}, {MIDIN31, &kfftMidInGF31}, {MIDIN61, &kfftMidInGF61},
+         {TAIL, &ktailSquare}, {TAIL31, &ktailSquareGF31}, {TAIL61, &ktailSquareGF61},
+         {MIDOUT, &kfftMidOut}, {MIDOUT31, &kfftMidOutGF31}, {MIDOUT61, &kfftMidOutGF61}}) {
+    const TimeInfo* t = kernel->getTimeInfo();
+    if (!kernel->isLoaded() || !t->n) { continue; }
+    ret.push_back({regKey(which), t->name, t->times[2] * 1e-3 / t->n, cudaKernelResources(kernel->handle())});
+  }
+  return ret;
+}
+#endif
 
 // AMD analog of the CUDA register cap, driven by the same REGxxxx options.  override_regs is the value of the kernel's option:
 //    0 = not specified (use the default below),  -1 = compiler default (no cap),
@@ -1052,10 +968,17 @@ string Gpu::kernelDefines(enum WHICH_KERNEL_TYPE which_kernel) {
 }
 
 
-Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize) :
+// A Gpu's own args: the shared args, then the FFT's tune.txt settings (not over the command line), then extraConf over everything
+static Args gpuArgs(const Args& shared, const string& fftSpec, const vector<KeyVal>& fftUses, const vector<KeyVal>& extraConf) {
+  Args ret = shared.withFftUses(fftSpec, fftUses);
+  for (const auto& [key, val] : extraConf) { ret.flags[key] = val; }
+  return ret;
+}
+
+Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize, const vector<KeyVal>& fftUses) :
   shared(s),
   background{shared.background},
-  args{*shared.args},
+  args{gpuArgs(*shared.args, fft.spec(), fftUses, extraConf)},
   E(E),
   N(fft.shape.size()),
   fft(fft),
@@ -1187,9 +1110,9 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 
 #undef K
 
-  bufTrigH{shared.bufCache->smallTrigCombo(shared.args, fft, WIDTH, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
-  bufTrigM{shared.bufCache->middleTrig(shared.args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
-  bufTrigW{shared.bufCache->smallTrig(shared.args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
+  bufTrigH{shared.bufCache->smallTrigCombo(&args, fft, WIDTH, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
+  bufTrigM{shared.bufCache->middleTrig(&args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
+  bufTrigW{shared.bufCache->smallTrig(&args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
 
   weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(shared.context->deviceId()))},
   bufConstWeights{shared.context, std::move(weights.weightsConstIF)},
@@ -2935,6 +2858,9 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   }
   queue.finish();
   if (Signal::stopRequested()) { throw "stop requested"; }
+  // Per-kernel times (with profiling, as -tune regs uses) count only the timed iterations: the warmup holds each kernel's first launch,
+  // whose one-time costs would otherwise add several percent to a short timing
+  profile.reset();
 
   Timer t;
   queue.setSquareTime(0);     // Busy wait on nVidia to get the most accurate timings while tuning

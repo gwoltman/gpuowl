@@ -240,11 +240,7 @@ std::string NvrtcProgram::preprocessOpenCL(const std::string& source) {
       bool const atLineStart = (i == 0 || source[i-1] == '\n');
       if (atLineStart) {
         while (i < source.size() && source[i] != '\n') i++;
-        result += "#ifdef CUDA_MIN_BLOCKS\n";
-        result += "#define KERNEL(x) extern \"C\" __global__ void __launch_bounds__(x, CUDA_MIN_BLOCKS)\n";
-        result += "#else\n";
-        result += "#define KERNEL(x) extern \"C\" __global__ void __launch_bounds__(x)\n";
-        result += "#endif";
+        result += "#define KERNEL(x) extern \"C\" __global__ void __launch_bounds__(x)";
         continue;
       }
     }
