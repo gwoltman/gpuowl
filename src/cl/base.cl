@@ -6,8 +6,8 @@
 
 IN_WG, OUT_WG: 64, 128, 256. Default: 128.
 IN_SIZEX, OUT_SIZEX: 4, 8, 16, 32. Default: 16.
-UNROLL_W: 0, 1.  1 = fully unroll fft_WIDTH's radix loop (variants 0 and 1, FP32, NTTs), 0 = never unroll it.  Default: 0 on AMD, 1 on Nvidia.
-UNROLL_H: 0, 1.  Same for fft_HEIGHT.  Default: 1 (0 on AMD for SMALL_HEIGHT >= 1024).
+UNROLL_W: 0, 1.  1 = fully unroll fft_WIDTH's radix loop (variants 0 and 1, FP32, NTTs), 0 = never unroll it.  Default: 1.
+UNROLL_H: 0, 1.  Same for fft_HEIGHT.  Default: 1.
 HOIST_W, HOIST_H: 0..3.  Limits how early the compiler may compute fft_WIDTH's / fft_HEIGHT's per-radix-step LDS addresses, twiddle loads
   and (variant 0) twiddle power chains.  Hoisting these to the start of the kernel can cost many VGPRs.  0 = compiler decides.
   1 = not before the start of their radix step (variant 2: their stage, i.e. after the previous shufl).
@@ -121,14 +121,14 @@ G_H        "group height" == SMALL_HEIGHT / NH
 
 // FFT variant is in 3 parts.  One digit for WIDTH, one digit for MIDDLE, one digit for HEIGHT.
 // For WIDTH and HEIGHT there are 3 variants:
-// 0   compute one trig, bcast, chainmul                                        previously was :even/:odd BCAST=1
-// 1   if TABMUL_CHAIN, read one trig then chainmul                             previously was :0/:1
-//     if !TABMUL_CHAIN, read all trigs, no chainmul                            previously was :2/:3
-// 2   read all trigs in sin/cos format for more FMA                            previously was :2/:3 UNROLL_W=3
+// 0   compute one trig, bcast, chainmul
+// 1   if TABMUL_CHAIN, read one trig then chainmul
+//     if !TABMUL_CHAIN, read all trigs, no chainmul
+// 2   read all trigs in sin/cos format for more FMA
 // Note: smaller numbers above do more F64 and are less accurate, larger numbers have more memory accesses and are more accurate
 // For MIDDLE there are two variants:
 // 0   full length chainmul
-// 1   lots of computing trigs, very short chainmul for maximum accuracy        previously was :1/:3
+// 1   lots of computing trigs, very short chainmul for maximum accuracy
 #define FFT_VARIANT_W    (FFT_VARIANT / 100)
 #define FFT_VARIANT_M    (FFT_VARIANT % 100 / 10)
 #define FFT_VARIANT_H    (FFT_VARIANT % 10)
@@ -208,11 +208,11 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #endif
 
 #if !defined(UNROLL_W)
-#if AMDGPU
-#define UNROLL_W 0
-#else
 #define UNROLL_W 1
 #endif
+
+#if !defined(UNROLL_H)
+#define UNROLL_H 1
 #endif
 
 #if !defined(HOIST_W)
@@ -220,14 +220,6 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #endif
 #if !defined(HOIST_H)
 #define HOIST_H 0
-#endif
-
-#if !defined(UNROLL_H)
-#if AMDGPU && (SMALL_HEIGHT >= 1024)
-#define UNROLL_H 0
-#else
-#define UNROLL_H 1
-#endif
 #endif
 
 #if !defined(ZEROHACK_W)

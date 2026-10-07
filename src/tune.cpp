@@ -1006,7 +1006,7 @@ void Tune::tune() {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_w = 0;
-      u32 const current_unroll_w = args->value("UNROLL_W", AMDGPU ? 0 : 1);
+      u32 const current_unroll_w = args->value("UNROLL_W", 1);
       double best_cost = -1.0;
       double current_cost = -1.0;
       for (u32 const unroll_w : {0, 1}) {
@@ -1016,7 +1016,7 @@ void Tune::tune() {
         if (unroll_w == current_unroll_w) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_unroll_w = unroll_w; }
       }
-      log("Best UNROLL_W is %u.  Default UNROLL_W is %u.\n", best_unroll_w, AMDGPU ? 0 : 1);
+      log("Best UNROLL_W is %u.  Default UNROLL_W is 1.\n", best_unroll_w);
       configsUpdate(current_cost, best_cost, 0.003, "UNROLL_W", best_unroll_w, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["UNROLL_W"] = to_string(best_unroll_w);
     }
@@ -1026,7 +1026,7 @@ void Tune::tune() {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_h = 0;
-      u32 const current_unroll_h = args->value("UNROLL_H", AMDGPU && defaultShape->height >= 1024 ? 0 : 1);
+      u32 const current_unroll_h = args->value("UNROLL_H", 1);
       double best_cost = -1.0;
       double current_cost = -1.0;
       for (u32 const unroll_h : {0, 1}) {
@@ -1036,7 +1036,7 @@ void Tune::tune() {
         if (unroll_h == current_unroll_h) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_unroll_h = unroll_h; }
       }
-      log("Best UNROLL_H is %u.  Default UNROLL_H is %u.\n", best_unroll_h, AMDGPU && defaultShape->height >= 1024 ? 0 : 1);
+      log("Best UNROLL_H is %u.  Default UNROLL_H is 1.\n", best_unroll_h);
       configsUpdate(current_cost, best_cost, 0.003, "UNROLL_H", best_unroll_h, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["UNROLL_H"] = to_string(best_unroll_h);
     }
