@@ -1380,7 +1380,9 @@ CudaSmLimits cudaSmLimits() {
 // so the limit is added to this kernel's entry in the PTX -- .maxnreg for a register count, .minnctapersm for the launch bounds
 // minimum blocks per SM -- and the module is reloaded from the PTX through the JIT.  Only the named kernel's entry is changed.
 // Done after compiling and after the kernel cache, so that a kernel compiles (and is cached) once whatever its register limit.
-bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs, int minBlocks) {
+// smemSpill adds .pragma "enable_smem_spilling" (ptxas from CUDA 13.0, sm_75 and up): the registers the limit makes ptxas spill go
+// to the block's shared memory, as far as there is room, instead of local memory.  If the JIT rejects it, the kernel is loaded without.
+bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs, int minBlocks, bool smemSpill) {
   if (!prog || !prog->moduleLoaded || (maxRegs <= 0 && minBlocks <= 0)) { return false; }
   ensureContextCurrent();
   string& ptx = prog->ptx;
@@ -1391,6 +1393,8 @@ bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs,
   size_t const maxntid = ptx.find(".maxntid ", entry);
   if (body == string::npos || maxntid == string::npos || maxntid > body) { return false; }
   string const directive = maxRegs > 0 ? ".maxnreg " + to_string(maxRegs) + "\n" : ".minnctapersm " + to_string(minBlocks) + "\n";
+  string const pragma = "\n.pragma \"enable_smem_spilling\";";
+  if (smemSpill) { ptx.insert(body + 1, pragma); }     // the pragma goes first in the entry's body
   ptx.insert(maxntid, directive);
 
   prog->cubin.clear();
@@ -1400,7 +1404,13 @@ bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs,
   char jitErrorLog[8192] = {};
   CUjit_option jitOpts[] = { CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES, CU_JIT_ERROR_LOG_BUFFER };
   void* jitOptVals[] = { (void*)(size_t)sizeof(jitErrorLog), (void*)jitErrorLog };
-  CUresult const r = loadModule(prog, 2, jitOpts, jitOptVals);
+  CUresult r = loadModule(prog, 2, jitOpts, jitOptVals);
+  if (r != CUDA_SUCCESS && smemSpill) {
+    fprintf(stderr, "%s: the JIT rejected enable_smem_spilling, loading it without (%s)\n", kernelName, jitErrorLog);
+    ptx.erase(ptx.find(pragma, entry + directive.size()), pragma.size());
+    jitErrorLog[0] = 0;
+    r = loadModule(prog, 2, jitOpts, jitOptVals);
+  }
   if (r != CUDA_SUCCESS) {
     fprintf(stderr, "cuModuleLoadData for %s with maxnreg %d minnctapersm %d failed: %d %s\n", kernelName, maxRegs, minBlocks, (int)r, jitErrorLog);
     return false;

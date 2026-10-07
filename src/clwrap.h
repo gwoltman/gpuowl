@@ -166,8 +166,9 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 void cudaSetL2PersistLimit(int pct);
 
 // Limit the registers of one kernel of a built program: maxRegs > 0 is a maximum register count, otherwise minBlocks > 0 is the
-// launch bounds minimum blocks per SM.  The program's module is rebuilt from its PTX.  Returns false on failure.
-bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs, int minBlocks);
+// launch bounds minimum blocks per SM.  smemSpill lets ptxas spill registers to shared memory.  The program's module is rebuilt from
+// its PTX.  Returns false on failure.
+bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs, int minBlocks, bool smemSpill);
 
 // A compiled kernel's resource use, as it limits occupancy
 struct CudaKernelResources {

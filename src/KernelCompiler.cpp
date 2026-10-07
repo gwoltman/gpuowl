@@ -436,15 +436,17 @@ static string to_hex(u64 d) {
 }
 
 #ifdef CUDA_BACKEND
-// The register limit options from Gpu::numRegisters (--maxrregcount=N, --minblocks=K) are not compiler options on CUDA: they are
-// applied to the compiled PTX when the kernel is loaded (cudaSetKernelRegLimit).  Returns args without them.
-static string takeRegLimit(const string& args, int& maxRegs, int& minBlocks) {
+// The register limit options from Gpu::numRegisters (--maxrregcount=N, --minblocks=K, --smemspill) are not compiler options on
+// CUDA: they are applied to the compiled PTX when the kernel is loaded (cudaSetKernelRegLimit).  Returns args without them.
+static string takeRegLimit(const string& args, int& maxRegs, int& minBlocks, bool& smemSpill) {
   maxRegs = minBlocks = 0;
+  smemSpill = false;
   string rest;
   istringstream iss{args};
   for (string tok; iss >> tok; ) {
     if (tok.starts_with("--maxrregcount=")) { maxRegs = atoi(tok.c_str() + 15); continue; }
     if (tok.starts_with("--minblocks=")) { minBlocks = atoi(tok.c_str() + 12); continue; }
+    if (tok == "--smemspill") { smemSpill = true; continue; }
     rest += tok + ' ';
   }
   return rest;
@@ -459,7 +461,8 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
   string compileArgs = args;
 #ifdef CUDA_BACKEND
   int maxRegs = 0, minBlocks = 0;
-  compileArgs = takeRegLimit(args, maxRegs, minBlocks);
+  bool smemSpill = false;
+  compileArgs = takeRegLimit(args, maxRegs, minBlocks, smemSpill);
 #endif
 
   Program program;
@@ -492,7 +495,7 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
   }
 
 #ifdef CUDA_BACKEND
-  if ((maxRegs > 0 || minBlocks > 0) && !cudaSetKernelRegLimit(program.get(), kernelName.c_str(), maxRegs, minBlocks)) {
+  if ((maxRegs > 0 || minBlocks > 0) && !cudaSetKernelRegLimit(program.get(), kernelName.c_str(), maxRegs, minBlocks, smemSpill)) {
     log("Can't apply the register limit (maxrregcount %d, minblocks %d) to %s\n", maxRegs, minBlocks, kernelName.c_str());
     throw "Can't apply register limit to " + kernelName;
   }

@@ -302,7 +302,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "L1CUDA",
                               "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
                               "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
-                              "PDL"                     // CUDA, sm_90+: programmatic dependent launch
+                              "PDL",                    // CUDA, sm_90+: programmatic dependent launch
+                              "SMEM_SPILL"              // CUDA, sm_75+: register limits spill to shared memory
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
@@ -505,7 +506,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 
   // The register limits are applied per kernel (numRegisters), not as defines: as defines they would change every kernel's
   // compile options, and so its kernel cache entry, whenever one kernel's limit changed.
-  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first); });
+  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first) || kv.first == "SMEM_SPILL"; });
   string defines = toDefine(config);
   if (doLog) { log("config: %s\n", defines.c_str()); }
 
@@ -886,9 +887,11 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
   // 0 or -1 = compiler default, 1..16 = launch bounds minimum blocks per SM, more than 16 = maximum register count.
   // These are not NVRTC options: KernelCompiler applies them to the compiled PTX (see cudaSetKernelRegLimit).
   int const regs = args.value(use_override, -1);
-  if (regs > 0 && regs <= 16) return string("--minblocks=") + to_string(regs) + " ";
-  if (regs > 16) return string("--maxrregcount=") + to_string(regs) + " ";
-  return string("");
+  if (regs <= 0) return string("");
+  // SMEM_SPILL=1: the registers the limit spills go to shared memory (sm_75 and up), see cudaSetKernelRegLimit.  Off by default
+  // until its effect is understood: spilling is extra work, which may cost more than it saves when queues overlap (MULTI_Q).
+  bool const smemSpill = args.value("SMEM_SPILL", 0) && getNvidiaComputeCapability(shared.context->deviceId()) >= 750;
+  return string(regs <= 16 ? "--minblocks=" : "--maxrregcount=") + to_string(regs) + (smemSpill ? " --smemspill " : " ");
 #else
   return amdRegisterOption(which_kernel, args.value(use_override, 0));
 #endif
