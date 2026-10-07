@@ -420,10 +420,10 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     while (big_h % wmul) --wmul;
     if (wmul != requested) {
       config["WMUL"] = to_string(wmul);
-      log("WMUL=%u is not usable for this FFT on this device.  Changing to WMUL=%u\n", requested, wmul);
+      if (doLog) { log("WMUL=%u is not usable for this FFT on this device.  Changing to WMUL=%u\n", requested, wmul); }
     }
     if (fft.shape.width * shufl_bytes_w * wmul >= lds_limit) {
-      log("Local shared memory limit of %uKB exceeded.  Changing to LDSPAD_W=0\n", lds_limit / 1024);
+      if (doLog) { log("Local shared memory limit of %uKB exceeded.  Changing to LDSPAD_W=0\n", lds_limit / 1024); }
       config["LDSPAD_W"] = to_string(0);
     }
   }
