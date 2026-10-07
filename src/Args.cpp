@@ -201,6 +201,8 @@ named "config.txt" in the prpll run directory.
                      Multiple PRPLL instances, each in its own directory, can share a pool of assignments.
                      Results are still written locally, to results-<N>.txt in each instance's own directory.
 -verbose           : print more log, useful for developers
+-v 10              : also report the register, LDS/shared memory and spill use of the main kernels, and save their assembly (AMD)
+                     or PTX (CUDA) in the kernel-dump directory.  -v 11 does so for every kernel.
 -version           : print only the version and exit
 -user <name>       : specify the mersenne.org user name (for result reporting)
 -workers <N>       : specify the number of parallel PRP tests to run (default 1)

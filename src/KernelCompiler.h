@@ -20,6 +20,8 @@ class KernelCompiler {
   std::string baseArgs;
   const bool useCache;
   const int verbose;
+  const bool saveTemps; // The AMD OpenCL runtime writes -save-temps files into the current directory (AMD_OCL_BUILD_OPTIONS_APPEND or
+                        // AMD_OCL_LINK_OPTIONS_APPEND has -save-temps, set by -v 10 or by the user): they are deleted after each compile.
   const bool asmDump;   // -v 10 or -v 11: pick up the compiler's assembly (AMD OpenCL). -v 10 reports only
                         // the "important" kernels (see isImportantKernel in KernelCompiler.cpp); -v 11 reports all of them.
 
@@ -50,6 +52,8 @@ public:
   const cl_device_id deviceId;
 
   KernelCompiler(const Args& args, const Context* context, const string& clArgs);
+
+  ~KernelCompiler();
   
   // Called by each Kernel on construction, before any is loaded (see declaredArgs).
   void declare(const string& kernelName, const string& args);

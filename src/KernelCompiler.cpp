@@ -120,11 +120,33 @@ static vector<fs::path> newCompilerTemps(const DirSnapshot& before) {
   return found;
 }
 
+// Files that could not be deleted yet (on Windows a file the runtime still has open), retried by each later removeFiles
+static vector<fs::path> pendingRemovals;
+
 static void removeFiles(const vector<fs::path>& files) {
+  vector<fs::path> failed;
   error_code ec;
-  for (const fs::path& p : files) { fs::remove(p, ec); }
+  for (const fs::path& p : pendingRemovals) { if (!fs::remove(p, ec) && fs::exists(p, ec)) { failed.push_back(p); } }
+  for (const fs::path& p : files) { if (!fs::remove(p, ec) && fs::exists(p, ec)) { failed.push_back(p); } }
+  pendingRemovals = std::move(failed);
 }
 #endif
+
+// Whether the AMD OpenCL runtime was asked, through the environment, to save its temporary files (see isCompilerTempName)
+static bool runtimeSavesTemps() {
+#ifdef CUDA_BACKEND
+  return false;
+#else
+  for (const char* var : {"AMD_OCL_BUILD_OPTIONS_APPEND", "AMD_OCL_LINK_OPTIONS_APPEND"}) {
+    const char* const val = getenv(var);
+    if (val && strstr(val, "save-temps")) { return true; }
+  }
+  return false;
+#endif
+}
+
+// Where -v 10 saves each kernel's assembly (AMD) or PTX (CUDA), rather than in the working directory
+static const char KERNEL_DUMP_DIR[] = "kernel-dump";
 
 // In OpenCL C long long is a 128-bit type, so every "ull" literal (in the kernels and in the host's -D values) makes the
 // arithmetic around it 128-bit.  Mesa rusticl translates the kernels to SPIR-V without optimizing that away, cannot handle
@@ -136,6 +158,12 @@ static string narrowLongLongLiterals(const string& s) {
   return regex_replace(s, longLongLiteral, "$1$2L");
 }
 
+KernelCompiler::~KernelCompiler() {
+#ifndef CUDA_BACKEND
+  if (saveTemps) { removeFiles({}); }   // a last try at the temp files that could not be deleted yet
+#endif
+}
+
 KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs) :
   cacheDir{args.cacheDir.string()},
   context{context->get()},
@@ -143,7 +171,9 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   baseArgs{},
   useCache{args.useCache},
   verbose{args.verbose},
-  asmDump{args.verbose >= 10 && getenv("PRPLL_ASM_REEXEC")},   // main() re-execs with the compiler options set only for AMD
+  saveTemps{runtimeSavesTemps()},
+  // main() re-execs with the compiler options set (Linux, AMD); otherwise the user may have set them (e.g. on Windows)
+  asmDump{args.verbose >= 10 && (getenv("PRPLL_ASM_REEXEC") || saveTemps)},
   deviceId{context->deviceId()}
 {
   // Every GPU driver we run on accepts -cl-std=CL2.0.  Some OpenCL 3.0 implementations (POCL; likely Mesa rusticl)
@@ -151,13 +181,21 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   // the kernels use from 2.0 (generic address space, memory-order atomics).  Probe once and fall back.
   string clStd = "CL2.0";
 #ifndef CUDA_BACKEND
-  // With -v 10 the probe compiles leave -save-temps files too; drop them.
-  DirSnapshot const before = asmDump ? snapshotDir() : DirSnapshot{};
+  if (saveTemps && !getenv("PRPLL_ASM_REEXEC")) {
+    static bool noted = false;
+    if (!noted) {
+      noted = true;
+      log("AMD_OCL_BUILD_OPTIONS_APPEND / AMD_OCL_LINK_OPTIONS_APPEND ask the OpenCL runtime for -save-temps files: they are deleted "
+          "after each compile\n");
+    }
+  }
+  // The probe compiles leave -save-temps files too; drop them.
+  DirSnapshot const before = saveTemps ? snapshotDir() : DirSnapshot{};
   if (!acceptsClStd(context->get(), deviceId, "CL2.0") && acceptsClStd(context->get(), deviceId, "CL3.0")) {
     clStd = "CL3.0";
     log("OpenCL C 2.0 is not available on this device; compiling the kernels as OpenCL C 3.0\n");
   }
-  if (asmDump) { removeFiles(newCompilerTemps(before)); }
+  if (saveTemps) { removeFiles(newCompilerTemps(before)); }
   if (isAmdGpu(deviceId)) {
     maxWaves = maxWavesPerSimd(getDeviceName(deviceId));
     simdPerCU = int(getAmdSimdPerComputeUnit(deviceId));
@@ -350,78 +388,81 @@ Program KernelCompiler::build(const string& fileName, const string& extraArgs) c
 
 Program KernelCompiler::compile(const string& fileName, [[maybe_unused]] const string& kernelName, const string& extraArgs) const {
 #ifndef CUDA_BACKEND
-  if (asmDump) {
+  if (saveTemps) {
     // Compiles are serial on this backend (see load() below), so what the compiler leaves in the directory
     // during this call belongs to this kernel.
     DirSnapshot const before = snapshotDir();
     Program program = build(fileName, extraArgs);
     vector<fs::path> const temps = newCompilerTemps(before);
-    bool saved = false;
-    for (const fs::path& p : temps) {
-      if (p.extension() != ".s") { continue; }
-      string const asmText = readWholeFile(p);
+    if (asmDump) {
+      bool saved = false;
+      for (const fs::path& p : temps) {
+        if (p.extension() != ".s") { continue; }
+        string const asmText = readWholeFile(p);
 
-      KernelStats const st = parseKernelStats(asmText, kernelName);
-      if (!st.found) { continue; }
+        KernelStats const st = parseKernelStats(asmText, kernelName);
+        if (!st.found) { continue; }
 
-      // Some kernelNames are compiled more than once under the same exported name, with different defines (e.g.
-      // "carryFused" plain/-DROE=1/-DMUL3=1/...): tell them apart by those defines, in the log and in the file name.
-      auto it = declaredArgs.find(kernelName);
-      string const variant = (it == declaredArgs.end()) ? "" : distinguishingArgs(extraArgs, it->second);
+        // Some kernelNames are compiled more than once under the same exported name, with different defines (e.g.
+        // "carryFused" plain/-DROE=1/-DMUL3=1/...): tell them apart by those defines, in the log and in the file name.
+        auto it = declaredArgs.find(kernelName);
+        string const variant = (it == declaredArgs.end()) ? "" : distinguishingArgs(extraArgs, it->second);
 
-      // -v 10 skips everything but the important kernels (see isImportantKernel); -v 11 dumps them all.
-      if (verbose == 10 && !isImportantKernel(kernelName, extraArgs)) {
-        saved = true;   // assembly was found -- just not reported -- so this is not "no assembly at all"
+        // -v 10 skips everything but the important kernels (see isImportantKernel); -v 11 dumps them all.
+        if (verbose == 10 && !isImportantKernel(kernelName, extraArgs)) {
+          saved = true;   // assembly was found -- just not reported -- so this is not "no assembly at all"
+          break;
+        }
+
+        string const base = variant.empty() ? kernelName : kernelName + '_' + fileSuffix(variant);
+        string outName = base + ".s";
+        for (int n = 2; !asmDumpNames.insert(outName).second; ++n) { outName = base + '_' + to_string(n) + ".s"; }
+
+        string const vgprs = (st.vgprs < 0 || st.vgprs == st.vgprsAllocated) ? to_string(st.vgprsAllocated) + " vgprs"
+                                          : to_string(st.vgprs) + " vgprs (" + to_string(st.vgprsAllocated) + " allocated)";
+        string const waves = to_string(st.occupancy) + (maxWaves ? "/" + to_string(maxWaves) : "") + " waves/SIMD";
+
+        // The compiled kernel's actual workgroup size (threads), from a throwaway kernel handle -- the same call
+        // Kernel.cpp makes on the real one it loads afterwards. -1 when unavailable (e.g. the query throws).
+        int groupSize = -1;
+        try {
+          if (KernelHolder const probe{loadKernel(program.get(), kernelName.c_str())}) {
+            groupSize = getWorkGroupSize(probe.get(), deviceId, kernelName.c_str());
+          }
+        } catch (const std::exception&) {}
+        string const threads = groupSize > 0 ? to_string(groupSize) + " threads" : "? threads";
+
+        // Is this kernel's LDS use, rather than its VGPR use, the tighter occupancy constraint? A workgroup's LDS is
+        // allocated once and shared by every wavefront in it, and by every workgroup resident on the same CU -- so the
+        // LDS-derived ceiling is "how many whole workgroups' worth of LDS fit in the CU's budget", converted to waves
+        // and averaged across that CU's SIMDs, not a per-SIMD quantity like the VGPR occupancy the compiler reports.
+        string ldsNote;
+        if (simdPerCU > 0 && wavefrontWidth > 0 && ldsPerCU > 0 && st.ldsBytes > 0 && st.occupancy > 0 && groupSize > 0) {
+          int const wavesPerWG = (groupSize + wavefrontWidth - 1) / wavefrontWidth;
+          long const wgPerCU = long(ldsPerCU) / st.ldsBytes;
+          double const wavesPerSimdLDS = double(wgPerCU * wavesPerWG) / simdPerCU;
+          if (wavesPerSimdLDS < st.occupancy) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), ", LDS-limited to %.1f waves/SIMD", wavesPerSimdLDS);
+            ldsNote = buf;
+          }
+        }
+
+        log("%s%s%s: %s, %ld sgprs, %s, %ld bytes lds, %ld bytes scratch, occupancy %s%s%s -> %s\n",
+            kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, threads.c_str(),
+            st.ldsBytes, st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", ldsNote.c_str(),
+            (fs::path(KERNEL_DUMP_DIR) / outName).string().c_str());
+        { error_code ec; fs::create_directories(KERNEL_DUMP_DIR, ec); }
+        { ofstream out(fs::path(KERNEL_DUMP_DIR) / outName, ios::binary); out << asmText; }
+        saved = true;
         break;
       }
-
-      string const base = variant.empty() ? kernelName : kernelName + '_' + fileSuffix(variant);
-      string outName = base + ".s";
-      for (int n = 2; !asmDumpNames.insert(outName).second; ++n) { outName = base + '_' + to_string(n) + ".s"; }
-
-      string const vgprs = (st.vgprs < 0 || st.vgprs == st.vgprsAllocated) ? to_string(st.vgprsAllocated) + " vgprs"
-                                        : to_string(st.vgprs) + " vgprs (" + to_string(st.vgprsAllocated) + " allocated)";
-      string const waves = to_string(st.occupancy) + (maxWaves ? "/" + to_string(maxWaves) : "") + " waves/SIMD";
-
-      // The compiled kernel's actual workgroup size (threads), from a throwaway kernel handle -- the same call
-      // Kernel.cpp makes on the real one it loads afterwards. -1 when unavailable (e.g. the query throws).
-      int groupSize = -1;
-      try {
-        if (KernelHolder const probe{loadKernel(program.get(), kernelName.c_str())}) {
-          groupSize = getWorkGroupSize(probe.get(), deviceId, kernelName.c_str());
-        }
-      } catch (const std::exception&) {}
-      string const threads = groupSize > 0 ? to_string(groupSize) + " threads" : "? threads";
-
-      // Is this kernel's LDS use, rather than its VGPR use, the tighter occupancy constraint? A workgroup's LDS is
-      // allocated once and shared by every wavefront in it, and by every workgroup resident on the same CU -- so the
-      // LDS-derived ceiling is "how many whole workgroups' worth of LDS fit in the CU's budget", converted to waves
-      // and averaged across that CU's SIMDs, not a per-SIMD quantity like the VGPR occupancy the compiler reports.
-      string ldsNote;
-      if (simdPerCU > 0 && wavefrontWidth > 0 && ldsPerCU > 0 && st.ldsBytes > 0 && st.occupancy > 0 && groupSize > 0) {
-        int const wavesPerWG = (groupSize + wavefrontWidth - 1) / wavefrontWidth;
-        long const wgPerCU = long(ldsPerCU) / st.ldsBytes;
-        double const wavesPerSimdLDS = double(wgPerCU * wavesPerWG) / simdPerCU;
-        if (wavesPerSimdLDS < st.occupancy) {
-          char buf[64];
-          snprintf(buf, sizeof(buf), ", LDS-limited to %.1f waves/SIMD", wavesPerSimdLDS);
-          ldsNote = buf;
-        }
+      if (program && !saved && !asmMissingNoted) {
+        asmMissingNoted = true;
+        log("-v 10: the OpenCL compiler left no assembly for %s (nor, likely, for the other kernels)\n", kernelName.c_str());
       }
-
-      log("%s%s%s: %s, %ld sgprs, %s, %ld bytes lds, %ld bytes scratch, occupancy %s%s%s -> %s\n",
-          kernelName.c_str(), variant.empty() ? "" : " ", variant.c_str(), vgprs.c_str(), st.sgprs, threads.c_str(),
-          st.ldsBytes, st.scratchBytes, waves.c_str(), st.scratchBytes > 0 ? " (SPILLING)" : "", ldsNote.c_str(),
-          outName.c_str());
-      { ofstream out(outName, ios::binary); out << asmText; }
-      saved = true;
-      break;
     }
-    if (program && !saved && !asmMissingNoted) {
-      asmMissingNoted = true;
-      log("-v 10: the OpenCL compiler left no assembly for %s (nor, likely, for the other kernels)\n", kernelName.c_str());
-    }
-    // The .s is copied out; its siblings (.cl, .i, .so, .bc) are of no use.
+    // The .s is copied out (with -v 10); the other files (.cl, .i, .so, .bc) are of no use.
     removeFiles(temps);
     return program;
   }

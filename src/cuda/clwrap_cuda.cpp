@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <sstream>
 #include <fstream>
+#include <filesystem>
 #include <unordered_set>
 #ifdef __linux__
 #include <unistd.h>
@@ -709,7 +710,9 @@ if (getenv("TRY_LDS_CARVEOUT"))
       static map<string, int> dumpCounts;
       lock_guard<mutex> const lock(dumpMutex);
       int const n = ++dumpCounts[name];
-      string const outName = string(name) + (n == 1 ? "" : "_" + to_string(n)) + ".ptx";
+      // In a directory of their own (as the AMD assembly, see KernelCompiler.cpp), not the working directory
+      string const outName = "kernel-dump/" + string(name) + (n == 1 ? "" : "_" + to_string(n)) + ".ptx";
+      { std::error_code ec; std::filesystem::create_directories("kernel-dump", ec); }
       ofstream out(outName, ios::binary);
       out << (pos != string::npos ? ptx.substr(pos, searchEnd - pos) : ptx);
     }
