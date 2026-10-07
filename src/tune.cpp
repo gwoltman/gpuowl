@@ -1810,38 +1810,81 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
   }
   args->profile = oldProfile;
 
-  vector<KeyVal> winners;
-  vector<KeyVal> tunedConf{{"NOREG", "0"}};
-  double predicted = 0;               // the saving per iteration the per-kernel times predict
+  // Each kernel's improved setting, with the saving per iteration its per-kernel time predicts
+  struct Win {
+    string kernelName;
+    vector<KeyVal> settings;
+    double saving;
+  };
+  vector<Win> wins;
   for (size_t i = 0; i < searches.size(); ++i) {
     const KernelSearch& k = searches[i];
     if (i == cf && wmul1Wins) {
       string const setting = k.base.key + '=' + to_string(wmul1Blocks) + ':';
       log("%-18s best is WMUL=1, %-12s%6.1f us vs %.1f us (%.1f%%)\n", k.base.kernelName.c_str(), setting.c_str(), wmul1Us,
           k.base.usPerCall, 100.0 * (wmul1Us / k.base.usPerCall - 1));
-      predicted += k.base.usPerCall - wmul1Us;
-      winners.emplace_back("WMUL", "1");
-      winners.emplace_back(k.base.key, to_string(wmul1Blocks));
+      wins.push_back({k.base.kernelName, {{"WMUL", "1"}, {k.base.key, to_string(wmul1Blocks)}}, k.base.usPerCall - wmul1Us});
     } else if (!bestValue[i]) {
       log("%-18s best is the compiler's default\n", k.base.kernelName.c_str());
-      tunedConf.emplace_back(k.base.key, "-1");
-      continue;
     } else {
       string const setting = k.base.key + '=' + to_string(bestValue[i]) + ':';
       log("%-18s best is %-12s%6.1f us vs %.1f us (%.1f%%)\n", k.base.kernelName.c_str(), setting.c_str(), bestUs[i],
           k.base.usPerCall, 100.0 * (bestUs[i] / k.base.usPerCall - 1));
-      predicted += k.base.usPerCall - bestUs[i];
-      winners.emplace_back(k.base.key, to_string(bestValue[i]));
+      wins.push_back({k.base.kernelName, {{k.base.key, to_string(bestValue[i])}}, k.base.usPerCall - bestUs[i]});
     }
   }
-  tunedConf.insert(tunedConf.end(), winners.begin(), winners.end());
+
+  // The settings for a timing: every kernel at the compiler's default, except for these wins
+  auto confOf = [&](const vector<const Win*>& with) {
+    map<string, string> m{{"NOREG", "0"}};
+    for (const KernelSearch& k : searches) { m[k.base.key] = "-1"; }
+    for (const Win* w : with) { for (const auto& [key, val] : w->settings) { m[key] = val; } }
+    return vector<KeyVal>(m.begin(), m.end());
+  };
+  vector<const Win*> accepted;
+  for (const Win& w : wins) { accepted.push_back(&w); }
 
   // tune.txt costs are whole iterations without profiling
   double baseCost = timeConfig(exponent, shared, e.fft, {{"NOREG", "1"}}, quick, nullptr, uses);
-  double tunedCost = winners.empty() ? baseCost : timeConfig(exponent, shared, e.fft, tunedConf, quick, nullptr, uses);
+  double tunedCost = baseCost;
+
+  // When the kernels of two queues overlap (MULTI_Q on an FFT with two or more number types), a kernel's time alone does not say
+  // how it does next to the other queue's kernels: e.g. more registers can leave less room for them.  Add the kernels' settings
+  // one at a time, largest predicted saving first, and keep each only if the whole iteration gets faster.
+  int const multiQ = [&] { for (const KeyVal& kv : uses) { if (kv.first == "MULTI_Q") { return atoi(kv.second.c_str()); } } return args->value("MULTI_Q", 0); }();
+  bool const overlap = multiQ && int(e.fft.FFT_FP64) + int(e.fft.FFT_FP32) + int(e.fft.NTT_GF31) + int(e.fft.NTT_GF61) >= 2;
+  if (overlap && wins.size() >= 2 && std::isfinite(baseCost)) {
+    log("%-18s The queues overlap (MULTI_Q): adding the kernels' settings one at a time\n", "");
+    vector<const Win*> order = accepted;
+    std::ranges::sort(order, [](const Win* a, const Win* b) { return a->saving > b->saving; });
+    accepted.clear();
+    for (const Win* w : order) {
+      vector<const Win*> trial = accepted;
+      trial.push_back(w);
+      double const cost = timeConfig(exponent, shared, e.fft, confOf(trial), quick, nullptr, uses);
+      bool const keep = cost < tunedCost;
+      string settings;
+      for (const auto& [key, val] : w->settings) { settings += (settings.empty() ? "" : ",") + key + '=' + val; }
+      log("%-18s %-22s %.1f us/iter vs %.1f: %s\n", w->kernelName.c_str(), settings.c_str(), cost, tunedCost, keep ? "kept" : "dropped");
+      if (keep) {
+        accepted = std::move(trial);
+        tunedCost = cost;
+      }
+    }
+  } else if (!wins.empty()) {
+    tunedCost = timeConfig(exponent, shared, e.fft, confOf(accepted), quick, nullptr, uses);
+  }
   if (!std::isfinite(baseCost) && !std::isfinite(tunedCost)) {
     log("%s: timing failed, tune.txt entry left as it was\n", spec.c_str());
     return e;
+  }
+
+  vector<KeyVal> const tunedConf = confOf(accepted);
+  vector<KeyVal> winners;
+  double predicted = 0;               // the saving per iteration the per-kernel times predict
+  for (const Win* w : accepted) {
+    winners.insert(winners.end(), w->settings.begin(), w->settings.end());
+    predicted += w->saving;
   }
 
   // A whole iteration timing varies about 1% from one Gpu to the next.  When the per-kernel times predict a clear saving that the
