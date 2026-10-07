@@ -17,6 +17,7 @@
 #include "tune.h"
 
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -96,6 +97,30 @@ int main(int argc, char **argv) {
     string const mainLine = Args::mergeArgs(argc, argv);
 #if !defined(CUDA_BACKEND) && !defined(_WIN32)
     fs::path const startDir = fs::current_path();
+#endif
+#if !defined(CUDA_BACKEND) && defined(_WIN32) && !defined(__MSYS__)
+    // -v 10 on Windows: ask the AMD OpenCL runtime for its -save-temps files (the assembly KernelCompiler reads for the register
+    // counts), as the Linux re-exec below does.  On Windows the runtime is loaded at the first OpenCL call, so setting them in this
+    // process may be enough.  That must come before any argument parsing: -uid and -pci look the devices up.  So only a -v on the
+    // command line counts, not one in config.txt.  Variables the user has set are left as they are; PRPLL_ASM_REEXEC marks that
+    // PRPLL set them.  Other OpenCL runtimes ignore them.
+    {
+      int verbose = 0;
+      for (const auto& [key, val] : Args::splitArgLine(mainLine)) {
+        if ((key == "-v" || key == "-verbose") && !val.empty() && isdigit((unsigned char) val[0])) { verbose = atoi(val.c_str()); }
+      }
+      if (verbose >= 10 && !getenv("AMD_OCL_BUILD_OPTIONS_APPEND") && !getenv("AMD_OCL_LINK_OPTIONS_APPEND")) {
+#if defined(__MINGW32__) || defined(__MINGW64__)
+        putenv("AMD_OCL_BUILD_OPTIONS_APPEND=-save-temps=x");
+        putenv("AMD_OCL_LINK_OPTIONS_APPEND=-save-temps-all");
+        putenv("PRPLL_ASM_REEXEC=1");
+#else
+        _putenv_s("AMD_OCL_BUILD_OPTIONS_APPEND", "-save-temps=x");
+        _putenv_s("AMD_OCL_LINK_OPTIONS_APPEND", "-save-temps-all");
+        _putenv_s("PRPLL_ASM_REEXEC", "1");
+#endif
+      }
+    }
 #endif
     {
       Args args{true};
