@@ -131,7 +131,7 @@ endif
 src/version.inc: FORCE
 	echo \"$(VERSION)\" > $(BIN)/version.new
 	diff -q -N $(BIN)/version.new $@ >/dev/null || mv $(BIN)/version.new $@
-	echo Version: `cat $@`
+	echo Version: \"$(VERSION)\"
 
 FORCE:
 
