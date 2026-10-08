@@ -2300,7 +2300,8 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
     if (graph->isRecorded()) {
       graph->launch(&queue);
       queue.incSquareCount();
-      if (roe) roePos++;   // WARNING: If we ever graph Gpu::Mul, we'll need to also maintain mulRoePos vector.
+      // Keep the host's sample counts in step with the kernels' (carryFused below): the GPU records a sample on every launch
+      if (roe) { roePos++; } else { updateCarryPos(1 << 0); }   // WARNING: If we ever graph Gpu::Mul, we'll need to also maintain mulRoePos vector.
       return;
     }
     // Otherwise, record a new graph

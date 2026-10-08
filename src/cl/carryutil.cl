@@ -132,7 +132,13 @@ i32 RNDVALfloatToInt(float d) {
 // map abs(carry) to floats, with 2^32 corresponding to 1.0
 // So that the maximum CARRY32 abs(carry), 2^31, is mapped to 0.5 (the same as the maximum ROE)
 float OVERLOAD boundCarry(i32 c) { return ldexp(fabs((float) c), -32); }
-float OVERLOAD boundCarry(i64 c) { return ldexp(fabs((float) (i32) (c >> 8)), -24); }
+
+// A 64-bit carry.  The FFT types that can also run with 32-bit carries (FFT64, FFT3231) measure it against CARRY32's 2^31, for
+// -carryTune (valid while abs(carry) < 2^39).  The others only have 64-bit carries: there 2^63, their overflow, maps to 0.5.
+float OVERLOAD boundCarry(i64 c) {
+  if (FFT_TYPE == FFT64 || FFT_TYPE == FFT3231) { return ldexp(fabs((float) (i32) (c >> 8)), -24); }
+  return boundCarry((i32) (c >> 32));
+}
 
 #if STATS || ROE
 void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *bufROE, u32 posROE, float roundMax) {
