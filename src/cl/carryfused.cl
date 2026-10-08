@@ -195,13 +195,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   weights = fancyMul(weights, CONST_THREAD_WEIGHTS[64 + line / 64]);
 #endif
 
-#if MUL3
-  P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
-  i64 carry[NW+1];
-#else
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;
   CFcarry carry[NW+1];
-#endif
 
   float roundMax = 0;
   float carryMax = 0;
@@ -894,13 +889,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
 
   Word2 wu[NW];
 
-#if MUL3
-  P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
-  i64 carry[NW+1];
-#else
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;
   CFcarry carry[NW+1];
-#endif
 
   u32 roundMax = 0;
   float carryMax = 0;
@@ -1468,13 +1458,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
 
-#if MUL3
-  P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
-  i64 carry[NW+1];
-#else
   P(CFcarry) carryShuttlePtr = (P(CFcarry)) carryShuttle;
   CFcarry carry[NW+1];
-#endif
 
   float roundMax = 0;
   float carryMax = 0;

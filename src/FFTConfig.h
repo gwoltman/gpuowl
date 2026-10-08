@@ -50,8 +50,9 @@ public:
   [[nodiscard]] u64 maxExp() const { return u64(maxBpw() * size()); }
   [[nodiscard]] std::string spec() const { return (fft_type ? to_string(fft_type) + ':' : "") + numberK(width) + ':' + numberK(middle) + ':' + numberK(height); }
 
-  [[nodiscard]] float carry32BPW() const;
-  [[nodiscard]] bool needsLargeCarry(u64 E) const;
+  // The highest bpw for 32-bit carries in carryFused; mul3: in its MUL3 version
+  [[nodiscard]] float carry32BPW(bool mul3 = false) const;
+  [[nodiscard]] bool needsLargeCarry(u64 E, bool mul3 = false) const;
   [[nodiscard]] bool isFavoredShape() const;
   // A MIDDLE with an odd factor (3, 7, 9 or 11 times a power of two) on an NTT or hybrid FFT/NTT type is done as a Good-Thomas
   // prime-factor transform: R = 3, 7, 9 or 11 rows of a power-of-two transform, the radix-R in fftMiddleIn/Out uses only an R-th

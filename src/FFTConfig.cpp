@@ -201,7 +201,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
   }
 }
 
-float FFTShape::carry32BPW() const {
+float FFTShape::carry32BPW(bool mul3) const {
   // The formula below was validated empirically with -carryTune
 
   // We observe that FFT 6.5M (1024:13:256) has safe carry32 up to 18.35 BPW
@@ -209,26 +209,27 @@ float FFTShape::carry32BPW() const {
   // We model carry with a Gumbel distrib similar to the one used for ROE, and measure carry with
   // -use STATS=1. See -carryTune
 
-  // The 19.0 cap is a hard limit of the CARRY32 code, not an empirical one, which is why the formula
-  // above must be clamped for the smaller FFTs (without it, -tune failed on FFT sizes from 256K to 1M).
+  // The 20.0 cap is a hard limit of the CARRY32 code, not an empirical one, which is why the formula
+  // above must be clamped for the smaller FFTs.
   //
   // In the CARRY32 case weightAndCarryOne() returns the raw bits of RNDVAL + value rather than stripping
-  // RNDVAL off (carryutil.cl:217-219), so bit 51 is set iff value >= 0 and bits 52+ hold the exponent.
+  // RNDVAL off, so bits 52+ hold the exponent (at 19 bpw it flips bit 51, making it the value's sign bit).
   // carryStep(i64, i32*) then takes the carry as xtract32(x, nBits), i.e. bits [nBits, nBits+32).  That
-  // window must stay strictly below bit 51 for the sign fill to work, so nBits <= 19, and since a big word
-  // has nBits = EXP / NWORDS + 1 that means EXP / NWORDS <= 18, i.e. bpw < 19.0.  At nBits = 20 the window
-  // includes bit 51 and every big word with a non-negative value yields a large negative carry.
-  if (18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())) > 19.0) return 19.0f;
-
-  return float(18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())));
+  // window must stay below bit 52, so nBits <= 20, and since a big word has nBits = EXP / NWORDS + 1 that
+  // means EXP / NWORDS <= 19, i.e. bpw < 20.0.
+  //
+  // MUL3 triples the value before the carry is split off.  At a given FFT size the carries double with each
+  // bpw, so the MUL3 kernels run out of 32-bit carry log2(3) bpw sooner.
+  double const bpw = 18.35 + 0.5 * (log2(13 * 1024 * 512) - log2(size())) - (mul3 ? log2(3.0) : 0.0);
+  return float(std::min(bpw, 20.0));
 }
 
-bool FFTShape::needsLargeCarry(u64 E) const {
-  // carry32BPW() caps at 19.0 and the comparison below is a strict >, so E == 19 * size() would still
-  // select CARRY32 with EXP / NWORDS == 19, which the CARRY32 code cannot handle (see carry32BPW()).
+bool FFTShape::needsLargeCarry(u64 E, bool mul3) const {
+  // carry32BPW() caps at 20.0 and the comparison below is a strict >, so E == 20 * size() would still
+  // select CARRY32 with EXP / NWORDS == 20, which the CARRY32 code cannot handle (see carry32BPW()).
   // Test the kernel's own EXP / NWORDS expression to close that off-by-one.
-  if (E / size() >= 19) { return true; }
-  return E / double(size()) > carry32BPW();
+  if (E / size() >= 20) { return true; }
+  return E / double(size()) > carry32BPW(mul3);
 }
 
 // Return TRUE for "favored" shapes.  That is, those that are most likely to be useful.  To save time in generating bpw data, only these favored

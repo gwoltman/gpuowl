@@ -540,6 +540,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (doLog) { log("Using CARRY64\n"); }
     defines += toDefine("CARRY64", 1);
   }
+  // The MUL3 kernels triple the carries, so they need 64-bit carries at a lower bpw.  An explicit :0 limits only the others.
+  if (fft.carry == CARRY_64 || fft.shape.needsLargeCarry(E, true)) { defines += toDefine("MUL3_CARRY64", 1); }
 
   u32 const N = fft.shape.size();
   defines += toDefine("FFT_VARIANT", fft.variant);
@@ -2335,9 +2337,10 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   // Use CarryFused
   else {
     assert(!useLongCarry);
-    assert(!doMul3);
     if (doLL) {
       carryFusedLL(buf1);
+    } else if (doMul3) {
+      carryFusedMul(buf1);
     } else {
       carryFused(buf1);
     }
@@ -2687,7 +2690,9 @@ u32 Gpu::getProofPower(u64 k) {
   return power;
 }
 
-tuple<bool, RoeInfo> Gpu::measureCarry() {
+// mul3: measure the MUL3 carries (carryFusedMul, STATS bit 1) by tripling every squaring.  The result is then not a PRP
+// residue, so the returned ok is only meaningful without mul3.
+tuple<bool, RoeInfo> Gpu::measureCarry(bool mul3) {
   u32 blockSize{}, iters{}, warmup{};
 
   blockSize = 200;
@@ -2712,12 +2717,12 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
   leadIn = LEAD_MIDDLE;
 
   enum LEAD_TYPE const leadOut = useLongCarry ? LEAD_NONE : LEAD_WIDTH;
-  square(bufData, bufData, leadIn, leadOut);
+  square(bufData, bufData, leadIn, leadOut, mul3);
   leadIn = leadOut;
   ++k;
 
   while (k < warmup) {
-    square(bufData, bufData, leadIn, leadOut);
+    square(bufData, bufData, leadIn, leadOut, mul3);
     leadIn = leadOut;
     ++k;
   }
@@ -2728,11 +2733,11 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
 
   while (true) {
     while (k % blockSize < blockSize-1) {
-      square(bufData, bufData, leadIn, leadOut);
+      square(bufData, bufData, leadIn, leadOut, mul3);
       leadIn = leadOut;
       ++k;
     }
-    square(bufData, bufData, leadIn, LEAD_NONE);
+    square(bufData, bufData, leadIn, LEAD_NONE, mul3);
     leadIn = LEAD_NONE;
     ++k;
 
@@ -2746,7 +2751,7 @@ tuple<bool, RoeInfo> Gpu::measureCarry() {
   [[maybe_unused]] u64 const res = dataResidue();
   if (Signal::stopRequested()) { throw "stop requested"; }
 
-  bool const ok = doCheck(blockSize);
+  bool const ok = mul3 || doCheck(blockSize);
   auto stats = readCarryStats();
 
   // log("%s %016" PRIx64 " %s\n", ok ? "OK" : "EE", res, roe.toString(statsBits).c_str());

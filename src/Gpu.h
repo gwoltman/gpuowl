@@ -347,7 +347,7 @@ public:
 #endif
 
   tuple<bool, u64, RoeInfo, RoeInfo> measureROE(bool quick);
-  tuple<bool, RoeInfo> measureCarry();
+  tuple<bool, RoeInfo> measureCarry(bool mul3 = false);
 
   Saver<PRPState> *getSaver();
 

@@ -1,6 +1,7 @@
 // Copyright (C) Mihai Preda
 
-#if CARRY64
+// carryFused's carry.  MUL3 triples the carries, so the MUL3 kernels switch to 64-bit carries at a lower bpw (MUL3_CARRY64).
+#if CARRY64 || (MUL3 && MUL3_CARRY64)
 typedef i64 CFcarry;
 #else
 typedef i32 CFcarry;
@@ -227,9 +228,10 @@ i64 weightAndCarryOne(T u, T invWeight, i64 inCarry, float* maxROE, int sloppy_r
   *maxROE = max(*maxROE, roundoff);
 
   // Convert to long (for CARRY32 case we don't need to strip off the RNDVAL bits).
-  // Leaving RNDVAL in place is only safe while the carry extraction window stays below bit 51 -- see the
-  // #error below and FFTShape::carry32BPW.
-  if (sloppy_result_is_acceptable) return as_long(d);
+  // The CARRY32 carryStep reads the carry from bits [nBits, nBits+32), and RNDVAL sets bit 51 iff the value is >= 0.  Below 19 bpw
+  // that window stays under bit 51.  At 19 bpw a big word's window is [20,52): flipping bit 51 turns it into the sign bit of the
+  // value as a 52-bit two's complement integer (the bits above it are never read).
+  if (sloppy_result_is_acceptable) return (EXP / NWORDS >= 19) ? as_long(d) ^ ((i64) 1 << 51) : as_long(d);
   else return RNDVALdoubleToLong(d);
 
 #else  // We cannot add in the carry until after the mul by 3
@@ -811,17 +813,17 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 /* Support both 32-bit and 64-bit carries */
 
 #if WordSize <= 4
-// A 32-bit carry means weightAndCarryOne returns RNDVAL + value un-stripped, and carryStep(i64, i32*) reads
-// the carry from bits [nBits, nBits+32).  That window must stay strictly below the RNDVAL bit 51, so
-// nBits <= 19; a big word has nBits = EXP / NWORDS + 1.  The host is supposed to select CARRY64 before this
+// A 32-bit carry means FFT64's weightAndCarryOne returns RNDVAL + value un-stripped (bit 51 flipped at 19 bpw), and
+// carryStep(i64, i32*) reads the carry from bits [nBits, nBits+32).  That window must stay within bits [0,52), so
+// nBits <= 20; a big word has nBits = EXP / NWORDS + 1.  The host is supposed to select CARRY64 before this
 // point (FFTShape::needsLargeCarry); fail loudly rather than compute wrong carries if it ever does not.
 //
 // The bound is the host's own, and the host does not make it depend on the FFT type: needsLargeCarry()
-// returns true for every type at EXP / NWORDS >= 19, so CARRY_AUTO can never reach here.  Only an explicit
+// returns true for every type at EXP / NWORDS >= 20, so CARRY_AUTO can never reach here.  Only an explicit
 // 32-bit carry in the FFT spec ("-fft 3:256:2:256:212:0") can, and the NTT types need the check as much as
 // FP64 does -- a GF61 carry at 25 bpw does not fit in i32 either, and nothing else would report it.
-#if !CARRY64 && EXP / NWORDS >= 19
-#error "CARRY32 requires EXP / NWORDS <= 18; this exponent needs CARRY64 (-carry long)"
+#if !(CARRY64 || (MUL3 && MUL3_CARRY64)) && EXP / NWORDS >= 20
+#error "CARRY32 requires EXP / NWORDS <= 19; this exponent needs CARRY64 (-carry long)"
 #endif
 #define iCARRY i32
 #include "carryinc.cl"

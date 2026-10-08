@@ -262,29 +262,32 @@ void Tune::ztune() {
 void Tune::carryTune() {
   File const fo = File::openAppend("carrytune.txt");
   fo.printf("\n// %s\n\n", shortTimeStr().c_str());
-  shared.args->flags["STATS"] = "1";
   u32 prevSize = 0;
   for (FFTShape const shape : FFTShape::multiSpec(shared.args->fftSpec)) {
     FFTConfig const fft{shape, LAST_VARIANT, CARRY_AUTO};
     if (prevSize == fft.size()) { continue; }
     prevSize = fft.size();
 
-    vector<float> zv;
-    double m = 0;
-    const float mid = fft.shape.carry32BPW();
-    for (float const bpw : {mid - 0.05f, mid + 0.05f}) {
-      u64 const exponent = primes.nearestPrime(u64(fft.size() * bpw));
-      auto [ok, carry] = Gpu::make(exponent, shared, fft, {}, false)->measureCarry();
-      m = carry.max;
-      if (!ok) { log("Error %s at %f\n", fft.spec().c_str(), bpw); }
-      zv.push_back(float(carry.z()));
-    }
+    // Measure the plain carryFused (STATS bit 0) and its MUL3 version (STATS bit 1), each at its own 32-bit carry limit
+    for (bool const mul3 : {false, true}) {
+      shared.args->flags["STATS"] = mul3 ? "2" : "1";
+      vector<float> zv;
+      double m = 0;
+      const float mid = fft.shape.carry32BPW(mul3);
+      for (float const bpw : {mid - 0.05f, mid + 0.05f}) {
+        u64 const exponent = primes.nearestPrime(u64(fft.size() * bpw));
+        auto [ok, carry] = Gpu::make(exponent, shared, fft, {}, false)->measureCarry(mul3);
+        m = carry.max;
+        if (!ok) { log("Error %s at %f\n", fft.spec().c_str(), bpw); }
+        zv.push_back(float(carry.z()));
+      }
 
-    float const avg = (zv[0] + zv[1]) / 2;
-    u64 const exponent = u64(fft.shape.carry32BPW() * fft.size());
-    double const pErr100 = -expm1(-exp(-avg) * exponent * 100);
-    log("%14s %.3f : %.3f (%.3f %.3f) %f %.0f%%\n", fft.spec().c_str(), mid, avg, zv[0], zv[1], m, pErr100 * 100);
-    fo.printf("%f %f\n", log2(fft.size()), avg);
+      float const avg = (zv[0] + zv[1]) / 2;
+      u64 const exponent = u64(mid * fft.size());
+      double const pErr100 = -expm1(-exp(-avg) * exponent * 100);
+      log("%14s%s %.3f : %.3f (%.3f %.3f) %f %.0f%%\n", fft.spec().c_str(), mul3 ? " MUL3" : "", mid, avg, zv[0], zv[1], m, pErr100 * 100);
+      fo.printf("%f %f%s\n", log2(fft.size()), avg, mul3 ? " MUL3" : "");
+    }
   }
 }
 
