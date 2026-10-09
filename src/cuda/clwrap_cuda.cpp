@@ -244,6 +244,27 @@ cl_program clCreateProgramWithSource(cl_context ctx, unsigned count, const char*
 static const char CUBIN_MARKER[] = "\n// PRPLL-CUBIN\n";
 static const size_t CUBIN_MARKER_LEN = sizeof(CUBIN_MARKER) - 1;
 
+// -use PTX_VERSION=x.y (undocumented, use at your own risk): relabel the PTX as PTX ISA version x.y, so that a driver older than
+// this NVRTC will JIT-compile it -- e.g. a statically linked CUDA 13 NVRTC on a CUDA 12.8 driver, whose PTX ISA is 8.7.  This is only
+// safe if the PTX uses nothing newer than x.y; the driver's JIT rejects code that does.  Returns the requested version, or "".
+static string ptxVersionOverride(const string& buildOptions) {
+  size_t const pos = buildOptions.find("-DPTX_VERSION=");
+  if (pos == string::npos) { return {}; }
+  size_t const start = pos + strlen("-DPTX_VERSION=");
+  return buildOptions.substr(start, buildOptions.find_first_of(" \t", start) - start);
+}
+
+static void setPtxVersion(string& ptx, const string& version) {
+  size_t pos = ptx.compare(0, 9, ".version ") == 0 ? 0 : ptx.find("\n.version ");
+  if (pos == string::npos) { return; }
+  if (pos) { ++pos; }
+  size_t const start = pos + strlen(".version ");
+  size_t const end = ptx.find_first_of(" \t\r\n", start);
+  static std::once_flag logged;
+  std::call_once(logged, [&] { log("PTX_VERSION: relabeling the PTX from version %s to %s\n", ptx.substr(start, end - start).c_str(), version.c_str()); });
+  ptx.replace(start, end - start, version);
+}
+
 static string cacheBlob(const _cl_program* prog) {
   if (prog->cubin.empty()) { return prog->ptx; }
   string blob;
@@ -450,6 +471,11 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
     // PRPLL_PTX_ONLY=1 keeps the driver's JIT path, for comparing the two.
     static const bool ptxOnly = getenv("PRPLL_PTX_ONLY") != nullptr;
     prog->cubin = ptxOnly ? string{} : std::move(images.cubin);
+    // An older driver rejects this NVRTC's CUBIN too, so with PTX_VERSION the relabeled PTX goes through the driver's JIT
+    if (string const ptxVersion = ptxVersionOverride(prog->buildOptions); !ptxVersion.empty()) {
+      setPtxVersion(prog->ptx, ptxVersion);
+      prog->cubin.clear();
+    }
     prog->compiled = true;
     prog->buildLog.clear();
   } catch (const exception& e) {

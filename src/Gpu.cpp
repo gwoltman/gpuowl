@@ -303,6 +303,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                               "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
                               "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
                               "PDL",                    // CUDA, sm_90+: programmatic dependent launch
+                              "PTX_VERSION",            // CUDA, undocumented: relabel the PTX for an older driver's JIT (see clwrap_cuda.cpp)
                               "SMEM_SPILL"              // CUDA, sm_75+: register limits spill to shared memory
                             };
   for (const auto& [k, v] : config) {
