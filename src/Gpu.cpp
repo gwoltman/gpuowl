@@ -545,6 +545,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     if (doLog && largeCarry) { log("Using CARRY96\n"); }
     defines += toDefine(largeCarry ? "CARRY96" : "CARRY64", 1);
     if (largeCarryMul3) { defines += toDefine("MUL3_CARRY96", 1); }
+    // Carries below 2^63 - 2^61 - 2^22 (0.42 bits less, so 0.42 bpw) can be subtracted from an i64 in weightAndCarryOne (crtPlusCarry)
+    if (!largeCarry && E / double(fft.shape.size()) <= fft.shape.carry64BPW() - 0.42) { defines += toDefine("CARRY_SUB_X", 1); }
   } else {
     if (doLog && largeCarry) { log("Using CARRY64\n"); }
     if (largeCarry) { defines += toDefine("CARRY64", 1); }

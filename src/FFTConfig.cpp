@@ -226,11 +226,10 @@ float FFTShape::carry32BPW(bool mul3) const {
 
 float FFTShape::carry64BPW(bool mul3) const {
   // FFT323161's 64-bit carries, measured with -carryTune (STATS: 2^63 maps to 0.5) for the same Z as carry32BPW() (Z ~27 at 4M, 8M
-  // and 16M words).  The plain kernels' crossover is above the bpw where sloppy carries stop (MAXBPW - 1.1), so their carries are exact.
-  // MUL3 triples the carries (log2(3) bpw), and at its lower bpw the previous iterations' sloppy carries make the input words, and so
-  // the carries, up to 2.8x larger (1.5 bpw) when frac(bpw) is just above zero, where almost every second word is a small word.
+  // and 16M words).  FFT323161 never uses sloppy signed carries, which would make the carries up to 2.8x larger (1.5 bpw).
+  // MUL3 triples the carries (log2(3) bpw).
   double const plain = 50.2 - 0.5 * (log2(size()) - 23);
-  return float(mul3 ? plain - log2(3.0) - 1.5 : plain);
+  return float(mul3 ? plain - log2(3.0) : plain);
 }
 
 bool FFTShape::needsLargeCarry(u64 E, bool mul3) const {

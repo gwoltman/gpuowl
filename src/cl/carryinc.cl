@@ -324,20 +324,20 @@ i128 OVERLOAD weightAndCarryOne(F uF, Z31 u31, Z61 u61, F F2_invWeight, u32 m31_
   i64 x = (i64)n61 - nF;
   i64 x2 = x - ((i64)nF << 30);
 #if !MUL3
-  // Put the parts together.  The low 31 bits of x2 << 31 are zero, so n31 is or'ed in, and nF << 92 only touches the high 64 bits.
-  i128 v = sub(make_i128((x2 >> 33) + ((i64)nF << 28), (x2 << 31) | n31), x);
+  // Put the parts together and add the carry.  The low 31 bits of x2 << 31 are zero, so n31 is or'ed in, and nF << 92 only touches the
+  // high 64 bits.
+  i128 v = crtPlusCarry((x2 >> 33) + ((i64)nF << 28), (x2 << 31) | n31, x, hasInCarry, inCarry);
 #else
   // Mul by 3.  Tripling the parts is cheaper than tripling the i128, and each still fits: 3 * x2 and 3 * (n31 - x) are below 2^63.
   i64 x2_3 = x2 * 3;
   i128 v = add(make_i128((x2_3 >> 33) + ((i64)(nF * 3) << 28), x2_3 << 31), ((i64)n31 - x) * 3);
+  if (hasInCarry) v = add(v, inCarry);
 #endif
 
   // Optionally calculate roundoff error
   float roundoff = fabs(fma(uF, 2.0194839183061857038255724444152e-28f, RNDVAL - uFint));
   *maxROE = max(*maxROE, roundoff);
 
-  // Add carry (MUL3 was applied above)
-  if (hasInCarry) v = add(v, inCarry);
   return v;
 }
 

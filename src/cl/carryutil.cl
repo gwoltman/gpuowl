@@ -413,7 +413,9 @@ Word OVERLOAD carryStepUnsignedSloppy(i32 x, i32 *outCarry, bool isBigWord) {
 // We only allow sloppy results when not near the maximum bits-per-word.  For now, this is defined as 1.1 bits below maxbpw.
 // No studies have been done on reducing this 1,1 value since this is a rather minor optimization.  Since the preprocessor can't
 // handle floats, the MAXBPW value passed in is 100 * maxbpw.
-#define SLOPPY_MAXBPW   (MAXBPW - 110)
+// Never for FFT323161: its exact i128 carryStep is as cheap as the sloppy one, and the sloppy words would make its carries up to 2.8x
+// larger (see carry64BPW).  Its unsigned sloppy first word, which carryFinal balances exactly, is still used.
+#define SLOPPY_MAXBPW   (FFT_TYPE == FFT323161 ? 0 : MAXBPW - 110)
 #define ACTUAL_BPW      (EXP / (NWORDS / 100))
 
 Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
@@ -570,6 +572,23 @@ bool carryIsZero(CarryABM c) { return c == 0; }
 
 /* iCARRY is set to all possible data types that CFCarry in carryfused could be.  Carryinc.cl is then #included for each data type. */
 /* In essence, iCARRY means "a carry from carryShuttle or a carry from the first word of a pair". */
+
+#if FFT_TYPE == FFT323161
+// FFT323161's CRT value (hi:lo) - x plus the carry, x in [-2^22, 2^61 + 2^22).  With CARRY_SUB_X (the host's guarantee that carries are
+// below 2^63 - 2^61 - 2^22) an i64 carry is subtracted from x instead of being added to the i128.  A 96-bit carry is added to the i128.
+#ifndef CARRY_SUB_X
+#define CARRY_SUB_X 0
+#endif
+i128 OVERLOAD crtPlusCarry(i64 hi, u64 lo, i64 x, bool hasInCarry, i64 inCarry) {
+  if (CARRY_SUB_X) { return sub(make_i128(hi, lo), hasInCarry ? x - inCarry : x); }
+  i128 v = sub(make_i128(hi, lo), x);
+  return hasInCarry ? add(v, inCarry) : v;
+}
+i128 OVERLOAD crtPlusCarry(i64 hi, u64 lo, i64 x, bool hasInCarry, i96 inCarry) {
+  i128 v = sub(make_i128(hi, lo), x);
+  return hasInCarry ? add(v, inCarry) : v;
+}
+#endif
 
 #if WordSize <= 4
 // A 32-bit carry means FFT64's weightAndCarryOne returns RNDVAL + value un-stripped (bit 51 flipped at 19 bpw), and
