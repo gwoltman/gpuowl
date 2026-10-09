@@ -425,44 +425,15 @@ Word OVERLOAD carryStepUnsignedSloppy(i32 x, i32 *outCarry, bool isBigWord) {
 #define ACTUAL_BPW      (EXP / (NWORDS / 100))
 
 Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
-#if ACTUAL_BPW > SLOPPY_MAXBPW
+  // A sloppy version (a word balanced to the big word size) is no cheaper than carryStep, whose word high half is one variable-width bit
+  // field extract and whose carry is funnel shifts: both take the same number of instructions.  FFT323161 does not use sloppy carries anyway.
   return carryStep(x, outCarry, isBigWord);
-#else
-
-//GW:  Need to compare to simple carryStep
-  
-// Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
-  const u32 bigwordBits = EXP / NWORDS + 1;
-  u32 nBits = bitlen(isBigWord);
-  u64 xlo = i128_lo64(x);
-  u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
-  i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
-  // Adding xlo_topbit (bit nBits - 1 of a big word, bit nBits of a small one) to x adds exactly one to x >> nBits
-  if (EXP / NWORDS >= 33) { *outCarry = I128_SHIFT_DWORDS(xlo, i128_hi64(x), nBits - 32) + (xlo_topbit != 0); return w; }
-  *outCarry = i128_shrlo64(x, nBits) + (xlo_topbit != 0);
-  return w;
-#endif
 }
 
 Word OVERLOAD carryStepSignedSloppy(i128 x, i96 *outCarry, bool isBigWord) {
-#if ACTUAL_BPW > SLOPPY_MAXBPW
+  // A sloppy version (a word balanced to the big word size) is no cheaper than carryStep, whose word high half is one variable-width bit
+  // field extract and whose carry is funnel shifts: both take the same number of instructions.  FFT323161 does not use sloppy carries anyway.
   return carryStep(x, outCarry, isBigWord);
-#else
-// Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
-  const u32 bigwordBits = EXP / NWORDS + 1;
-  u32 nBits = bitlen(isBigWord);
-  u64 xlo = i128_lo64(x);
-  u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
-  i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
-  // Adding xlo_topbit (bit nBits - 1 of a big word, bit nBits of a small one) to x adds exactly one to x >> nBits
-  if (EXP / NWORDS >= 33) {
-    u64 hi = i128_hi64(x);
-    *outCarry = add(make_i96((i32) hi32(hi) >> (nBits - 32), (u64) I128_SHIFT_DWORDS(xlo, hi, nBits - 32)), (i64) (xlo_topbit != 0));
-    return w;
-  }
-  *outCarry = add(i128_shr96(x, nBits), (i64) (xlo_topbit != 0));
-  return w;
-#endif
 }
 
 Word OVERLOAD carryStepSignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
