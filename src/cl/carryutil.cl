@@ -259,7 +259,13 @@ Word OVERLOAD carryStep(i96 x, i64 *outCarry, bool isBigWord) {
 // This code can be tricky because we must not shift i32 or u32 variables by 32.
 #if EXP / NWORDS >= 33
   i32 whi = lowBits(i96_mid32(x), nBitsLess32);
-  *outCarry = ((i64)i96_hi64(x) - (i64)whi) >> nBitsLess32;
+  // For FFT3161 and FFT3261 the carry (hi64 - whi) >> nBitsLess32 is quicker as two 32-bit shifts, hi64 >> nBitsLess32 plus one if the word
+  // is negative (fewer SASS instructions on sm_70 and sm_120).  FFT6431 was 0.7% slower that way on a TitanV.
+  if (FFT_TYPE == FFT3161 || FFT_TYPE == FFT3261) {
+    *outCarry = as_long((int2)(xtract32(i96_hi64(x), nBitsLess32), (i32)i96_hi32(x) >> nBitsLess32)) + (whi < 0);
+  } else {
+    *outCarry = ((i64)i96_hi64(x) - (i64)whi) >> nBitsLess32;
+  }
   return as_ulong((uint2)(i96_lo32(x), (u32)whi));
 #elif EXP / NWORDS == 32
   i32 whi = xtract32(i96_lo64(x), nBitsLess32) >> 31;
