@@ -273,7 +273,7 @@ void Tune::carryTune() {
       shared.args->flags["STATS"] = mul3 ? "2" : "1";
       vector<float> zv;
       double m = 0;
-      const float mid = fft.shape.carry32BPW(mul3);
+      const float mid = fft.shape.narrowCarryBPW(mul3);
       for (float const bpw : {mid - 0.05f, mid + 0.05f}) {
         u64 const exponent = primes.nearestPrime(u64(fft.size() * bpw));
         auto [ok, carry] = Gpu::make(exponent, shared, fft, {}, false)->measureCarry(mul3);

@@ -52,6 +52,11 @@ public:
 
   // The highest bpw for 32-bit carries in carryFused; mul3: in its MUL3 version
   [[nodiscard]] float carry32BPW(bool mul3 = false) const;
+  // The same for FFT323161's 64-bit carries (its wider carry is 96 bits)
+  [[nodiscard]] float carry64BPW(bool mul3 = false) const;
+  // The highest bpw for this FFT type's narrower carry (32 bits, or 64 bits for FFT323161)
+  [[nodiscard]] float narrowCarryBPW(bool mul3 = false) const { return fft_type == FFT323161 ? carry64BPW(mul3) : carry32BPW(mul3); }
+  // True if the exponent needs the wider carry (64 bits, or 96 bits for FFT323161)
   [[nodiscard]] bool needsLargeCarry(u64 E, bool mul3 = false) const;
   [[nodiscard]] bool isFavoredShape() const;
   // A MIDDLE with an odd factor (3, 7, 9 or 11 times a power of two) on an NTT or hybrid FFT/NTT type is done as a Good-Thomas

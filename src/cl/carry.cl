@@ -671,7 +671,7 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
 
   // & vs. && to workaround spurious warning
-  CarryABM carry = (LL & (me == 0) & (g == 0)) ? -2 : 0;
+  CarryABM carry = make_i96((LL & (me == 0) & (g == 0)) ? -2 : 0);
   float roundMax = 0;
   float carryMax = 0;
 

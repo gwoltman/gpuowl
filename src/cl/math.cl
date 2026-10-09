@@ -110,6 +110,7 @@ i128 OVERLOAD make_i128(i64 hi, u64 lo) { i128 val; val.x = ((__int128)hi << 64)
 i128 OVERLOAD make_i128(u64 hi, u64 lo) { i128 val; val.x = ((__int128)hi << 64) | lo; return val; }
 u64 i128_lo64(i128 val) { return val.x; }
 u64 i128_shrlo64(i128 val, u32 bits) { return val.x >> bits; }
+i96 i128_shr96(i128 val, u32 bits) { __int128 v = val.x >> bits; return make_i96((i32) (v >> 64), (u64) v); }
 i128 OVERLOAD i128_masklo64(i128 a, u64 m) { i128 val; val.x = a.x & (((__int128)0xFFFFFFFFFFFFFFFFULL << 64) | m); return val; }
 i128 OVERLOAD add(i128 a, i128 b) { i128 val; val.x = a.x + b.x; return val; }
 i128 OVERLOAD add(i128 a, u64 b) { i128 val; val.x = a.x + (__int128)b; return val; }
@@ -128,6 +129,7 @@ i128 OVERLOAD make_i128(i64 hi, u64 lo) { i128 val; val.hi64 = hi; val.lo64 = lo
 i128 OVERLOAD make_i128(u64 hi, u64 lo) { i128 val; val.hi64 = hi; val.lo64 = lo; return val; }
 u64 i128_lo64(i128 val) { return val.lo64; }
 u64 i128_shrlo64(i128 val, u32 bits) { return (val.hi64 << (64 - bits)) | (val.lo64 >> bits); }
+i96 i128_shr96(i128 val, u32 bits) { return make_i96((i32) (val.hi64 >> bits), i128_shrlo64(val, bits)); }
 i128 OVERLOAD i128_masklo64(i128 a, u64 m) { i128 val; val.lo64 = a.lo64 & m; val.hi64 = a.hi64; return val; }
 i128 OVERLOAD add(i128 a, i128 b) { i128 val; val.lo64 = a.lo64 + b.lo64; val.hi64 = a.hi64 + b.hi64 + (val.lo64 < a.lo64); return val; }
 i128 OVERLOAD add(i128 a, u64 b) { i128 val; val.lo64 = a.lo64 + b; val.hi64 = a.hi64 + (val.lo64 < a.lo64); return val; }
@@ -140,6 +142,10 @@ u64 u128_hi64(u128 val) { return val.hi64; }
 u64 u128_shrlo64(u128 val, u32 bits) { return (val.hi64 << (64 - bits)) | (val.lo64 >> bits); }
 u128 OVERLOAD add(u128 a, u128 b) { u128 val; val.lo64 = a.lo64 + b.lo64; val.hi64 = a.hi64 + b.hi64 + (val.lo64 < a.lo64); return val; }
 #endif
+
+// Widen an i96 to i128 (used for 96-bit carries)
+i128 OVERLOAD make_i128(i96 v) { return make_i128((i64) (i32) i96_hi32(v), i96_lo64(v)); }
+i128 OVERLOAD add(i128 a, i96 b) { return add(a, make_i128(b)); }
 
 // Select based on sign of first argument.  This generates less PTX code, but is no faster on 5xxx GPUs
 i32 select32(i32 a, i32 b, i32 c) {

@@ -1,15 +1,25 @@
 // Copyright (C) Mihai Preda
 
-// carryFused's carry.  MUL3 triples the carries, so the MUL3 kernels switch to 64-bit carries at a lower bpw (MUL3_CARRY64).
-#if CARRY64 || (MUL3 && MUL3_CARRY64)
+// carryFused's carry, whose width the host picks: CARRY32 (the default) or CARRY64 for FFT64 and FFT3231, CARRY64 or CARRY96 for
+// FFT323161.  MUL3 triples the carries, so the MUL3 kernels switch to the wider carry at a lower bpw (MUL3_CARRY64, MUL3_CARRY96).
+// CFCARRY(v) makes a CFcarry from an int.
+#if CARRY96 || (MUL3 && MUL3_CARRY96)
+typedef i96 CFcarry;
+#define CFCARRY(v) make_i96((i32) (v))
+#elif CARRY64 || (MUL3 && MUL3_CARRY64)
 typedef i64 CFcarry;
+#define CFCARRY(v) ((i64) (v))
 #else
 typedef i32 CFcarry;
+#define CFCARRY(v) ((i32) (v))
+#define CFCARRY32 1
 #endif
 
 // The carry for the non-fused CarryA, CarryB, CarryM kernels.
 // Simply use largest possible carry always as the split kernels are slow anyway (and seldomly used normally).
-#if FFT_TYPE != FFT32 && FFT_TYPE != FFT31
+#if FFT_TYPE == FFT323161
+typedef i96 CarryABM;
+#elif FFT_TYPE != FFT32 && FFT_TYPE != FFT31
 typedef i64 CarryABM;
 #else
 typedef i32 CarryABM;
@@ -141,6 +151,9 @@ float OVERLOAD boundCarry(i64 c) {
   return boundCarry((i32) (c >> 32));
 }
 
+// A 96-bit carry (FFT323161) is measured on the 64-bit carry's scale, 2^63 maps to 0.5, for -carryTune's CARRY64/CARRY96 crossover
+float OVERLOAD boundCarry(i96 c) { return ldexp(fabs((float) (i64) i96_hi64(c)), -32); }
+
 #if STATS || ROE
 void updateStats(local u32 *lds, u32 num_threads, u32 num_blocks, global uint *bufROE, u32 posROE, float roundMax) {
   assert(roundMax >= 0);
@@ -213,6 +226,13 @@ Word OVERLOAD carryStep(i128 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
   i64 w = lowBits(i128_lo64(x), nBits);
   *outCarry = i128_shrlo64(x, nBits) + (w < 0);
+  return w;
+}
+
+Word OVERLOAD carryStep(i128 x, i96 *outCarry, bool isBigWord) {
+  u32 nBits = bitlen(isBigWord);
+  i64 w = lowBits(i128_lo64(x), nBits);
+  *outCarry = add(i128_shr96(x, nBits), (i64) (w < 0));
   return w;
 }
 
@@ -314,6 +334,17 @@ Word OVERLOAD carryStepUnsignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
   return w;
 }
 
+Word OVERLOAD carryStepUnsignedSloppy(i128 x, i96 *outCarry, bool isBigWord) {
+  const u32 bigwordBits = EXP / NWORDS + 1;
+  u32 nBits = bitlen(isBigWord);
+
+// Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
+  u64 w = ulowFixedBits(i128_lo64(x), bigwordBits);
+  x = i128_masklo64(x, ~((u64)1 << (bigwordBits - 1)));
+  *outCarry = i128_shr96(x, nBits);
+  return w;
+}
+
 Word OVERLOAD carryStepUnsignedSloppy(i96 x, i64 *outCarry, bool isBigWord) {
   const u32 bigwordBits = EXP / NWORDS + 1;
   u32 nBits = bitlen(isBigWord);
@@ -377,6 +408,21 @@ Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
   u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
   i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
   *outCarry = i128_shrlo64(add(x, xlo_topbit), nBits);
+  return w;
+#endif
+}
+
+Word OVERLOAD carryStepSignedSloppy(i128 x, i96 *outCarry, bool isBigWord) {
+#if ACTUAL_BPW > SLOPPY_MAXBPW
+  return carryStep(x, outCarry, isBigWord);
+#else
+// Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
+  const u32 bigwordBits = EXP / NWORDS + 1;
+  u32 nBits = bitlen(isBigWord);
+  u64 xlo = i128_lo64(x);
+  u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
+  i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
+  *outCarry = i128_shr96(add(x, xlo_topbit), nBits);
   return w;
 #endif
 }
@@ -457,11 +503,34 @@ Word OVERLOAD carryStepSignedSloppy(i32 x, i32 *outCarry, bool isBigWord) {
 
 
 // Carry propagation from word and carry.  Used by carryB.cl.
+// carryWordLast: the same for the last word pair of a carryB group, adding the carry out of the first word into the second without
+// normalizing it.  carryIsZero: true if the carry is zero.
+#if FFT_TYPE == FFT323161
+Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
+  a.x = carryStep(add(make_i128(*carry), (i64) a.x), carry, b1);
+  a.y = carryStep(add(make_i128(*carry), (i64) a.y), carry, b2);
+  return a;
+}
+Word2 carryWordLast(Word2 a, CarryABM carry, bool b1) {
+  i64 c;      // The carry out of one word fits in an i64
+  a.x = carryStep(add(make_i128(carry), (i64) a.x), &c, b1);
+  a.y += c;
+  return a;
+}
+bool carryIsZero(CarryABM c) { return (i96_lo64(c) | i96_hi32(c)) == 0; }
+#else
 Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
   a.x = carryStep(a.x + *carry, carry, b1);
   a.y = carryStep(a.y + *carry, carry, b2);
   return a;
 }
+Word2 carryWordLast(Word2 a, CarryABM carry, bool b1) {
+  a.x = carryStep(a.x + carry, &carry, b1);
+  a.y += carry;
+  return a;
+}
+bool carryIsZero(CarryABM c) { return c == 0; }
+#endif
 
 /**************************************************************************/
 /*     Do this last, it depends on weightAndCarryOne defined above        */
@@ -482,7 +551,7 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 // returns true for every type at EXP / NWORDS >= 20, so CARRY_AUTO can never reach here.  Only an explicit
 // 32-bit carry in the FFT spec ("-fft 3:256:2:256:212:0") can, and the NTT types need the check as much as
 // FP64 does -- a GF61 carry at 25 bpw does not fit in i32 either, and nothing else would report it.
-#if !(CARRY64 || (MUL3 && MUL3_CARRY64)) && EXP / NWORDS >= 20
+#if CFCARRY32 && EXP / NWORDS >= 20
 #error "CARRY32 requires EXP / NWORDS < 20; this exponent needs CARRY64 (-carry long)"
 #endif
 #define iCARRY i32
@@ -493,5 +562,13 @@ Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
 #if FFT_TYPE != FFT32 && FFT_TYPE != FFT31
 #define iCARRY i64
 #include "carryinc.cl"
+#undef iCARRY
+#endif
+
+#if FFT_TYPE == FFT323161
+#define iCARRY i96
+#define ICARRY_I96 1
+#include "carryinc.cl"
+#undef ICARRY_I96
 #undef iCARRY
 #endif

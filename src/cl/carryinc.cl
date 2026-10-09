@@ -345,12 +345,23 @@ error - missing weightAndCarryOne implementation
 #endif
 
 
+#if !ICARRY_I96
 Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
   iCARRY tmpCarry;
   u.x = carryStepSignedSloppy(u.x + inCarry, &tmpCarry, b1);
   u.y += tmpCarry;
   return u;
 }
+#else
+// A 96-bit carry is a struct, so it is added as an i128.  The carry out of the first word is small enough for an i64.
+// Like the i64 version (whose carryStepSignedSloppy is carryStep) the word is balanced exactly.
+Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
+  i64 tmpCarry;
+  u.x = carryStep(add(make_i128(inCarry), (i64) u.x), &tmpCarry, b1);
+  u.y += tmpCarry;
+  return u;
+}
+#endif
 
 /*******************************************************************************************/
 /*  Original FP64 version to start the carry propagation process for a pair of FFT values  */

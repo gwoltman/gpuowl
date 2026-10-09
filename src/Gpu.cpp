@@ -536,12 +536,20 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   if (isNvidiaGpu(id)) { defines += toDefine("CC", getNvidiaComputeCapability(id)); }
   if (!hasFP64(id)) { defines += toDefine("NO_FP64", 1); }
 
-  if ((fft.carry == CARRY_AUTO && fft.shape.needsLargeCarry(E)) || (fft.carry == CARRY_64)) {
-    if (doLog) { log("Using CARRY64\n"); }
-    defines += toDefine("CARRY64", 1);
+  // carryFused's carry width: CARRY32 or CARRY64, or for FFT323161 CARRY64 or CARRY96.  The MUL3 kernels triple the carries, so they
+  // need the wider carry at a lower bpw (MUL3_CARRY64, MUL3_CARRY96).  An explicit :0 or :1 picks the narrower or wider carry; :0 limits
+  // only the non-MUL3 kernels.
+  bool const largeCarry = (fft.carry == CARRY_AUTO && fft.shape.needsLargeCarry(E)) || fft.carry == CARRY_64;
+  bool const largeCarryMul3 = fft.carry == CARRY_64 || fft.shape.needsLargeCarry(E, true);
+  if (fft.shape.fft_type == FFT323161) {
+    if (doLog && largeCarry) { log("Using CARRY96\n"); }
+    defines += toDefine(largeCarry ? "CARRY96" : "CARRY64", 1);
+    if (largeCarryMul3) { defines += toDefine("MUL3_CARRY96", 1); }
+  } else {
+    if (doLog && largeCarry) { log("Using CARRY64\n"); }
+    if (largeCarry) { defines += toDefine("CARRY64", 1); }
+    if (largeCarryMul3) { defines += toDefine("MUL3_CARRY64", 1); }
   }
-  // The MUL3 kernels triple the carries, so they need 64-bit carries at a lower bpw.  An explicit :0 limits only the others.
-  if (fft.carry == CARRY_64 || fft.shape.needsLargeCarry(E, true)) { defines += toDefine("MUL3_CARRY64", 1); }
 
   u32 const N = fft.shape.size();
   defines += toDefine("FFT_VARIANT", fft.variant);
@@ -1130,7 +1138,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   BUF(bufAux, N * fft.WordSize / sizeof(Word)),
   BUF(bufCheck, N * fft.WordSize / sizeof(Word)),
   // Every double-word (i.e. N/2) produces one carry. In addition we may have one extra group thus WIDTH more carries.
-  BUF(bufCarry, N / 2 + WIDTH),
+  // FFT323161's 96-bit carries add a second plane of i32s (see csStore in carryfused.cl)
+  BUF(bufCarry, (N / 2 + WIDTH) * (fft.shape.fft_type == FFT323161 ? 3 : 2) / 2),
   BUF(bufReady, (N / 2 + WIDTH) / 32), // Every wavefront (32 or 64 lanes) needs to signal "carry is ready"
 
   BUF(bufSmallOut, 256),

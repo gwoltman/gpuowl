@@ -224,7 +224,17 @@ float FFTShape::carry32BPW(bool mul3) const {
   return float(std::min(bpw, 20.0));
 }
 
+float FFTShape::carry64BPW(bool mul3) const {
+  // FFT323161's 64-bit carries, measured with -carryTune (STATS: 2^63 maps to 0.5) for the same Z as carry32BPW() (Z ~27 at 4M, 8M
+  // and 16M words).  The plain kernels' crossover is above the bpw where sloppy carries stop (MAXBPW - 1.1), so their carries are exact.
+  // MUL3 triples the carries (log2(3) bpw), and at its lower bpw the previous iterations' sloppy carries make the input words, and so
+  // the carries, up to 2.8x larger (1.5 bpw) when frac(bpw) is just above zero, where almost every second word is a small word.
+  double const plain = 50.2 - 0.5 * (log2(size()) - 23);
+  return float(mul3 ? plain - log2(3.0) - 1.5 : plain);
+}
+
 bool FFTShape::needsLargeCarry(u64 E, bool mul3) const {
+  if (fft_type == FFT323161) { return E / double(size()) > carry64BPW(mul3); }
   // carry32BPW() caps at 20.0 and the comparison below is a strict >, so E == 20 * size() would still
   // select CARRY32 with EXP / NWORDS == 20, which the CARRY32 code cannot handle (see carry32BPW()).
   // Test the kernel's own EXP / NWORDS expression to close that off-by-one.
@@ -348,7 +358,9 @@ float FFTConfig::maxBpw() const {
     b = (b1 + b2) / 2.0f;
   }
   // Only some FFTs support both 32 and 64 bit carries.
-  return (carry == CARRY_32 && (shape.fft_type == FFT64 || shape.fft_type == FFT3231)) ? std::min(shape.carry32BPW(), b) : b;
+  // Only some FFTs support two carry widths (FFT64, FFT3231: 32 or 64 bits; FFT323161: 64 or 96 bits)
+  bool const twoWidths = shape.fft_type == FFT64 || shape.fft_type == FFT3231 || shape.fft_type == FFT323161;
+  return (carry == CARRY_32 && twoWidths) ? std::min(shape.narrowCarryBPW(), b) : b;
 }
 
 FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses) {

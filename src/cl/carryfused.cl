@@ -39,6 +39,20 @@ void spin() {
 #define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
 #endif
 
+// Carry shuttle stores and loads.  A 96-bit carry is kept in two planes, its low 64 bits and then its high 32 bits, so each part is a
+// plain i64 or i32 access.  The second plane starts after the first's NWORDS / 2 + WIDTH i64s (see bufCarry in Gpu.cpp).
+#define CS_PLANE2       (NWORDS / 2 + WIDTH)
+void OVERLOAD csStore(P(i64) cs, u32 pos, i32 c) { CSSTORE(&((P(i32)) cs)[pos], c); }
+void OVERLOAD csStore(P(i64) cs, u32 pos, i64 c) { CSSTORE(&cs[pos], c); }
+void OVERLOAD csStore(P(i64) cs, u32 pos, i96 c) { CSSTORE(&cs[pos], (i64) i96_lo64(c)); CSSTORE(&((P(i32)) (cs + CS_PLANE2))[pos], (i32) i96_hi32(c)); }
+void OVERLOAD csLoad(P(i64) cs, u32 pos, i32 *c) { *c = CSLOAD(&((P(i32)) cs)[pos]); }
+void OVERLOAD csLoad(P(i64) cs, u32 pos, i64 *c) { *c = CSLOAD(&cs[pos]); }
+void OVERLOAD csLoad(P(i64) cs, u32 pos, i96 *c) {
+  i64 lo = CSLOAD(&cs[pos]);
+  i32 hi = CSLOAD(&((P(i32)) (cs + CS_PLANE2))[pos]);
+  *c = make_i96(hi, (u64) lo);
+}
+
 // In place, the last workgroup (gr == H / WMUL) redoes group 0's lines and overwrites them.  Carries only pass from one group to the
 // next, so nothing orders that write after group 0's read of the same lines: the last group waits on group H / WMUL - 1 only, and every
 // group publishes its carries before waiting for its own.  If group 0 starts late it reads lines that are already overwritten and hands
@@ -145,6 +159,18 @@ void OVERLOAD shufl_carries_up(local void *lds2, i32 *carry, u32 me, u32 lowMe) 
   // One last bar() is needed when sharing LDS memory.  This is because when sharing a workgroup will write to more than its own LDS area.
   if (SHARING_LDS(WMUL)) bar();
 
+#endif
+}
+
+// A 96-bit carry is shuffled as its low 64 bits and then its high 32 bits
+void OVERLOAD shufl_carries_up(local void *lds2, i96 *carry, u32 me, u32 lowMe) {
+#if WMUL > 1
+  i64 lo[NW];
+  i32 hi[NW];
+  for (i32 i = 0; i < NW; ++i) { lo[i] = i96_lo64(carry[i]); hi[i] = i96_hi32(carry[i]); }
+  shufl_carries_up(lds2, lo, me, lowMe);
+  shufl_carries_up(lds2, hi, me, lowMe);
+  for (i32 i = 0; i < NW; ++i) { carry[i] = make_i96(hi[i], (u64) lo[i]); }
 #endif
 }
 
@@ -2358,8 +2384,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   weights.y = optionalHalve(weights.y, base_frac_bits > partialLine_frac_bits);
 #endif
 
-  P(i64) carryShuttlePtr = (P(i64)) carryShuttle;
-  i64 carry[NW+1];
+  CFcarry carry[NW+1];
 
   float roundMax = 0;
   float carryMax = 0;
@@ -2435,7 +2460,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     wu[i] = weightAndCarryPairSloppy(SWAP_XY(uF2[i]), SWAP_XY(u31[i]), SWAP_XY(u61[i]), invWeight1, invWeight2, m31_weight_shift0, m31_weight_shift1, m61_weight_shift0, m61_weight_shift1,
                       // For an LL test, add -2 as the very initial "carry in"
                       // We'd normally use logical &&, but the compiler whines with warning and bitwise fixes it
-                      LL != 0, (LL & (i == 0) & (line==0) & (me == 0)) ? -2 : 0, biglit0, biglit1, &carry[i], &roundMax, &carryMax);
+                      LL != 0, CFCARRY((LL & (i == 0) & (line==0) & (me == 0)) ? -2 : 0), biglit0, biglit1, &carry[i], &roundMax, &carryMax);
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;
@@ -2455,7 +2480,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    for (i32 i = 0; i < NW; ++i) { csStore(carryShuttle, gr * WIDTH + CarryShuttleAccess(lowMe, i), carry[i]); }
 
     // Tell next group that its carries are ready
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
@@ -2541,12 +2566,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (!rotatedCarries) {
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        csLoad(carryShuttle, (gr - 1) * WIDTH + CarryShuttleAccess(me, i), &carry[i]);
       }
     } else {
 
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        csLoad(carryShuttle, (gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i), &carry[i]);
       }
 
       if (me == 0) {
