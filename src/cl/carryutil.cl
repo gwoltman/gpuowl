@@ -222,8 +222,18 @@ void ROUNDOFF_CHECK(double x) {
 /*   Split a value + carryIn into a big-or-little word and a carryOut   */
 /************************************************************************/
 
+// With words of 33 bits or more (FFT323161), the i128 carry steps work on 32-bit pieces: the word's high half is a bit field of the second
+// dword and the carry, bits [nBits, nBits + 64) or [nBits, nBits + 96), is funnel shifts of the higher dwords.
+#define I128_SHIFT_DWORDS(lo, hi, s)  as_long((uint2)(xtract32(as_long((uint2)(hi32(lo), lo32(hi))), s), xtract32((i64) (hi), s)))
+
 Word OVERLOAD carryStep(i128 x, i64 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
+  if (EXP / NWORDS >= 33) {
+    u64 lo = i128_lo64(x), hi = i128_hi64(x);
+    i32 whi = lowBits((i32) hi32(lo), nBits - 32);
+    *outCarry = I128_SHIFT_DWORDS(lo, hi, nBits - 32) + (whi < 0);
+    return as_long((int2)(lo32(lo), whi));
+  }
   i64 w = lowBits(i128_lo64(x), nBits);
   *outCarry = i128_shrlo64(x, nBits) + (w < 0);
   return w;
@@ -231,6 +241,12 @@ Word OVERLOAD carryStep(i128 x, i64 *outCarry, bool isBigWord) {
 
 Word OVERLOAD carryStep(i128 x, i96 *outCarry, bool isBigWord) {
   u32 nBits = bitlen(isBigWord);
+  if (EXP / NWORDS >= 33) {
+    u64 lo = i128_lo64(x), hi = i128_hi64(x);
+    i32 whi = lowBits((i32) hi32(lo), nBits - 32);
+    *outCarry = add(make_i96((i32) hi32(hi) >> (nBits - 32), (u64) I128_SHIFT_DWORDS(lo, hi, nBits - 32)), (i64) (whi < 0));
+    return as_long((int2)(lo32(lo), whi));
+  }
   i64 w = lowBits(i128_lo64(x), nBits);
   *outCarry = add(i128_shr96(x, nBits), (i64) (w < 0));
   return w;
@@ -330,6 +346,7 @@ Word OVERLOAD carryStepUnsignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
   u64 w = ulowFixedBits(i128_lo64(x), bigwordBits);
   x = i128_masklo64(x, ~((u64)1 << (bigwordBits - 1)));
+  if (EXP / NWORDS >= 33) { *outCarry = I128_SHIFT_DWORDS(i128_lo64(x), i128_hi64(x), nBits - 32); return w; }
   *outCarry = i128_shrlo64(x, nBits);
   return w;
 }
@@ -341,6 +358,11 @@ Word OVERLOAD carryStepUnsignedSloppy(i128 x, i96 *outCarry, bool isBigWord) {
 // Return a Word using the big word size.  Big word size is a constant which allows for more optimization.
   u64 w = ulowFixedBits(i128_lo64(x), bigwordBits);
   x = i128_masklo64(x, ~((u64)1 << (bigwordBits - 1)));
+  if (EXP / NWORDS >= 33) {
+    u64 lo = i128_lo64(x), hi = i128_hi64(x);
+    *outCarry = make_i96((i32) hi32(hi) >> (nBits - 32), (u64) I128_SHIFT_DWORDS(lo, hi, nBits - 32));
+    return w;
+  }
   *outCarry = i128_shr96(x, nBits);
   return w;
 }
@@ -407,7 +429,9 @@ Word OVERLOAD carryStepSignedSloppy(i128 x, i64 *outCarry, bool isBigWord) {
   u64 xlo = i128_lo64(x);
   u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
   i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
-  *outCarry = i128_shrlo64(add(x, xlo_topbit), nBits);
+  // Adding xlo_topbit (bit nBits - 1 of a big word, bit nBits of a small one) to x adds exactly one to x >> nBits
+  if (EXP / NWORDS >= 33) { *outCarry = I128_SHIFT_DWORDS(xlo, i128_hi64(x), nBits - 32) + (xlo_topbit != 0); return w; }
+  *outCarry = i128_shrlo64(x, nBits) + (xlo_topbit != 0);
   return w;
 #endif
 }
@@ -422,7 +446,13 @@ Word OVERLOAD carryStepSignedSloppy(i128 x, i96 *outCarry, bool isBigWord) {
   u64 xlo = i128_lo64(x);
   u64 xlo_topbit = xlo & ((u64)1 << (bigwordBits - 1));
   i64 w = ulowFixedBits(xlo, bigwordBits - 1) - xlo_topbit;
-  *outCarry = i128_shr96(add(x, xlo_topbit), nBits);
+  // Adding xlo_topbit (bit nBits - 1 of a big word, bit nBits of a small one) to x adds exactly one to x >> nBits
+  if (EXP / NWORDS >= 33) {
+    u64 hi = i128_hi64(x);
+    *outCarry = add(make_i96((i32) hi32(hi) >> (nBits - 32), (u64) I128_SHIFT_DWORDS(xlo, hi, nBits - 32)), (i64) (xlo_topbit != 0));
+    return w;
+  }
+  *outCarry = add(i128_shr96(x, nBits), (i64) (xlo_topbit != 0));
   return w;
 #endif
 }

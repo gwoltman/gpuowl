@@ -317,25 +317,26 @@ i128 OVERLOAD weightAndCarryOne(F uF, Z31 u31, Z61 u61, F F2_invWeight, u32 m31_
   // = (((nF << 31) - nF) << 61) + ((n61 - nF) << 31) - (n61 - nF) + n31
   // = (((nF << 32) - nF*2) << 60) + ((n61 - nF) << 31) - (n61 - nF) + n31
 
-  // Compute x = (n61 - nF)
-  i64 x = (i64)n61 - nF;
-  // Compute y = ((n61 - nF) << 31) + n31
-  i128 y = make_i128(x >> 33, (x << 31) | n31);
-  // Compute z = ((nF << 32) - nF*2) << 60
-  i64 tmp = make_i64(nF, 0) - (i64)(nF + nF);
-  i128 z = make_i128(tmp >> 4, tmp << 60);
+  // Since -(nF << 61) = -((nF << 30) << 31), the middle terms can be combined before shifting:
+  // = (nF << 92) + ((n61 - nF - (nF << 30)) << 31) - (n61 - nF) + n31
 
-  // Put the parts together
-  i128 v = sub(add(z, y), x);
+  // Compute x = (n61 - nF) and x2 = x - (nF << 30), which still fits in an i64
+  i64 x = (i64)n61 - nF;
+  i64 x2 = x - ((i64)nF << 30);
+#if !MUL3
+  // Put the parts together.  The low 31 bits of x2 << 31 are zero, so n31 is or'ed in, and nF << 92 only touches the high 64 bits.
+  i128 v = sub(make_i128((x2 >> 33) + ((i64)nF << 28), (x2 << 31) | n31), x);
+#else
+  // Mul by 3.  Tripling the parts is cheaper than tripling the i128, and each still fits: 3 * x2 and 3 * (n31 - x) are below 2^63.
+  i64 x2_3 = x2 * 3;
+  i128 v = add(make_i128((x2_3 >> 33) + ((i64)(nF * 3) << 28), x2_3 << 31), ((i64)n31 - x) * 3);
+#endif
 
   // Optionally calculate roundoff error
   float roundoff = fabs(fma(uF, 2.0194839183061857038255724444152e-28f, RNDVAL - uFint));
   *maxROE = max(*maxROE, roundoff);
 
-  // Mul by 3 and add carry
-#if MUL3
-  v = add(v, add(v, v));
-#endif
+  // Add carry (MUL3 was applied above)
   if (hasInCarry) v = add(v, inCarry);
   return v;
 }
@@ -353,11 +354,11 @@ Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
   return u;
 }
 #else
-// A 96-bit carry is a struct, so it is added as an i128.  The carry out of the first word is small enough for an i64.
+// A 96-bit carry is a struct, so it is added with add(i96, i64).  The carry out of the first word is small enough for an i64.
 // Like the i64 version (whose carryStepSignedSloppy is carryStep) the word is balanced exactly.
 Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
   i64 tmpCarry;
-  u.x = carryStep(add(make_i128(inCarry), (i64) u.x), &tmpCarry, b1);
+  u.x = carryStep(add(inCarry, (i64) u.x), &tmpCarry, b1);
   u.y += tmpCarry;
   return u;
 }
