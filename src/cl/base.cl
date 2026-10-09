@@ -2,6 +2,12 @@
 
 #pragma once
 
+#if defined(__clang__)
+// The out-of-line copy of a function with a fully unrolled loop whose bounds depend on a parameter (e.g. fft_common's on callnum)
+// cannot be unrolled; the inlined copies are.  Some ROCm versions warn about that copy on every compile.
+#pragma clang diagnostic ignored "-Wpass-failed"
+#endif
+
 /* Tunable paramaters for -ctune :
 
 IN_WG, OUT_WG: 64, 128, 256. Default: 128.
@@ -296,7 +302,7 @@ u32 pfaTailPartner(u32 line) { u32 kx = line % PFA_TW; return line - kx + (kx ? 
 u32 pfaTailTrigIndex(u32 line) { return line / PFA_TW * (PFA_TW / 2 + 1) + line % PFA_TW; }
 #define TAIL_PARTNER(line)      pfaTailPartner(line)
 #define TAIL_TRIG_LINE(line)    pfaTailTrigIndex(line)
-#define TAIL_SELF_PAIRED(line)  ((line) % PFA_TW == 0)
+#define TAIL_SELF_PAIRED(line)  (!((line) % PFA_TW))  // Not "== 0": in preprocessed source (-save-temps) clang warns about if (((x) == 0))
 
 // The FP side of a hybrid FFT/NTT (FP32 or FP64) uses the same layout, but its PFA-th root of unity is complex: the conjugate of
 // row frequency k3 is PFA - k3, so the tail pairs line kx + PFA_TW*k3 with ((PFA_TW - kx) % PFA_TW) + PFA_TW*((PFA - k3) % PFA).
@@ -322,7 +328,7 @@ u32 pfaFpTailTrigBase(u32 line) { return (line / PFA_TW * PFA_L + PFA * (line % 
 // Stock tail: line pairs with H - line, lines 0 and H/2 pair with themselves (H = WIDTH * MIDDLE)
 #define TAIL_PARTNER(line)      ((line) ? WIDTH * MIDDLE - (line) : WIDTH * MIDDLE / 2)
 #define TAIL_TRIG_LINE(line)    (line)
-#define TAIL_SELF_PAIRED(line)  ((line) == 0)
+#define TAIL_SELF_PAIRED(line)  (!(line))             // Not "== 0", see above
 #endif
 
 // 2 is a primitive q-th root of unity mod Mq, so the NWORDS-th root of two used by the IBDWT weights is 2^(NWORDS^-1 mod q).
