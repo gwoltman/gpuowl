@@ -44,7 +44,7 @@ u32 pfaExtra(u32 k) { return (u32) ((u64) k * STEP % NWORDS); }
 
 #endif
 
-// Routines to acces the 8 precomputed step weights
+// Routines to access the 8 precomputed step weights
 u32 weightStepIndex(u32 i) { return i * STEP % NW * (8 / NW); }
 u32 weightStepFracBits(u32 i) { return 0xFFFFFFFF - (weightStepIndex(i) << 29); }
 

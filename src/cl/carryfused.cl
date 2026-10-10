@@ -53,13 +53,18 @@ void OVERLOAD csLoad(P(i64) cs, u32 pos, i96 *c) {
   *c = make_i96(hi, (u64) lo);
 }
 
+// carryFused signals "carries ready" once per READY_LANES lanes of a G_W-wide line: once per wavefront, or once per line when a line is
+// narrower than a wavefront (G_W = 32, radix 8 at WIDTH 256, on a 64-lane AMD wavefront).  READY_PER_LINE flags per line.
+#define READY_LANES     (G_W < WAVEFRONT ? G_W : WAVEFRONT)
+#define READY_PER_LINE  (G_W / READY_LANES)
+
 // In place, the last workgroup (gr == H / WMUL) redoes group 0's lines and overwrites them.  Carries only pass from one group to the
 // next, so nothing orders that write after group 0's read of the same lines: the last group waits on group H / WMUL - 1 only, and every
 // group publishes its carries before waiting for its own.  If group 0 starts late it reads lines that are already overwritten and hands
 // bad carries to group 1.  On nVidia this happens when the GPU is time-sliced with another process while CUDA graphs are in use.
 // So group 0 raises a flag once it has read its lines, and the last group waits for that flag (and clears it) before writing.  The flag
 // uses the first ready[] slot past those of the carry hand-off.
-#define LINES_READ_FLAG (BIG_HEIGHT / WMUL * (G_W / WAVEFRONT))
+#define LINES_READ_FLAG (BIG_HEIGHT / WMUL * READY_PER_LINE)
 
 void signalLinesRead(P(u32) ready) {
   if (!INPLACE) return;
@@ -272,8 +277,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -328,14 +333,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -507,8 +512,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) { 
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) { 
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -555,14 +560,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -751,8 +756,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -807,14 +812,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -995,8 +1000,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -1051,14 +1056,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -1263,8 +1268,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -1329,14 +1334,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -1569,8 +1574,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -1624,14 +1629,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -1872,8 +1877,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -1927,14 +1932,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -2167,8 +2172,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -2223,14 +2228,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
@@ -2486,8 +2491,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     write_mem_fence(CLK_GLOBAL_MEM_FENCE);
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
-    if (lowMe % WAVEFRONT == 0) {
-      u32 pos = gr * (G_W / WAVEFRONT) + lowMe / WAVEFRONT;
+    if (lowMe % READY_LANES == 0) {
+      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
       atomic_store((global atomic_uint *) &ready[pos], 1);
     }
 #endif
@@ -2541,14 +2546,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
-    u32 pos = (gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT;
-    if (me % WAVEFRONT == 0) {
+    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    if (me % READY_LANES == 0) {
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
     read_mem_fence(CLK_GLOBAL_MEM_FENCE);
     // Clear carry ready flag for next iteration
-    if (me % WAVEFRONT == 0) ready[(gr - 1) * (G_W / WAVEFRONT) + me / WAVEFRONT] = 0;
+    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
     setPriority(1);
   }
