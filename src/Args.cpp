@@ -139,18 +139,28 @@ void Args::readConfig(const fs::path& path) {
   }
 }
 
-Args Args::withFftUses(const string& fftSpec, const vector<KeyVal>& uses) const {
+// Same priority as clDefines: these args' flags (command line, config.txt, tune.txt), then the FFT's config.txt line
+bool Args::radix8At256(const string& fftShapeSpec, bool height) const {
+  string const key = height ? "256RADIX8_H" : "256RADIX8_W";
+  if (auto it = flags.find(key); it != flags.end()) { return atoi(it->second.c_str()) != 0; }
+  if (auto it = perFftConfig.find(fftShapeSpec); it != perFftConfig.end()) {
+    for (const auto& [k, v] : it->second) { if (k == key) { return atoi(v.c_str()) != 0; } }
+  }
+  return false;
+}
+
+Args Args::withFftUses(const string& fftSpec, const vector<KeyVal>& uses, bool doLog) const {
   Args ret{*this};
   string applied;
   for (const auto& [key, val] : uses) {
     if (cmdlineUses.contains(key)) {
-      if (flags.at(key) != val) { log("%s: tune.txt %s=%s overridden by command line %s=%s\n", fftSpec.c_str(), key.c_str(), val.c_str(), key.c_str(), flags.at(key).c_str()); }
+      if (doLog && flags.at(key) != val) { log("%s: tune.txt %s=%s overridden by command line %s=%s\n", fftSpec.c_str(), key.c_str(), val.c_str(), key.c_str(), flags.at(key).c_str()); }
       continue;
     }
     applied += (applied.empty() ? "" : ", ") + key + '=' + val;
     ret.flags[key] = val;
   }
-  if (!applied.empty()) { log("%s: tune.txt sets %s\n", fftSpec.c_str(), applied.c_str()); }
+  if (doLog && !applied.empty()) { log("%s: tune.txt sets %s\n", fftSpec.c_str(), applied.c_str()); }
   return ret;
 }
 
@@ -267,6 +277,8 @@ named "config.txt" in the prpll run directory.
                      0 = All trig values are pre-computed and read from memory.
                      1 = Read one trig value and compute the next 3 or 7 (chained multiplies, slightly less accurate).
                      TABMUL_CHAIN31, TABMUL_CHAIN32 and TABMUL_CHAIN61 do the same for the M31, FP32 and M61 parts.
+  -use 256RADIX8_W, 256RADIX8_H : at a WIDTH (or HEIGHT) of 256 use the radix-8 code (32 threads per line, no
+                     variant 0) instead of radix 4.  Faster on Radeon VII, and for FP64 on TitanV; slower for NTTs on TitanV.
 
   -use DEBUG       : enable asserts in OpenCL kernels (slow, developers)
   -use STATS=<val> : enable carry statistics collection & logging (developers), for the kernel according to <val>:

@@ -26,7 +26,7 @@
 // The LDSPAD RADIX == 4 reads in this file choose between a WG == 64 form and an else arm whose
 // i * 64 and (lowMe / 64) * 16 terms only balance at WG == 256.  Both workgroup sizes RADIX 4 can
 // have today are therefore handled -- a 256-wide/high shape gives WG 64, and a 1024 one would give
-// WG 256 if the commented-out clause in FFTConfig::nW()/nH() were re-enabled -- so the code is
+// WG 256 if FFTConfig::nW()/nH() ever chose radix 4 at 1024 -- so the code is
 // correct as it stands, and generalising it would add index arithmetic for no present benefit.
 // Any other WG would read slots that were never written, silently and with the wrong residue as the
 // only symptom, so refuse to build it instead.  Generalising is easy when it is needed: i * (WG / 4)

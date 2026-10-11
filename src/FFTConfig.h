@@ -42,8 +42,14 @@ public:
   explicit FFTShape(const string& spec);
 
   [[nodiscard]] u32 size() const { return width * height * middle * 2; }
-  [[nodiscard]] u32 nW() const { return (/*width == 1024 ||*/ width == 256) ? 4 : 8; }
-  [[nodiscard]] u32 nH() const { return (/*height == 1024 ||*/ height == 256) ? 4 : 8; }
+  // Radix 8, except radix 4 at 256 unless radix8At256 (-use 256RADIX8_W / 256RADIX8_H, see Args::radix8At256) selects the 4 * 8 * 8
+  // radix-8 code.  Radix 8 at 256 (32 threads per line) does less math.  It is faster for FP64 on Radeon VII and TitanV and for GF61 on
+  // Radeon VII, but slower for the NTT types on TitanV (more registers, fewer warps, more instruction fetch stalls).
+  [[nodiscard]] u32 nW(bool radix8At256) const { return width == 256 && !radix8At256 ? 4 : 8; }
+  [[nodiscard]] u32 nH(bool radix8At256) const { return height == 256 && !radix8At256 ? 4 : 8; }
+  // Variant 0 (BCAST) is implemented for sizes up to 1K, but not for radix 8 at 256
+  [[nodiscard]] bool hasVariant0W(bool radix8At256) const { return width <= 1024 && !(width == 256 && radix8At256); }
+  [[nodiscard]] bool hasVariant0H(bool radix8At256) const { return height <= 1024 && !(height == 256 && radix8At256); }
 
   [[nodiscard]] float minBpw() const { return fft_type != FFT32 ? 3.0f : 1.0f; }
   [[nodiscard]] float maxBpw() const { return *std::ranges::max_element(bpw); }

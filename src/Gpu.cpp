@@ -272,7 +272,7 @@ CARRY_SIZE = 100000
 // Any setting adjusted here for this FFT or device (INPLACE, TAIL_KERNELS, WMUL, LDSPAD_W, L2_STRIPING, MULTI_Q, GRAPHS...) is changed
 // only in the local config and in the out-parameters.  args is const: writing such a change back into args.flags would carry it into
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
-string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<KeyVal>& extraConf, u64 E, bool doLog,
+string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 nH, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
                  u32 &multi_q, u32 &l2_striping, bool &graphs) {
   map<string, string> config;
@@ -308,7 +308,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
-    bool const isValid = isCudaOnly || Args::isRegisterKey(k) || isInList(k, {
+    bool const isValid = isCudaOnly || Args::isRegisterKey(k) || Args::isRadixKey(k) || isInList(k, {
                               "FAST_BARRIER",
                               "STATS",
                               "IN_SIZEX",
@@ -410,10 +410,17 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
           shufl_bytes_w, fft.shape.width * shufl_bytes_w, fft.shape.width, u32(getLocalMemSize(id)));
       throw "SHUFL_BYTES_W too large";
     }
+    // A line narrower than a wavefront (radix 8 at WIDTH 256 is 32 threads) leaves part of every wavefront idle with WMUL=1, and the
+    // global WMUL in config.txt is chosen for wider FFTs.  So on 64-lane AMD wavefronts carryFused uses WMUL = WAVEFRONT / G_W.
+    if (u32 const wavefront = getAmdWavefrontWidth(id), g_w = fft.shape.width / nW; wavefront && g_w < wavefront && wmul != wavefront / g_w) {
+      if (doLog) { log("WMUL=%u changed to %u: a %u-thread line is narrower than a %u-lane wavefront\n", wmul, wavefront / g_w, g_w, wavefront); }
+      wmul = wavefront / g_w;
+      config["WMUL"] = to_string(wmul);
+    }
     u32 max_wmul = lds_limit / (fft.shape.width * shufl_bytes_w);
     if (max_wmul > 2 && fft.shape.width >= 1024) max_wmul = 2;
     if (max_wmul > 1 && fft.shape.width >= 4096) max_wmul = 1;
-    max_wmul = std::min(max_wmul, getMaxWorkGroupSize(id) / (fft.shape.width / fft.shape.nW()));
+    max_wmul = std::min(max_wmul, getMaxWorkGroupSize(id) / (fft.shape.width / nW));
     max_wmul = std::max(max_wmul, 1u);
     u32 const requested = wmul;
     if (wmul > max_wmul) wmul = max_wmul;
@@ -507,7 +514,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
 
   // The register limits are applied per kernel (numRegisters), not as defines: as defines they would change every kernel's
   // compile options, and so its kernel cache entry, whenever one kernel's limit changed.
-  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first) || kv.first == "SMEM_SPILL"; });
+  // Nor can the radix keys be defines (a macro name cannot start with a digit); the .cl code sees NW and NH.
+  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || kv.first == "SMEM_SPILL"; });
   string defines = toDefine(config);
   if (doLog) { log("config: %s\n", defines.c_str()); }
 
@@ -517,8 +525,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
                     {"SMALL_HEIGHT", fft.shape.height},
                     {"MIDDLE", fft.shape.middle},
                     {"CARRY_LEN", CARRY_LEN},
-                    {"NW", fft.shape.nW()},
-                    {"NH", fft.shape.nH()}
+                    {"NW", nW},
+                    {"NH", nH}
                   });
 
   if (isAmdGpu(id)) {
@@ -641,35 +649,35 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
   if (fft.FFT_FP64 && fft.NTT_GF31) {
     // GF31 data is located after the FP64 data.  Compute size of the FP64 data and trigs.
     defines += toDefine("DISTGF31",      FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
-    defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-    defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF31 && fft.NTT_GF61) {
     // GF31 and GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
     u32 sz1, sz2, sz3, sz4;
     defines += toDefine("DISTGF31",      sz1 = FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
-    defines += toDefine("DISTWTRIGGF31", sz2 = SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTWTRIGGF31", sz2 = SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
     defines += toDefine("DISTMTRIGGF31", sz3 = MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-    defines += toDefine("DISTHTRIGGF31", sz4 = SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTHTRIGGF31", sz4 = SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
     defines += toDefine("DISTGF61",      sz1 + GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
-    defines += toDefine("DISTWTRIGGF61", sz2 + SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTWTRIGGF61", sz2 + SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
     defines += toDefine("DISTMTRIGGF61", sz3 + MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-    defines += toDefine("DISTHTRIGGF61", sz4 + SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTHTRIGGF61", sz4 + SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF31) {
     // GF31 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
     defines += toDefine("DISTGF31",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
-    defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-    defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF61) {
     // GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
     defines += toDefine("DISTGF61",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
-    defines += toDefine("DISTWTRIGGF61", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTWTRIGGF61", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-    defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
   }
   else if (fft.NTT_GF31 && fft.NTT_GF61) {
     defines += toDefine("DISTGF31",      0);
@@ -678,9 +686,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, const vector<
     defines += toDefine("DISTHTRIGGF31", 0);
     // GF61 data is located after the GF31 data.  Compute size of the GF31 data and trigs.
     defines += toDefine("DISTGF61",      GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
-    defines += toDefine("DISTWTRIGGF61", SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTWTRIGGF61", SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
-    defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, fft.shape.nH()));
+    defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
   }
   else if (fft.NTT_GF31) {
     defines += toDefine("DISTGF31",      0);
@@ -813,6 +821,13 @@ string formatSecsPerIter(float secsPerIter) {
 
 // --------
 
+// A Gpu's own args: the shared args, then the FFT's tune.txt settings (not over the command line), then extraConf over everything
+static Args gpuArgs(const Args& shared, const string& fftSpec, const vector<KeyVal>& fftUses, const vector<KeyVal>& extraConf, bool doLog = true) {
+  Args ret = shared.withFftUses(fftSpec, fftUses, doLog);
+  for (const auto& [key, val] : extraConf) { ret.flags[key] = val; }
+  return ret;
+}
+
 unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize,
                           const vector<KeyVal>& fftUses) {
   if (fftConfig.FFT_FP64 && !hasFP64(shared.context->deviceId())) {
@@ -830,6 +845,19 @@ unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const ve
     FFTConfig const fallback{fftConfig.shape, variant_WMH(max(variant_W(v), 1u), variant_M(v), max(variant_H(v), 1u)), fftConfig.carry};
     log("%s: this OpenCL compiler lacks what FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
     fftConfig = fallback;
+  }
+  // No variant 0 for radix 8 at 256: an explicit one (with -use 256RADIX8_W on the command line, say) becomes variant 1
+  if (fftConfig.FFT_FP64) {
+    Args const args = gpuArgs(*shared.args, fftConfig.spec(), fftUses, extraConf, false);
+    string const shapeSpec = fftConfig.shape.spec();
+    u32 const vw = variant_W(fftConfig.variant), vh = variant_H(fftConfig.variant);
+    bool const noW0 = vw == 0 && !fftConfig.shape.hasVariant0W(args.radix8At256(shapeSpec, false));
+    bool const noH0 = vh == 0 && !fftConfig.shape.hasVariant0H(args.radix8At256(shapeSpec, true));
+    if (noW0 || noH0) {
+      FFTConfig const fallback{fftConfig.shape, variant_WMH(noW0 ? 1 : vw, variant_M(fftConfig.variant), noH0 ? 1 : vh), fftConfig.carry};
+      log("%s: there is no variant 0 for radix 8 at 256, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
+      fftConfig = fallback;
+    }
   }
   return make_unique<Gpu>(shared, fftConfig, E, extraConf, logFftSize, fftUses);
 }
@@ -984,13 +1012,6 @@ string Gpu::kernelDefines(enum WHICH_KERNEL_TYPE which_kernel) {
 }
 
 
-// A Gpu's own args: the shared args, then the FFT's tune.txt settings (not over the command line), then extraConf over everything
-static Args gpuArgs(const Args& shared, const string& fftSpec, const vector<KeyVal>& fftUses, const vector<KeyVal>& extraConf) {
-  Args ret = shared.withFftUses(fftSpec, fftUses);
-  for (const auto& [key, val] : extraConf) { ret.flags[key] = val; }
-  return ret;
-}
-
 Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, bool logFftSize, const vector<KeyVal>& fftUses) :
   shared(s),
   background{shared.background},
@@ -1002,12 +1023,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   SMALL_H(fft.shape.height),
   BIG_H(SMALL_H * fft.shape.middle),
   hN(N / 2),
-  nW(fft.shape.nW()),
-  nH(fft.shape.nH()),
+  nW(fft.shape.nW(args.radix8At256(fft.shape.spec(), false))),
+  nH(fft.shape.nH(args.radix8At256(fft.shape.spec(), true))),
   useLongCarry{args.carry == CARRY_64},
   queue{*shared.context, args.profile},
       
-  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
+  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
                                multi_q, l2_striping, graphs)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)

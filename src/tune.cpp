@@ -1354,14 +1354,14 @@ skip_some_WH_variants = 2;   // should default be 1??
       // nVidia now supports variant zero, but is slower on TitanV
       if (variant_W(variant) == 0) {
         if (!VARIANT0) continue;
-        if (shape.width > 1024) continue;
+        if (!shape.hasVariant0W(shared.args->radix8At256(shape.spec(), false))) continue;
       }
 
       // Only AMD GPUs profitably support variant zero (BCAST) and only if height <= 1024.
       // nVidia now supports variant zero, but is slower on TitanV
       if (variant_H(variant) == 0) {
         if (!VARIANT0) continue;
-        if (shape.height > 1024) continue;
+        if (!shape.hasVariant0H(shared.args->radix8At256(shape.spec(), true))) continue;
       }
 
       // Reject shapes that won't be used to test exponents in the user's desired range.
@@ -1396,7 +1396,7 @@ skip_some_WH_variants = 2;   // should default be 1??
             double cost, min_cost = -1.0;
             for (u32 w = 0; w < N_VARIANT_W; w++) {
               if (w == 0 && !VARIANT0) continue;
-              if (w == 0 && test.width > 1024) continue;
+              if (w == 0 && !test.hasVariant0W(shared.args->radix8At256(test.spec(), false))) continue;
               FFTConfig const fft{test, variant_WMH (w, 0, 1), CARRY_32};
               cost = timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, adjusted_quick);
               log("Fast width search %6.1f %12s\n", cost, fft.spec().c_str());
@@ -1418,7 +1418,7 @@ skip_some_WH_variants = 2;   // should default be 1??
             double cost, min_cost = -1.0;
             for (u32 h = 0; h < N_VARIANT_H; h++) {
               if (h == 0 && !VARIANT0) continue;
-              if (h == 0 && test.height > 1024) continue;
+              if (h == 0 && !test.hasVariant0H(shared.args->radix8At256(test.spec(), true))) continue;
               FFTConfig const fft{test, variant_WMH (1, 0, h), CARRY_32};
               cost = timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, quick);
               log("Fast height search %6.1f %12s\n", cost, fft.spec().c_str());
@@ -1544,8 +1544,8 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
   for (size_t i = 0; i < shapes.size(); ++i) {
     FFTShape const& shape = shapes[i];
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant(variant)) {
-      if (variant_W(variant) == 0 && (!variant0 || shape.width > 1024)) { continue; }
-      if (variant_H(variant) == 0 && (!variant0 || shape.height > 1024)) { continue; }
+      if (variant_W(variant) == 0 && (!variant0 || !shape.hasVariant0W(shared.args->radix8At256(shape.spec(), false)))) { continue; }
+      if (variant_H(variant) == 0 && (!variant0 || !shape.hasVariant0H(shared.args->radix8At256(shape.spec(), true)))) { continue; }
       vector carries{CARRY_AUTO};
       if (shape.fft_type == FFT64) {
         carries = {CARRY_32};
