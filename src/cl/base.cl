@@ -209,8 +209,11 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define MODM31 0
 #endif
 
-#if !defined(MIDDLE_CHAIN)
-#define MIDDLE_CHAIN 0
+#if !defined(MIDDLE_CHAIN31)
+#define MIDDLE_CHAIN31 0
+#endif
+#if !defined(MIDDLE_CHAIN61)
+#define MIDDLE_CHAIN61 0
 #endif
 
 #if !defined(UNROLL_W)
