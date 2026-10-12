@@ -614,7 +614,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     defines += toDefine("PFA", R);
     defines += toDefine("PFA_LINV", invModR(rowL));
     defines += toDefine("PFA_BHINV", invModR(rowBH));
-    // For each prime: R^-1 mod q (weights), R^-1 mod p (normalization), the powers of the root w of the radix-R, and for R = 7 and 11
+    // For each prime: R^-1 mod q (weights), R^-1 mod p (normalization), the powers of the root w of the radix-R, and for R = 5, 7, 11 and 15
     // the coefficients (w^m + w^-m) / 2 and (w^m - w^-m) / 2 of the folded DFT
     for (u32 q : {31u, 61u}) {
       if ((q == 31 && !fft.NTT_GF31) || (q == 61 && !fft.NTT_GF61)) { continue; }

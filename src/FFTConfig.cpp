@@ -93,7 +93,7 @@ vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
     for (u32 const width : {256, 512, 1024, 2048, 4096}) {
       for (u32 const height : {256, 512, 1024, 2048}) {
         for (u32 const middle : {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
-          if (type != FFT64 && type != FFT32 && (middle & (middle - 1)) && !(pfaMiddle(middle) && pfaType(type))) continue;  // Reject unsupported middles in NTTs and hybrid FFTs
+          if (type != FFT64 && type != FFT32 && (middle & (middle - 1)) && !(pfaMiddle(middle, type) && pfaType(type))) continue;  // Reject unsupported middles in NTTs and hybrid FFTs
           u32 const sz = width * height * middle * 2;
           if (sizeFrom <= sz && sz <= sizeTo) {
             configs.emplace_back(type, width, middle, height);
@@ -284,8 +284,8 @@ FFTConfig::FFTConfig(const string& spec) {
       log("Height must be 256, 512, 1024, or 2048.\n");
       throw "Invalid FFT spec";
     }
-    if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1)) && !(FFTShape::pfaMiddle(m) && FFTShape::pfaType(fft_type))) {
-      log("NTT and hybrid FFT middle must be 2, 3, 4, 6, 7, 8, 9, 11, 12, or 14.\n");
+    if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1)) && !(FFTShape::pfaMiddle(m, fft_type) && FFTShape::pfaType(fft_type))) {
+      log("NTT and hybrid FFT middle must be 2, 3, 4, 6, 7, 8, 9, 11, 12, 14 or 16 (also 5, 10 and 15 for the types with GF61 but no GF31).\n");
       throw "Invalid FFT spec";
     }
   }

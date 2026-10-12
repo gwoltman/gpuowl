@@ -1220,12 +1220,51 @@ void OVERLOAD pfaDft3(GF61 *a, Z61 w) {
   a[0] = modM61q(y0, 0); a[1] = modM61q(y1, 2); a[2] = modM61q(y2, 6);
 }
 
+// Five-point DFT for a root v, given c_m = (v^m + v^-m) / 2 and s_m = (v^m - v^-m) / 2 for m = 1, 2 (c_3 = c_2, c_4 = c_1, s_3 = -s_2,
+// s_4 = -s_1).  Pairing the inputs k and 5 - k:  y_j = a0 + c_j (a1 + a4) + c_2j (a2 + a3) +- (s_j (a1 - a4) + s_2j (a2 - a3)).
+// Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
+void OVERLOAD pfaDft5(GF61 *a, Z61 c1, Z61 c2, Z61 s1, Z61 s2) {
+  GF61 sum1 = a[1] + a[4], sum2 = a[2] + a[3];                          // 0..2+
+  GF61 dif1 = a[1] + neg(a[4], 2), dif2 = a[2] + neg(a[3], 2);          // 1-..3+, positive for the multiplies
+  Z61 negs1 = M61 - s1;                                                 // s_4 = -s_1, kept positive
+  // Two-term dot products accumulated in 128 bits (each product below 3 M61^2) and reduced once
+  GF61 pc1 = a[0] + U2(weakModM61(mad64(sum2.x, c2, mul64(sum1.x, c1)), 128), weakModM61(mad64(sum2.y, c2, mul64(sum1.y, c1)), 128));  // 0..3+
+  GF61 qs1 = U2(weakModM61(mad64(dif2.x, s2, mul64(dif1.x, s1)), 128), weakModM61(mad64(dif2.y, s2, mul64(dif1.y, s1)), 128));         // 0..2+
+  GF61 pc2 = a[0] + U2(weakModM61(mad64(sum2.x, c1, mul64(sum1.x, c2)), 128), weakModM61(mad64(sum2.y, c1, mul64(sum1.y, c2)), 128));  // 0..3+
+  GF61 qs2 = U2(weakModM61(mad64(dif2.x, negs1, mul64(dif1.x, s2)), 128), weakModM61(mad64(dif2.y, negs1, mul64(dif1.y, s2)), 128));   // 0..2+
+  a[0] = modM61q(a[0] + sum1 + sum2, 0);                                // 0..5+ before the mod
+  a[1] = modM61q(pc1 + qs1, 0);                                         // 0..5+ before the mod
+  a[4] = modM61q(pc1 - qs1, 3);                                         // -2-..3+ before the mod
+  a[2] = modM61q(pc2 + qs2, 0);
+  a[3] = modM61q(pc2 - qs2, 3);
+}
+
 // Forward PFA-point DFT with the root w = PFA_WPOW61[1] (the host passes PFA_WPOW61 = w^0..w^(PFA-1) and, for 7 and 11,
 // PFA_C61[m] = (w^m + w^-m) / 2 and PFA_S61[m] = (w^m - w^-m) / 2).  All the constants are in Z/pZ.
 void OVERLOAD pfaDftR(GF61 *a) {
   const Z61 wp[PFA] = { PFA_WPOW61 };
 #if PFA == 3
   pfaDft3(a, wp[1]);
+#elif PFA == 5
+  const Z61 c[PFA] = { PFA_C61 }, s[PFA] = { PFA_S61 };
+  pfaDft5(a, c[1], c[2], s[1], s[2]);
+#elif PFA == 15
+  // 3 x 5 Good-Thomas, which needs no twiddles: inputs n = 5*n1 + 3*n2, outputs k = 10*k1 + 6*k2 (mod 15).  The 3-point DFTs use the
+  // root w^5, the 5-point DFTs w^3, whose c_m and s_m are the 15-point ones at 3m.
+  const Z61 c[PFA] = { PFA_C61 }, s[PFA] = { PFA_S61 };
+  GF61 b[15];
+  #pragma unroll
+  for (u32 n2 = 0; n2 < 5; ++n2) {
+    GF61 t[3] = { a[3 * n2 % 15], a[(5 + 3 * n2) % 15], a[(10 + 3 * n2) % 15] };
+    pfaDft3(t, wp[5]);
+    for (u32 k1 = 0; k1 < 3; ++k1) { b[3 * n2 + k1] = t[k1]; }
+  }
+  #pragma unroll
+  for (u32 k1 = 0; k1 < 3; ++k1) {
+    GF61 t[5] = { b[k1], b[3 + k1], b[6 + k1], b[9 + k1], b[12 + k1] };
+    pfaDft5(t, c[3], c[6], s[3], s[6]);
+    for (u32 k2 = 0; k2 < 5; ++k2) { a[(10 * k1 + 6 * k2) % 15] = t[k2]; }
+  }
 #elif PFA == 9
   // 3 x 3 Cooley-Tukey with w^3 a cube root of unity: inputs n1 + 3*n2, outputs k2 + 3*k1, twiddles w^(n1*k2)
   GF61 b[9];

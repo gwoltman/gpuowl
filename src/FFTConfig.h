@@ -65,15 +65,19 @@ public:
   // True if the exponent needs the wider carry (64 bits, or 96 bits for FFT323161)
   [[nodiscard]] bool needsLargeCarry(u64 E, bool mul3 = false) const;
   [[nodiscard]] bool isFavoredShape() const;
-  // A MIDDLE with an odd factor (3, 7, 9 or 11 times a power of two) on an NTT or hybrid FFT/NTT type is done as a Good-Thomas
-  // prime-factor transform: R = 3, 7, 9 or 11 rows of a power-of-two transform, the radix-R in fftMiddleIn/Out uses only an R-th
-  // root of unity (in Z/pZ for both M31 and M61, complex for the FP part of a hybrid) and no twiddles.  The pure FP types use
-  // ordinary odd radices.
+  // A MIDDLE with an odd factor R times a power of two on an NTT or hybrid FFT/NTT type is done as a Good-Thomas prime-factor
+  // transform: R rows of a power-of-two transform, the radix-R in fftMiddleIn/Out uses only an R-th root of unity (in Z/pZ for M31
+  // and M61, complex for the FP part of a hybrid) and no twiddles.  R = 3, 7, 9 and 11 divide both M31 - 1 and M61 - 1.  R = 5 and 15
+  // divide only M61 - 1 (GF(M31^2) has no 5th roots of unity), so they are for the types with GF61 and without GF31.  The pure FP
+  // types use ordinary odd radices.
   [[nodiscard]] static bool pfaType(enum FFT_TYPES t) { return t != FFT64 && t != FFT32; }
   [[nodiscard]] static u32 pfaRadix(u32 m) { return m / (m & (~m + 1)); }     // The odd part of m
-  [[nodiscard]] static bool pfaMiddle(u32 m) { u32 const r = pfaRadix(m); return r == 3 || r == 7 || r == 9 || r == 11; }
+  [[nodiscard]] static bool pfaMiddle(u32 m, enum FFT_TYPES t) {
+    u32 const r = pfaRadix(m);
+    return r == 3 || r == 7 || r == 9 || r == 11 || ((r == 5 || r == 15) && (t == FFT61 || t == FFT3261));
+  }
   [[nodiscard]] u32 pfaRadix() const { return pfaRadix(middle); }
-  [[nodiscard]] bool isPfa() const { return pfaMiddle(middle) && pfaType(fft_type); }
+  [[nodiscard]] bool isPfa() const { return pfaMiddle(middle, fft_type) && pfaType(fft_type); }
 };
 
 static const u32 N_VARIANT_W = 3;

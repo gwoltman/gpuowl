@@ -267,7 +267,7 @@ typedef uint u32;
 typedef long i64;
 typedef ulong u64;
 
-// PFA: MIDDLE = PFA * PFA_M2, with PFA = 3, 7, 9 or 11 and PFA_M2 a power of two, on an NTT or hybrid type is done as a Good-Thomas
+// PFA: MIDDLE = PFA * PFA_M2, with PFA = 3, 7, 9 or 11 (also 5 and 15 without GF31) and PFA_M2 a power of two, on an NTT or hybrid type is done as a Good-Thomas
 // prime-factor transform.  The ND pairs of words are split into PFA rows of PFA_L pairs by the Chinese remainder theorem: pair p is
 // in row p % PFA at binary index p % PFA_L.  Each row is an ordinary power-of-two transform of WIDTH * PFA_M2 * SMALL_HEIGHT pairs
 // (width, middle radix PFA_M2, height).  The radix-PFA between the rows (fftMiddleIn/Out) uses only a PFA-th root of unity, which
@@ -281,8 +281,11 @@ typedef ulong u64;
 #define PFA 0
 #endif
 #if PFA
-#if (PFA != 3 && PFA != 7 && PFA != 9 && PFA != 11) || MIDDLE % PFA || ((MIDDLE / PFA) & (MIDDLE / PFA - 1))
-#error PFA needs MIDDLE = 3, 7, 9 or 11 times a power of two
+#if (PFA != 3 && PFA != 5 && PFA != 7 && PFA != 9 && PFA != 11 && PFA != 15) || MIDDLE % PFA || ((MIDDLE / PFA) & (MIDDLE / PFA - 1))
+#error PFA needs MIDDLE = 3, 5, 7, 9, 11 or 15 times a power of two
+#endif
+#if NTT_GF31 && (PFA == 5 || PFA == 15)
+#error PFA 5 and 15 need a 5th root of unity, which GF(M31^2) does not have
 #endif
 #define PFA_M2 (MIDDLE / PFA)                   // The power-of-two part of MIDDLE
 #define PFA_BH (SMALL_HEIGHT * PFA_M2)          // The lines (BIG_HEIGHT) of a row
