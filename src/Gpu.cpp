@@ -306,9 +306,22 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "PTX_VERSION",            // CUDA, undocumented: relabel the PTX for an older driver's JIT (see clwrap_cuda.cpp)
                               "SMEM_SPILL"              // CUDA, sm_75+: register limits spill to shared memory
                             };
+  // These keys may be undocumented in help because they are either deprecated, experimental, or developer-only.
+  initializer_list<string> const hiddenKeys = {
+                              "BIGLIT",                 // Deprecated
+                              "NONTEMPORAL",            // Deprecated
+			      "HOIST_W","HOIST_H",
+			      "LDSPAD_W","LDSPAD_H",
+			      "LDSSWIZ_W","LDSSWIZ_H",
+			      "L2_STRIPING",
+			      "MIDDLE_CHAIN31",
+                              "MIDDLE_CHAIN61",
+                              "M61_SM120"
+                            };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
-    bool const isValid = isCudaOnly || Args::isRegisterKey(k) || Args::isRadixKey(k) || isInList(k, {
+    bool const isHidden = isInList(k, hiddenKeys);
+    bool const isValid = isCudaOnly || isHidden || Args::isRegisterKey(k) || Args::isRadixKey(k) || isInList(k, {
                               "FAST_BARRIER",
                               "STATS",
                               "IN_SIZEX",
@@ -322,8 +335,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "NO_ASM",
                               "DEBUG",
                               "CARRY64",
-                              "BIGLIT",                 // Deprecated
-                              "NONTEMPORAL",            // Deprecated
                               "INPLACE",
                               "PAD",
                               "MIDDLE_IN_LDS_TRANSPOSE",
@@ -340,7 +351,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "MODM31",
                               "LOADS","STORES",
                               "WMUL",
-                              "M61_SM120",
                               "MULTI_Q"
                             });
     if (k == "TRY_LDS_CARVEOUT") {

@@ -1012,6 +1012,15 @@ GF31 OVERLOAD csqTrig(GF31 a) { u32 two_ay = a.y + a.y; return U2(modM31(mad32(t
 // Cube w, a root of unity complex number, given w^2 and w
 GF31 OVERLOAD ccubeTrig(GF31 sq, GF31 w) { u32 tmp = sq.y + sq.y; return U2(modM31(mad32(tmp, neg(w.y), w.x)), modM31(mad32(tmp, w.x, neg(w.y)))); }
 
+// res1 = a * b and res2 = a * conjugate(b) from the same four products.  For b a root of unity, conjugate(b) is 1/b, so a = w^k gives w^(k+1)
+// and w^(k-1).  M31^2 (a multiple of M31) keeps the differences positive; each product is at most M31^2, so every sum is below 2^63.
+void OVERLOAD cmul_a_by_b_and_conjb(GF31 *res1, GF31 *res2, GF31 a, GF31 b) {
+  const u64 M31SQ = (u64) M31 * M31;
+  u64 axbx = (u64) a.x * b.x, ayby = (u64) a.y * b.y, axby = (u64) a.x * b.y, aybx = (u64) a.y * b.x;
+  *res1 = U2(modM31(axbx + M31SQ - ayby, 63), modM31(axby + aybx, 63));
+  *res2 = U2(modM31(axbx + ayby, 63), modM31(aybx + M31SQ - axby, 63));
+}
+
 // mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
 GF31 OVERLOAD mul_t4(GF31 a) { return U2(neg(a.y), a.x); }                                              // GWBUG:  Can caller use a version that does not negate real?
 
@@ -1285,6 +1294,14 @@ GF61 OVERLOAD cmul(GF61 a, GF61 b) {
 // Square a root of unity complex number (the second version may be faster if the compiler optimizes the u128 squaring).
 //GF61 OVERLOAD csqTrig(GF61 a) { Z61 two_ay = a.y + a.y; return U2(modM61(1 + weakMul(two_ay, neg(a.y, 2))), mul(a.x, two_ay)); }
 GF61 OVERLOAD csqTrig(GF61 a) { Z61 ay_sq = weakMul(a.y, a.y, 2, 2); return U2(modM61(1 + neg(ay_sq + ay_sq, 4)), mul2(weakMul(a.x, a.y, 2, 2))); }
+
+// res1 = a * b and res2 = a * conjugate(b) from the same four products (Karatsuba cmul needs three each).  For b a root of unity, conjugate(b)
+// is 1/b, so a = w^k gives w^(k+1) and w^(k-1).  Each weakMul is 0..2+, so the sums and the 3*M61 - x differences stay below 5*M61.
+void OVERLOAD cmul_a_by_b_and_conjb(GF61 *res1, GF61 *res2, GF61 a, GF61 b) {
+  Z61 axbx = weakMul(a.x, b.x, 2, 2), ayby = weakMul(a.y, b.y, 2, 2), axby = weakMul(a.x, b.y, 2, 2), aybx = weakMul(a.y, b.x, 2, 2);
+  *res1 = U2(modM61(axbx + neg(ayby, 3)), modM61(axby + aybx));
+  *res2 = U2(modM61(axbx + ayby), modM61(aybx + neg(axby, 3)));
+}
 
 // Cube w, a root of unity complex number, given w^2 and w
 GF61 OVERLOAD ccubeTrig(GF61 sq, GF61 w) { Z61 tmp = sq.y + sq.y; return U2(modM61(weakMul(tmp, neg(w.y, 2), 3, 3) + w.x), modM61(weakMul(tmp, w.x, 3, 2) + neg(w.y, 2))); }

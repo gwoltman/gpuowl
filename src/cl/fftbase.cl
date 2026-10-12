@@ -1948,17 +1948,17 @@ void OVERLOAD chainMul4(GF31 *u, GF31 w) {
   u[3] = cmul(u[3], base);
 }
 
+// The powers of w: w^2, w^4, w^6 squared, w^3 cubed, and w^5, w^7 as the pair w^6 * w, w^6 / w (as in the FP64 version)
 void OVERLOAD chainMul8(GF31 *u, GF31 w) {
+  GF31 w2 = csqTrig(w), w3 = ccubeTrig(w2, w), w4 = csqTrig(w2), w6 = csqTrig(w3), w5, w7;
+  cmul_a_by_b_and_conjb(&w7, &w5, w6, w);
   u[1] = cmul(u[1], w);
-
-  GF31 base = csqTrig(w);
-  u[2] = cmul(u[2], base);
-
-  base = ccubeTrig(base, w);
-  for (int i = 3; i < 8; ++i) {
-    u[i] = cmul(u[i], base);
-    base = cmul(base, w);
-  }
+  u[2] = cmul(u[2], w2);
+  u[3] = cmul(u[3], w3);
+  u[4] = cmul(u[4], w4);
+  u[5] = cmul(u[5], w5);
+  u[6] = cmul(u[6], w6);
+  u[7] = cmul(u[7], w7);
 }
 
 void OVERLOAD chainMul(GF31 *u, GF31 w) {
@@ -2192,27 +2192,25 @@ void OVERLOAD fft_RADIX(GF61 *u) {
 #endif
 }
 
+// csqTrig and ccubeTrig need w on the unit circle (norm 1), which holds for every twiddle: its order divides 2^61 = M61 + 1
 void OVERLOAD chainMul4(GF61 *u, GF61 w) {
+  GF61 w2 = csqTrig(w), w3 = ccubeTrig(w2, w);
   u[1] = cmul(u[1], w);
-
-  GF61 base = csq(w);                   //GWBUG - see FP64 version for possible optimization
-  u[2] = cmul(u[2], base);
-
-  base = cmul(base, w);                 //GWBUG - see FP64 version for possible optimization
-  u[3] = cmul(u[3], base);
+  u[2] = cmul(u[2], w2);
+  u[3] = cmul(u[3], w3);
 }
 
+// The powers of w: w^2, w^4, w^6 squared, w^3 cubed, and w^5, w^7 as the pair w^6 * w, w^6 / w (as in the FP64 version)
 void OVERLOAD chainMul8(GF61 *u, GF61 w) {
+  GF61 w2 = csqTrig(w), w3 = ccubeTrig(w2, w), w4 = csqTrig(w2), w6 = csqTrig(w3), w5, w7;
+  cmul_a_by_b_and_conjb(&w7, &w5, w6, w);
   u[1] = cmul(u[1], w);
-
-  GF61 w2 = csq(w);
   u[2] = cmul(u[2], w2);
-
-  GF61 base = cmul(w2, w);              //GWBUG - see FP64 version for many possible optimizations
-  for (int i = 3; i < 8; ++i) {
-    u[i] = cmul(u[i], base);
-    base = cmul(base, w);
-  }
+  u[3] = cmul(u[3], w3);
+  u[4] = cmul(u[4], w4);
+  u[5] = cmul(u[5], w5);
+  u[6] = cmul(u[6], w6);
+  u[7] = cmul(u[7], w7);
 }
 
 void OVERLOAD chainMul(GF61 *u, GF61 w) {

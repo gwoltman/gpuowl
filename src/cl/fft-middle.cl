@@ -894,7 +894,7 @@ void OVERLOAD middleMul(GF31 *u, u32 s, TrigGF31 trig) {
   assert(s < SMALL_HEIGHT);
   if (MIDDLE == 1) return;
 
-#if !MIDDLE_CHAIN           // Read all trig values from memory
+#if !MIDDLE_CHAIN31           // Read all trig values from memory
 
   for (u32 k = 1; k < MIDDLE; ++k) {
     WADD(k, TFLOAD(&trig[s]));
@@ -903,21 +903,29 @@ void OVERLOAD middleMul(GF31 *u, u32 s, TrigGF31 trig) {
 
 #else
 
+  // The powers of w (MIDDLE is 2, 4, 8 or 16): w^2 (and w^4, w^6 for MIDDLE 8) squared, w^3 cubed, w^5, w^7 as the pair w^6 * w, w^6 / w
   GF31 w = TFLOAD(&trig[s]);         // s / BIG_HEIGHT
   WADD(1, w);
   if (MIDDLE == 2) return;
-
-#if SHOULD_BE_FASTER
-  GF31 sq = csqTrig(w);
-  WADD(2, sq);
-  GF31 base = ccubeTrig(sq, w);                         // GWBUG: compute w^4 as csqTriq(sq), w^6 as ccubeTrig(w2, w4), and w^5 and w^7 as cmul_a_by_b_and_conjb
-  for (u32 k = 3; k < MIDDLE; ++k) {
-#else
-  GF31 base = csq(w);
-  for (u32 k = 2; k < MIDDLE; ++k) {
-#endif
-    WADD(k, base);
+  GF31 w2 = csqTrig(w), w3 = ccubeTrig(w2, w);
+  WADD(2, w2);
+  WADD(3, w3);
+  if (MIDDLE == 4) return;
+  if (MIDDLE == 8) {
+    GF31 w4 = csqTrig(w2), w6 = csqTrig(w3), w5, w7;
+    cmul_a_by_b_and_conjb(&w7, &w5, w6, w);
+    WADD(4, w4);
+    WADD(5, w5);
+    WADD(6, w6);
+    WADD(7, w7);
+    return;
+  }
+  // MIDDLE == 16: a serial chain.  With u[16] live, computing the powers by squaring and pairing holds several at once and costs dozens of
+  // registers (fftMiddleIn 100 -> 136 on sm_120).
+  GF31 base = w3;
+  for (u32 k = 4; k < MIDDLE; ++k) {
     base = cmul(base, w);
+    WADD(k, base);
   }
 
 #endif
@@ -1159,7 +1167,7 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
   assert(s < SMALL_HEIGHT);
   if (MIDDLE == 1) return;
 
-#if !MIDDLE_CHAIN           // Read all trig values from memory
+#if !MIDDLE_CHAIN61           // Read all trig values from memory
 
   for (u32 k = 1; k < MIDDLE; ++k) {
     WADD(k, TFLOAD(&trig[s]));
@@ -1168,21 +1176,29 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
 
 #else
 
+  // The powers of w (MIDDLE is 2, 4, 8 or 16): w^2 (and w^4, w^6 for MIDDLE 8) squared, w^3 cubed, w^5, w^7 as the pair w^6 * w, w^6 / w
   GF61 w = TFLOAD(&trig[s]);         // s / BIG_HEIGHT
   WADD(1, w);
   if (MIDDLE == 2) return;
-
-#if SHOULD_BE_FASTER
-  GF61 sq = csqTrig(w);
-  WADD(2, sq);
-  GF61 base = ccubeTrig(sq, w);                         // GWBUG: compute w^4 as csqTriq(sq), w^6 as ccubeTrig(w2, w4), and w^5 and w^7 as cmul_a_by_b_and_conjb
-  for (u32 k = 3; k < MIDDLE; ++k) {
-#else
-  GF61 base = csq(w);
-  for (u32 k = 2; k < MIDDLE; ++k) {
-#endif
-    WADD(k, base);
+  GF61 w2 = csqTrig(w), w3 = ccubeTrig(w2, w);
+  WADD(2, w2);
+  WADD(3, w3);
+  if (MIDDLE == 4) return;
+  if (MIDDLE == 8) {
+    GF61 w4 = csqTrig(w2), w6 = csqTrig(w3), w5, w7;
+    cmul_a_by_b_and_conjb(&w7, &w5, w6, w);
+    WADD(4, w4);
+    WADD(5, w5);
+    WADD(6, w6);
+    WADD(7, w7);
+    return;
+  }
+  // MIDDLE == 16: a serial chain.  With u[16] live, computing the powers by squaring and pairing holds several at once and costs dozens of
+  // registers (fftMiddleIn 100 -> 136 on sm_120).
+  GF61 base = w3;
+  for (u32 k = 4; k < MIDDLE; ++k) {
     base = cmul(base, w);
+    WADD(k, base);
   }
 
 #endif
