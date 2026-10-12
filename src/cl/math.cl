@@ -201,6 +201,14 @@ i32 OVERLOAD optional_mod(i32 a, const i32 b) {
 
 #define M61 ((((Z61) 1) << 61) - 1)
 
+// M61_SM120: M61 reductions shaped for sm_120 (RTX 50x0), whose native 64-bit add ptxas uses even where an operand must first be zero-filled
+// into a register pair.  modM61 adds its top 3 bits with a 32-bit carry chain, and weakModM61 uses plain 64-bit code instead of 32-bit asm
+// pieces.  On an RTX 5080 that removes nearly all the zero-filling moves (8% of carryFused's instructions, 11% of tailSquareGF61's) and
+// makes iterations 2-4% faster (types 1, 3, 4).  Older GPUs and sm_100 compile modM61 identically either way.  -use M61_SM120=0/1 overrides.
+#if !defined(M61_SM120)
+#define M61_SM120 (HAS_PTX >= 1200)
+#endif
+
 // Optionally add a constant value if first arg is negative.
 i64 OVERLOAD optional_addM61(i64 a) {
 #if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
@@ -1072,7 +1080,19 @@ u64 OVERLOAD get_Z61(Z61 a) { Z61 m = a - M61; return (m & 0x8000000000000000ULL
 i64 OVERLOAD get_balanced_Z61(Z61 a) { return (hi32(a) >= 0x10000000) ? (i64)(a - M61) : (i64)a; }  // Get balanced value in range -M61/2 to M61/2
 
 // Internal routine to bring Z61 value into the range 0..M61+epsilon
-Z61 OVERLOAD modM61(Z61 a) { return (a & M61) + (a >> 61); }
+Z61 OVERLOAD modM61(Z61 a) {
+#if M61_SM120 && HAS_PTX >= 200
+  uint2 r = as_uint2(a);
+  u32 top;
+  __asm("shr.b32    %2, %1, 29;\n\t"           // The top 3 bits
+        "and.b32    %1, %1, 536870911;\n\t"     // a & M61
+        "add.cc.u32 %0, %0, %2;\n\t"
+        "addc.u32   %1, %1, 0;" : "+r"(r.x), "+r"(r.y), "=r"(top));
+  return as_ulong(r);
+#else
+  return (a & M61) + (a >> 61);
+#endif
+}
 GF61 OVERLOAD modM61(GF61 a) { return U2(modM61(a.x), modM61(a.y)); }
 // Internal routine to negate a value by adding the specified number of M61s -- no mod M61 reduction
 Z61 OVERLOAD neg(Z61 a, const u32 m61_count) { return m61_count * M61 - a; }
@@ -1138,8 +1158,8 @@ Z61 OVERLOAD shl31(Z61 a) {
 GF61 OVERLOAD shl31(GF61 a) { return U2(shl31(a.x), shl31(a.y)); }
 
 u64 OVERLOAD weakModM61(u128 a, u32 num_bits) {
-// This is faster on TitanV, CUDA 13.0.  No difference on 5070Ti.
-#if HAS_PTX >= 320        // shf instruction requires sm_32 support or higher
+// This is faster on TitanV, CUDA 13.0.  On sm_120 the plain code below is shorter (see M61_SM120).
+#if HAS_PTX >= 320 && !M61_SM120        // shf instruction requires sm_32 support or higher
   uint2 alo = as_uint2(u128_lo64(a));
   uint2 ahi = as_uint2(u128_hi64(a));
   if (num_bits <= 125) {

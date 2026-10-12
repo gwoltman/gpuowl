@@ -340,6 +340,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "MODM31",
                               "LOADS","STORES",
                               "WMUL",
+                              "M61_SM120",
                               "MULTI_Q"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
