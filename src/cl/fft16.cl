@@ -266,32 +266,16 @@ void OVERLOAD fft16(GF31 *u) {
 
 #include "fft8.cl"
 
+// A radix-2 layer of quick adds and subtracts, then the two halves as in the 1K and 2K widths/heights: fft8_16a takes the sums (0..2+)
+// and gives the even outputs, fft8_16b the differences (-1-..1+), twiddles them by w^k and gives the odd outputs.  Inputs 0..1+.
 void OVERLOAD fft16(GF61 *u) {
-  X2(u[0], u[8]);
-  X2(u[1], u[9]);
-  X2_mul_t8(u[2], u[10]);
-  X2(u[3], u[11]);
-  X2_mul_t4(u[4], u[12]);
-  X2(u[5], u[13]);
-  X2_mul_3t8(u[6], u[14]);
-  X2(u[7], u[15]);
-
-  u[9] = mul_t16(u[9]);
-  u[11] = mul_3t16(u[11]);
-  u[13] = mul_5t16(u[13]);
-  u[15] = mul_7t16(u[15]);
-
-  fft8Core(u);
-  fft8Core(u + 8);
-
-  // revbin fix order
-  // 0 8 4 12 2 10 6 14 1 9 5 13 3 11 7 15
-  SWAP(u[1], u[8]);
-  SWAP(u[2], u[4]);
-  SWAP(u[3], u[12]);
-  SWAP(u[5], u[10]);
-  SWAP(u[7], u[14]);
-  SWAP(u[11], u[13]);
+  for (u32 i = 0; i < 8; ++i) X2q(&u[i], &u[i + 8]);     // u[0..7] = 0..2+, u[8..15] = -1-..1+
+  fft8_16a(u);
+  fft8_16b(u + 8);
+  // Interleave: output 2k is fft8_16a's k, output 2k+1 is fft8_16b's k
+  GF61 t[16];
+  for (u32 k = 0; k < 8; ++k) { t[2 * k] = u[k]; t[2 * k + 1] = u[k + 8]; }
+  for (u32 k = 0; k < 16; ++k) { u[k] = t[k]; }
 }
 
 #endif
