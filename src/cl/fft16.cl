@@ -222,37 +222,16 @@ void OVERLOAD fft16(F2 *u) {
 
 #include "fft8.cl"
 
+// A radix-2 layer, then the two halves as in the 1K and 2K widths/heights: fft8_16a takes the sums and gives the even outputs, fft8_16b
+// the differences, twiddles them by w^k and gives the odd outputs.
 void OVERLOAD fft16(GF31 *u) {
-  const Z31 C1 = 1556715293;
-  const Z31 S1 = 978592373;
-  const Z31 negC1 = M31 - C1;
-  const Z31 negS1 = M31 - S1;
-
-  X2(u[0], u[8]);
-  X2(u[1], u[9]);
-  X2_mul_t8(u[2], u[10]);
-  X2(u[3], u[11]);
-  X2_mul_t4(u[4], u[12]);
-  X2(u[5], u[13]);
-  X2_mul_3t8(u[6], u[14]);
-  X2(u[7], u[15]);
-
-  u[ 9] = cmul_const(u[ 9], U2( C1, S1)); // 1t16
-  u[11] = cmul_const(u[11], U2( S1, C1)); // 3t16
-  u[13] = cmul_const(u[13], U2(negS1, C1)); // 5t16
-  u[15] = cmul_const(u[15], U2(negC1, S1)); // 7t16
-
-  fft8Core(u);
-  fft8Core(u + 8);
-
-  // revbin fix order
-  // 0 8 4 12 2 10 6 14 1 9 5 13 3 11 7 15
-  SWAP(u[1], u[8]);
-  SWAP(u[2], u[4]);
-  SWAP(u[3], u[12]);
-  SWAP(u[5], u[10]);
-  SWAP(u[7], u[14]);
-  SWAP(u[11], u[13]);
+  for (u32 i = 0; i < 8; ++i) X2(u[i], u[i + 8]);
+  fft8_16a(u);
+  fft8_16b(u + 8);
+  // Interleave: output 2k is fft8_16a's k, output 2k+1 is fft8_16b's k
+  GF31 t[16];
+  for (u32 k = 0; k < 8; ++k) { t[2 * k] = u[k]; t[2 * k + 1] = u[k + 8]; }
+  for (u32 k = 0; k < 16; ++k) { u[k] = t[k]; }
 }
 
 #endif
