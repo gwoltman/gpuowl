@@ -1380,6 +1380,16 @@ GF61 OVERLOAD mul_7t16(GF61 a) { return cmul(a, U2(M61 - 22027337052962166ULL, 1
 GF61 OVERLOAD mul_9t16(GF61 a) { return cmul(a, U2(M61 - 22027337052962166ULL, M61 - 1693317751237720973ULL)); }
 #endif
 
+// Quick (no final modM61) multiply by the 16th root of unity w = (C1, S1), for fft8_16b (which gets w^3 and w^9 from it too).  Karatsuba's
+// shared product k1 = C1 * (a.x + a.y) is tiny because C1 is (0.0096 M61), and the other constants come out non-negative (M61 - S1 - C1 =
+// 0.256 M61, S1 - C1 = 0.725 M61), so the outputs need no modM61.  Inputs 0..1+; outputs 0..1.28+, 0..1.74+.
+#define T16C1  22027337052962166ULL
+#define T16S1  1693317751237720973ULL
+GF61 OVERLOAD mul_t16q(GF61 a) {         // k1 = C1 * (ax + ay):  re = k1 + ay * (M61 - S1 - C1) is 0..1.28+,  im = k1 + ax * (S1 - C1) is 0..1.74+
+  u128 k1 = mul64(T16C1, a.x + a.y);
+  return U2(weakModM61(mad64(a.y, M61 - T16S1 - T16C1, k1), 125), weakModM61(mad64(a.x, T16S1 - T16C1, k1), 125));
+}
+
 // Return a+b and a-b
 void OVERLOAD X2_internal(GF61 *a, GF61 *b) { GF61 t = *a; *a = add(t, *b); *b = sub(t, *b); }
 
