@@ -340,10 +340,10 @@ void OVERLOAD fft8_16a(GF61 *u) {
   // Must normalize values.  The delayed mul_t8s can help with that (half of the complex number needs normalizing before mul_t8).
   for (u32 i = 0; i <= 3; ++i) u[i] = modM61q(u[i], 0);
   u[4] = modM61q(u[4], 3);
-  u[5].x = optional_add((i64)u[5].x, 2*M61);   // u[5] now 0-..2+, -2..2+
+  u[5].x = lessneg(u[5].x, 2);                 // u[5] now 0-..2+, -2..2+
   u[5] = mul_t8q(u[5], 5);                     // Perform delayed mul_t8 (count of 5 based on u[5].y - u[5].x range of -4-..2+
   u[6] = modM61q(u[6], 3);
-  u[7].x = optional_add((i64)u[7].x, 2*M61);   // u[7] now 0-..2+, -2..2+
+  u[7].x = lessneg(u[7].x, 2);                 // u[7] now 0-..2+, -2..2+
   u[7] = mul_t8q(u[7], 5);                     // Perform delayed mul_t8.
 
   fft4Core(u);
@@ -363,11 +363,11 @@ void OVERLOAD fft8_16b(GF61 *u) {
   // Must normalize values.  Some mul_t8s can help with that (only half of the complex number needs normalizing before mul_t8).
   u[0] = modM61q(u[0], 3);
   u[1] = modM61q(u[1], 3);
-  u[2].x = optional_add((i64)u[2].x, 2*M61);   // u[2] now 0-..2+, -2..2+
+  u[2].x = lessneg(u[2].x, 2);                 // u[2] now 0-..2+, -2..2+
   u[3] = modM61q(u[3], 3);
   u[4] = modM61q(u[4], 3);
   u[5] = modM61q(u[5], 3);
-  u[6].y = optional_add((i64)u[6].y, 2*M61);   // u[6] now -2-..2+, 0-..2+
+  u[6].y = lessneg(u[6].y, 2);                 // u[6] now -2-..2+, 0-..2+
   u[7] = modM61q(u[7], 3);
 
   u[1] = mul_t16(u[1]);

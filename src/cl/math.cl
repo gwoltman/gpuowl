@@ -1116,6 +1116,14 @@ GF61 OVERLOAD sub(GF61 a, GF61 b) { return U2(sub(a.x, b.x), sub(a.y, b.y)); }
 Z61 OVERLOAD neg(Z61 a) { return modM61(neg(a, 2)); }                // GWBUG: Examine all callers to see if neg call can be avoided
 GF61 OVERLOAD neg(GF61 a) { return U2(neg(a.x), neg(a.y)); }
 
+// Make a value less negative.  Caller uses this to allow future "quick" calls.  This routine either adds m61_count*M61 to a if it is negative
+// or does modM61 if that's cheaper.  On TitanV, modM61 is cheaper.  On RTX 5080, optional_add is cheaper.
+// fft8_16a and fft8_16b call this on -2-..2+ values with a m61_count of 2 -- expecting a return in the range 0-..2+.  modM61 needs to add
+// (m61_count+1)*M61 to guarantee a positive value to reduce (and the input's upper bound plus m61_count+1 must stay below 8 M61s).  The 0..1+
+// returned range is a subset of the range the caller is expecting.
+Z61 OVERLOAD lessneg(Z61 a, const u32 m61_count) { return M61_SM120 ? (Z61) optional_add((i64) a, m61_count * M61) : modM61(a + (m61_count + 1) * M61); }
+GF61 OVERLOAD lessneg(GF61 a, const u32 m61_count) { return U2(lessneg(a.x, m61_count), lessneg(a.y, m61_count)); }
+
 // Assumes k reduced mod 61.
 Z61 OVERLOAD shr(Z61 a, u32 k) { return (a >> k) + ((a << (61 - k)) & M61); }         // Return range 0..M61+2^(61-k), can handle 64-bit inputs but small k is big epsilon
 GF61 OVERLOAD shr(GF61 a, u32 k) { return U2(shr(a.x, k), shr(a.y, k)); }
