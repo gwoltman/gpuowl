@@ -92,7 +92,8 @@ vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
   for (enum FFT_TYPES const type : {FFT64, FFT6431, FFT3161, FFT3261, FFT61, FFT323161}) {
     for (u32 const width : {256, 512, 1024, 2048, 4096}) {
       for (u32 const height : {256, 512, 1024, 2048}) {
-        for (u32 const middle : {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
+        for (u32 const middle : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
+          if (middle == 1 && (width != 256 || height != 256)) continue;  // MIDDLE=1 only for the 128K FFT; larger sizes are better with MIDDLE > 1
           if (type != FFT64 && type != FFT32 && (middle & (middle - 1)) && !(pfaMiddle(middle, type) && pfaType(type))) continue;  // Reject unsupported middles in NTTs and hybrid FFTs
           u32 const sz = width * height * middle * 2;
           if (sizeFrom <= sz && sz <= sizeTo) {
@@ -140,8 +141,8 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
 
   // Same limits FFTConfig applies to a full spec.  Shapes can also arrive here from -tune / -info / size ranges, and a
   // too-small one (e.g. 128:2:128) drives middle to 0 in the fallback below and then loops forever.
-  if ((w != 256 && w != 512 && w != 1024 && w != 2048 && w != 4096) || m < 2 || m > 16 || (h != 256 && h != 512 && h != 1024 && h != 2048)) {
-    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 2..16, height 256/512/1024/2048)\n", w, m, h);
+  if ((w != 256 && w != 512 && w != 1024 && w != 2048 && w != 4096) || m < 1 || m > 16 || (h != 256 && h != 512 && h != 1024 && h != 2048)) {
+    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 1..16, height 256/512/1024/2048)\n", w, m, h);
     throw "Invalid FFT shape";
   }
 
@@ -276,8 +277,8 @@ FFTConfig::FFTConfig(const string& spec) {
       log("Width must be 256, 512, 1024, 2048, or 4096.\n");
       throw "Invalid FFT spec";
     }
-    if (m < 2 || m > 16) {
-      log("Middle must be between 2 and 16.\n");
+    if (m < 1 || m > 16) {
+      log("Middle must be between 1 and 16.\n");
       throw "Invalid FFT spec";
     }
     if (h != 256 && h != 512 && h != 1024 && h != 2048) {
@@ -285,7 +286,7 @@ FFTConfig::FFTConfig(const string& spec) {
       throw "Invalid FFT spec";
     }
     if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1)) && !(FFTShape::pfaMiddle(m, fft_type) && FFTShape::pfaType(fft_type))) {
-      log("NTT and hybrid FFT middle must be 2, 3, 4, 6, 7, 8, 9, 11, 12, 14 or 16 (also 5, 10 and 15 for the types with GF61 but no GF31).\n");
+      log("NTT and hybrid FFT middle must be 1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 14 or 16 (also 5, 10 and 15 for the types with GF61 but no GF31).\n");
       throw "Invalid FFT spec";
     }
   }

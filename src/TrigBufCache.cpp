@@ -785,9 +785,7 @@ static vector<uint2> genSmallTrigComboGF31(Args *args, u32 width, u32 middle, u3
 
 static vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width) {
   vector<uint2> tab;
-  if (middle == 1) {
-    tab.resize(1);
-  } else if (middle & (middle - 1)) {
+  if (middle & (middle - 1)) {
     // PFA, see genMiddleTrigGF61
     u32 const m2 = middle & (~middle + 1), bh = smallH * m2;     // m2: the power-of-two part of middle
     GF31 const root1wbh = GF31::root_one(width * bh);
@@ -1033,9 +1031,7 @@ static vector<ulong2> genSmallTrigComboGF61(Args *args, u32 width, u32 middle, u
 
 static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
   vector<ulong2> tab;
-  if (middle == 1) {
-    tab.resize(1);
-  } else if (middle & (middle - 1)) {
+  if (middle & (middle - 1)) {
     // PFA, see pfaTwiddle.  A row has bh = smallH * m2 lines and w is a root of order width*bh:
     //   trig2[k] = w^k for k < bh, then the row's middleMul twiddles w^(width*y*k) for 0 < k < middle/R and y < smallH,
     //   then at smallH * (middle - 1): trig1[k] = w^(bh*k) for k < width

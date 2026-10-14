@@ -1,4 +1,5 @@
 // FFT64 - Computed by targeting Z=28
+{ "256:1:256", {19.204f, 19.547f, 19.636f, 19.204f, 19.547f, 19.636f}},  // Estimated: the 256:2:256 values (a 128K FFT should allow ~0.3 more)
 { "256:2:256", {19.204f, 19.547f, 19.636f, 19.204f, 19.547f, 19.636f}},
 { "256:3:256", {19.106f, 19.386f, 19.369f, 19.106f, 19.399f, 19.361f}},
 { "256:4:256", {18.928f, 19.236f, 19.322f, 18.954f, 19.272f, 19.367f}},
@@ -109,6 +110,7 @@
 {  "4K:15:2K", {16.538f, 16.539f, 16.595f, 16.605f, 16.615f, 16.732f}},
 {  "4K:16:2K", {16.449f, 16.463f, 16.443f, 16.551f, 16.571f, 16.652f}},
 // FFT3161 - Computed by targeting maxROE of ~0.35 over 1000 iterations, probably could go higher
+{ "1:256:1:256", {40.54f, 40.54f, 40.54f, 40.54f, 40.54f, 40.54f}},  // Estimated: the 256:2:256 values (a 128K FFT should allow ~0.3 more)
 { "1:256:2:256", {40.54f, 40.54f, 40.54f, 40.54f, 40.54f, 40.54f}},
 { "1:256:4:256", {40.19f, 40.19f, 40.19f, 40.19f, 40.19f, 40.19f}},
 { "1:256:8:256", {39.98f, 39.98f, 39.98f, 39.98f, 39.98f, 39.98f}},
@@ -131,6 +133,7 @@
 {  "1:4K:16:1K", {37.12f, 37.12f, 37.12f, 37.12f, 37.12f, 37.12f}},
 {  "1:4K:16:2K", {36.12f, 36.12f, 36.12f, 36.12f, 36.12f, 36.12f}},   // Estimated
 // FFT3261 - Computed (after the FP32 slowTrig fix) with variant 101, -use TABMUL_CHAIN32=1,TAIL_TRIGS32=0 (the worst ROE) and targeting maxROE of ~0.35 over 1000 iterations
+{ "2:256:1:256", {35.65f, 35.65f, 35.65f, 35.65f, 35.65f, 35.65f}},  // Estimated: the 256:2:256 values (a 128K FFT should allow ~0.3 more)
 { "2:256:2:256", {35.65f, 35.65f, 35.65f, 35.65f, 35.65f, 35.65f}},
 { "2:256:4:256", {35.37f, 35.37f, 35.37f, 35.37f, 35.37f, 35.37f}},
 { "2:256:8:256", {35.01f, 35.01f, 35.01f, 35.01f, 35.01f, 35.01f}},
@@ -153,6 +156,7 @@
 {  "2:4K:16:1K", {33.01f, 33.01f, 33.01f, 33.01f, 33.01f, 33.01f}},
 {  "2:4K:16:2K", {32.85f, 32.85f, 32.85f, 32.85f, 32.85f, 32.85f}},  // Estimated
 // FFT61 - Computed by targeting maxROE of ~0.35 over 1000 iterations, probably could go higher
+{ "3:256:1:256", {25.02f, 25.02f, 25.02f, 25.02f, 25.02f, 25.02f}},  // Estimated: the 256:2:256 values (a 128K FFT should allow ~0.3 more)
 { "3:256:2:256", {25.02f, 25.02f, 25.02f, 25.02f, 25.02f, 25.02f}},
 { "3:256:4:256", {24.72f, 24.10f, 24.10f, 24.10f, 24.10f, 24.10f}},
 { "3:256:8:256", {24.46f, 24.46f, 24.46f, 24.46f, 24.46f, 24.46f}},
@@ -176,6 +180,7 @@
 {  "3:4K:16:2K", {22.02f, 22.02f, 22.02f, 22.02f, 22.02f, 22.02f}},  // Estimated
 // FFT323161 - Computed (after the FP32 slowTrig fix) with variant 101, -use TABMUL_CHAIN32=1,TAIL_TRIGS32=0 and targeting maxROE of ~0.35 over 1000 iterations
 // (TitanV).  From 4M words up these were once capped by the MUL3 squaring's 64-bit carry overflow in the Gerbicz check, now 96-bit (CARRY96).
+{ "4:256:1:256", {51.11f, 51.11f, 51.11f, 51.11f, 51.11f, 51.11f}},  // Estimated: the 256:2:256 values (a 128K FFT should allow ~0.3 more)
 { "4:256:2:256", {51.11f, 51.11f, 51.11f, 51.11f, 51.11f, 51.11f}},
 { "4:256:4:256", {50.79f, 50.79f, 50.79f, 50.79f, 50.79f, 50.79f}},
 { "4:256:8:256", {50.57f, 50.57f, 50.57f, 50.57f, 50.57f, 50.57f}},
@@ -199,6 +204,7 @@
 {  "4:4K:16:2K", {48.10f, 48.10f, 48.10f, 48.10f, 48.10f, 48.10f}},  // Estimated
 // FFT3231 - Computed with variant 101, -use TABMUL_CHAIN32=1,TAIL_TRIGS32=0 and targeting maxROE of ~0.35 over 1000 iterations (TitanV).
 // (The earlier, much lower carry-overflow limits came from 32-bit mid-pair carries, now fixed.)
+{"50:256:1:256", {20.65f, 20.65f, 20.65f, 20.65f, 20.65f, 20.65f}},  // Estimated: the 256:2:256 values (a 128K FFT should allow ~0.3 more)
 {"50:256:2:256", {20.65f, 20.65f, 20.65f, 20.65f, 20.65f, 20.65f}},
 {"50:256:4:256", {20.36f, 20.36f, 20.36f, 20.36f, 20.36f, 20.36f}},
 {"50:256:8:256", {20.07f, 20.07f, 20.07f, 20.07f, 20.07f, 20.07f}},
@@ -221,6 +227,7 @@
 { "50:4K:16:1K", {18.03f, 18.03f, 18.03f, 18.03f, 18.03f, 18.03f}},
 { "50:4K:16:2K", {17.80f, 17.80f, 17.80f, 17.80f, 17.80f, 17.80f}},  // Estimated
 // FFT6431 - Computed with variant 202 and targeting maxROE of ~0.35 over 1000 iterations, probably could go higher
+{ "51:256:1:256", {35.27f, 35.27f, 35.27f, 35.27f, 35.27f, 35.27f}},  // Estimated: the 256:2:256 values (a 128K FFT should allow ~0.3 more)
 { "51:256:2:256", {35.27f, 35.27f, 35.27f, 35.27f, 35.27f, 35.27f}},
 { "51:256:4:256", {34.98f, 34.98f, 34.98f, 34.98f, 34.98f, 34.98f}},
 { "51:256:8:256", {34.61f, 34.61f, 34.61f, 34.61f, 34.61f, 34.61f}},
