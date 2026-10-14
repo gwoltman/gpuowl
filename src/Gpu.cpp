@@ -2893,7 +2893,12 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   u32 k = 0;
   PRPState const state{.exponent=E, .k=0, .blockSize=blockSize, .res64=3, .check=makeWords(E, 1), .nErrors=0};
   writeState(state.k, state.check, state.blockSize);
-  assert(dataResidue() == state.res64);
+  // A setting that computes wrongly on this GPU (or driver) can already fail here, on the first modMul.  Treat it like a failed check
+  // at the end: the timing never wins, and -tune moves on instead of aborting.
+  if (u64 const res = dataResidue(); res != state.res64) {
+    log("Error on load: %016" PRIx64 " vs. %016" PRIx64 "\n", res, state.res64);
+    return std::numeric_limits<double>::infinity();
+  }
 
   enum LEAD_TYPE leadIn = LEAD_NONE;
   modMul(bufCheck, bufData, leadIn);
