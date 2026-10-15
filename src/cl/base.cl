@@ -371,6 +371,8 @@ typedef float F;            // A classic FFT using floats.  Use typedefs F and F
 typedef float2 F2;
 typedef uint Z31;           // A value calculated mod M31.  For a GF(M31^2) NTT.
 typedef uint2 GF31;         // A complex value using two Z31s.  For a GF(M31^2) NTT.
+typedef struct { u64 v; } Z31q;       // A quick (unreduced) Z31: a sum of products below 0xFFFFFFFF7FFFFFFF, modM31(u64)'s limit.  Structs, so
+typedef struct { Z31q x, y; } GF31q;  // their overloads (mulq, madq, addq, subq, modM31 in math.cl) cannot collide with Z61's / GF61's u64 / ulong2 ones.
 typedef ulong Z61;          // A value calculated mod M61.  For a GF(M61^2) NTT.
 typedef ulong2 GF61;        // A complex value using two Z61s.  For a GF(M61^2) NTT.
 //typedef ulong NCW;          // A value calculated mod 2^64 - 2^32 + 1.

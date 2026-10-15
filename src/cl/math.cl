@@ -938,6 +938,33 @@ GF31 OVERLOAD mul_t8(GF31 a) { return U2(shl(sub(a.x, a.y), 15), shl(add(a.x, a.
 // mul with (-2^15, 2^15). (twiddle of 3*tau/8).
 GF31 OVERLOAD mul_3t8(GF31 a) { return U2(shl(neg(add(a.x, a.y)), 15), shl(sub(a.x, a.y), 15)); }
 
+// Multiply both components by a scalar (the radix-PFA DFTs, fftN.cl)
+GF31 OVERLOAD pfaScale(GF31 a, Z31 s) { return U2(mul(a.x, s), mul(a.y, s)); }
+
+// Quick (unreduced) GF31 arithmetic for the radix-PFA DFTs (fftN.cl): Z31q / GF31q hold sums of products, reduced once by modM31.
+Z31q OVERLOAD makeZ31q(u64 v) { Z31q r; r.v = v; return r; }
+GF31q OVERLOAD makeGF31q(Z31q x, Z31q y) { GF31q r; r.x = x; r.y = y; return r; }
+
+// x * c for a constant c.  A c above M31/2 is folded to (M31 - x) * (M31 - c), so the product stays below M31 * M31/2 < 2^61 (x in 0..M31).
+// The branch is resolved at compile time.
+Z31q OVERLOAD mulq(Z31 x, Z31 c) { return makeZ31q(c > M31 / 2 ? (u64)(M31 - x) * (M31 - c) : (u64) x * c); }
+GF31q OVERLOAD mulq(GF31 a, Z31 c) { return makeGF31q(mulq(a.x, c), mulq(a.y, c)); }
+
+// acc + x * c, acc unreduced or a Z31
+Z31q OVERLOAD madq(Z31 x, Z31 c, Z31q acc) { return makeZ31q(acc.v + mulq(x, c).v); }
+Z31q OVERLOAD madq(Z31 x, Z31 c, Z31 acc) { return makeZ31q(acc + mulq(x, c).v); }
+GF31q OVERLOAD madq(GF31 a, Z31 c, GF31q acc) { return makeGF31q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
+GF31q OVERLOAD madq(GF31 a, Z31 c, GF31 acc) { return makeGF31q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
+
+// a + b and a - b.  subq adds M31 * 2^32, a multiple of M31:  the caller keeps b <= M31 * 2^32 and both results below 0xFFFFFFFF7FFFFFFF.
+Z31q OVERLOAD addq(Z31q a, Z31q b) { return makeZ31q(a.v + b.v); }
+Z31q OVERLOAD subq(Z31q a, Z31q b) { return makeZ31q(a.v + ((u64) M31 << 32) - b.v); }
+GF31q OVERLOAD addq(GF31q a, GF31q b) { return makeGF31q(addq(a.x, b.x), addq(a.y, b.y)); }
+GF31q OVERLOAD subq(GF31q a, GF31q b) { return makeGF31q(subq(a.x, b.x), subq(a.y, b.y)); }
+
+Z31 OVERLOAD modM31(Z31q a) { return modM31(a.v); }
+GF31 OVERLOAD modM31(GF31q a) { return U2(modM31(a.x), modM31(a.y)); }
+
 // Return a+b and a-b
 void OVERLOAD X2_internal(GF31 *a, GF31 *b) { GF31 t = *a; *a = add(t, *b); *b = sub(t, *b); }
 
@@ -1295,6 +1322,9 @@ GF61 OVERLOAD mul_t16q(GF61 a) {         // k1 = C1 * (ax + ay):  re = k1 + ay *
   u128 k1 = mul64(T16C1, a.x + a.y);
   return U2(weakModM61(mad64(a.y, M61 - T16S1 - T16C1, k1), 125), weakModM61(mad64(a.x, T16S1 - T16C1, k1), 125));
 }
+
+// Multiply both components by a scalar (the radix-PFA DFTs, fftN.cl)
+GF61 OVERLOAD pfaScale(GF61 a, Z61 s) { return U2(mul(a.x, s), mul(a.y, s)); }
 
 // Return a+b and a-b
 void OVERLOAD X2_internal(GF61 *a, GF61 *b) { GF61 t = *a; *a = add(t, *b); *b = sub(t, *b); }

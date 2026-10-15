@@ -1,11 +1,11 @@
 // Copyright (C) Mihai Preda
 
-#if FFT_FP64
-
 #include "fft5.cl"
 
+#if FFT_FP64
+
 // PFA(5*2): 36 FMA + 44 ADD
-void fft10(T2 *u) {
+void OVERLOAD fft10(T2 *u) {
   fft5by(u, 0, 2, 10);
   fft5by(u, 5, 2, 10);
   for (int i = 0; i < 10; i += 2) { X2(u[i], u[(i + 5) % 10]); }
@@ -26,10 +26,8 @@ void fft10(T2 *u) {
 
 #if FFT_FP32
 
-#include "fft5.cl"
-
 // PFA(5*2): 36 FMA + 44 ADD
-void fft10(F2 *u) {
+void OVERLOAD fft10(F2 *u) {
   fft5by(u, 0, 2, 10);
   fft5by(u, 5, 2, 10);
   for (int i = 0; i < 10; i += 2) { X2(u[i], u[(i + 5) % 10]); }

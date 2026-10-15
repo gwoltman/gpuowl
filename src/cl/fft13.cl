@@ -9,7 +9,7 @@
 // 1.3% of the former 156 FMA version: the cos change alone costs 4% (its coefficients reach 1.09), the sin choice wins most of it back.
 // Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0,3,2,4, sin terms smallest first.
 
-void fft13(T2 *u) {
+void OVERLOAD fft13(T2 *u) {
   const double COS3 = 0.1205366802553230533491;    // cos(3*tau/13): subtracted from every cos coefficient, it zeroes one term per cos row
   const double C1_C3 = 0.7649193453978868425513;   // cos(tau/13) - cos(3*tau/13)
   const double C2_C3 = 0.4475280664758327491627;   // cos(2*tau/13) - cos(3*tau/13)
@@ -128,7 +128,7 @@ void fft13(T2 *u) {
 // 1.3% of the former 156 FMA version: the cos change alone costs 4% (its coefficients reach 1.09), the sin choice wins most of it back.
 // Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0,3,2,4, sin terms smallest first.
 
-void fft13(F2 *u) {
+void OVERLOAD fft13(F2 *u) {
   const float COS3 = 0.1205366802553230533491f;    // cos(3*tau/13): subtracted from every cos coefficient, it zeroes one term per cos row
   const float C1_C3 = 0.7649193453978868425513f;   // cos(tau/13) - cos(3*tau/13)
   const float C2_C3 = 0.4475280664758327491627f;   // cos(2*tau/13) - cos(3*tau/13)

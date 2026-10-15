@@ -5,7 +5,7 @@
 #if FFT_FP64
 
 // 12 FMA + 24 ADD
-void fft6(T2 *u) {
+void OVERLOAD fft6(T2 *u) {
   X2(u[0], u[3]);
   X2(u[2], u[5]);
   X2(u[4], u[1]);
@@ -28,7 +28,7 @@ void fft6(T2 *u) {
 #if FFT_FP32
 
 // 12 FMA + 24 ADD
-void fft6(F2 *u) {
+void OVERLOAD fft6(F2 *u) {
   X2(u[0], u[3]);
   X2(u[2], u[5]);
   X2(u[4], u[1]);

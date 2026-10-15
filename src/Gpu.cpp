@@ -614,25 +614,15 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     defines += toDefine("PFA", R);
     defines += toDefine("PFA_LINV", invModR(rowL));
     defines += toDefine("PFA_BHINV", invModR(rowBH));
-    // For each prime: R^-1 mod q (weights), R^-1 mod p (normalization), the powers of the root w of the radix-R, and for R = 5, 7, 11 and 15
-    // the coefficients (w^m + w^-m) / 2 and (w^m - w^-m) / 2 of the folded DFT
+    // For each prime: R^-1 mod q (weights), R^-1 mod p (normalization), and the root w of the radix-R.  The radix-R DFTs (the GF
+    // sections of fftN.cl) hardwire their constants from this same root and #error if PFA_W31 / PFA_W61 differs.
     for (u32 q : {31u, 61u}) {
       if ((q == 31 && !fft.NTT_GF31) || (q == 61 && !fft.NTT_GF61)) { continue; }
       u64 const p = (u64(1) << q) - 1;
       string const suffix = q == 61 ? "ull" : "u";
-      u64 const w = pfaRootOfUnity(q, R), half = pfaPowMod(q, 2, q - 1);         // 2^-1 = 2^(q-1) mod p
-      string wpow, c, s;
-      for (u32 m = 0; m < R; ++m) {
-        u64 const wm = pfaPowMod(q, w, m), wmi = pfaPowMod(q, w, (R - m) % R);
-        wpow += (m ? "," : "") + to_string(wm) + suffix;
-        c += (m ? "," : "") + to_string(pfaMulMod(q, (wm + wmi) % p, half)) + suffix;
-        s += (m ? "," : "") + to_string(pfaMulMod(q, (wm + p - wmi) % p, half)) + suffix;
-      }
       defines += toDefine("PFA_RINV" + to_string(q), [&]{ for (u32 x = 1; x < q; ++x) { if (R * x % q == 1) { return x; } } return 0u; }());
       defines += toDefine("PFA_INVR_" + to_string(q), to_string(pfaPowMod(q, R, p - 2)) + suffix);
-      defines += toDefine("PFA_WPOW" + to_string(q), wpow);
-      defines += toDefine("PFA_C" + to_string(q), c);
-      defines += toDefine("PFA_S" + to_string(q), s);
+      defines += toDefine("PFA_W" + to_string(q), to_string(pfaRootOfUnity(q, R)) + suffix);
     }
     // The FP side of a hybrid needs no constants from here: its radix-PFA is the hand-tuned fftN (fft-middle.cl pfaDftR)
   }

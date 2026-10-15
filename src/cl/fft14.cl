@@ -1,11 +1,11 @@
 // Copyright (C) Mihai Preda and George Woltman
 
-#if FFT_FP64
-
 #include "fft7.cl"
 
+#if FFT_FP64
+
 // PFA(7*2): 76 FMA + 64 ADD
-void fft14(T2 *u) {
+void OVERLOAD fft14(T2 *u) {
   fft7by(u, 0, 2, 14);
   fft7by(u, 7, 2, 14);
   for (int i = 0; i < 14; i += 2) { X2(u[i], u[(i + 7) % 14]); }
@@ -29,10 +29,8 @@ void fft14(T2 *u) {
 
 #if FFT_FP32
 
-#include "fft7.cl"
-
 // PFA(7*2): 76 FMA + 64 ADD
-void fft14(F2 *u) {
+void OVERLOAD fft14(F2 *u) {
   fft7by(u, 0, 2, 14);
   fft7by(u, 7, 2, 14);
   for (int i = 0; i < 14; i += 2) { X2(u[i], u[(i + 7) % 14]); }

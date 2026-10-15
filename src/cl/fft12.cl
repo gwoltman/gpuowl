@@ -1,12 +1,12 @@
 // Copyright (C) Mihai Preda and George Woltman
 
-#if FFT_FP64
-
 #include "fft3.cl"
 #include "fft4.cl"
 
+#if FFT_FP64
+
 // 24 FMA + 72 ADD
-void fft12(T2 *u) {
+void OVERLOAD fft12(T2 *u) {
   fft3by(u, 0, 4, 12);
   fft3by(u, 3, 4, 12);
   fft3by(u, 6, 4, 12);
@@ -31,11 +31,8 @@ void fft12(T2 *u) {
 
 #if FFT_FP32
 
-#include "fft3.cl"
-#include "fft4.cl"
-
 // 24 FMA + 72 ADD
-void fft12(F2 *u) {
+void OVERLOAD fft12(F2 *u) {
   fft3by(u, 0, 4, 12);
   fft3by(u, 3, 4, 12);
   fft3by(u, 6, 4, 12);
