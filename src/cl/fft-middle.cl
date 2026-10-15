@@ -950,6 +950,10 @@ void OVERLOAD middleMul(GF31 *u, u32 s, TrigGF31 trig) {
 
 GF31 OVERLOAD pfaScale(GF31 a, Z31 s) { return U2(mul(a.x, s), mul(a.y, s)); }
 
+// acc + x * c for a constant c, unreduced.  A c above M31/2 is folded to M31 - c with the input negated, (M31 - x) * (M31 - c), so the
+// product stays below 2^61 (x in 0..M31).  The branch is resolved at compile time.
+u64 OVERLOAD gf31mad(Z31 x, Z31 c, u64 acc) { return c > M31 / 2 ? acc + (u64)(M31 - x) * (M31 - c) : acc + (u64) x * c; }
+
 // Three-point DFT using w^2 + w + 1 = 0, so it needs a single scalar multiply:  y1 = a0 - a2 + w(a1 - a2), y2 = a0 - a1 - w(a1 - a2)
 void OVERLOAD pfaDft3(GF31 *a, Z31 w) {
   GF31 wd = pfaScale(sub(a[1], a[2]), w);
@@ -966,36 +970,70 @@ void OVERLOAD pfaDftR(GF31 *a) {
 #if PFA == 3
   pfaDft3(a, wp[1]);
 #elif PFA == 9
-  // 3 x 3 Cooley-Tukey with w^3 a cube root of unity: inputs n1 + 3*n2, outputs k2 + 3*k1, twiddles w^(n1*k2)
-  GF31 b[9];
-  for (u32 n1 = 0; n1 < 3; ++n1) {
-    GF31 t[3] = { a[n1], a[n1 + 3], a[n1 + 6] };
-    pfaDft3(t, wp[3]);
-    for (u32 k2 = 0; k2 < 3; ++k2) { b[3 * n1 + k2] = t[k2]; }
+  // Paired as for 7 and 11 below, with the structure 9 = 3 * 3 adds:  rows 1, 2, 4 all hold c_3 = -1/2 on sum_3 and a permutation of
+  // c_1, c_2, c_4 on sum_1, sum_2, sum_4, so base = a0 + c_3 sum_3 + c_1 (sum_1 + sum_2 + sum_4) leaves two products per row;  row 3 is
+  // a0 + sum_3 + c_3 (sum_1 + sum_2 + sum_4).  64-bit dot products reduced once, as below.
+  const Z31 c[PFA] = { PFA_C31 }, s[PFA] = { PFA_S31 };
+  GF31 sum[4], dif[4], y[PFA];
+  #pragma unroll
+  for (u32 k = 1; k <= 4; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); }
+  GF31 s124 = add(add(sum[0], sum[1]), sum[3]);
+  GF31 t = add(a[0], sum[2]);
+  y[0] = add(t, s124);
+  u64 bx = gf31mad(s124.x, c[1], gf31mad(sum[2].x, c[3], a[0].x)), by = gf31mad(s124.y, c[1], gf31mad(sum[2].y, c[3], a[0].y));
+  #pragma unroll
+  for (u32 j = 1; j <= 4; ++j) {
+    u64 pcx, pcy, qsx = 0, qsy = 0;
+    if (j == 3) { pcx = gf31mad(s124.x, c[3], t.x); pcy = gf31mad(s124.y, c[3], t.y); }
+    else {
+      pcx = bx; pcy = by;
+      #pragma unroll
+      for (u32 k = 1; k <= 4; ++k) {
+        u32 m = j * k % PFA;
+        if (k == 3 || m == 1 || m == PFA - 1) continue;           // k = 3 (c_3) and the c_1 term are in the base
+        Z31 cd = (c[m] + M31 - c[1]) % M31;
+        pcx = gf31mad(sum[k - 1].x, cd, pcx); pcy = gf31mad(sum[k - 1].y, cd, pcy);
+      }
+    }
+    #pragma unroll
+    for (u32 k = 1; k <= 4; ++k) {
+      u32 m = j * k % PFA;
+      if (m == 0) continue;                                      // s_0 = 0
+      qsx = gf31mad(dif[k - 1].x, s[m], qsx); qsy = gf31mad(dif[k - 1].y, s[m], qsy);
+    }
+    GF31 pc = U2(modM31(pcx), modM31(pcy)), qs = U2(modM31(qsx), modM31(qsy));
+    y[j] = add(pc, qs);
+    y[PFA - j] = sub(pc, qs);
   }
-  b[4] = pfaScale(b[4], wp[1]); b[5] = pfaScale(b[5], wp[2]); b[7] = pfaScale(b[7], wp[2]); b[8] = pfaScale(b[8], wp[4]);
-  for (u32 k2 = 0; k2 < 3; ++k2) {
-    GF31 t[3] = { b[k2], b[3 + k2], b[6 + k2] };
-    pfaDft3(t, wp[3]);
-    for (u32 k1 = 0; k1 < 3; ++k1) { a[k2 + 3 * k1] = t[k1]; }
-  }
+  for (u32 k = 0; k < PFA; ++k) { a[k] = y[k]; }
 #else
-  // Pair the inputs k and PFA - k:  y_j = a0 + sum_k c_jk (a_k + a_-k) + s_jk (a_k - a_-k),  y_-j = the same with -s
+  // Pair the inputs k and PFA - k:  y_j = a0 + sum_k c_jk (a_k + a_-k) + s_jk (a_k - a_-k),  y_-j = the same with -s.
+  // Each row is a dot product accumulated in 64 bits and reduced once (gf31mad keeps every product below 2^61, so a row of at most
+  // five products plus a0 stays below 0xFFFFFFFF7FFFFFFF, the limit of modM31(u64)).  As in fft11.cl, the cos rows all hold the same
+  // cosines, so base = a0 + c_1 * (sum of the sums) lets each row use c_jk - c_1 and skip the term where c_jk = c_1.
   const Z31 c[PFA] = { PFA_C31 }, s[PFA] = { PFA_S31 };
   const u32 h = (PFA - 1) / 2;
   GF31 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
-  y[0] = a[0];
-  // Unrolled so that c[] and s[] are indexed by constants.  Whether a compiler unrolls these loops on its own depends on its
-  // heuristics.  When NVIDIA's did not (GF61, PFA = 11, before the 128-bit dot products), the arrays went on the stack and
-  // fftMiddleIn/Out were 30% slower.
   #pragma unroll
-  for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); y[0] = add(y[0], sum[k - 1]); }
+  for (u32 k = 1; k <= h; ++k) { sum[k - 1] = add(a[k], a[PFA - k]); dif[k - 1] = sub(a[k], a[PFA - k]); }
+  GF31 sall = sum[0];
+  #pragma unroll
+  for (u32 k = 2; k <= h; ++k) { sall = add(sall, sum[k - 1]); }
+  y[0] = add(a[0], sall);
+  u64 bx = gf31mad(sall.x, c[1], a[0].x), by = gf31mad(sall.y, c[1], a[0].y);
   #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
-    GF31 pc = pfaScale(sum[0], c[j % PFA]), qs = pfaScale(dif[0], s[j % PFA]);
+    u64 pcx = bx, pcy = by, qsx = 0, qsy = 0;
     #pragma unroll
-    for (u32 k = 2; k <= h; ++k) { pc = add(pc, pfaScale(sum[k - 1], c[j * k % PFA])); qs = add(qs, pfaScale(dif[k - 1], s[j * k % PFA])); }
-    pc = add(a[0], pc);
+    for (u32 k = 1; k <= h; ++k) {
+      u32 m = j * k % PFA;
+      if (m != 1 && m != PFA - 1) {
+        Z31 cd = (c[m] + M31 - c[1]) % M31;
+        pcx = gf31mad(sum[k - 1].x, cd, pcx); pcy = gf31mad(sum[k - 1].y, cd, pcy);
+      }
+      qsx = gf31mad(dif[k - 1].x, s[m], qsx); qsy = gf31mad(dif[k - 1].y, s[m], qsy);
+    }
+    GF31 pc = U2(modM31(pcx), modM31(pcy)), qs = U2(modM31(qsx), modM31(qsy));
     y[j] = add(pc, qs);
     y[PFA - j] = sub(pc, qs);
   }
@@ -1280,7 +1318,8 @@ void OVERLOAD pfaDftR(GF61 *a) {
     for (u32 k2 = 0; k2 < 5; ++k2) { a[(10 * k1 + 6 * k2) % 15] = t[k2]; }
   }
 #elif PFA == 9
-  // 3 x 3 Cooley-Tukey with w^3 a cube root of unity: inputs n1 + 3*n2, outputs k2 + 3*k1, twiddles w^(n1*k2)
+  // 3 x 3 Cooley-Tukey with w^3 a cube root of unity: inputs n1 + 3*n2, outputs k2 + 3*k1, twiddles w^(n1*k2).  (Paired 64x64-bit dot
+  // products as for 7 and 11, with GF31's PFA 9 structure, need about 24 products per component instead of 10: 12% more instructions.)
   GF61 b[9];
   for (u32 n1 = 0; n1 < 3; ++n1) {
     GF61 t[3] = { a[n1], a[n1 + 3], a[n1 + 6] };
@@ -1298,7 +1337,6 @@ void OVERLOAD pfaDftR(GF61 *a) {
   const Z61 c[PFA] = { PFA_C61 }, s[PFA] = { PFA_S61 };
   const u32 h = (PFA - 1) / 2;
   GF61 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
-  y[0] = a[0];
   // Unrolled so that c[] and s[] are indexed by constants.  Whether a compiler unrolls these loops on its own depends on its
   // heuristics.  When NVIDIA's did not (GF61, PFA = 11, before the 128-bit dot products), the arrays went on the stack and
   // fftMiddleIn/Out were 30% slower.
@@ -1308,20 +1346,27 @@ void OVERLOAD pfaDftR(GF61 *a) {
     sum[k - 1] = a[k] + a[PFA - k];                                     // 0..2+
     dif[k - 1] = a[k] + neg(a[PFA - k], 2);                             // 1-..3+, positive for the multiplies
   }
-  // y0 = a0 + the sums: at most three sums at a time stay below 8 M61
-  y[0] = modM61q(y[0] + sum[0] + sum[1] + sum[2], 0);                   // 0..7+ before the mod
+  // sall = the sum of the sums, reduced: at most three sums at a time stay below 8 M61.  y0 = a0 + sall.
+  GF61 sall = modM61q(sum[0] + sum[1] + sum[2], 0);                     // 0..6+ before the mod
   #pragma unroll
-  for (u32 k = 4; k <= h; k += 2) { y[0] = modM61q(y[0] + sum[k - 1] + (k < h ? sum[k] : U2(0ull, 0ull)), 0); }  // 0..5+ before the mod
+  for (u32 k = 4; k <= h; k += 2) { sall = modM61q(sall + sum[k - 1] + (k < h ? sum[k] : U2(0ull, 0ull)), 0); }  // 0..5+ before the mod
+  y[0] = modM61q(a[0] + sall, 0);                                       // 0..2+ before the mod
+  // As in fft11.cl, the cos rows all hold the same cosines: base = a0 + c_1 sall lets each row use c_jk - c_1 and skip one product
+  u128 bx = mad64(sall.x, c[1], a[0].x), by = mad64(sall.y, c[1], a[0].y);
   #pragma unroll
   for (u32 j = 1; j <= h; ++j) {
     // Dot products accumulated in 128 bits and reduced once: h <= 5 products below 3 M61^2 each stay below 2^126
-    u128 pcx = mul64(sum[0].x, c[j % PFA]), pcy = mul64(sum[0].y, c[j % PFA]), qsx = mul64(dif[0].x, s[j % PFA]), qsy = mul64(dif[0].y, s[j % PFA]);
+    u128 pcx = bx, pcy = by, qsx = mul64(dif[0].x, s[j % PFA]), qsy = mul64(dif[0].y, s[j % PFA]);
     #pragma unroll
-    for (u32 k = 2; k <= h; ++k) {
-      pcx = mad64(sum[k - 1].x, c[j * k % PFA], pcx); pcy = mad64(sum[k - 1].y, c[j * k % PFA], pcy);
-      qsx = mad64(dif[k - 1].x, s[j * k % PFA], qsx); qsy = mad64(dif[k - 1].y, s[j * k % PFA], qsy);
+    for (u32 k = 1; k <= h; ++k) {
+      u32 m = j * k % PFA;
+      if (m != 1 && m != PFA - 1) {
+        Z61 cd = (c[m] + M61 - c[1]) % M61;
+        pcx = mad64(sum[k - 1].x, cd, pcx); pcy = mad64(sum[k - 1].y, cd, pcy);
+      }
+      if (k > 1) { qsx = mad64(dif[k - 1].x, s[m], qsx); qsy = mad64(dif[k - 1].y, s[m], qsy); }
     }
-    GF61 pc = a[0] + U2(weakModM61(pcx, 128), weakModM61(pcy, 128));      // 0..3+
+    GF61 pc = U2(weakModM61(pcx, 128), weakModM61(pcy, 128));            // 0..2+, a0 is in the base
     GF61 qs = U2(weakModM61(qsx, 128), weakModM61(qsy, 128));             // 0..2+
     y[j] = modM61q(pc + qs, 0);                                           // 0..5+ before the mod
     y[PFA - j] = modM61q(pc - qs, 3);                                     // -2-..3+ before the mod
