@@ -227,10 +227,10 @@ void OVERLOAD fft9(GF61 *u) {
   fft3by(u, 0, 3, 9);
   fft3by(u, 1, 3, 9);
   fft3by(u, 2, 3, 9);
-  u[4] = pfaScale(u[4], W1);
-  u[7] = pfaScale(u[7], W2);
-  u[5] = pfaScale(u[5], W2);
-  u[8] = pfaScale(u[8], W4);
+  u[4] = mul(u[4], W1);
+  u[7] = mul(u[7], W2);
+  u[5] = mul(u[5], W2);
+  u[8] = mul(u[8], W4);
   fft3by(u, 0, 1, 9);
   fft3by(u, 3, 1, 9);
   fft3by(u, 6, 1, 9);

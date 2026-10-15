@@ -1038,7 +1038,7 @@ void OVERLOAD pfaMiddleOut(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = a[j * (PFA_BH % PFA) % PFA]; }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    GF31 w = pfaScale(pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig), PFA_INVR_31);
+    GF31 w = mul(pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig), PFA_INVR_31);
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
 }
@@ -1275,7 +1275,7 @@ void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = a[j * (PFA_BH % PFA) % PFA]; }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    GF61 w = pfaScale(pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig), PFA_INVR_61);
+    GF61 w = mul(pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig), PFA_INVR_61);
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
 }

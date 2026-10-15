@@ -130,9 +130,9 @@ void OVERLOAD fft7by(GF31 *u, u32 base, u32 step, u32 M) {
   X2(A(2), A(5));
   X2(A(3), A(4));
 
-  GF31 sall = add(add(A(1), A(2)), A(3));
-  GF31q cbase = madq(sall, C1, A(0));                  // u0 + c1 * sall
-  A(0) = add(A(0), sall);
+  GF31 sum = add(add(A(1), A(2)), A(3));
+  GF31q cbase = madq(sum, C1, A(0));                   // u0 + c1 * sum
+  A(0) = add(A(0), sum);
 
   // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  The comments give each
   // row's maximum values (mulq keeps a product below M31 * M31/2), which keep addq and subq below modM31's limit of 0xFFFFFFFF7FFFFFFF.
@@ -193,48 +193,42 @@ void OVERLOAD fft7by(GF61 *u, u32 base, u32 step, u32 M) {
   const Z61 S3 = 831884051671952528ull;
 
   // Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
-  GF61 sum1 = A(1) + A(6);                    // 0..2+
-  GF61 dif1 = A(1) + neg(A(6), 2);             // 1-..3+, positive for the multiplies
-  GF61 sum2 = A(2) + A(5);                    // 0..2+
-  GF61 dif2 = A(2) + neg(A(5), 2);             // 1-..3+, positive for the multiplies
-  GF61 sum3 = A(3) + A(4);                    // 0..2+
-  GF61 dif3 = A(3) + neg(A(4), 2);             // 1-..3+, positive for the multiplies
-  GF61 sall = modM61q(sum1 + sum2 + sum3, 0);                  // 0..6+ before the mod
-  // base = a0 + c1 * sall: each cos row then uses c_m - c1 and skips the c1 term
-  u128 basex = mad64(sall.x, C1, A(0).x), basey = mad64(sall.y, C1, A(0).y);
-  A(0) = modM61q(A(0) + sall, 0);                          // 0..2+ before the mod
+  X2qp(&A(1), &A(6));    // A(1) = 0..2+, A(6) = 1-..3+
+  X2qp(&A(2), &A(5));    // A(2) = 0..2+, A(5) = 1-..3+
+  X2qp(&A(3), &A(4));    // A(3) = 0..2+, A(4) = 1-..3+
 
-  // One row at a time, each k's cos and sin terms together (the row's 128-bit accumulators are dead before the next row starts);
-  // the outputs are kept until the last row
-  u128 pc1x = basex, pc1y = basey;
-  u128 qs1x = mul64(dif1.x, S1), qs1y = mul64(dif1.y, S1);
-  pc1x = mad64(sum2.x, C2_C1, pc1x); pc1y = mad64(sum2.y, C2_C1, pc1y);
-  qs1x = mad64(dif2.x, S2, qs1x); qs1y = mad64(dif2.y, S2, qs1y);
-  pc1x = mad64(sum3.x, C3_C1, pc1x); pc1y = mad64(sum3.y, C3_C1, pc1y);
-  qs1x = mad64(dif3.x, S3, qs1x); qs1y = mad64(dif3.y, S3, qs1y);
-  GF61 pc1 = U2(weakModM61(pc1x, 128), weakModM61(pc1y, 128));        // 0..2+
-  GF61 qs1 = U2(weakModM61(qs1x, 128), weakModM61(qs1y, 128));        // 0..2+
-  GF61 y1 = modM61q(pc1 + qs1, 0), y6 = modM61q(pc1 - qs1, 3);  // 0..4+ and -2-..2+ before the mods
+  GF61 sum = modM61q(A(1) + A(2) + A(3), 0);     // 0..6+ before the mod
+  GF61q cbase = madq(sum, C1, A(0));             // u0 + c1 * sum
+  A(0) = modM61q(A(0) + sum, 0);                 // 0..2+ before the mod
 
-  u128 pc2x = basex, pc2y = basey;
-  pc2x = mad64(sum1.x, C2_C1, pc2x); pc2y = mad64(sum1.y, C2_C1, pc2y);
-  u128 qs2x = mul64(dif1.x, S2), qs2y = mul64(dif1.y, S2);
-  pc2x = mad64(sum2.x, C3_C1, pc2x); pc2y = mad64(sum2.y, C3_C1, pc2y);
-  qs2x = mad64(dif2.x, (M61 - S3), qs2x); qs2y = mad64(dif2.y, (M61 - S3), qs2y);
-  qs2x = mad64(dif3.x, (M61 - S1), qs2x); qs2y = mad64(dif3.y, (M61 - S1), qs2y);
-  GF61 pc2 = U2(weakModM61(pc2x, 128), weakModM61(pc2y, 128));        // 0..2+
-  GF61 qs2 = U2(weakModM61(qs2x, 128), weakModM61(qs2y, 128));        // 0..2+
-  GF61 y2 = modM61q(pc2 + qs2, 0), y5 = modM61q(pc2 - qs2, 3);  // 0..4+ and -2-..2+ before the mods
+  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  Each product of a quick
+  // value (below 4 M61) and a constant is below 4 M61^2, so a row of at most six stays below 2^127 for weakModM61q.
+  GF61q tmp27a = cbase;
+  GF61q tmp27b = mulq(A(6), S1);
+  tmp27a = madq(A(2), C2_C1, tmp27a);
+  tmp27b = madq(A(5), S2, tmp27b);
+  tmp27a = madq(A(3), C3_C1, tmp27a);
+  tmp27b = madq(A(4), S3, tmp27b);
+  GF61 pc1 = weakModM61q(tmp27a), qs1 = weakModM61q(tmp27b);     // 0..2+
+  GF61 y1 = modM61q(pc1 + qs1, 0), y6 = modM61q(pc1 - qs1, 3);   // 0..4+ and -2-..2+ before the mods
 
-  u128 pc3x = basex, pc3y = basey;
-  pc3x = mad64(sum1.x, C3_C1, pc3x); pc3y = mad64(sum1.y, C3_C1, pc3y);
-  u128 qs3x = mul64(dif1.x, S3), qs3y = mul64(dif1.y, S3);
-  qs3x = mad64(dif2.x, (M61 - S1), qs3x); qs3y = mad64(dif2.y, (M61 - S1), qs3y);
-  pc3x = mad64(sum3.x, C2_C1, pc3x); pc3y = mad64(sum3.y, C2_C1, pc3y);
-  qs3x = mad64(dif3.x, S2, qs3x); qs3y = mad64(dif3.y, S2, qs3y);
-  GF61 pc3 = U2(weakModM61(pc3x, 128), weakModM61(pc3y, 128));        // 0..2+
-  GF61 qs3 = U2(weakModM61(qs3x, 128), weakModM61(qs3y, 128));        // 0..2+
-  GF61 y3 = modM61q(pc3 + qs3, 0), y4 = modM61q(pc3 - qs3, 3);  // 0..4+ and -2-..2+ before the mods
+  GF61q tmp36a = cbase;
+  tmp36a = madq(A(1), C2_C1, tmp36a);
+  GF61q tmp36b = mulq(A(6), S2);
+  tmp36a = madq(A(2), C3_C1, tmp36a);
+  tmp36b = madq(A(5), (M61 - S3), tmp36b);
+  tmp36b = madq(A(4), (M61 - S1), tmp36b);
+  GF61 pc2 = weakModM61q(tmp36a), qs2 = weakModM61q(tmp36b);     // 0..2+
+  GF61 y2 = modM61q(pc2 + qs2, 0), y5 = modM61q(pc2 - qs2, 3);   // 0..4+ and -2-..2+ before the mods
+
+  GF61q tmp45a = cbase;
+  tmp45a = madq(A(1), C3_C1, tmp45a);
+  GF61q tmp45b = mulq(A(6), S3);
+  tmp45b = madq(A(5), (M61 - S1), tmp45b);
+  tmp45a = madq(A(3), C2_C1, tmp45a);
+  tmp45b = madq(A(4), S2, tmp45b);
+  GF61 pc3 = weakModM61q(tmp45a), qs3 = weakModM61q(tmp45b);     // 0..2+
+  GF61 y3 = modM61q(pc3 + qs3, 0), y4 = modM61q(pc3 - qs3, 3);   // 0..4+ and -2-..2+ before the mods
 
   A(1) = y1; A(6) = y6;
   A(2) = y2; A(5) = y5;

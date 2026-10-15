@@ -61,7 +61,7 @@ void OVERLOAD fft3(F2 *u) { fft3by(u, 0, 1, 3); }
 // y1 = u0 - u2 + w (u1 - u2), y2 = u0 - u1 - w (u1 - u2).
 void OVERLOAD fft3by(GF31 *u, u32 base, u32 step, u32 M) {
   const Z31 W = 1513477735u;                           // w, a cube root of unity:  w^2 + w + 1 = 0, so one scalar multiply
-  GF31 wd = pfaScale(sub(A(1), A(2)), W);
+  GF31 wd = mul(sub(A(1), A(2)), W);
   GF31 y0 = add(add(A(0), A(1)), A(2));
   GF31 y1 = add(sub(A(0), A(2)), wd);
   GF31 y2 = sub(sub(A(0), A(1)), wd);
