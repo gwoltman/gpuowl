@@ -400,26 +400,23 @@ void OVERLOAD middleShuffle(local T2 *lds, T2 *u) {
 // The FP side of a PFA middle step (hybrid FFT/NTT types), as pfaMiddleIn / pfaMiddleOut for GF61 below.  The PFA-th root of unity
 // w = e^(2*pi*i/PFA) is complex and on the unit circle, so the inverse radix-PFA is the forward one on SWAP_XY'd data, as for the
 // binary parts of the transform.
-// Forward PFA-point DFT, pairing the inputs k and PFA - k:  y_j = a0 + sum_k cos(2*pi*jk/PFA) (a_k + a_-k) + i sin(2*pi*jk/PFA) (a_k - a_-k)
+// Forward PFA-point DFT, y_j = sum_k a_k w^(jk) in natural order: the hand-tuned fftN, which all use w = e^(2*pi*i/N)
 void OVERLOAD pfaDftR(T2 *a) {
-  const T c[PFA] = { PFA_COS }, s[PFA] = { PFA_SIN };
-  const u32 h = (PFA - 1) / 2;
-  T2 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
-  y[0] = a[0];
-  // Unrolled so that c[] and s[] are indexed by constants, as in the GF versions
-  #pragma unroll
-  for (u32 k = 1; k <= h; ++k) { sum[k - 1] = a[k] + a[PFA - k]; dif[k - 1] = a[k] - a[PFA - k]; y[0] += sum[k - 1]; }
-  #pragma unroll
-  for (u32 j = 1; j <= h; ++j) {
-    T2 pc = sum[0] * c[j % PFA], qs = dif[0] * s[j % PFA];
-    #pragma unroll
-    for (u32 k = 2; k <= h; ++k) { pc += sum[k - 1] * c[j * k % PFA]; qs += dif[k - 1] * s[j * k % PFA]; }
-    pc += a[0];
-    T2 iqs = U2(-qs.y, qs.x);
-    y[j] = pc + iqs;
-    y[PFA - j] = pc - iqs;
-  }
-  for (u32 k = 0; k < PFA; ++k) { a[k] = y[k]; }
+#if PFA == 3
+  fft3(a);
+#elif PFA == 5
+  fft5(a);
+#elif PFA == 7
+  fft7(a);
+#elif PFA == 9
+  fft9(a);
+#elif PFA == 11
+  fft11(a);
+#elif PFA == 15
+  fft15(a);
+#else
+#error PFA
+#endif
 }
 
 // Rotate a[0..PFA-1] by a run-time amount t < PFA: right (a[i] = a[i - t]) or left (a[i] = a[i + t]), one select per bit of t
@@ -505,14 +502,34 @@ void OVERLOAD fft_MIDDLE(F2 *u) {
   // Do nothing
 #elif MIDDLE == 2
   fft2(u);
+#elif MIDDLE == 3
+  fft3(u);
 #elif MIDDLE == 4
   fft4(u);
+#elif MIDDLE == 5
+  fft5(u);
+#elif MIDDLE == 6
+  fft6(u);
+#elif MIDDLE == 7
+  fft7(u);
 #elif MIDDLE == 8
   fft8(u);
+#elif MIDDLE == 9
+  fft9(u);
+#elif MIDDLE == 10
+  fft10(u);
+#elif MIDDLE == 11
+  fft11(u);
+#elif MIDDLE == 12
+  fft12(u);
+#elif MIDDLE == 13
+  fft13(u);
+#elif MIDDLE == 14
+  fft14(u);
+#elif MIDDLE == 15
+  fft15(u);
 #elif MIDDLE == 16
   fft16(u);
-#elif PFA
-  // Not used: PFA's middle step is done by pfaMiddleIn / pfaMiddleOut
 #else
 #error UNRECOGNIZED MIDDLE
 #endif
@@ -772,26 +789,23 @@ void OVERLOAD middleShuffle(local F2 *lds, F2 *u) {
 // The FP side of a PFA middle step (hybrid FFT/NTT types), as pfaMiddleIn / pfaMiddleOut for GF61 below.  The PFA-th root of unity
 // w = e^(2*pi*i/PFA) is complex and on the unit circle, so the inverse radix-PFA is the forward one on SWAP_XY'd data, as for the
 // binary parts of the transform.
-// Forward PFA-point DFT, pairing the inputs k and PFA - k:  y_j = a0 + sum_k cos(2*pi*jk/PFA) (a_k + a_-k) + i sin(2*pi*jk/PFA) (a_k - a_-k)
+// Forward PFA-point DFT, y_j = sum_k a_k w^(jk) in natural order: the hand-tuned fftN, which all use w = e^(2*pi*i/N)
 void OVERLOAD pfaDftR(F2 *a) {
-  const F c[PFA] = { PFA_COSF }, s[PFA] = { PFA_SINF };
-  const u32 h = (PFA - 1) / 2;
-  F2 sum[(PFA - 1) / 2], dif[(PFA - 1) / 2], y[PFA];
-  y[0] = a[0];
-  // Unrolled so that c[] and s[] are indexed by constants, as in the GF versions
-  #pragma unroll
-  for (u32 k = 1; k <= h; ++k) { sum[k - 1] = a[k] + a[PFA - k]; dif[k - 1] = a[k] - a[PFA - k]; y[0] += sum[k - 1]; }
-  #pragma unroll
-  for (u32 j = 1; j <= h; ++j) {
-    F2 pc = sum[0] * c[j % PFA], qs = dif[0] * s[j % PFA];
-    #pragma unroll
-    for (u32 k = 2; k <= h; ++k) { pc += sum[k - 1] * c[j * k % PFA]; qs += dif[k - 1] * s[j * k % PFA]; }
-    pc += a[0];
-    F2 iqs = U2(-qs.y, qs.x);
-    y[j] = pc + iqs;
-    y[PFA - j] = pc - iqs;
-  }
-  for (u32 k = 0; k < PFA; ++k) { a[k] = y[k]; }
+#if PFA == 3
+  fft3(a);
+#elif PFA == 5
+  fft5(a);
+#elif PFA == 7
+  fft7(a);
+#elif PFA == 9
+  fft9(a);
+#elif PFA == 11
+  fft11(a);
+#elif PFA == 15
+  fft15(a);
+#else
+#error PFA
+#endif
 }
 
 // Rotate a[0..PFA-1] by a run-time amount t < PFA: right (a[i] = a[i - t]) or left (a[i] = a[i + t]), one select per bit of t

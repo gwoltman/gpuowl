@@ -2,6 +2,8 @@
 
 #pragma once
 
+#define A(k) u[(base + k * step) % M]
+
 #if FFT_FP64
 
 void OVERLOAD fft4Core(T2 *u) {
@@ -14,10 +16,6 @@ void OVERLOAD fft4Core(T2 *u) {
 
 // 16 ADD
 void OVERLOAD fft4by(T2 *u, u32 base, u32 step, u32 M) {
-
-#define A(k) u[(base + step * k) % M]
-
-#if 1
   double x0 = A(0).x + A(2).x;
   double x2 = A(0).x - A(2).x;
   double y0 = A(0).y + A(2).y;
@@ -44,20 +42,6 @@ void OVERLOAD fft4by(T2 *u, u32 base, u32 step, u32 M) {
   A(1) = U2(a2, b2);
   A(2) = U2(a1, b1);
   A(3) = U2(a3, b3);
-
-#else
-
-  X2(A(0), A(2));
-  X2_mul_t4(A(1), A(3));
-  X2(A(0), A(1));
-
-  X2(A(2), A(3));
-  SWAP(A(1), A(2));
-
-#endif
-
-#undef A
-
 }
 
 void OVERLOAD fft4(T2 *u) { fft4by(u, 0, 1, 4); }
@@ -65,9 +49,8 @@ void OVERLOAD fft4(T2 *u) { fft4by(u, 0, 1, 4); }
 // For FUSE_WEIGHT_BUTTERFLY.  Same as fft4/fft4by(u,0,1,4), but the caller has already performed the first butterfly adds/subs (see carryfused.cl);
 // u[3] still needs the mul_t4 that X2_mul_t4 would have applied to it.   Mirrors fft4Core's second butterfly plus fft4by's own output swap.
 void OVERLOAD fft4Core_skip1(T2 *u) {
-  u[3] = mul_t4(u[3]);
   X2(u[0], u[1]);
-  X2(u[2], u[3]);
+  X2t4(u[2], u[3]);
 }
 void OVERLOAD fft4_skip1(T2 *u) {
   fft4Core_skip1(u);
@@ -93,10 +76,6 @@ void OVERLOAD fft4Core(F2 *u) {
 
 // 16 ADD
 void OVERLOAD fft4by(F2 *u, u32 base, u32 step, u32 M) {
-
-#define A(k) u[(base + step * k) % M]
-
-#if 1
   float x0 = A(0).x + A(2).x;
   float x2 = A(0).x - A(2).x;
   float y0 = A(0).y + A(2).y;
@@ -123,29 +102,14 @@ void OVERLOAD fft4by(F2 *u, u32 base, u32 step, u32 M) {
   A(1) = U2(a2, b2);
   A(2) = U2(a1, b1);
   A(3) = U2(a3, b3);
-
-#else
-
-  X2(A(0), A(2));
-  X2_mul_t4(A(1), A(3));
-  X2(A(0), A(1));
-
-  X2(A(2), A(3));
-  SWAP(A(1), A(2));
-
-#endif
-
-#undef A
-
 }
 
 void OVERLOAD fft4(F2 *u) { fft4by(u, 0, 1, 4); }
 
 // For FUSE_WEIGHT_BUTTERFLY, see the FP64 version above
 void OVERLOAD fft4Core_skip1(F2 *u) {
-  u[3] = mul_t4(u[3]);
   X2(u[0], u[1]);
-  X2(u[2], u[3]);
+  X2t4(u[2], u[3]);
 }
 void OVERLOAD fft4_skip1(F2 *u) {
   fft4Core_skip1(u);
@@ -170,10 +134,7 @@ void OVERLOAD fft4Core(GF31 *u) {
 
 // 16 ADD
 void OVERLOAD fft4by(GF31 *u, u32 base, u32 step, u32 M) {
-
-#define A(k) u[(base + step * k) % M]
-
-  Z31 x0 = add(A(0).x, A(2).x);                                 //GWBUG:  Delay some of the mods using 64 bit temps?
+  Z31 x0 = add(A(0).x, A(2).x);
   Z31 x2 = sub(A(0).x, A(2).x);
   Z31 y0 = add(A(0).y, A(2).y);
   Z31 y2 = sub(A(0).y, A(2).y);
@@ -199,9 +160,6 @@ void OVERLOAD fft4by(GF31 *u, u32 base, u32 step, u32 M) {
   A(1) = U2(a2, b2);
   A(2) = U2(a1, b1);
   A(3) = U2(a3, b3);
-
-#undef A
-
 }
 
 void OVERLOAD fft4(GF31 *u) { fft4by(u, 0, 1, 4); }
@@ -226,9 +184,6 @@ void OVERLOAD fft4Core(GF61 *u) {
 
 // 16 ADD
 void OVERLOAD fft4by(GF61 *u, u32 base, u32 step, u32 M) {
-
-#define A(k) u[(base + step * k) % M]
-
   Z61 x0 = A(0).x + A(2).x;     // 0..2+
   Z61 x2 = A(0).x - A(2).x;     // -1-..1+
   Z61 y0 = A(0).y + A(2).y;     // 0..2+
@@ -255,11 +210,10 @@ void OVERLOAD fft4by(GF61 *u, u32 base, u32 step, u32 M) {
   A(1) = modM61q(U2(a2, b2), 3);
   A(2) = modM61q(U2(a1, b1), 3);
   A(3) = modM61q(U2(a3, b3), 3);
-
-#undef A
-
 }
 
 void OVERLOAD fft4(GF61 *u) { fft4by(u, 0, 1, 4); }
 
 #endif
+
+#undef A

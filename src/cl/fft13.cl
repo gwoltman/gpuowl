@@ -2,160 +2,233 @@
 
 #if FFT_FP64
 
-// To calculate a 13-complex FFT in a brute force way (using a shorthand notation):
-// The sin/cos values (w = 13th root of unity) are:
-// w^1 = .885 - .465i
-// w^2 = .568 - .823i
-// w^3 = .121 - .993i
-// w^4 = -.355 - .935i
-// w^5 = -.749 - .663i
-// w^6 = -.971 - .239i
-// w^7 = -.971 + .239i
-// w^8 = -.749 + .663i
-// w^9 = -.355 + .935i
-// w^10= .121 + .993i
-// w^11= .568 + .823i
-// w^12= .885 + .465i
-//
-// R1 = r1     +(r2+r13)     +(r3+r12)     +(r4+r11)     +(r5+r10)     +(r6+r9)     +(r7+r8)
-// R2 = r1 +.885(r2+r13) +.568(r3+r12) +.121(r4+r11) -.355(r5+r10) -.749(r6+r9) -.971(r7+r8)  +.465(i2-i13) +.823(i3-i12) +.993(i4-i11) +.935(i5-i10) +.663(i6-i9) +.239(i7-i8)
-// R13= r1 +.885(r2+r13) +.568(r3+r12) +.121(r4+r11) -.355(r5+r10) -.749(r6+r9) -.971(r7+r8)  -.465(i2-i13) -.823(i3-i12) -.993(i4-i11) -.935(i5-i10) -.663(i6-i9) -.239(i7-i8)
-// R3 = r1 +.568(r2+r13) -.355(r3+r12) -.971(r4+r11) -.749(r5+r10) +.121(r6+r9) +.885(r7+r8)  +.823(i2-i13) +.935(i3-i12) +.239(i4-i11) -.663(i5-i10) -.993(i6-i9) -.465(i7-i8)
-// R12= r1 +.568(r2+r13) -.355(r3+r12) -.971(r4+r11) -.749(r5+r10) +.121(r6+r9) +.885(r7+r8)  -.823(i2-i13) -.935(i3-i12) -.239(i4-i11) +.663(i5-i10) +.993(i6-i9) +.465(i7-i8)
-// R4 = r1 +.121(r2+r13) -.971(r3+r12) -.355(r4+r11) +.885(r5+r10) +.568(r6+r9) -.749(r7+r8)  +.993(i2-i13) +.239(i3-i12) -.935(i4-i11) -.465(i5-i10) +.823(i6-i9) +.663(i7-i8)
-// R11= r1 +.121(r2+r13) -.971(r3+r12) -.355(r4+r11) +.885(r5+r10) +.568(r6+r9) -.749(r7+r8)  -.993(i2-i13) -.239(i3-i12) +.935(i4-i11) +.465(i5-i10) -.823(i6-i9) -.663(i7-i8)
-// R5 = r1 -.355(r2+r13) -.749(r3+r12) +.885(r4+r11) +.121(r5+r10) -.971(r6+r9) +.568(r7+r8)  +.935(i2-i13) -.663(i3-i12) -.465(i4-i11) +.993(i5-i10) -.239(i6-i9) -.823(i7-i8)
-// R10= r1 -.355(r2+r13) -.749(r3+r12) +.885(r4+r11) +.121(r5+r10) -.971(r6+r9) +.568(r7+r8)  -.935(i2-i13) +.663(i3-i12) +.465(i4-i11) -.993(i5-i10) +.239(i6-i9) +.823(i7-i8)
-// R6 = r1 -.749(r2+r13) +.121(r3+r12) +.568(r4+r11) -.971(r5+r10) +.885(r6+r9) -.355(r7+r8)  +.663(i2-i13) -.993(i3-i12) +.823(i4-i11) -.239(i5-i10) -.465(i6-i9) +.935(i7-i8)
-// R9 = r1 -.749(r2+r13) +.121(r3+r12) +.568(r4+r11) -.971(r5+r10) +.885(r6+r9) -.355(r7+r8)  -.663(i2-i13) +.993(i3-i12) -.823(i4-i11) +.239(i5-i10) +.465(i6-i9) -.935(i7-i8)
-// R7 = r1 -.971(r2+r13) +.885(r3+r12) -.749(r4+r11) +.568(r5+r10) -.355(r6+r9) +.121(r7+r8)  +.239(i2-i13) -.465(i3-i12) +.663(i4-i11) -.823(i5-i10) +.935(i6-i9) -.993(i7-i8)
-// R8 = r1 -.971(r2+r13) +.885(r3+r12) -.749(r4+r11) +.568(r5+r10) -.355(r6+r9) +.121(r7+r8)  -.239(i2-i13) +.465(i3-i12) -.663(i4-i11) +.823(i5-i10) -.935(i6-i9) +.993(i7-i8)
-//
-// I1 = i1                                                                                        +(i2+i13)     +(i3+i12)     +(i4+i11)     +(i5+i10)     +(i6+i9)     +(i7+i8)
-// I2 = i1 -.465(r2-r13) -.823(r3-r12) -.993(r4-r11) -.935(r5-r10) -.663(r6-r9) -.239(r7-r8)  +.885(i2+i13) +.568(i3+i12) +.121(i4+i11) -.355(i5+i10) -.749(i6+i9) -.971(i7+i8)
-// I13= i1 +.465(r2-r13) +.823(r3-r12) +.993(r4-r11) +.935(r5-r10) +.663(r6-r9) +.239(r7-r8)  +.885(i2+i13) +.568(i3+i12) +.121(i4+i11) -.355(i5+i10) -.749(i6+i9) -.971(i7+i8)
-// I3 = i1 -.823(r2-r13) -.935(r3-r12) -.239(r4-r11) +.663(r5-r10) +.993(r6-r9) +.465(r7-r8)  +.568(i2+i13) -.355(i3+i12) -.971(i4+i11) -.749(i5+i10) +.121(i6+i9) +.885(i7+i8)
-// I12= i1 +.823(r2-r13) +.935(r3-r12) +.239(r4-r11) -.663(r5-r10) -.993(r6-r9) -.465(r7-r8)  +.568(i2+i13) -.355(i3+i12) -.971(i4+i11) -.749(i5+i10) +.121(i6+i9) +.885(i7+i8)
-// I4 = i1 -.993(r2-r13) -.239(r3-r12) +.935(r4-r11) +.465(r5-r10) -.823(r6-r9) -.663(r7-r8)  +.121(i2+i13) -.971(i3+i12) -.355(i4+i11) +.885(i5+i10) +.568(i6+i9) -.749(i7+i8)
-// I11= i1 +.993(r2-r13) +.239(r3-r12) -.935(r4-r11) -.465(r5-r10) +.823(r6-r9) +.663(r7-r8)  +.121(i2+i13) -.971(i3+i12) -.355(i4+i11) +.885(i5+i10) +.568(i6+i9) -.749(i7+i8)
-// I5 = i1 -.935(r2-r13) +.663(r3-r12) +.465(r4-r11) -.993(r5-r10) +.239(r6-r9) +.823(r7-r8)  -.355(i2+i13) -.749(i3+i12) +.885(i4+i11) +.121(i5+i10) -.971(i6+i9) +.568(i7+i8)
-// I10= i1 +.935(r2-r13) -.663(r3-r12) -.465(r4-r11) +.993(r5-r10) -.239(r6-r9) -.823(r7-r8)  -.355(i2+i13) -.749(i3+i12) +.885(i4+i11) +.121(i5+i10) -.971(i6+i9) +.568(i7+i8)
-// I6 = i1 -.663(r2-r13) +.993(r3-r12) -.823(r4-r11) +.239(r5-r10) +.465(r6-r9) -.993(r7-r8)  -.749(i2+i13) +.121(i3+i12) +.568(i4+i11) -.971(i5+i10) +.885(i6+i9) -.355(i7+i8)
-// I9 = i1 +.663(r2-r13) -.993(r3-r12) +.823(r4-r11) -.239(r5-r10) -.465(r6-r9) +.993(r7-r8)  -.749(i2+i13) +.121(i3+i12) +.568(i4+i11) -.971(i5+i10) +.885(i6+i9) -.355(i7+i8)
-// I7 = i1 -.239(r2-r13) +.465(r3-r12) -.663(r4-r11) +.823(r5-r10) -.935(r6-r9) +.935(r7-r8)  -.971(i2+i13) +.885(i3+i12) -.749(i4+i11) +.568(i5+i10) -.355(i6+i9) +.121(i7+i8)
-// I8 = i1 +.239(r2-r13) -.465(r3-r12) +.663(r4-r11) -.823(r5-r10) +.935(r6-r9) -.935(r7-r8)  -.971(i2+i13) +.885(i3+i12) -.749(i4+i11) +.568(i5+i10) -.355(i6+i9) +.121(i7+i8)
+// 146 FMA + 36 ADD.  The method of fft11.cl (prime95's gwnum/zr11.mac): pair inputs k and 13-k, then each output pair j, 13-j is
+// (u0 + sum_k cos(j*k*tau/13) sum_k) +- sum_k sin(j*k*tau/13) dif_k, with w = e^(2*pi*i/13).  As in fft11.cl, cbase = u0 + cos(3*tau/13) *
+// sum zeroes one term per cos row (cos(3*tau/13) is the cosine nearest the middle of the range: the smallest coefficients), and the sin
+// rows are scaled by sin(6*tau/13), the most accurately represented of the six sines.  A double-precision study put the round-off within
+// 1.3% of the former 156 FMA version: the cos change alone costs 4% (its coefficients reach 1.09), the sin choice wins most of it back.
+// Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0,3,2,4, sin terms smallest first.
 
 void fft13(T2 *u) {
-  const double
-      COS1      =  0.88545602565320991, // cos(tau/13)
-      COS2      =  0.56806474673115581, // cos(2*t/13)
-      COS3      =  0.12053668025532305, // cos(3*t/13)
-      COS4      = -0.35460488704253562, // cos(4*t/13)
-      COS5      = -0.74851074817110108, // etc..
-      COS6      = -0.97094181742605201,
-      SIN1      =  0.46472317204376856, // sin(tau/13)
-      SIN2_SIN1 =  1.7709120513064198,  // sin(2*t/13) / sin(t/13) = .823/.465
-      SIN3_SIN1 =  2.1361294934623114,  // sin(3*t/13) / sin(t/13) = .993/.465
-      SIN4_SIN1 =  2.0119854118170659,  // etc..
-      SIN5_SIN1 =  1.4269197193772403,
-      SIN6_SIN1 =  0.51496391547486375;
+  const double COS3 = 0.1205366802553230533491;    // cos(3*tau/13): subtracted from every cos coefficient, it zeroes one term per cos row
+  const double C1_C3 = 0.7649193453978868425513;   // cos(tau/13) - cos(3*tau/13)
+  const double C2_C3 = 0.4475280664758327491627;   // cos(2*tau/13) - cos(3*tau/13)
+  const double C4_C3 = -0.4751415672978586793187;  // cos(4*tau/13) - cos(3*tau/13)
+  const double C5_C3 = -0.8690474284264241519837;  // cos(5*tau/13) - cos(3*tau/13)
+  const double C6_C3 = -1.0914784976813750805060;  // cos(6*tau/13) - cos(3*tau/13)
+  const double SIN6 = 0.2393156642875577671488;    // sin(6*tau/13): factored out of the sin rows, it makes one term per row a plain add
+  const double S1_S6 = 1.9418836348521040543140;   // sin(tau/13) / sin(6*tau/13)
+  const double S2_S6 = 3.4389051311943062515832;   // sin(2*tau/13) / sin(6*tau/13)
+  const double S3_S6 = 4.1481149052793775035225;   // sin(3*tau/13) / sin(6*tau/13)
+  const double S4_S6 = 3.9070415447687313968244;   // sin(4*tau/13) / sin(6*tau/13)
+  const double S5_S6 = 2.7709120513064197918008;   // sin(5*tau/13) / sin(6*tau/13)
 
-  X2_mul_t4(u[1], u[12]);				// (r2+ i2+),  (i2- -r2-)
-  X2_mul_t4(u[2], u[11]);				// (r3+ i3+),  (i3- -r3-)
-  X2_mul_t4(u[3], u[10]);				// (r4+ i4+),  (i4- -r4-)
-  X2_mul_t4(u[4], u[9]);				// (r5+ i5+),  (i5- -r5-)
-  X2_mul_t4(u[5], u[8]);				// (r6+ i6+),  (i6- -r6-)
-  X2_mul_t4(u[6], u[7]);				// (r7+ i7+),  (i7- -r7-)
+  X2_mul_t4(u[1], u[12]);
+  X2_mul_t4(u[2], u[11]);
+  X2_mul_t4(u[3], u[10]);
+  X2_mul_t4(u[4], u[9]);
+  X2_mul_t4(u[5], u[8]);
+  X2_mul_t4(u[6], u[7]);
 
-  T2 tmp213a = fmaT2(COS1, u[1], u[0]);
-  T2 tmp312a = fmaT2(COS2, u[1], u[0]);
-  T2 tmp411a = fmaT2(COS3, u[1], u[0]);
-  T2 tmp510a = fmaT2(COS4, u[1], u[0]);
-  T2 tmp69a = fmaT2(COS5, u[1], u[0]);
-  T2 tmp78a = fmaT2(COS6, u[1], u[0]);
-  u[0] = u[0] + u[1];
+  T2 sum = u[1] + u[2] + u[3] + u[4] + u[5] + u[6];
+  T2 cbase = fmaT2(COS3, sum, u[0]);                    // u[0] + COS3 * sum: each cos row below then has one term fewer
+  u[0] = u[0] + sum;
 
-  tmp213a = fmaT2(COS2, u[2], tmp213a);
-  tmp312a = fmaT2(COS4, u[2], tmp312a);
-  tmp411a = fmaT2(COS6, u[2], tmp411a);
-  tmp510a = fmaT2(COS5, u[2], tmp510a);
-  tmp69a = fmaT2(COS3, u[2], tmp69a);
-  tmp78a = fmaT2(COS1, u[2], tmp78a);
-  u[0] = u[0] + u[2];
+  T2 tmp213a = fmaT2(C4_C3, u[4], cbase);
+  T2 tmp312a = fmaT2(C4_C3, u[2], cbase);
+  T2 tmp411a = fmaT2(C4_C3, u[3], cbase);
+  T2 tmp510a = fmaT2(C4_C3, u[1], cbase);
+  T2 tmp69a = fmaT2(C4_C3, u[6], cbase);
+  T2 tmp78a = fmaT2(C4_C3, u[5], cbase);
 
-  tmp213a = fmaT2(COS3, u[3], tmp213a);
-  tmp312a = fmaT2(COS6, u[3], tmp312a);
-  tmp411a = fmaT2(COS4, u[3], tmp411a);
-  tmp510a = fmaT2(COS1, u[3], tmp510a);
-  tmp69a = fmaT2(COS2, u[3], tmp69a);
-  tmp78a = fmaT2(COS5, u[3], tmp78a);
-  u[0] = u[0] + u[3];
+  tmp213a = fmaT2(C2_C3, u[2], tmp213a);
+  tmp312a = fmaT2(C2_C3, u[1], tmp312a);
+  tmp411a = fmaT2(C2_C3, u[5], tmp411a);
+  tmp510a = fmaT2(C2_C3, u[6], tmp510a);
+  tmp69a = fmaT2(C2_C3, u[3], tmp69a);
+  tmp78a = fmaT2(C2_C3, u[4], tmp78a);
 
-  tmp213a = fmaT2(COS4, u[4], tmp213a);
-  tmp312a = fmaT2(COS5, u[4], tmp312a);
-  tmp411a = fmaT2(COS1, u[4], tmp411a);
-  tmp510a = fmaT2(COS3, u[4], tmp510a);
-  tmp69a = fmaT2(COS6, u[4], tmp69a);
-  tmp78a = fmaT2(COS2, u[4], tmp78a);
-  u[0] = u[0] + u[4];
+  tmp213a = fmaT2(C5_C3, u[5], tmp213a);
+  tmp312a = fmaT2(C5_C3, u[4], tmp312a);
+  tmp411a = fmaT2(C5_C3, u[6], tmp411a);
+  tmp510a = fmaT2(C5_C3, u[2], tmp510a);
+  tmp69a = fmaT2(C5_C3, u[1], tmp69a);
+  tmp78a = fmaT2(C5_C3, u[3], tmp78a);
 
-  tmp213a = fmaT2(COS5, u[5], tmp213a);
-  tmp312a = fmaT2(COS3, u[5], tmp312a);
-  tmp411a = fmaT2(COS2, u[5], tmp411a);
-  tmp510a = fmaT2(COS6, u[5], tmp510a);
-  tmp69a = fmaT2(COS1, u[5], tmp69a);
-  tmp78a = fmaT2(COS4, u[5], tmp78a);
-  u[0] = u[0] + u[5];
+  tmp213a = fmaT2(C1_C3, u[1], tmp213a);
+  tmp312a = fmaT2(C1_C3, u[6], tmp312a);
+  tmp411a = fmaT2(C1_C3, u[4], tmp411a);
+  tmp510a = fmaT2(C1_C3, u[3], tmp510a);
+  tmp69a = fmaT2(C1_C3, u[5], tmp69a);
+  tmp78a = fmaT2(C1_C3, u[2], tmp78a);
 
-  tmp213a = fmaT2(COS6, u[6], tmp213a);
-  tmp312a = fmaT2(COS1, u[6], tmp312a);
-  tmp411a = fmaT2(COS5, u[6], tmp411a);
-  tmp510a = fmaT2(COS2, u[6], tmp510a);
-  tmp69a = fmaT2(COS4, u[6], tmp69a);
-  tmp78a = fmaT2(COS3, u[6], tmp78a);
-  u[0] = u[0] + u[6];
+  tmp213a = fmaT2(C6_C3, u[6], tmp213a);
+  tmp312a = fmaT2(C6_C3, u[3], tmp312a);
+  tmp411a = fmaT2(C6_C3, u[2], tmp411a);
+  tmp510a = fmaT2(C6_C3, u[5], tmp510a);
+  tmp69a = fmaT2(C6_C3, u[4], tmp69a);
+  tmp78a = fmaT2(C6_C3, u[1], tmp78a);
 
-  T2 tmp213b = fmaT2(SIN2_SIN1, u[11], u[12]);		// .823/.465
-  T2 tmp312b = fmaT2(SIN2_SIN1, u[12], -u[7]);
-  T2 tmp411b = fmaT2(SIN2_SIN1, u[8], -u[9]);
-  T2 tmp510b = fmaT2(SIN2_SIN1, -u[7], -u[10]);
-  T2 tmp69b = fmaT2(SIN2_SIN1, u[10], -u[8]);
-  T2 tmp78b = fmaT2(SIN2_SIN1, -u[9], -u[11]);
+  T2 tmp213b = fmaT2(S1_S6, u[12], u[7]);
+  T2 tmp312b = fmaT2(S1_S6, -u[7], u[10]);
+  T2 tmp411b = fmaT2(S1_S6, -u[9], u[11]);
+  T2 tmp510b = fmaT2(S1_S6, -u[10], -u[8]);
+  T2 tmp69b = fmaT2(S1_S6, -u[8], -u[9]);
+  T2 tmp78b = fmaT2(S1_S6, -u[11], u[12]);
 
-  tmp213b = fmaT2(SIN3_SIN1, u[10], tmp213b);		// .993/.465
-  tmp312b = fmaT2(SIN3_SIN1, -u[8], tmp312b);
-  tmp411b = fmaT2(SIN3_SIN1, u[12], tmp411b);
-  tmp510b = fmaT2(SIN3_SIN1, u[9], tmp510b);
-  tmp69b = fmaT2(SIN3_SIN1, -u[11], tmp69b);
-  tmp78b = fmaT2(SIN3_SIN1, -u[7], tmp78b);
+  tmp213b = fmaT2(S5_S6, u[8], tmp213b);
+  tmp312b = fmaT2(S5_S6, -u[9], tmp312b);
+  tmp411b = fmaT2(S5_S6, u[7], tmp411b);
+  tmp510b = fmaT2(S5_S6, -u[11], tmp510b);
+  tmp69b = fmaT2(S5_S6, u[12], tmp69b);
+  tmp78b = fmaT2(S5_S6, u[10], tmp78b);
 
-  tmp213b = fmaT2(SIN4_SIN1, u[9], tmp213b);		// .935/.465
-  tmp312b = fmaT2(SIN4_SIN1, u[11], tmp312b);
-  tmp411b = fmaT2(SIN4_SIN1, -u[10], tmp411b);
-  tmp510b = fmaT2(SIN4_SIN1, u[12], tmp510b);
-  tmp69b = fmaT2(SIN4_SIN1, u[7], tmp69b);
-  tmp78b = fmaT2(SIN4_SIN1, u[8], tmp78b);
+  tmp213b = fmaT2(S2_S6, u[11], tmp213b);
+  tmp312b = fmaT2(S2_S6, u[12], tmp312b);
+  tmp411b = fmaT2(S2_S6, u[8], tmp411b);
+  tmp510b = fmaT2(S2_S6, -u[7], tmp510b);
+  tmp69b = fmaT2(S2_S6, u[10], tmp69b);
+  tmp78b = fmaT2(S2_S6, -u[9], tmp78b);
 
-  tmp213b = fmaT2(SIN5_SIN1, u[8], tmp213b);		// .663/.465
-  tmp312b = fmaT2(SIN5_SIN1, -u[9], tmp312b);
-  tmp411b = fmaT2(SIN5_SIN1, u[7], tmp411b);
-  tmp510b = fmaT2(SIN5_SIN1, -u[11], tmp510b);
-  tmp69b = fmaT2(SIN5_SIN1, u[12], tmp69b);
-  tmp78b = fmaT2(SIN5_SIN1, u[10], tmp78b);
+  tmp213b = fmaT2(S4_S6, u[9], tmp213b);
+  tmp312b = fmaT2(S4_S6, u[11], tmp312b);
+  tmp411b = fmaT2(S4_S6, -u[10], tmp411b);
+  tmp510b = fmaT2(S4_S6, u[12], tmp510b);
+  tmp69b = fmaT2(S4_S6, u[7], tmp69b);
+  tmp78b = fmaT2(S4_S6, u[8], tmp78b);
 
-  tmp213b = fmaT2(SIN6_SIN1, u[7], tmp213b);		// .239/.465
-  tmp312b = fmaT2(SIN6_SIN1, u[10], tmp312b);
-  tmp411b = fmaT2(SIN6_SIN1, u[11], tmp411b);
-  tmp510b = fmaT2(SIN6_SIN1, -u[8], tmp510b);
-  tmp69b = fmaT2(SIN6_SIN1, -u[9], tmp69b);
-  tmp78b = fmaT2(SIN6_SIN1, u[12], tmp78b);
+  tmp213b = fmaT2(S3_S6, u[10], tmp213b);
+  tmp312b = fmaT2(S3_S6, -u[8], tmp312b);
+  tmp411b = fmaT2(S3_S6, u[12], tmp411b);
+  tmp510b = fmaT2(S3_S6, u[9], tmp510b);
+  tmp69b = fmaT2(S3_S6, -u[11], tmp69b);
+  tmp78b = fmaT2(S3_S6, -u[7], tmp78b);
 
-  fma_addsub(u[1], u[12], SIN1, tmp213a, tmp213b);
-  fma_addsub(u[2], u[11], SIN1, tmp312a, tmp312b);
-  fma_addsub(u[3], u[10], SIN1, tmp411a, tmp411b);
-  fma_addsub(u[4], u[9], SIN1, tmp510a, tmp510b);
-  fma_addsub(u[5], u[8], SIN1, tmp69a, tmp69b);
-  fma_addsub(u[6], u[7], SIN1, tmp78a, tmp78b);
+  fma_addsub(u[1], u[12], SIN6, tmp213a, tmp213b);
+  fma_addsub(u[2], u[11], SIN6, tmp312a, tmp312b);
+  fma_addsub(u[3], u[10], SIN6, tmp411a, tmp411b);
+  fma_addsub(u[4], u[9], SIN6, tmp510a, tmp510b);
+  fma_addsub(u[5], u[8], SIN6, tmp69a, tmp69b);
+  fma_addsub(u[6], u[7], SIN6, tmp78a, tmp78b);
+}
+
+#endif
+
+
+/**************************************************************************/
+/*            Similar to above, but for an FFT based on FP32              */
+/**************************************************************************/
+
+#if FFT_FP32
+
+// 146 FMA + 36 ADD.  The method of fft11.cl (prime95's gwnum/zr11.mac): pair inputs k and 13-k, then each output pair j, 13-j is
+// (u0 + sum_k cos(j*k*tau/13) sum_k) +- sum_k sin(j*k*tau/13) dif_k, with w = e^(2*pi*i/13).  As in fft11.cl, cbase = u0 + cos(3*tau/13) *
+// sum zeroes one term per cos row (cos(3*tau/13) is the cosine nearest the middle of the range: the smallest coefficients), and the sin
+// rows are scaled by sin(6*tau/13), the most accurately represented of the six sines.  A double-precision study put the round-off within
+// 1.3% of the former 156 FMA version: the cos change alone costs 4% (its coefficients reach 1.09), the sin choice wins most of it back.
+// Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0,3,2,4, sin terms smallest first.
+
+void fft13(F2 *u) {
+  const float COS3 = 0.1205366802553230533491f;    // cos(3*tau/13): subtracted from every cos coefficient, it zeroes one term per cos row
+  const float C1_C3 = 0.7649193453978868425513f;   // cos(tau/13) - cos(3*tau/13)
+  const float C2_C3 = 0.4475280664758327491627f;   // cos(2*tau/13) - cos(3*tau/13)
+  const float C4_C3 = -0.4751415672978586793187f;  // cos(4*tau/13) - cos(3*tau/13)
+  const float C5_C3 = -0.8690474284264241519837f;  // cos(5*tau/13) - cos(3*tau/13)
+  const float C6_C3 = -1.0914784976813750805060f;  // cos(6*tau/13) - cos(3*tau/13)
+  const float SIN6 = 0.2393156642875577671488f;    // sin(6*tau/13): factored out of the sin rows, it makes one term per row a plain add
+  const float S1_S6 = 1.9418836348521040543140f;   // sin(tau/13) / sin(6*tau/13)
+  const float S2_S6 = 3.4389051311943062515832f;   // sin(2*tau/13) / sin(6*tau/13)
+  const float S3_S6 = 4.1481149052793775035225f;   // sin(3*tau/13) / sin(6*tau/13)
+  const float S4_S6 = 3.9070415447687313968244f;   // sin(4*tau/13) / sin(6*tau/13)
+  const float S5_S6 = 2.7709120513064197918008f;   // sin(5*tau/13) / sin(6*tau/13)
+
+  X2_mul_t4(u[1], u[12]);
+  X2_mul_t4(u[2], u[11]);
+  X2_mul_t4(u[3], u[10]);
+  X2_mul_t4(u[4], u[9]);
+  X2_mul_t4(u[5], u[8]);
+  X2_mul_t4(u[6], u[7]);
+
+  F2 sum = u[1] + u[2] + u[3] + u[4] + u[5] + u[6];
+  F2 cbase = fmaT2(COS3, sum, u[0]);                    // u[0] + COS3 * sum: each cos row below then has one term fewer
+  u[0] = u[0] + sum;
+
+  F2 tmp213a = fmaT2(C4_C3, u[4], cbase);
+  F2 tmp312a = fmaT2(C4_C3, u[2], cbase);
+  F2 tmp411a = fmaT2(C4_C3, u[3], cbase);
+  F2 tmp510a = fmaT2(C4_C3, u[1], cbase);
+  F2 tmp69a = fmaT2(C4_C3, u[6], cbase);
+  F2 tmp78a = fmaT2(C4_C3, u[5], cbase);
+
+  tmp213a = fmaT2(C2_C3, u[2], tmp213a);
+  tmp312a = fmaT2(C2_C3, u[1], tmp312a);
+  tmp411a = fmaT2(C2_C3, u[5], tmp411a);
+  tmp510a = fmaT2(C2_C3, u[6], tmp510a);
+  tmp69a = fmaT2(C2_C3, u[3], tmp69a);
+  tmp78a = fmaT2(C2_C3, u[4], tmp78a);
+
+  tmp213a = fmaT2(C5_C3, u[5], tmp213a);
+  tmp312a = fmaT2(C5_C3, u[4], tmp312a);
+  tmp411a = fmaT2(C5_C3, u[6], tmp411a);
+  tmp510a = fmaT2(C5_C3, u[2], tmp510a);
+  tmp69a = fmaT2(C5_C3, u[1], tmp69a);
+  tmp78a = fmaT2(C5_C3, u[3], tmp78a);
+
+  tmp213a = fmaT2(C1_C3, u[1], tmp213a);
+  tmp312a = fmaT2(C1_C3, u[6], tmp312a);
+  tmp411a = fmaT2(C1_C3, u[4], tmp411a);
+  tmp510a = fmaT2(C1_C3, u[3], tmp510a);
+  tmp69a = fmaT2(C1_C3, u[5], tmp69a);
+  tmp78a = fmaT2(C1_C3, u[2], tmp78a);
+
+  tmp213a = fmaT2(C6_C3, u[6], tmp213a);
+  tmp312a = fmaT2(C6_C3, u[3], tmp312a);
+  tmp411a = fmaT2(C6_C3, u[2], tmp411a);
+  tmp510a = fmaT2(C6_C3, u[5], tmp510a);
+  tmp69a = fmaT2(C6_C3, u[4], tmp69a);
+  tmp78a = fmaT2(C6_C3, u[1], tmp78a);
+
+  F2 tmp213b = fmaT2(S1_S6, u[12], u[7]);
+  F2 tmp312b = fmaT2(S1_S6, -u[7], u[10]);
+  F2 tmp411b = fmaT2(S1_S6, -u[9], u[11]);
+  F2 tmp510b = fmaT2(S1_S6, -u[10], -u[8]);
+  F2 tmp69b = fmaT2(S1_S6, -u[8], -u[9]);
+  F2 tmp78b = fmaT2(S1_S6, -u[11], u[12]);
+
+  tmp213b = fmaT2(S5_S6, u[8], tmp213b);
+  tmp312b = fmaT2(S5_S6, -u[9], tmp312b);
+  tmp411b = fmaT2(S5_S6, u[7], tmp411b);
+  tmp510b = fmaT2(S5_S6, -u[11], tmp510b);
+  tmp69b = fmaT2(S5_S6, u[12], tmp69b);
+  tmp78b = fmaT2(S5_S6, u[10], tmp78b);
+
+  tmp213b = fmaT2(S2_S6, u[11], tmp213b);
+  tmp312b = fmaT2(S2_S6, u[12], tmp312b);
+  tmp411b = fmaT2(S2_S6, u[8], tmp411b);
+  tmp510b = fmaT2(S2_S6, -u[7], tmp510b);
+  tmp69b = fmaT2(S2_S6, u[10], tmp69b);
+  tmp78b = fmaT2(S2_S6, -u[9], tmp78b);
+
+  tmp213b = fmaT2(S4_S6, u[9], tmp213b);
+  tmp312b = fmaT2(S4_S6, u[11], tmp312b);
+  tmp411b = fmaT2(S4_S6, -u[10], tmp411b);
+  tmp510b = fmaT2(S4_S6, u[12], tmp510b);
+  tmp69b = fmaT2(S4_S6, u[7], tmp69b);
+  tmp78b = fmaT2(S4_S6, u[8], tmp78b);
+
+  tmp213b = fmaT2(S3_S6, u[10], tmp213b);
+  tmp312b = fmaT2(S3_S6, -u[8], tmp312b);
+  tmp411b = fmaT2(S3_S6, u[12], tmp411b);
+  tmp510b = fmaT2(S3_S6, u[9], tmp510b);
+  tmp69b = fmaT2(S3_S6, -u[11], tmp69b);
+  tmp78b = fmaT2(S3_S6, -u[7], tmp78b);
+
+  fma_addsub(u[1], u[12], SIN6, tmp213a, tmp213b);
+  fma_addsub(u[2], u[11], SIN6, tmp312a, tmp312b);
+  fma_addsub(u[3], u[10], SIN6, tmp411a, tmp411b);
+  fma_addsub(u[4], u[9], SIN6, tmp510a, tmp510b);
+  fma_addsub(u[5], u[8], SIN6, tmp69a, tmp69b);
+  fma_addsub(u[6], u[7], SIN6, tmp78a, tmp78b);
 }
 
 #endif

@@ -719,102 +719,10 @@ F2 OVERLOAD subq(F2 a, F2 b) { return sub(a, b); }
 /*          Similar to above, but for an NTT based on GF(M31^2)           */
 /**************************************************************************/
 
-#if NTT_GF31
+#if NTT_GF31                                                                          // This version is a little sloppy.  Returns values in 0..M31 range.
 
 // bits in reduced mod M.
 #define M31 ((((Z31) 1) << 31) - 1)
-
-#if 0          // Version that keeps results strictly in the 0..M31-1 range
-
-Z31 OVERLOAD mod(Z31 a) { return (a & M31) + (a >> 31); }            // GWBUG: This could be larger than M31 (unless a is result of an add), need a wesk and strong mod
-
-Z31 OVERLOAD add(Z31 a, Z31 b) { Z31 t = a + b; return t - (t >= M31 ? M31 : 0); }     //GWBUG - an if stmt may be faster
-GF31 OVERLOAD add(GF31 a, GF31 b) { return U2(add(a.x, b.x), add(a.y, b.y)); }
-
-Z31 OVERLOAD sub(Z31 a, Z31 b) { Z31 t = a - b; return t + (t >= M31 ? M31 : 0); }     //GWBUG - an if stmt may be faster.  So might "(i64) t < 0".
-GF31 OVERLOAD sub(GF31 a, GF31 b) { return U2(sub(a.x, b.x), sub(a.y, b.y)); }
-
-Z31 OVERLOAD neg(Z31 a) { return a == 0 ? 0 : M31 - a; }                // GWBUG: Examine all callers to see if neg call can be avoided
-GF31 OVERLOAD neg(GF31 a) { return U2(neg(a.x), neg(a.y)); }
-
-Z31 OVERLOAD make_Z31(i32 a) { return (Z31) (a < 0 ? a + M31 : a); }              // Handles signed values of a
-Z31 OVERLOAD make_Z31(u32 a) { return (Z31) (a); }                                // a must be in range of 0 .. M31-1
-Z31 OVERLOAD make_Z31(i64 a) { if (a < 0) a += (((i64) M31 << 31) + M31); return add((Z31) (a & M31), (Z31) (a >> 31)); } // Handles 62-bit a values
-
-u32 get_Z31(Z31 a) { return a; }  // Get balanced value in range 0 to M31-1
-i32 get_balanced_Z31(Z31 a) { return (a & 0xC0000000) ? (i32) a - M31 : (i32) a; }  // Get balanced value in range -M31/2 to M31/2
-
-// Assumes k reduced mod 31.
-Z31 OVERLOAD shl(Z31 a, u32 k) { return ((a << k) + (a >> (31 - k))) & M31; }
-GF31 OVERLOAD shl(GF31 a, u32 k) { return U2(shl(a.x, k), shl(a.y, k)); }
-Z31 OVERLOAD shr(Z31 a, u32 k) { return ((a >> k) + (a << (31 - k))) & M31; }
-GF31 OVERLOAD shr(GF31 a, u32 k) { return U2(shr(a.x, k), shr(a.y, k)); }
-
-Z31 OVERLOAD mul(Z31 a, Z31 b) { u64 t = a * (u64) b; return add((Z31) (t & M31), (Z31) (t >> 31)); }
-
-// Multiply by 2
-Z31 OVERLOAD mul2(Z31 a) { return add(a, a); }
-GF31 OVERLOAD mul2(GF31 a) { return U2(mul2(a.x), mul2(a.y)); }
-
-// Return conjugate of a
-GF31 OVERLOAD conjugate(GF31 a) { return U2(a.x, neg(a.y)); }
-
-// Complex square.  input, output 31 bits. Uses (a + i*b)^2 == ((a+b)*(a-b) + i*2*a*b).
-GF31 OVERLOAD csq(GF31 a) { return U2(mul(add(a.x, a.y), sub(a.x, a.y)), mul2(mul(a.x, a.y))); }        //GWBUG: Probably faster to double a.y and have a mul that takes non-normalized inputs
-
-// a^2 + c
-GF31 OVERLOAD csqa(GF31 a, GF31 c) { return add(csq(a), c); }                                           // GWBUG: inline csq so we only "mod" after adding c??  Find a way to use fma instructions
-
-// Complex mul
-//GF31 OVERLOAD cmul(GF31 a, GF31 b) { return U2(sub(mul(a.x, b.x), mul(a.y, b.y)), add(mul(a.x, b.y), mul(a.y, b.x)));}   // GWBUG:  Is a 3 multiply complex mul faster?  See above
-GF31 OVERLOAD cmul(GF31 a, GF31 b) {
-  Z31 k1 = mul(b.x, add(a.x, a.y));
-  Z31 k2 = mul(a.x, sub(b.y, b.x));
-  Z31 k3 = mul(a.y, add(b.y, b.x));
-  return U2(sub(k1, k3), add(k1, k2));
-}
-
-// mul with (0, 1). (twiddle of tau/4, sqrt(-1) aka "i").
-GF31 OVERLOAD mul_t4(GF31 a) { return U2(neg(a.y), a.x); }                                              // GWBUG:  Can caller use a version that does not negate real?
-
-// mul with (2^15, 2^15). (twiddle of tau/8 aka sqrt(i)). Note: 2 * (+/-2^15)^2 == 1 (mod M31).
-GF31 OVERLOAD mul_t8(GF31 a) { return U2(shl(sub(a.x, a.y), 15), shl(add(a.x, a.y), 15)); }       // GWBUG:  Can caller use a version that does not negate real?  is shl(neg) same as shr???
-
-// mul with (-2^15, 2^15). (twiddle of 3*tau/8).
-GF31 OVERLOAD mul_3t8(GF31 a) { return U2(shl(neg(add(a.x, a.y)), 15), shl(sub(a.x, a.y), 15)); }
-
-// Return a+b and a-b
-void OVERLOAD X2_internal(GF31 *a, GF31 *b) { GF31 t = *a; *a = add(t, *b); *b = sub(t, *b); }
-
-// Same as X2(a, mul_t4(b))
-void OVERLOAD X2t4_internal(GF31 *a, GF31 *b) { Z31 by = b->y; b->y = sub(a->y, b->x); a->y = add(a->y, b->x); b->x = add(a->x, by); a->x = sub(a->x, by); }
-
-// Same as X2(a, conjugate(b))
-void OVERLOAD X2conjb_internal(GF31 *a, GF31 *b) { GF31 t = *a; a->x = add(a->x, b->x); a->y = sub(a->y, b->y); b->x = sub(t.x, b->x); b->y = add(t.y, b->y); }
-
-// Same as X2(a, b), b = mul_t4(b)
-void OVERLOAD X2_mul_t4_internal(GF31 *a, GF31 *b) { Z31 by = b->y; b->y = sub(a->x, b->x); a->x = add(a->x, b->x); b->x = sub(by, a->y); a->y = add(a->y, by); }
-
-// Same as X2(a, b), b = mul_t8(b)
-void OVERLOAD X2_mul_t8_internal(GF31 *a, GF31 *b) { X2(*a, *b); *b = mul_t8(*b); }
-
-// Same as X2(a, b), b = mul_3t8(b)
-void OVERLOAD X2_mul_3t8_internal(GF31 *a, GF31 *b) { X2(*a, *b); *b = mul_3t8(*b); }           //GWBUG: can we do better (elim a negate)?
-
-// Same as X2(a, b), b = conjugate(b)
-void OVERLOAD X2_conjb_internal(GF31 *a, GF31 *b) { GF31 t = *a; *a = add(t, *b); b->x = sub(t.x, b->x); b->y = sub(b->y, t.y); }
-
-void OVERLOAD SWAP_internal(GF31 *a, GF31 *b) { GF31 t = *a; *a = *b; *b = t; }
-
-GF31 OVERLOAD addsub(GF31 a) { return U2(add(a.x, a.y), sub(a.x, a.y)); }
-GF31 OVERLOAD foo2(GF31 a, GF31 b) { a = addsub(a); b = addsub(b); return addsub(U2(mul(RE(a), RE(b)), mul(IM(a), IM(b)))); }
-GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
-
-
-
-
-
-#elif 1                                                               // This version is a little sloppy.  Returns values in 0..M31 range.
 
 // Internal routines to return value in 0..M31 range
 #if MODM31 == 0
@@ -1056,8 +964,6 @@ void OVERLOAD SWAP_internal(GF31 *a, GF31 *b) { GF31 t = *a; *a = *b; *b = t; }
 GF31 OVERLOAD addsub(GF31 a) { return U2(add(a.x, a.y), sub(a.x, a.y)); }
 GF31 OVERLOAD foo2(GF31 a, GF31 b) { a = addsub(a); b = addsub(b); return addsub(U2(mul(RE(a), RE(b)), mul(IM(a), IM(b)))); }
 GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
-
-#endif
 
 // Create "quick" routines for compatibility with shufl_and_fft2 and the GF61 data type.
 

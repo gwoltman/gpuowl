@@ -2,111 +2,106 @@
 
 #pragma once
 
+#define A(k) u[(base + k * step) % M]
+
 #if FFT_FP64
 
-#define A(i) u[(base + i * step) % M]
-
-#if 1
-// 10 FMA + 62 ADD
+// 38 FMA + 18 ADD.  The method of fft11.cl (prime95's gwnum/zr11.mac): pair inputs k and 7-k, then each output pair j, 7-j is
+// (u0 + sum_k cos(j*k*tau/7) sum_k) +- sum_k sin(j*k*tau/7) dif_k, with w = e^(2*pi*i/7).  cbase = u0 + cos(2*tau/7) * sum zeroes one
+// term per cos row (the cosine nearest the middle of the range: the smallest coefficients), and the sin rows are scaled by sin(3*tau/7),
+// the most accurately represented sine.
+// Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0 (largest first), sin terms smallest first.
 void fft7by(T2 *u, u32 base, u32 step, u32 M) {
-  // Adapted from Nussbaumer, "Fast Fourier Transforms and Convolution Algorithms", 5.5.5 7-Point DFT
-  const double
-      C1=-0.16666666666666666, // (c1 + c2 + c3)/3
-      C2=0.79015646852540022,  // (2*c1 - c2 - c3)/3
-      C3=0.055854267289647735, // (c1 - 2*c2 + c3)/3
-      C4=0.73430220123575241,  // (c1 + c2 - 2*c3)/3
-      S1=0.44095855184409843,  // (s1 + s2 - s3)/3
-      S2=0.34087293062393137,  // (2*s1 - s2 + s3)/3
-      S3=-0.53396936033772513, // (s1 - 2*s2 - s3)/3
-      S4=0.87484229096165655;  // (s1 + s2 + 2*s3)/3
+  const double COS2 = -0.2225209339563144042889;   // cos(2*tau/7): subtracted from every cos coefficient, it zeroes one term per cos row
+  const double C1_C2 = 0.8460107358150479348139;   // cos(1*tau/7) - cos(2*tau/7)
+  const double C3_C2 = -0.6784479339461047219472;  // cos(3*tau/7) - cos(2*tau/7)
+  const double SIN3 = 0.4338837391175581204758;    // sin(3*tau/7): factored out of the sin rows, it makes one term per row a plain add
+  const double S1_S3 = 1.8019377358048382524722;   // sin(1*tau/7) / sin(3*tau/7)
+  const double S2_S3 = 2.2469796037174670610500;   // sin(2*tau/7) / sin(3*tau/7)
 
-  X2(A(1), A(6));
-  X2(A(2), A(5));
-  X2(A(3), A(4));
+  X2_mul_t4(A(1), A(6));
+  X2_mul_t4(A(2), A(5));
+  X2_mul_t4(A(3), A(4));
 
-  T2 t13 = A(2) - A(1);
-  T2 t9  = A(2) - A(3);
+  T2 sum = A(1) + A(2) + A(3);
+  T2 cbase = fmaT2(COS2, sum, A(0));			// A(0) + COS2 * sum: each cos row below then has one term fewer
+  A(0) = A(0) + sum;
 
-  X2(A(1), A(3));
+  T2 tmp27a = fmaT2(C1_C2, A(1), cbase);
+  T2 tmp36a = fmaT2(C1_C2, A(3), cbase);
+  T2 tmp45a = fmaT2(C1_C2, A(2), cbase);
 
-  T2 m2 = -C2 * A(3);
-  T2 s0 = fmaT2(C3, t9, m2);
-  T2 t4  = A(1) + A(2);
-  A(2) = fmaT2(-C4, t13, m2);
+  tmp27a = fmaT2(C3_C2, A(3), tmp27a);
+  tmp36a = fmaT2(C3_C2, A(2), tmp36a);
+  tmp45a = fmaT2(C3_C2, A(1), tmp45a);
 
-  T2 s4 = fmaT2(C1, t4, A(0));
-  A(0) = A(0) + t4;
-  A(1) = s4 - s0;
-  A(3) = s4 + s0 - A(2);
-  A(2) = s4      + A(2);
+  T2 tmp27b = fmaT2(S1_S3, A(6), A(4));
+  T2 tmp36b = fmaT2(S1_S3, -A(4), -A(5));
+  T2 tmp45b = fmaT2(S1_S3, -A(5), A(6));
 
-  T2 m6 = -S2 * (A(4) + A(6));
-  T2 t2 = fmaT2(S3, A(5) + A(4), m6);
-  T2 s3 = fmaT2(S4, A(6) - A(5), m6);
+  tmp27b = fmaT2(S2_S3, A(5), tmp27b);
+  tmp36b = fmaT2(S2_S3, A(6), tmp36b);
+  tmp45b = fmaT2(S2_S3, A(4), tmp45b);
 
-  T2 t1  = S1 * (A(5) - A(4) + A(6));
-  A(5) = mul_t4(t1 + s3);
-  A(6) = mul_t4(t1 - t2);
-
-  t1 = mul_t4(t1 + t2 - s3);
-
-  X2(A(1), A(6));
-  X2(A(2), A(5));
-
-  A(4) = A(3) + t1;
-  A(3) = A(3) - t1;
-
+  fma_addsub(A(1), A(6), SIN3, tmp27a, tmp27b);
+  fma_addsub(A(2), A(5), SIN3, tmp36a, tmp36b);
+  fma_addsub(A(3), A(4), SIN3, tmp45a, tmp45b);
 }
-
-
-#else
-
-// 42 FMA + 18 ADD
-void fft7by(T2 *u, u32 base, u32 step, u32 M) {
-  // See prime95's gwnum/zr7.mac file for more detailed explanation of the formulas below
-
-  const double
-      COS1      =  0.62348980185873348, // cos(tau/7)
-      COS2      = -0.22252093395631439, // cos(2*tau/7)
-      COS3      = -0.90096886790241915, // cos(3*tau/7)
-      SIN1      =  0.7818314824680298,  // sin(tau/7)
-      SIN2_SIN1 =  1.246979603717467,   // sin(2*tau/7) / sin(tau/7)
-      SIN3_SIN1 =  0.55495813208737121; // sin(3*tau/7) / sin(tau/7)
-
-  X2_mul_t4(A(1), A(6));				// (r2+ i2+),  (i2- -r2-)
-  X2_mul_t4(A(2), A(5));				// (r3+ i3+),  (i3- -r3-)
-  X2_mul_t4(A(3), A(4));				// (r4+ i4+),  (i4- -r4-)
-
-  T2 tmp27a = fmaT2(COS1, A(1), A(0));
-  T2 tmp36a = fmaT2(COS2, A(1), A(0));
-  T2 tmp45a = fmaT2(COS3, A(1), A(0));
-  A(0) = A(0) + A(1);
-
-  tmp27a = fmaT2(COS2, A(2), tmp27a);
-  tmp36a = fmaT2(COS3, A(2), tmp36a);
-  tmp45a = fmaT2(COS1, A(2), tmp45a);
-  A(0) = A(0) + A(2);
-
-  tmp27a = fmaT2(COS3, A(3), tmp27a);
-  tmp36a = fmaT2(COS1, A(3), tmp36a);
-  tmp45a = fmaT2(COS2, A(3), tmp45a);
-  A(0) = A(0) + A(3);
-
-  T2 tmp27b = fmaT2(SIN2_SIN1, A(5), A(6));		// .975/.782
-  T2 tmp36b = fmaT2(SIN2_SIN1, A(6), -A(4));
-  T2 tmp45b = fmaT2(SIN2_SIN1, A(4), -A(5));
-
-  tmp27b = fmaT2(SIN3_SIN1, A(4), tmp27b);		// .434/.782
-  tmp36b = fmaT2(SIN3_SIN1, -A(5), tmp36b);
-  tmp45b = fmaT2(SIN3_SIN1, A(6), tmp45b);
-
-  fma_addsub(A(1), A(6), SIN1, tmp27a, tmp27b);
-  fma_addsub(A(2), A(5), SIN1, tmp36a, tmp36b);
-  fma_addsub(A(3), A(4), SIN1, tmp45a, tmp45b);
-}
-#endif
-#undef A
 
 void fft7(T2 *u) { return fft7by(u, 0, 1, 7); }
 
 #endif
+
+/**************************************************************************/
+/*            Similar to above, but for an FFT based on FP32              */
+/**************************************************************************/
+
+#if FFT_FP32
+
+// 38 FMA + 18 ADD.  The method of fft11.cl (prime95's gwnum/zr11.mac): pair inputs k and 7-k, then each output pair j, 7-j is
+// (u0 + sum_k cos(j*k*tau/7) sum_k) +- sum_k sin(j*k*tau/7) dif_k, with w = e^(2*pi*i/7).  cbase = u0 + cos(2*tau/7) * sum zeroes one
+// term per cos row (the cosine nearest the middle of the range: the smallest coefficients), and the sin rows are scaled by sin(3*tau/7),
+// the most accurately represented sine.
+// Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0 (largest first), sin terms smallest first.
+void fft7by(F2 *u, u32 base, u32 step, u32 M) {
+  const float COS2 = -0.2225209339563144042889f;   // cos(2*tau/7): subtracted from every cos coefficient, it zeroes one term per cos row
+  const float C1_C2 = 0.8460107358150479348139f;   // cos(1*tau/7) - cos(2*tau/7)
+  const float C3_C2 = -0.6784479339461047219472f;  // cos(3*tau/7) - cos(2*tau/7)
+  const float SIN3 = 0.4338837391175581204758f;    // sin(3*tau/7): factored out of the sin rows, it makes one term per row a plain add
+  const float S1_S3 = 1.8019377358048382524722f;   // sin(1*tau/7) / sin(3*tau/7)
+  const float S2_S3 = 2.2469796037174670610500f;   // sin(2*tau/7) / sin(3*tau/7)
+
+  X2_mul_t4(A(1), A(6));
+  X2_mul_t4(A(2), A(5));
+  X2_mul_t4(A(3), A(4));
+
+  F2 sum = A(1) + A(2) + A(3);
+  F2 cbase = fmaT2(COS2, sum, A(0));			// A(0) + COS2 * sum: each cos row below then has one term fewer
+  A(0) = A(0) + sum;
+
+  F2 tmp27a = fmaT2(C1_C2, A(1), cbase);
+  F2 tmp36a = fmaT2(C1_C2, A(3), cbase);
+  F2 tmp45a = fmaT2(C1_C2, A(2), cbase);
+
+  tmp27a = fmaT2(C3_C2, A(3), tmp27a);
+  tmp36a = fmaT2(C3_C2, A(2), tmp36a);
+  tmp45a = fmaT2(C3_C2, A(1), tmp45a);
+
+  F2 tmp27b = fmaT2(S1_S3, A(6), A(4));
+  F2 tmp36b = fmaT2(S1_S3, -A(4), -A(5));
+  F2 tmp45b = fmaT2(S1_S3, -A(5), A(6));
+
+  tmp27b = fmaT2(S2_S3, A(5), tmp27b);
+  tmp36b = fmaT2(S2_S3, A(6), tmp36b);
+  tmp45b = fmaT2(S2_S3, A(4), tmp45b);
+
+  fma_addsub(A(1), A(6), SIN3, tmp27a, tmp27b);
+  fma_addsub(A(2), A(5), SIN3, tmp36a, tmp36b);
+  fma_addsub(A(3), A(4), SIN3, tmp45a, tmp45b);
+}
+
+void fft7(F2 *u) { return fft7by(u, 0, 1, 7); }
+
+#endif
+
+#undef A

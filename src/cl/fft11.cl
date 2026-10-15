@@ -2,183 +2,186 @@
 
 #if FFT_FP64
 
-#if 0
-// Adapted from https://web.archive.org/web/20101126231320/http://cnx.org/content/col10569/1.7/pdf
-// 40 FMA + 150 ADD
-void fft11(T2 *u) {
-  double
-      C1 = 0.1, C2 = 0.33166247903553997,
-      C3 = 0.51541501300188641, C4 = 0.94125353283118118,
-      C5 = 1.4143537075597825, C6 = 0.85949297361449739,
-      C7 = 0.042314838273285138, C8 = 0.38639279888589612,
-      C9 = 0.51254589567199993, C10 = 1.0702757469471715,
-      C11 = 0.55486073394528501, C12 = 1.2412944743900585,
-      C13 = 0.20897833842005759, C14 = 0.374157173124608,
-      C15 = 0.049929922194110285, C16 = 0.65815896284539277,
-      C17 = 0.63306543373877588, C18 = 1.0822460581641111,
-      C19 = 0.81720737907134011, C20 = 0.4240870953187183;
-
-  X2(u[1], u[10]);
-  X2(u[2], u[9]);
-  X2(u[3], u[8]);
-  X2(u[4], u[7]);
-  X2(u[5], u[6]);
-
-  T2 t1 = u[1];
-  T2 t6 = u[10];
-
-  T2 t2 = u[2];
-  T2 t7 = u[9];
-
-  T2 t3 = u[3];
-  T2 t8 = u[8];
-
-  T2 t4 = u[4];
-  T2 t9 = u[7];
-
-  T2 t5  = u[5];
-  T2 t10 = u[6];
-
-  T2 t11 = t1 + t2;
-  T2 t12 = t3 + t5;
-  T2 t13 = t4 + t11 + t12;
-  T2 s0 = u[0] - C1 * t13;
-  u[0]  = u[0] + t13;
-
-  T2 t14 = t7 - t8;
-  T2 t15 = t6 + t10;
-
-  T2 am2 = (t14 - t15 - t9) * C2;
-  T2 am3 = (t2 - t4) * C3;
-  T2 am4 = (t1 - t4) * C4;
-  T2 am5 = (t2 - t1) * C5;
-  T2 am6 = (t5 - t4) * C6;
-  T2 am7 = (t3 - t4) * C7;
-  T2 am8 = (t5 - t3) * C8;
-  T2 am11 = (t12 - t11) * C11;
-  T2 am14 = (t6 + t7) * C14;
-  T2 am17 = (t8 - t10) * C17;
-  T2 am20 = (t14 + t15) * C20;
-
-  T2 s7 = am11 + C10 * (t1 - t3);
-  T2 s8 = am11 + (t2 - t5) * C9;
-  T2 s9 = am14 + (t6 - t9) * C13;
-  T2 s10 = -am14 + (t7 + t9) * C12;
-  T2 s11 = am17 + (t8 - t9) * C16;
-  T2 s12 = -am17 + (t9 - t10) * C15;
-  T2 s13 = am20 + (t6 - t8) * C19;
-  T2 s14 = -am20 + (t7 + t10) * C18;
-
-  u[1] = s0 + am3 + am4 - am6 - am7;
-  u[10] = mul_t4(s9 + s10 + s11 + s12 - am2);
-  X2(u[1], u[10]);
-
-  u[2] = s0 + s7 + am7 + am8;
-  u[9] = mul_t4(s13 + am2 + s11);
-  X2(u[2], u[9]);
-
-  u[3] = s0 - s7 - am4 - am5;
-  u[8] = mul_t4(s13 - am2 - s9);
-  X2(u[3], u[8]);
-
-  u[4] = s0 + s8 + am6 - am8;
-  u[7] = -mul_t4(s14 + am2 + s12);
-  X2(u[4], u[7]);
-
-  u[5] = s0 - s8 - am3 + am5;
-  u[6] = mul_t4(s14 - am2 - s10);
-  X2(u[5], u[6]);
-}
-
-#else
-
-// 110 FMA + 30 ADD (or 100 FMA + 50 ADD)
-// See prime95's gwnum/zr11.mac file for more detailed explanation
+// 102 FMA + 30 ADD.  See prime95's gwnum/zr11.mac file for the method: pair inputs k and 11-k, then each output pair j, 11-j is
+// (u0 + sum_k cos(j*k*tau/11) sum_k) +- sum_k sin(j*k*tau/11) dif_k, the sin sum scaled by one sine.  Two refinements over zr11:
+//  - every cos row holds the same five cosines, so with cbase = u0 + cos(3*tau/11) * sum the coefficients become cos - cos(3*tau/11) and
+//    one term per row vanishes (4 fewer complex FMAs).  cos(3*tau/11) is the cosine nearest the middle of the range: it keeps every new
+//    coefficient below 1 in magnitude, and a double-precision study found the round-off of the other choices 6-41% higher.
+//  - the sin rows are scaled by 1/sin(4*tau/11) instead of 1/sin(tau/11): one term per row is again a plain add, and sin(4*tau/11),
+//    the most accurately represented of the five sines, gave the lowest round-off in the same study.
+// Overall the round-off matched the former 110 FMA version.
+// Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0,3,2, sin terms smallest first.
 
 void fft11(T2 *u) {
-  const double COS1 = 0.8412535328311811688;		// cos(tau/11)
-  const double COS2 = 0.4154150130018864255;		// cos(2*tau/11)
-  const double COS3 = -0.1423148382732851404;		// cos(3*tau/11)
-  const double COS4 = -0.6548607339452850640;		// cos(4*tau/11)
-  const double COS5 = -0.9594929736144973898;		// cos(5*tau/11)
-  const double SIN1 = 0.5406408174555975821;		// sin(tau/11)
-  const double SIN2_SIN1 = 1.682507065662362337;	// sin(2*tau/11) / sin(tau/11) = .910/.541
-  const double SIN3_SIN1 = 1.830830026003772851;	// sin(3*tau/11) / sin(tau/11) = .990/.541
-  const double SIN4_SIN1 = 1.397877389115792056;	// sin(4*tau/11) / sin(tau/11) = .756/.541
-  const double SIN5_SIN1 = 0.521108558113202723;	// sin(5*tau/11) / sin(tau/11) = .282/.541
+  const double COS3 = -0.1423148382732851404438;   // cos(3*tau/11): subtracted from every cos coefficient, it zeroes one term per cos row
+  const double C1_C3 = 0.9835683711044663093056;   // cos(tau/11) - cos(3*tau/11)
+  const double C2_C3 = 0.5577298512751715659731;   // cos(2*tau/11) - cos(3*tau/11)
+  const double C4_C3 = -0.5125458956719999236131;  // cos(4*tau/11) - cos(3*tau/11)
+  const double C5_C3 = -0.8171781353412122494466;  // cos(5*tau/11) - cos(3*tau/11)
+  const double SIN4 = 0.7557495743542582837740;    // sin(4*tau/11): factored out of the sin rows, it makes one term per row a plain add
+  const double S1_S4 = 0.7153703234534297191124;   // sin(tau/11) / sin(4*tau/11)
+  const double S2_S4 = 1.2036156237755650606683;   // sin(2*tau/11) / sin(4*tau/11)
+  const double S3_S4 = 1.3097214678905701281139;   // sin(3*tau/11) / sin(4*tau/11)
+  const double S5_S4 = 0.3727855977717922096098;   // sin(5*tau/11) / sin(4*tau/11)
 
-  X2_mul_t4(u[1], u[10]);				// (r2+ i2+),  (i2- -r2-)
-  X2_mul_t4(u[2], u[9]);				// (r3+ i3+),  (i3- -r3-)
-  X2_mul_t4(u[3], u[8]);				// (r4+ i4+),  (i4- -r4-)
-  X2_mul_t4(u[4], u[7]);				// (r5+ i5+),  (i5- -r5-)
-  X2_mul_t4(u[5], u[6]);				// (r6+ i6+),  (i6- -r6-)
+  X2_mul_t4(u[1], u[10]);                               // (r2+ i2+),  (i2- -r2-)
+  X2_mul_t4(u[2], u[9]);
+  X2_mul_t4(u[3], u[8]);
+  X2_mul_t4(u[4], u[7]);
+  X2_mul_t4(u[5], u[6]);
 
-  T2 tmp211a = fmaT2(COS1, u[1], u[0]);
-  T2 tmp310a = fmaT2(COS2, u[1], u[0]);
-  T2 tmp49a = fmaT2(COS3, u[1], u[0]);
-  T2 tmp58a = fmaT2(COS4, u[1], u[0]);
-  T2 tmp67a = fmaT2(COS5, u[1], u[0]);
-  u[0] = u[0] + u[1];
+  T2 sum = u[1] + u[2] + u[3] + u[4] + u[5];
+  T2 cbase = fmaT2(COS3, sum, u[0]);                    // u[0] + COS3 * sum: each cos row below then has one term fewer
+  u[0] = u[0] + sum;
 
-  tmp211a = fmaT2(COS2, u[2], tmp211a);
-  tmp310a = fmaT2(COS4, u[2], tmp310a);
-  tmp49a = fmaT2(COS5, u[2], tmp49a);
-  tmp58a = fmaT2(COS3, u[2], tmp58a);
-  tmp67a = fmaT2(COS1, u[2], tmp67a);
-  u[0] = u[0] + u[2];
+  T2 tmp211a = fmaT2(C2_C3, u[2], cbase);
+  T2 tmp310a = fmaT2(C2_C3, u[1], cbase);
+  T2 tmp49a = fmaT2(C2_C3, u[3], cbase);
+  T2 tmp58a = fmaT2(C2_C3, u[5], cbase);
+  T2 tmp67a = fmaT2(C2_C3, u[4], cbase);
 
-  tmp211a = fmaT2(COS3, u[3], tmp211a);
-  tmp310a = fmaT2(COS5, u[3], tmp310a);
-  tmp49a = fmaT2(COS2, u[3], tmp49a);
-  tmp58a = fmaT2(COS1, u[3], tmp58a);
-  tmp67a = fmaT2(COS4, u[3], tmp67a);
-  u[0] = u[0] + u[3];
+  tmp211a = fmaT2(C4_C3, u[4], tmp211a);
+  tmp310a = fmaT2(C4_C3, u[2], tmp310a);
+  tmp49a = fmaT2(C4_C3, u[5], tmp49a);
+  tmp58a = fmaT2(C4_C3, u[1], tmp58a);
+  tmp67a = fmaT2(C4_C3, u[3], tmp67a);
 
-  tmp211a = fmaT2(COS4, u[4], tmp211a);
-  tmp310a = fmaT2(COS3, u[4], tmp310a);
-  tmp49a = fmaT2(COS1, u[4], tmp49a);
-  tmp58a = fmaT2(COS5, u[4], tmp58a);
-  tmp67a = fmaT2(COS2, u[4], tmp67a);
-  u[0] = u[0] + u[4];
+  tmp211a = fmaT2(C1_C3, u[1], tmp211a);
+  tmp310a = fmaT2(C1_C3, u[5], tmp310a);
+  tmp49a = fmaT2(C1_C3, u[4], tmp49a);
+  tmp58a = fmaT2(C1_C3, u[3], tmp58a);
+  tmp67a = fmaT2(C1_C3, u[2], tmp67a);
 
-  tmp211a = fmaT2(COS5, u[5], tmp211a);
-  tmp310a = fmaT2(COS1, u[5], tmp310a);
-  tmp49a = fmaT2(COS4, u[5], tmp49a);
-  tmp58a = fmaT2(COS2, u[5], tmp58a);
-  tmp67a = fmaT2(COS3, u[5], tmp67a);
-  u[0] = u[0] + u[5];
+  tmp211a = fmaT2(C5_C3, u[5], tmp211a);
+  tmp310a = fmaT2(C5_C3, u[3], tmp310a);
+  tmp49a = fmaT2(C5_C3, u[2], tmp49a);
+  tmp58a = fmaT2(C5_C3, u[4], tmp58a);
+  tmp67a = fmaT2(C5_C3, u[1], tmp67a);
 
-  T2 tmp211b = fmaT2(SIN2_SIN1, u[9], u[10]);		// .910/.541
-  T2 tmp310b = fmaT2(SIN2_SIN1, u[10], -u[6]);
-  T2 tmp49b = fmaT2(SIN2_SIN1, -u[8], u[7]);
-  T2 tmp58b = fmaT2(SIN2_SIN1, -u[6], u[8]);
-  T2 tmp67b = fmaT2(SIN2_SIN1, -u[7], -u[9]);
+  T2 tmp211b = fmaT2(S5_S4, u[6], u[7]);
+  T2 tmp310b = fmaT2(S5_S4, -u[8], u[9]);
+  T2 tmp49b = fmaT2(S5_S4, -u[9], u[6]);
+  T2 tmp58b = fmaT2(S5_S4, u[7], u[10]);
+  T2 tmp67b = fmaT2(S5_S4, u[10], u[8]);
 
-  tmp211b = fmaT2(SIN3_SIN1, u[8], tmp211b);		// .990/.541
-  tmp310b = fmaT2(SIN3_SIN1, -u[7], tmp310b);
-  tmp49b = fmaT2(SIN3_SIN1, u[10], tmp49b);
-  tmp58b = fmaT2(SIN3_SIN1, -u[9], tmp58b);
-  tmp67b = fmaT2(SIN3_SIN1, u[6], tmp67b);
+  tmp211b = fmaT2(S1_S4, u[10], tmp211b);
+  tmp310b = fmaT2(S1_S4, -u[6], tmp310b);
+  tmp49b = fmaT2(S1_S4, u[7], tmp49b);
+  tmp58b = fmaT2(S1_S4, u[8], tmp58b);
+  tmp67b = fmaT2(S1_S4, -u[9], tmp67b);
 
-  tmp211b = fmaT2(SIN4_SIN1, u[7], tmp211b);		// .756/.541
-  tmp310b = fmaT2(SIN4_SIN1, u[9], tmp310b);
-  tmp49b = fmaT2(SIN4_SIN1, u[6], tmp49b);
-  tmp58b = fmaT2(SIN4_SIN1, u[10], tmp58b);
-  tmp67b = fmaT2(SIN4_SIN1, u[8], tmp67b);
+  tmp211b = fmaT2(S2_S4, u[9], tmp211b);
+  tmp310b = fmaT2(S2_S4, u[10], tmp310b);
+  tmp49b = fmaT2(S2_S4, -u[8], tmp49b);
+  tmp58b = fmaT2(S2_S4, -u[6], tmp58b);
+  tmp67b = fmaT2(S2_S4, -u[7], tmp67b);
 
-  tmp211b = fmaT2(SIN5_SIN1, u[6], tmp211b);		// .282/.541
-  tmp310b = fmaT2(SIN5_SIN1, -u[8], tmp310b);
-  tmp49b = fmaT2(SIN5_SIN1, -u[9], tmp49b);
-  tmp58b = fmaT2(SIN5_SIN1, u[7], tmp58b);
-  tmp67b = fmaT2(SIN5_SIN1, u[10], tmp67b);
+  tmp211b = fmaT2(S3_S4, u[8], tmp211b);
+  tmp310b = fmaT2(S3_S4, -u[7], tmp310b);
+  tmp49b = fmaT2(S3_S4, u[10], tmp49b);
+  tmp58b = fmaT2(S3_S4, -u[9], tmp58b);
+  tmp67b = fmaT2(S3_S4, u[6], tmp67b);
 
-  fma_addsub(u[1], u[10], SIN1, tmp211a, tmp211b);
-  fma_addsub(u[2], u[9], SIN1, tmp310a, tmp310b);
-  fma_addsub(u[3], u[8], SIN1, tmp49a, tmp49b);
-  fma_addsub(u[4], u[7], SIN1, tmp58a, tmp58b);
-  fma_addsub(u[5], u[6], SIN1, tmp67a, tmp67b);
+  fma_addsub(u[1], u[10], SIN4, tmp211a, tmp211b);
+  fma_addsub(u[2], u[9], SIN4, tmp310a, tmp310b);
+  fma_addsub(u[3], u[8], SIN4, tmp49a, tmp49b);
+  fma_addsub(u[4], u[7], SIN4, tmp58a, tmp58b);
+  fma_addsub(u[5], u[6], SIN4, tmp67a, tmp67b);
 }
 
 #endif
+
+/**************************************************************************/
+/*            Similar to above, but for an FFT based on FP32              */
+/**************************************************************************/
+
+#if FFT_FP32
+
+// 102 FMA + 30 ADD.  See prime95's gwnum/zr11.mac file for the method: pair inputs k and 11-k, then each output pair j, 11-j is
+// (u0 + sum_k cos(j*k*tau/11) sum_k) +- sum_k sin(j*k*tau/11) dif_k, the sin sum scaled by one sine.  Two refinements over zr11:
+//  - every cos row holds the same five cosines, so with cbase = u0 + cos(3*tau/11) * sum the coefficients become cos - cos(3*tau/11) and
+//    one term per row vanishes (4 fewer complex FMAs).  cos(3*tau/11) is the cosine nearest the middle of the range: it keeps every new
+//    coefficient below 1 in magnitude, and a double-precision study found the round-off of the other choices 6-41% higher.
+//  - the sin rows are scaled by 1/sin(4*tau/11) instead of 1/sin(tau/11): one term per row is again a plain add, and sin(4*tau/11),
+//    the most accurately represented of the five sines, gave the lowest round-off in the same study.
+// Overall the round-off matched the former 110 FMA version.
+// Accumulation order (a double-precision study: a few percent less round-off than index order): cos terms by |coef| rank 1,0,3,2, sin terms smallest first.
+
+void fft11(F2 *u) {
+  const float COS3 = -0.1423148382732851404438f;   // cos(3*tau/11): subtracted from every cos coefficient, it zeroes one term per cos row
+  const float C1_C3 = 0.9835683711044663093056f;   // cos(tau/11) - cos(3*tau/11)
+  const float C2_C3 = 0.5577298512751715659731f;   // cos(2*tau/11) - cos(3*tau/11)
+  const float C4_C3 = -0.5125458956719999236131f;  // cos(4*tau/11) - cos(3*tau/11)
+  const float C5_C3 = -0.8171781353412122494466f;  // cos(5*tau/11) - cos(3*tau/11)
+  const float SIN4 = 0.7557495743542582837740f;    // sin(4*tau/11): factored out of the sin rows, it makes one term per row a plain add
+  const float S1_S4 = 0.7153703234534297191124f;   // sin(tau/11) / sin(4*tau/11)
+  const float S2_S4 = 1.2036156237755650606683f;   // sin(2*tau/11) / sin(4*tau/11)
+  const float S3_S4 = 1.3097214678905701281139f;   // sin(3*tau/11) / sin(4*tau/11)
+  const float S5_S4 = 0.3727855977717922096098f;   // sin(5*tau/11) / sin(4*tau/11)
+
+  X2_mul_t4(u[1], u[10]);                               // (r2+ i2+),  (i2- -r2-)
+  X2_mul_t4(u[2], u[9]);
+  X2_mul_t4(u[3], u[8]);
+  X2_mul_t4(u[4], u[7]);
+  X2_mul_t4(u[5], u[6]);
+
+  F2 sum = u[1] + u[2] + u[3] + u[4] + u[5];
+  F2 cbase = fmaT2(COS3, sum, u[0]);                    // u[0] + COS3 * sum: each cos row below then has one term fewer
+  u[0] = u[0] + sum;
+
+  F2 tmp211a = fmaT2(C2_C3, u[2], cbase);
+  F2 tmp310a = fmaT2(C2_C3, u[1], cbase);
+  F2 tmp49a = fmaT2(C2_C3, u[3], cbase);
+  F2 tmp58a = fmaT2(C2_C3, u[5], cbase);
+  F2 tmp67a = fmaT2(C2_C3, u[4], cbase);
+
+  tmp211a = fmaT2(C4_C3, u[4], tmp211a);
+  tmp310a = fmaT2(C4_C3, u[2], tmp310a);
+  tmp49a = fmaT2(C4_C3, u[5], tmp49a);
+  tmp58a = fmaT2(C4_C3, u[1], tmp58a);
+  tmp67a = fmaT2(C4_C3, u[3], tmp67a);
+
+  tmp211a = fmaT2(C1_C3, u[1], tmp211a);
+  tmp310a = fmaT2(C1_C3, u[5], tmp310a);
+  tmp49a = fmaT2(C1_C3, u[4], tmp49a);
+  tmp58a = fmaT2(C1_C3, u[3], tmp58a);
+  tmp67a = fmaT2(C1_C3, u[2], tmp67a);
+
+  tmp211a = fmaT2(C5_C3, u[5], tmp211a);
+  tmp310a = fmaT2(C5_C3, u[3], tmp310a);
+  tmp49a = fmaT2(C5_C3, u[2], tmp49a);
+  tmp58a = fmaT2(C5_C3, u[4], tmp58a);
+  tmp67a = fmaT2(C5_C3, u[1], tmp67a);
+
+  F2 tmp211b = fmaT2(S5_S4, u[6], u[7]);
+  F2 tmp310b = fmaT2(S5_S4, -u[8], u[9]);
+  F2 tmp49b = fmaT2(S5_S4, -u[9], u[6]);
+  F2 tmp58b = fmaT2(S5_S4, u[7], u[10]);
+  F2 tmp67b = fmaT2(S5_S4, u[10], u[8]);
+
+  tmp211b = fmaT2(S1_S4, u[10], tmp211b);
+  tmp310b = fmaT2(S1_S4, -u[6], tmp310b);
+  tmp49b = fmaT2(S1_S4, u[7], tmp49b);
+  tmp58b = fmaT2(S1_S4, u[8], tmp58b);
+  tmp67b = fmaT2(S1_S4, -u[9], tmp67b);
+
+  tmp211b = fmaT2(S2_S4, u[9], tmp211b);
+  tmp310b = fmaT2(S2_S4, u[10], tmp310b);
+  tmp49b = fmaT2(S2_S4, -u[8], tmp49b);
+  tmp58b = fmaT2(S2_S4, -u[6], tmp58b);
+  tmp67b = fmaT2(S2_S4, -u[7], tmp67b);
+
+  tmp211b = fmaT2(S3_S4, u[8], tmp211b);
+  tmp310b = fmaT2(S3_S4, -u[7], tmp310b);
+  tmp49b = fmaT2(S3_S4, u[10], tmp49b);
+  tmp58b = fmaT2(S3_S4, -u[9], tmp58b);
+  tmp67b = fmaT2(S3_S4, u[6], tmp67b);
+
+  fma_addsub(u[1], u[10], SIN4, tmp211a, tmp211b);
+  fma_addsub(u[2], u[9], SIN4, tmp310a, tmp310b);
+  fma_addsub(u[3], u[8], SIN4, tmp49a, tmp49b);
+  fma_addsub(u[4], u[7], SIN4, tmp58a, tmp58b);
+  fma_addsub(u[5], u[6], SIN4, tmp67a, tmp67b);
+}
 
 #endif

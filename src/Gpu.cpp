@@ -634,21 +634,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
       defines += toDefine("PFA_C" + to_string(q), c);
       defines += toDefine("PFA_S" + to_string(q), s);
     }
-    // The FP side of a hybrid uses the complex root w = e^(2*pi*i/R) (root1's sign convention) with the coefficients cos(2*pi*m/R)
-    // and sin(2*pi*m/R) of its folded DFT
-    if (fft.FFT_FP64 || fft.FFT_FP32) {
-      string cd, sd, cf, sf;
-      for (u32 m = 0; m < R; ++m) {
-        long double const angle = 2 * M_PIl * m / R;
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%#.20Lg", cosl(angle)); cd += (m ? "," : "") + string(buf); cf += (m ? "," : "") + string(buf) + "f";
-        snprintf(buf, sizeof(buf), "%#.20Lg", sinl(angle)); sd += (m ? "," : "") + string(buf); sf += (m ? "," : "") + string(buf) + "f";
-      }
-      defines += toDefine("PFA_COS", cd);
-      defines += toDefine("PFA_SIN", sd);
-      defines += toDefine("PFA_COSF", cf);
-      defines += toDefine("PFA_SINF", sf);
-    }
+    // The FP side of a hybrid needs no constants from here: its radix-PFA is the hand-tuned fftN (fft-middle.cl pfaDftR)
   }
 
   // Send the FFT/NTT type and booleans that enable/disable code for each possible FP and NTT
