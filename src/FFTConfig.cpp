@@ -364,6 +364,10 @@ float FFTConfig::maxBpw() const {
 }
 
 FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses) {
+  return bestFits(args, E, spec, uses).front();
+}
+
+vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses) {
   if (uses) { uses->clear(); }
 
   // A FFT-spec was given, simply take the first FFT from the spec that can handle E
@@ -373,7 +377,7 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector
       log("Warning: %s (max %" PRIu64 ") may be too small for %" PRIu64 "\n", fft.spec().c_str(), fft.maxExp(), E);
     }
     if (uses) { *uses = TuneEntry::usesFor(args, fft); }
-    return fft;
+    return {fft};
   }
 
   // Devices without FP64 can only use the FFT types that have no FP64 data
@@ -388,27 +392,31 @@ FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector
     // The first acceptable is the best as they're sorted by cost
     if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) {
       if (uses) { *uses = e.uses; }
-      return e.fft;
+      return {e.fft};
     }
   }
 
   log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);
 
-  // Take the smallest FFT that can handle E.  allShapes() sorts by size alone, which lets an FP32 hybrid (e.g. FP32+M31+M61) win
-  // without any timing, and some OpenCL compilers can't build the FP32 code (hence -tune nofp32).  Prefer FP64 and M31+M61
-  // (the two types -tune compares by default), FP64 at equal size, and use the other types only for an E beyond both.
+  // Untuned:  the smallest FFT of any type that can handle E, FP64 then M31+M61 then the others at equal size.  The FP32 hybrids are
+  // often the smallest (e.g. FP32+M31+M61 2M against M31+M61 2.25M) and usually the fastest on consumer GPUs, but some OpenCL compilers
+  // can't build the FP32 code, so the smallest fitting FFT of up to six types is returned in this order:  Task::execute moves on to the next when
+  // a GPU can't be built for one.
   auto const rank = [](const FFTShape& s) { return s.fft_type == FFT64 ? 0 : s.fft_type == FFT3161 ? 1 : 2; };
   vector<FFTShape> shapes = FFTShape::allShapes();
   std::ranges::stable_sort(shapes, [&](const FFTShape& a, const FFTShape& b) {
-    if ((rank(a) < 2) != (rank(b) < 2)) { return rank(a) < 2; }
     if (a.size() != b.size()) { return a.size() < b.size(); }
     return rank(a) < rank(b);
   });
+  vector<FFTConfig> candidates;
   for (const FFTShape& shape : shapes) {
+    if (std::ranges::any_of(candidates, [&](const FFTConfig& c) { return c.shape.fft_type == shape.fft_type; })) { continue; }
     for (u32 const v : {101, 202}) {
-      if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft) && (fp64 || !fft.FFT_FP64)) { return fft; }
+      if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft) && (fp64 || !fft.FFT_FP64)) { candidates.push_back(fft); break; }
     }
+    if (candidates.size() == 6) { break; }     // enough fallbacks
   }
+  if (!candidates.empty()) { return candidates; }
 
   log("No FFT found for %" PRIu64 "\n", E);
   throw "No FFT";

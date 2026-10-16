@@ -100,6 +100,9 @@ struct FFTConfig {
 public:
   // uses, if given, receives the -use settings from the chosen FFT's tune.txt line
   static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr);
+  // The same choice as a list:  one FFT for an -fft spec or a tune.txt line, else the untuned candidates in order of preference
+  // (Task::execute tries the next when a GPU can't be built for one).  Throws "No FFT" if none can handle E.
+  static vector<FFTConfig> bestFits(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr);
 
   // Which FP and NTT primes are involved in the FFT
   bool FFT_FP64;

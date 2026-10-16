@@ -26,6 +26,7 @@ public:
   string verifyPath{}; // For Verify
 
   void execute(GpuCommon shared, u32 instance);
+  void executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vector<KeyVal>& fftUses);   // execute's work on one FFT
 
   void writeResultPRP(FFTConfig fft, const Args&, u32 instance, bool isPrime, u64 res64, const std::string& res2048, u32 nErrors, const fs::path& proofPath) const;
   void writeResultLL(FFTConfig fft, const Args&, u32 instance, bool isPrime, u64 res64) const;
