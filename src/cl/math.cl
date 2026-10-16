@@ -981,16 +981,23 @@ typedef struct { Z31q x, y; } GF31q;
 Z31q OVERLOAD makeZ31q(u64 v) { Z31q r; r.v = v; return r; }
 GF31q OVERLOAD makeGF31q(Z31q x, Z31q y) { GF31q r; r.x = x; r.y = y; return r; }
 
-// x * c for a constant c.  A c above M31/2 is folded to (M31 - x) * (M31 - c), so the product stays below M31 * M31/2 < 2^61 (x in 0..M31).
-// The branch is resolved at compile time.
-Z31q OVERLOAD mulq(Z31 x, Z31 c) { return makeZ31q(c > M31 / 2 ? (u64)(M31 - x) * (M31 - c) : (u64) x * c); }
-GF31q OVERLOAD mulq(GF31 a, Z31 c) { return makeGF31q(mulq(a.x, c), mulq(a.y, c)); }
+// x * c for a constant c (x in 0..M31).  A c above negAbove is folded to (M31 - x) * (M31 - c), which costs a subtract but keeps the product
+// below M31 * (M31 - c); otherwise the product is below M31 * c.  The default negAbove of M31/2 keeps every product below M31 * M31/2 < 2^61.
+// A caller whose row sums have room passes a larger negAbove (M31 = never fold) to save the subtracts.  The branch is resolved at compile time.
+Z31q OVERLOAD mulq(Z31 x, Z31 c, Z31 negAbove) { return makeZ31q(c > negAbove ? (u64)(M31 - x) * (M31 - c) : (u64) x * c); }
+Z31q OVERLOAD mulq(Z31 x, Z31 c) { return mulq(x, c, M31 / 2); }
+GF31q OVERLOAD mulq(GF31 a, Z31 c, Z31 negAbove) { return makeGF31q(mulq(a.x, c, negAbove), mulq(a.y, c, negAbove)); }
+GF31q OVERLOAD mulq(GF31 a, Z31 c) { return mulq(a, c, M31 / 2); }
 
-// acc + x * c, acc unreduced or a Z31
-Z31q OVERLOAD madq(Z31 x, Z31 c, Z31q acc) { return makeZ31q(acc.v + mulq(x, c).v); }
-Z31q OVERLOAD madq(Z31 x, Z31 c, Z31 acc) { return makeZ31q(acc + mulq(x, c).v); }
-GF31q OVERLOAD madq(GF31 a, Z31 c, GF31q acc) { return makeGF31q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
-GF31q OVERLOAD madq(GF31 a, Z31 c, GF31 acc) { return makeGF31q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
+// acc + x * c, acc unreduced or a Z31.  negAbove as in mulq.
+Z31q OVERLOAD madq(Z31 x, Z31 c, Z31q acc, Z31 negAbove) { return makeZ31q(acc.v + mulq(x, c, negAbove).v); }
+Z31q OVERLOAD madq(Z31 x, Z31 c, Z31 acc, Z31 negAbove) { return makeZ31q(acc + mulq(x, c, negAbove).v); }
+GF31q OVERLOAD madq(GF31 a, Z31 c, GF31q acc, Z31 negAbove) { return makeGF31q(madq(a.x, c, acc.x, negAbove), madq(a.y, c, acc.y, negAbove)); }
+GF31q OVERLOAD madq(GF31 a, Z31 c, GF31 acc, Z31 negAbove) { return makeGF31q(madq(a.x, c, acc.x, negAbove), madq(a.y, c, acc.y, negAbove)); }
+Z31q OVERLOAD madq(Z31 x, Z31 c, Z31q acc) { return madq(x, c, acc, M31 / 2); }
+Z31q OVERLOAD madq(Z31 x, Z31 c, Z31 acc) { return madq(x, c, acc, M31 / 2); }
+GF31q OVERLOAD madq(GF31 a, Z31 c, GF31q acc) { return madq(a, c, acc, M31 / 2); }
+GF31q OVERLOAD madq(GF31 a, Z31 c, GF31 acc) { return madq(a, c, acc, M31 / 2); }
 
 // a + b and a - b.  subq adds M31 * 2^32, a multiple of M31:  the caller keeps b <= M31 * 2^32 and both results below 0xFFFFFFFF7FFFFFFF.
 Z31q OVERLOAD addq(Z31q a, Z31q b) { return makeZ31q(a.v + b.v); }

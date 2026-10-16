@@ -165,40 +165,42 @@ void OVERLOAD fft9(GF31 *u) {
   GF31q cbase = madq(s124, C1, madq(u[3], C3, u[0]));   // rows 1, 2, 4:  u0 + c3 sum3 + c1 (sum1 + sum2 + sum4)
   u[0] = add(t, s124);
 
-  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  The comments give each
-  // row's maximum values (mulq keeps a product below M31 * M31/2), which keep addq and subq below modM31's limit of 0xFFFFFFFF7FFFFFFF.
+  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  No product is folded
+  // (negAbove = M31), so there are no M31 - x subtracts:  row 1/8's sines negated (its outputs swapped, free) keeps each row within
+  // modM31's limits.  The comments give each row's maximum values; subq needs tmpNNa below about 4*2^61 and tmpNNb <= M31 * 2^32
+  // (about 4*2^61), addq needs the sum below 8*2^61.
   GF31q tmp29a = cbase;
-  GF31q tmp29b = mulq(u[8], S1);
-  tmp29a = madq(u[2], C2_C1, tmp29a);
-  tmp29b = madq(u[7], S2, tmp29b);
-  tmp29b = madq(u[6], S3, tmp29b);
-  tmp29a = madq(u[4], C4_C1, tmp29a);
-  tmp29b = madq(u[5], S4, tmp29b);
-  GF31 y1 = modM31(addq(tmp29a, tmp29b)), y8 = modM31(subq(tmp29a, tmp29b));  // tmp29a < 3.19*2^61, tmp29b < 2.41*2^61
+  GF31q tmp29b = mulq(u[8], (M31 - S1));
+  tmp29a = madq(u[2], C2_C1, tmp29a, M31);
+  tmp29b = madq(u[7], (M31 - S2), tmp29b, M31);
+  tmp29b = madq(u[6], (M31 - S3), tmp29b, M31);
+  tmp29a = madq(u[4], C4_C1, tmp29a, M31);
+  tmp29b = madq(u[5], (M31 - S4), tmp29b);
+  GF31 y8 = modM31(addq(tmp29a, tmp29b)), y1 = modM31(subq(tmp29a, tmp29b));  // tmp29a < 3.91*2^61, tmp29b < 3.84*2^61  (sines negated)
 
   GF31q tmp38a = cbase;
-  tmp38a = madq(u[1], C2_C1, tmp38a);
+  tmp38a = madq(u[1], C2_C1, tmp38a, M31);
   GF31q tmp38b = mulq(u[8], S2);
-  tmp38a = madq(u[2], C4_C1, tmp38a);
-  tmp38b = madq(u[7], S4, tmp38b);
-  tmp38b = madq(u[6], (M31 - S3), tmp38b);
+  tmp38a = madq(u[2], C4_C1, tmp38a, M31);
+  tmp38b = madq(u[7], S4, tmp38b, M31);
+  tmp38b = madq(u[6], (M31 - S3), tmp38b, M31);
   tmp38b = madq(u[5], (M31 - S1), tmp38b);
-  GF31 y2 = modM31(addq(tmp38a, tmp38b)), y7 = modM31(subq(tmp38a, tmp38b));  // tmp38a < 3.19*2^61, tmp38b < 2.41*2^61
+  GF31 y2 = modM31(addq(tmp38a, tmp38b)), y7 = modM31(subq(tmp38a, tmp38b));  // tmp38a < 3.91*2^61, tmp38b < 3.86*2^61
 
   GF31q tmp47a = madq(s124, C3, t);                 // row 3:  u0 + sum3 + c3 (sum1 + sum2 + sum4)
   GF31q tmp47b = mulq(u[8], S3);
-  tmp47b = madq(u[7], (M31 - S3), tmp47b);
+  tmp47b = madq(u[7], (M31 - S3), tmp47b, M31);
   tmp47b = madq(u[5], S3, tmp47b);
-  GF31 y3 = modM31(addq(tmp47a, tmp47b)), y6 = modM31(subq(tmp47a, tmp47b));  // tmp47a < 1.00*2^61, tmp47b < 1.23*2^61
+  GF31 y3 = modM31(addq(tmp47a, tmp47b)), y6 = modM31(subq(tmp47a, tmp47b));  // tmp47a < 1.00*2^61, tmp47b < 2.41*2^61
 
   GF31q tmp56a = cbase;
-  tmp56a = madq(u[1], C4_C1, tmp56a);
-  GF31q tmp56b = mulq(u[8], S4);
+  tmp56a = madq(u[1], C4_C1, tmp56a, M31);
+  GF31q tmp56b = mulq(u[8], S4, M31);
   tmp56b = madq(u[7], (M31 - S1), tmp56b);
   tmp56b = madq(u[6], S3, tmp56b);
-  tmp56a = madq(u[4], C2_C1, tmp56a);
-  tmp56b = madq(u[5], (M31 - S2), tmp56b);
-  GF31 y4 = modM31(addq(tmp56a, tmp56b)), y5 = modM31(subq(tmp56a, tmp56b));  // tmp56a < 3.19*2^61, tmp56b < 2.41*2^61
+  tmp56a = madq(u[4], C2_C1, tmp56a, M31);
+  tmp56b = madq(u[5], (M31 - S2), tmp56b, M31);
+  GF31 y4 = modM31(addq(tmp56a, tmp56b)), y5 = modM31(subq(tmp56a, tmp56b));  // tmp56a < 3.91*2^61, tmp56b < 2.93*2^61
 
   u[1] = y1; u[8] = y8;
   u[2] = y2; u[7] = y7;
