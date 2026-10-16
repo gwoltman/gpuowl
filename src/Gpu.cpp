@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <limits>
 #include <iomanip>
+#include <sstream>
 #include <array>
 #include <cinttypes>
 #include <cstring>
