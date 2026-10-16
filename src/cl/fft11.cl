@@ -309,14 +309,15 @@ void OVERLOAD fft11(GF31 *u) {
 
 // Radix-11 DFT, y_j = sum_k u_k w^(jk) with w = 37^((p-1)/11) (pfaRootOfUnity), for the radix-PFA of a PFA middle.  The method of
 // the FP version above: pair inputs k and 11-k (X2 makes the sums and differences), then output pair j, 11-j is
-// (u0 + sum_k c_jk sum_k) +- sum_k s_jk dif_k, with c_m = (w^m + w^-m)/2 and s_m = (w^m - w^-m)/2 in Z/pZ.  base = u0 + c1 * (the sum of
-// the sums) zeroes one term per cos row.  Each row is a 128-bit dot product reduced once.
+// (u0 + sum_k c_jk sum_k) +- sum_k s_jk dif_k, with c_m = (w^m + w^-m)/2 and s_m = (w^m - w^-m)/2 in Z/pZ.  base = u0 + c4 * (the sum of
+// the sums) zeroes one term per cos row (no roundoff in GF, so the base is chosen for the bounds).  Each row is a 128-bit dot product
+// reduced once.
 void OVERLOAD fft11(GF61 *u) {
-  const Z61 C1 = 1160353696041600296ull;
-  const Z61 C2_C1 = 374271700540470474ull;     // c2 - c1
-  const Z61 C3_C1 = 1401275570391910582ull;    // c3 - c1
-  const Z61 C4_C1 = 1268713385799026254ull;    // c4 - c1
-  const Z61 C5_C1 = 1530264404522213989ull;    // c5 - c1
+  const Z61 C4 = 123224072626932599ull;
+  const Z61 C1_C4 = 1037129623414667697ull;    // c1 - c4
+  const Z61 C2_C4 = 1411401323955138171ull;    // c2 - c4
+  const Z61 C3_C4 = 132562184592884328ull;     // c3 - c4
+  const Z61 C5_C4 = 261551018723187735ull;     // c5 - c4
   const Z61 S1 = 1106344711947379848ull;
   const Z61 S2 = 1389461816021368328ull;
   const Z61 S3 = 2075749902183963383ull;
@@ -332,75 +333,76 @@ void OVERLOAD fft11(GF61 *u) {
 
   GF61 sum = modM61q(u[1] + u[2] + u[3], 0);  // 0..6+ before the mod
   sum = modM61q(sum + u[4] + u[5], 0);        // 0..5+ before the mod
-  GF61q cbase = madq(sum, C1, u[0]);          // u0 + c1 * sum
+  GF61q cbase = madq(sum, C4, u[0]);          // u0 + c4 * sum
   u[0] = modM61q(u[0] + sum, 0);              // 0..2+ before the mod
 
-  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  Each product of a quick
-  // value (below 4 M61) and a constant is below 4 M61^2, so a row of at most six stays below 2^127 for weakModM61q.
+  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  Each product of a quick value
+  // (sums below 2 M61, differences below 3 M61) and a constant gives the n passed to weakModM61q, which keeps pc + qs and pc - qs + K M61
+  // below 2^64 for modM61q.  Base c4 lets the cos rows use the 125-bit reduction; the sin rows are too large and use the 128-bit one.
   GF61q tmp211a = cbase;
+  tmp211a = madq(u[1], C1_C4, tmp211a);
   GF61q tmp211b = mulq(u[10], S1);
-  tmp211a = madq(u[2], C2_C1, tmp211a);
+  tmp211a = madq(u[2], C2_C4, tmp211a);
   tmp211b = madq(u[9], S2, tmp211b);
-  tmp211a = madq(u[3], C3_C1, tmp211a);
+  tmp211a = madq(u[3], C3_C4, tmp211a);
   tmp211b = madq(u[8], S3, tmp211b);
-  tmp211a = madq(u[4], C4_C1, tmp211a);
   tmp211b = madq(u[7], S4, tmp211b);
-  tmp211a = madq(u[5], C5_C1, tmp211a);
+  tmp211a = madq(u[5], C5_C4, tmp211a);
   tmp211b = madq(u[6], S5, tmp211b);
-  GF61 pc1 = weakModM61q(tmp211a), qs1 = weakModM61q(tmp211b);    // 0..2+
-  GF61 y1 = modM61q(pc1 + qs1, 0), y10 = modM61q(pc1 - qs1, 3);   // 0..4+ and -2-..2+ before the mods
+  GF61 pc1 = weakModM61q(tmp211a, 3), qs1 = weakModM61q(tmp211b, 11);   // below 4 M61 and 3 M61
+  GF61 y1 = modM61q(pc1 + qs1, 0), y10 = modM61q(pc1 - qs1, 3);   // below 7 M61 before the mods
 
   GF61q tmp310a = cbase;
-  tmp310a = madq(u[1], C2_C1, tmp310a);
+  tmp310a = madq(u[1], C2_C4, tmp310a);
   GF61q tmp310b = mulq(u[10], S2);
-  tmp310a = madq(u[2], C4_C1, tmp310a);
   tmp310b = madq(u[9], S4, tmp310b);
-  tmp310a = madq(u[3], C5_C1, tmp310a);
+  tmp310a = madq(u[3], C5_C4, tmp310a);
   tmp310b = madq(u[8], (M61 - S5), tmp310b);
-  tmp310a = madq(u[4], C3_C1, tmp310a);
+  tmp310a = madq(u[4], C3_C4, tmp310a);
   tmp310b = madq(u[7], (M61 - S3), tmp310b);
+  tmp310a = madq(u[5], C1_C4, tmp310a);
   tmp310b = madq(u[6], (M61 - S1), tmp310b);
-  GF61 pc2 = weakModM61q(tmp310a), qs2 = weakModM61q(tmp310b);   // 0..2+
-  GF61 y2 = modM61q(pc2 + qs2, 0), y9 = modM61q(pc2 - qs2, 3);   // 0..4+ and -2-..2+ before the mods
+  GF61 pc2 = weakModM61q(tmp310a, 3), qs2 = weakModM61q(tmp310b, 9);   // below 4 M61 and 3 M61
+  GF61 y2 = modM61q(pc2 + qs2, 0), y9 = modM61q(pc2 - qs2, 3);   // below 7 M61 before the mods
 
   GF61q tmp49a = cbase;
-  tmp49a = madq(u[1], C3_C1, tmp49a);
+  tmp49a = madq(u[1], C3_C4, tmp49a);
   GF61q tmp49b = mulq(u[10], S3);
-  tmp49a = madq(u[2], C5_C1, tmp49a);
+  tmp49a = madq(u[2], C5_C4, tmp49a);
   tmp49b = madq(u[9], (M61 - S5), tmp49b);
-  tmp49a = madq(u[3], C2_C1, tmp49a);
+  tmp49a = madq(u[3], C2_C4, tmp49a);
   tmp49b = madq(u[8], (M61 - S2), tmp49b);
+  tmp49a = madq(u[4], C1_C4, tmp49a);
   tmp49b = madq(u[7], S1, tmp49b);
-  tmp49a = madq(u[5], C4_C1, tmp49a);
   tmp49b = madq(u[6], S4, tmp49b);
-  GF61 pc3 = weakModM61q(tmp49a), qs3 = weakModM61q(tmp49b);     // 0..2+
-  GF61 y3 = modM61q(pc3 + qs3, 0), y8 = modM61q(pc3 - qs3, 3);   // 0..4+ and -2-..2+ before the mods
+  GF61 pc3 = weakModM61q(tmp49a, 3), qs3 = weakModM61q(tmp49b, 11);   // below 4 M61 and 3 M61
+  GF61 y3 = modM61q(pc3 + qs3, 0), y8 = modM61q(pc3 - qs3, 3);   // below 7 M61 before the mods
 
   GF61q tmp58a = cbase;
-  tmp58a = madq(u[1], C4_C1, tmp58a);
   GF61q tmp58b = mulq(u[10], S4);
-  tmp58a = madq(u[2], C3_C1, tmp58a);
+  tmp58a = madq(u[2], C3_C4, tmp58a);
   tmp58b = madq(u[9], (M61 - S3), tmp58b);
+  tmp58a = madq(u[3], C1_C4, tmp58a);
   tmp58b = madq(u[8], S1, tmp58b);
-  tmp58a = madq(u[4], C5_C1, tmp58a);
+  tmp58a = madq(u[4], C5_C4, tmp58a);
   tmp58b = madq(u[7], S5, tmp58b);
-  tmp58a = madq(u[5], C2_C1, tmp58a);
+  tmp58a = madq(u[5], C2_C4, tmp58a);
   tmp58b = madq(u[6], (M61 - S2), tmp58b);
-  GF61 pc4 = weakModM61q(tmp58a), qs4 = weakModM61q(tmp58b);     // 0..2+
-  GF61 y4 = modM61q(pc4 + qs4, 0), y7 = modM61q(pc4 - qs4, 3);   // 0..4+ and -2-..2+ before the mods
+  GF61 pc4 = weakModM61q(tmp58a, 3), qs4 = weakModM61q(tmp58b, 8);   // below 4 M61 and 3 M61
+  GF61 y4 = modM61q(pc4 + qs4, 0), y7 = modM61q(pc4 - qs4, 3);   // below 7 M61 before the mods
 
   GF61q tmp67a = cbase;
-  tmp67a = madq(u[1], C5_C1, tmp67a);
+  tmp67a = madq(u[1], C5_C4, tmp67a);
   GF61q tmp67b = mulq(u[10], S5);
+  tmp67a = madq(u[2], C1_C4, tmp67a);
   tmp67b = madq(u[9], (M61 - S1), tmp67b);
-  tmp67a = madq(u[3], C4_C1, tmp67a);
   tmp67b = madq(u[8], S4, tmp67b);
-  tmp67a = madq(u[4], C2_C1, tmp67a);
+  tmp67a = madq(u[4], C2_C4, tmp67a);
   tmp67b = madq(u[7], (M61 - S2), tmp67b);
-  tmp67a = madq(u[5], C3_C1, tmp67a);
+  tmp67a = madq(u[5], C3_C4, tmp67a);
   tmp67b = madq(u[6], S3, tmp67b);
-  GF61 pc5 = weakModM61q(tmp67a), qs5 = weakModM61q(tmp67b);     // 0..2+
-  GF61 y5 = modM61q(pc5 + qs5, 0), y6 = modM61q(pc5 - qs5, 3);   // 0..4+ and -2-..2+ before the mods
+  GF61 pc5 = weakModM61q(tmp67a, 3), qs5 = weakModM61q(tmp67b, 10);   // below 4 M61 and 3 M61
+  GF61 y5 = modM61q(pc5 + qs5, 0), y6 = modM61q(pc5 - qs5, 3);   // below 7 M61 before the mods
 
   u[1] = y1; u[10] = y10;
   u[2] = y2; u[9] = y9;

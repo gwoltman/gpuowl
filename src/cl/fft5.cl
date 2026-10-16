@@ -103,21 +103,22 @@ void OVERLOAD fft5by(GF61 *u, u32 base, u32 step, u32 M) {
   GF61q cbase = madq(sum, C1, A(0));       // u0 + c1 * sum
   A(0) = modM61q(A(0) + sum, 0);           // 0..2+ before the mod
 
-  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  Each product of a quick
-  // value (below 4 M61) and a constant is below 4 M61^2, so a row of at most six stays below 2^127 for weakModM61q.
+  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  Each product of a quick value
+  // (sums below 2 M61, differences below 3 M61) and a constant gives the n passed to weakModM61q, which keeps pc + qs and pc - qs + K M61
+  // below 2^64 for modM61q.
   GF61q tmp25a = cbase;
   GF61q tmp25b = mulq(A(4), S1);
   tmp25a = madq(A(2), C2_C1, tmp25a);
   tmp25b = madq(A(3), S2, tmp25b);
-  GF61 pc1 = weakModM61q(tmp25a), qs1 = weakModM61q(tmp25b);     // 0..2+
-  GF61 y1 = modM61q(pc1 + qs1, 0), y4 = modM61q(pc1 - qs1, 3);   // 0..4+ and -2-..2+ before the mods
+  GF61 pc1 = weakModM61q(tmp25a, 2), qs1 = weakModM61q(tmp25b, 3);   // below 3 M61 and 4 M61
+  GF61 y1 = modM61q(pc1 + qs1, 0), y4 = modM61q(pc1 - qs1, 4);   // below 7 M61 before the mods
 
   GF61q tmp34a = cbase;
   tmp34a = madq(A(1), C2_C1, tmp34a);
   GF61q tmp34b = mulq(A(4), S2);
   tmp34b = madq(A(3), (M61 - S1), tmp34b);
-  GF61 pc2 = weakModM61q(tmp34a), qs2 = weakModM61q(tmp34b);     // 0..2+
-  GF61 y2 = modM61q(pc2 + qs2, 0), y3 = modM61q(pc2 - qs2, 3);   // 0..4+ and -2-..2+ before the mods
+  GF61 pc2 = weakModM61q(tmp34a, 2), qs2 = weakModM61q(tmp34b, 2);   // below 3 M61 and 3 M61
+  GF61 y2 = modM61q(pc2 + qs2, 0), y3 = modM61q(pc2 - qs2, 3);   // below 6 M61 before the mods
 
   A(1) = y1; A(4) = y4;
   A(2) = y2; A(3) = y3;
