@@ -1385,7 +1385,8 @@ Z61 OVERLOAD optsubqu(Z61 a, const u32 m61_limit, const u32 m61_count) { return 
 GF61 OVERLOAD optsubqu(GF61 a, const u32 m61_limit, const u32 m61_count) { return U2(optsubqu(a.x, m61_limit, m61_count), optsubqu(a.y, m61_limit, m61_count)); }
 Z61 OVERLOAD optsubqs(Z61 a, const u32 m61_limit, const u32 m61_count) { return optional_sub((i64)a, (i32)(m61_limit << (61 - 32)), (i64)(m61_count * M61)); }
 GF61 OVERLOAD optsubqs(GF61 a, const u32 m61_limit, const u32 m61_count) { return U2(optsubqs(a.x, m61_limit, m61_count), optsubqs(a.y, m61_limit, m61_count)); }
-GF61 OVERLOAD modM61q(GF61 a, const u32 m61_count) { if (m61_count) { a.x += m61_count * M61; a.y += m61_count * M61; } return modM61(a); }
+// m61_count may be negative when the caller knows the true value of a + m61_count * M61 is in 0..2^64 (the u64 additions wrap harmlessly)
+GF61 OVERLOAD modM61q(GF61 a, const i32 m61_count) { if (m61_count) { a.x += m61_count * M61; a.y += m61_count * M61; } return modM61(a); }
 GF61 OVERLOAD modM61q(GF61 a, const u32 m61_count_x, const u32 m61_count_y) { if (m61_count_x) a.x += m61_count_x * M61; if (m61_count_y) a.y += m61_count_y * M61; return modM61(a); }
 
 // Quick (unreduced) GF61 arithmetic for the radix-PFA DFTs (fftN.cl), as GF31's above.  A Z61q holds a 128-bit sum of products of quick Z61s
