@@ -31,6 +31,9 @@ public:
   void setDefaults();
   [[nodiscard]] bool uses(const std::string& key) const { return flags.contains(key); }
   [[nodiscard]] int value(const std::string& key, int valNotFound = -1) const;
+  // The value of a -use key as the kernels compiled for FFT shape fftSpec see it (see clDefines): these flags
+  // first, then a "! <fftSpec> ..." line from config.txt.  value() above never sees the per-FFT line.
+  [[nodiscard]] int valueFor(const std::string& key, int valNotFound, const std::string& fftSpec) const;
   void readConfig(const fs::path& path);
   // The REGxxxx register limit keys (see Gpu::numRegisters) and NOREG.  The C++ code reads them, never the .cl code.
   [[nodiscard]] static bool isRegisterKey(const string& k) {
