@@ -14,7 +14,17 @@ static volatile sig_atomic_t signalled = 0;
 static void (* volatile oldIntHandler)(int) = nullptr;
 static void (* volatile oldTermHandler)(int) = nullptr;
 
-static void signalHandler(int signal) { signalled = signal; }
+// A second Ctrl-C ends the process at once, for when the graceful stop is not coming (or is too slow).  Windows' CRT already behaves this
+// way (it resets the handler to SIG_DFL before calling it); POSIX signal() keeps the handler, so do it here.  signal() and raise() are
+// async-signal-safe.
+static void signalHandler(int sig) {
+  if (sig == SIGINT && signalled == SIGINT) {
+    signal(SIGINT, SIG_DFL);
+    raise(SIGINT);
+    return;
+  }
+  signalled = sig;
+}
 
 // A file named "stop" in the run directory asks for the same graceful stop
 // a SIGINT does: finish the block, verify it, write the savefile, exit.

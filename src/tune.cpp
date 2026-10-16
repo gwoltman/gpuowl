@@ -9,6 +9,7 @@
 #include "log.h"
 #include "File.h"
 #include "TuneEntry.h"
+#include "Signal.h"
 
 #include <limits>
 #include <map>
@@ -107,22 +108,51 @@ string formatConfigResults(const vector<Entry>& results) {
   return s;
 }
 
+// Set once any candidate has been built and run.  Until then, a candidate that fails to build or run raises the question whether the GPU
+// can run anything at all (e.g. an NVRTC that cannot compile for this GPU); checkGpuCanRun answers it once rather than letting -tune grind
+// through hundreds of candidates that all cost infinity.
+bool anyCandidateRan = false;
+
+// After a failed candidate, before any candidate has run:  build the FFT with no tune overrides (only the user's own -use settings).
+// If that fails too, stop the tune with an explanation.
+void checkGpuCanRun(u64 exponent, GpuCommon shared, FFTConfig fft, bool candidateWasDefault) {
+  if (anyCandidateRan) { return; }
+  if (!candidateWasDefault) {
+    try {
+      Gpu::make(exponent, shared, fft, {}, false, {});
+      anyCandidateRan = true;     // the GPU can run this FFT; failures from now on are the candidates' own
+      return;
+    } catch (const std::exception& e) {
+      log("%s with no tune overrides failed: %s\n", fft.spec().c_str(), e.what());
+    } catch (const string& mes) {
+      log("%s with no tune overrides failed: %s\n", fft.spec().c_str(), mes.c_str());
+    }
+  }
+  throw "the GPU cannot run "s + fft.spec() + " even with no tune overrides, so -tune would only time failures (see the errors above;"
+        " e.g. a CUDA/NVRTC version that no longer supports this GPU, or a bad -use setting)";
+}
+
 // Time one tune candidate.  A candidate the GPU can't run (a kernel that fails to compile or link, an
 // out-of-memory or out-of-resources error) is logged and costs infinity, so it never wins and the tune
-// moves on to the next candidate instead of aborting.  Deliberate stops ("stop requested") still propagate.
+// moves on to the next candidate instead of aborting.  Deliberate stops ("stop requested") still propagate, and a stop is checked before
+// each candidate:  when every candidate fails before timePRP (e.g. an NVRTC that cannot compile for this GPU), nothing else would see it.
 // usedWmul, if given, receives the WMUL the candidate actually ran with (clDefines lowers one the FFT or device cannot use).
 // fftUses are the FFT's tune.txt settings (see Gpu::make).
 double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& config, int quick = 7, u32* usedWmul = nullptr,
                   const vector<KeyVal>& fftUses = {}) {
+  if (Signal::stopRequested()) { throw "stop requested"; }
   try {
     auto gpu = Gpu::make(exponent, shared, fft, config, false, fftUses);
     if (usedWmul) { *usedWmul = gpu->effectiveWmul(); }
-    return gpu->timePRP(quick);
+    double const cost = gpu->timePRP(quick);
+    anyCandidateRan = true;
+    return cost;
   } catch (const std::exception& e) {
     log("%s failed: %s\n", fft.spec().c_str(), e.what());
   } catch (const string& mes) {
     log("%s failed: %s\n", fft.spec().c_str(), mes.c_str());
   }
+  checkGpuCanRun(exponent, shared, fft, config.empty() && fftUses.empty());
   return numeric_limits<double>::infinity();
 }
 
@@ -1722,16 +1752,20 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
 
   // One timing with per-kernel profiling.  Empty if the GPU can't run it.  wmul, if given, receives the WMUL it ran with.
   auto timeKernels = [&](const vector<KeyVal>& regConf, u32* wmul = nullptr) -> vector<Gpu::RegTunable> {
+    if (Signal::stopRequested()) { throw "stop requested"; }     // as in timeConfig
     try {
       auto gpu = Gpu::make(exponent, shared, e.fft, regConf, false, uses);
       if (wmul) { *wmul = gpu->effectiveWmul(); }
-      if (!std::isfinite(gpu->timePRP(quick))) { return {}; }
+      bool const ok = std::isfinite(gpu->timePRP(quick));
+      anyCandidateRan = true;
+      if (!ok) { return {}; }
       return gpu->regTunables();
     } catch (const std::exception& ex) {
       log("%s failed: %s\n", spec.c_str(), ex.what());
     } catch (const string& mes) {
       log("%s failed: %s\n", spec.c_str(), mes.c_str());
     }
+    checkGpuCanRun(exponent, shared, e.fft, regConf.empty() && uses.empty());
     return {};
   };
 
