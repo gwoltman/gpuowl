@@ -317,7 +317,19 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 			      "L2_STRIPING",
 			      "MIDDLE_CHAIN31",
                               "MIDDLE_CHAIN61",
-                              "M61_SM120"
+                              "M61_SM120",
+                              "MIDDLE_CHAIN",
+                              "MM_CHAIN","MM2_CHAIN",
+                              "SHUFL_BYTES_W","SHUFL_BYTES_H",
+                              "LDSMUL_W","LDSMUL_H",
+                              "SWIZ_RECOMPUTE",
+                              "FUSE_WEIGHT_BUTTERFLY",
+                              "OLD_FENCE",
+                              "ENABLE_BARSYNC",
+                              "ENABLE_RESTRICT",
+                              "USE_REGISTER_BARSYNC",
+                              "CARRY_SUB_X",            // FFT323161 only
+                              "ROUNDOFF_LIMIT"          // Only acts under DEBUG
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
