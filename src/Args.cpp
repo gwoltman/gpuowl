@@ -231,7 +231,8 @@ named "config.txt" in the prpll run directory.
                      extends the range by 1%% (and this would be quite too much WRT errors).
 
 -block <value>     : PRP block size, one of: 1000, 500, 200. Default 1000.
--carry long|short  : force carry type. Short carry may be faster, but requires high bits/word.
+-carry long|short  : long replaces carryFused with separate FFT and carry kernels, which is much slower (about 25%%).
+                     It is only needed at very low bits/word, which PRPLL detects and handles itself.  short is the default.
 -prp <exponent>    : run a single PRP test and exit, ignoring worktodo.txt
 -ll <exponent>     : run a single LL test and exit, ignoring worktodo.txt
 -verify <file>     : verify PRP-proof contained in <file>
