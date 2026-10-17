@@ -3,6 +3,7 @@
 #include "fs.h"
 #include "File.h"
 
+#include <sstream>
 #include <thread>
 #include <utility>
 
