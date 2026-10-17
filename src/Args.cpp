@@ -307,7 +307,8 @@ named "config.txt" in the prpll run directory.
                                         config.txt settings are then not tuned, and the FFTs already in tune.txt are kept.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
                          regs         - (CUDA) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,
-                                        if given).  -tune does this after timing the FFTs.  Rerun it after a new CUDA driver/toolkit or
+                                        if given, and of the entries used for exponents from minexp to maxexp, if either is given).
+                                        -tune does this after timing the FFTs.  Rerun it after a new CUDA driver/toolkit or
                                         PRPLL version.  The best limits are added to each tune.txt line as REGxxxx=<val> settings.
                          variants     - Time all the other variants of FFT shapes already in tune.txt.  Only FFTs with an FP64
                                         part (FP64 and FP64+M31) have variants.  More accurate variants extend an entry's

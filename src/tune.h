@@ -51,7 +51,8 @@ public:
 
   // Find the best register limits (REGxxxx settings) for each tune.txt entry, or only those of onlyShapes if not empty,
   // and only those of onlySpecs (FFTConfig specs) if given
-  void regTune(int quick, const vector<FFTShape>& onlyShapes, const std::set<std::string>* onlySpecs = nullptr);
+  void regTune(int quick, const vector<FFTShape>& onlyShapes, const std::set<std::string>* onlySpecs = nullptr,
+               u64 minExp = 0, u64 maxExp = UINT64_MAX / 2);
 
   // Time the other variants of the FFT shapes in tune.txt (or only onlyShapes) as -tune times a shape, add those that earn an entry,
   // then tune their register usage.  variant0 is whether this device runs variant 0 (BCAST).  Variants with a max exponent outside

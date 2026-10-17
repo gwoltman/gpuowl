@@ -82,6 +82,8 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
   fi.allowUnterminatedLastLine();
 
   for (const string& line : fi) {
+    // Lines starting with ';' or '#' are comments
+    if (auto const first = line.find_first_not_of(" \t"); first != string::npos && (line[first] == ';' || line[first] == '#')) { continue; }
     try {
       optional<TuneEntry> const e = parseTuneLine(line);
       if (!e) {

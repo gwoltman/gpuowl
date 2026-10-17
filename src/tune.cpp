@@ -461,9 +461,11 @@ void Tune::tune() {
   quick = std::max(quick, 1);
   quick = std::min(quick, 10);
 
-  // Only (re)tune the register limits of the existing tune.txt entries -- those of the -fft shapes, if given
+  // Only (re)tune the register limits of the existing tune.txt entries -- those of the -fft shapes, if given, and those used for the
+  // exponents between minexp and maxexp, if either is given
   if (regs_only) {
-    regTune(quick, args->fftSpec.empty() ? vector<FFTShape>{} : shapes);
+    regTune(quick, args->fftSpec.empty() ? vector<FFTShape>{} : shapes, nullptr,
+            range_given ? min_exponent : 0, range_given ? max_exponent : UINT64_MAX / 2);
     return;
   }
 
@@ -1620,7 +1622,8 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
 #endif
 }
 
-void Tune::regTune([[maybe_unused]] int quick, [[maybe_unused]] const vector<FFTShape>& onlyShapes, [[maybe_unused]] const set<string>* onlySpecs) {
+void Tune::regTune([[maybe_unused]] int quick, [[maybe_unused]] const vector<FFTShape>& onlyShapes, [[maybe_unused]] const set<string>* onlySpecs,
+                   [[maybe_unused]] u64 minExp, [[maybe_unused]] u64 maxExp) {
 #ifndef CUDA_BACKEND
   log("-tune regs: register limits are only tuned in the CUDA build\n");
 #else
@@ -1637,8 +1640,11 @@ void Tune::regTune([[maybe_unused]] int quick, [[maybe_unused]] const vector<FFT
   vector<TuneEntry> done;
   for (u32 i = 0; i < entries.size(); ++i) {
     const TuneEntry& e = entries[i];
+    // The entries are sorted by max exponent, and each is used for the exponents above the max exponent of the one before it
+    u64 const lowestExp = i ? entries[i - 1].fft.maxExp() + 1 : 0;
     bool const selected = (onlyShapes.empty() || std::ranges::any_of(onlyShapes, [&](const FFTShape& s) { return s.spec() == e.fft.shape.spec(); }))
-                          && (!onlySpecs || onlySpecs->contains(e.fft.spec()));
+                          && (!onlySpecs || onlySpecs->contains(e.fft.spec()))
+                          && e.fft.maxExp() >= minExp && lowestExp <= maxExp;
     done.push_back(selected ? regTuneEntry(e, quick, sm) : e);
 
     // Rewrite tune.txt after each entry: the entries done so far, and the rest as they were
