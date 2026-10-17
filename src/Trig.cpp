@@ -73,6 +73,13 @@ array<double, N> scaleCos(const array<double, N>& v, double f) {
   return ret;
 }
 
+// Relative-error minimax fits for a in [0, 1/4], good to 0.054 * 2^-24 (sine) and 0.011 * 2^-24 (cos - 1):
+//   sin(pi*a) = a * (SIN32[0] + SIN32[1]*a^2 + SIN32[2]*a^4 + SIN32[3]*a^6),  cos(pi*a) - 1 = a^2 * (COS32[0] + ... + COS32[3]*a^6)
+const array<double, 4> SIN32 = {3.1415926434166843414531563767044510155135, -5.1677076818660068583343963078491515255835,
+                                2.5497610486133892212929096638841713742207, -0.58901220979012759640678479764315066640344};
+const array<double, 4> COS32 = {-4.9348021974246128677565350369831930064067, 4.0587105450337586754386795289537097775925,
+                                -1.3351369343568265015110744385968520552305, 0.23211605007706233595084109296886418921164};
+
 } // namespace
 
 TrigCoefs trigCoefs(u32 n) {
@@ -91,25 +98,32 @@ TrigCoefs trigCoefs(u32 n) {
   throw "Trig tab not found";
 }
 
-// trigCoefs folds the power-of-two part of n into the coefficients, which is fine in double but in float makes the higher order
-// coefficients of large FFTs denormal or zero (hundreds of ulps of error).  Instead scale k (exactly, by an integer times a power
-// of two) to x in [0, 2) and scale the coefficients only by the matching power of two, which keeps them all normal floats.
+// In float z = x*x is never exact, so a multiplier buys nothing and a large one makes x = k * scale inexact (k * multiplier must
+// stay under 2^24).  Instead x = k / (twos/4) / 2^q, a power of two times k, is exact and in [0, 2), with a = x * 2^q / (4*mid).
+// S[0], S[1] is a float hi/lo pair for the linear term; C[0] is unused (the kernel adds cosBase instead).
 TrigCoefsFP32 trigCoefsFP32(u32 n) {
   auto [mid, twos] = splitTwos(n);
   assert(twos >= 1 && (twos & (twos - 1)) == 0 && (twos % 4 == 0));
   assert(mid % 2 == 1);
-  assert(mid <= 15 || (mid % 625 == 0 && mid / 625 <= 13));
 
-  for (u32 i = 0; i < MUL_TAB.size(); ++i) {
-    if (MUL_TAB[i] % mid == 0) {
-      // x = k * (MUL_TAB[i] / mid) / (twos / 4) is at most MUL_TAB[i]; bring it under 2 with 2^-q
-      int q = 0;
-      while ((2u << q) <= MUL_TAB[i]) { ++q; }
-      double const pow2q = ldexp(1.0, q);
-      double const scale = double(MUL_TAB[i] / mid) / (twos / 4) / pow2q;
-      return {.scale=scale, .sinCoefs=scaleSin(SIN[i], pow2q), .cosCoefs=scaleCos(COS[i], pow2q)};
-    }
+  int q = 0;
+  while ((2u << q) <= mid) { ++q; }
+  double const u = ldexp(1.0, q) / (4.0 * mid);
+  double const u2 = u * u;
+
+  array<double, 5> sinCoefs{}, cosCoefs{};
+  double s0 = SIN32[0] * u;
+  sinCoefs[0] = float(s0);
+  sinCoefs[1] = s0 - float(s0);
+  cosCoefs[0] = 1;
+  double f = u * u2, g = u2;
+  for (u32 i = 1; i < 4; ++i) {
+    sinCoefs[i + 1] = SIN32[i] * f;
+    f *= u2;
   }
-  log("Trig tab not found for %u (%u * %u)\n", n, mid, twos);
-  throw "Trig tab not found";
+  for (u32 i = 0; i < 4; ++i) {
+    cosCoefs[i + 1] = COS32[i] * g;
+    g *= u2;
+  }
+  return {.scale=ldexp(1.0 / (twos / 4), -q), .sinCoefs=sinCoefs, .cosCoefs=cosCoefs};
 }

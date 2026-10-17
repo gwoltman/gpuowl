@@ -80,23 +80,14 @@ T2 OVERLOAD slowTrig_N(u32 k, u32 kBound)   {
 #if FFT_FP32
 
 F2 reducedCosSin(int k, float cosBase) {
-  const float S[] = TRIG_SIN;
-  const float C[] = TRIG_COS;
+  const float S[] = TRIG_SIN;   // hi, lo, x^3, x^5, x^7
+  const float C[] = TRIG_COS;   // (unused), x^2, x^4, x^6, x^8
 
-  float x = k * TRIG_SCALE;      // TRIG_SCALE is an integer times a power of two, so x is exact and in [0, 2)
+  float x = k * TRIG_SCALE;     // TRIG_SCALE is a power of two, so x is exact and in [0, 2)
   float z = x * x;
 
-  float r1 = fma(S[7], z, S[6]);
-  float r2 = fma(C[7], z, C[6]);
-
-  r1 = fma(r1, z, S[5]);
-  r2 = fma(r2, z, C[5]);
-
-  r1 = fma(r1, z, S[4]);
-  r2 = fma(r2, z, C[4]);
-
-  r1 = fma(r1, z, S[3]);
-  r2 = fma(r2, z, C[3]);
+  float r1 = fma(S[4], z, S[3]);
+  float r2 = fma(C[4], z, C[3]);
 
   r1 = fma(r1, z, S[2]);
   r2 = fma(r2, z, C[2]);

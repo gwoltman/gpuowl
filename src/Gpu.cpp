@@ -594,7 +594,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
       TrigCoefsFP32 const coefs = trigCoefsFP32(fft.shape.size() / 4);
       auto lit = [](double v) { char buf[48]; snprintf(buf, sizeof(buf), "%#.9gf", (double) (float) v); return string(buf); };
       string sinCoefs = "{", cosCoefs = "{";
-      for (u32 i = 0; i < 8; ++i) { sinCoefs += lit(coefs.sinCoefs[i]) + ','; cosCoefs += lit(coefs.cosCoefs[i]) + ','; }
+      for (u32 i = 0; i < coefs.sinCoefs.size(); ++i) { sinCoefs += lit(coefs.sinCoefs[i]) + ','; cosCoefs += lit(coefs.cosCoefs[i]) + ','; }
       defines += toDefine("TRIG_SCALE", lit(coefs.scale));
       defines += toDefine("TRIG_SIN", sinCoefs + '}');
       defines += toDefine("TRIG_COS", cosCoefs + '}');

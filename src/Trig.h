@@ -13,11 +13,11 @@ struct TrigCoefs {
 
 TrigCoefs trigCoefs(u32 N);
 
-// The FP32 variant: x = k * scale is kept in [0, 2) and the coefficients are not scaled (see trigCoefsFP32)
+// The FP32 variant: x = k * scale is kept in [0, 2), with a shorter series (see trigCoefsFP32)
 struct TrigCoefsFP32 {
   double scale;
-  std::array<double, 8> sinCoefs;
-  std::array<double, 8> cosCoefs;
+  std::array<double, 5> sinCoefs;
+  std::array<double, 5> cosCoefs;
 };
 
 TrigCoefsFP32 trigCoefsFP32(u32 N);
