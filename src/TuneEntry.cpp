@@ -53,6 +53,12 @@ static fs::path tuneFilePath(const Args& args) {
   return tuneFile;
 }
 
+// Lines starting with ';' or '#', and blank lines, are comments: readTuneFile() skips them and writeTuneFile() keeps them
+static bool isCommentLine(const string& line) {
+  auto const first = line.find_first_not_of(" \t\r\n");
+  return first == string::npos || line[first] == ';' || line[first] == '#';
+}
+
 // A tune.txt line is "<cost> <fft spec> # <maxExp>[, KEY=VAL]...".  The KEY=VALs are -use settings for that FFT alone,
 // taking priority over config.txt (but not over the command line).
 // Returns nothing for a line that is not an entry.  Throws (const char*) for an FFT spec this build can't parse.
@@ -82,8 +88,7 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
   fi.allowUnterminatedLastLine();
 
   for (const string& line : fi) {
-    // Lines starting with ';' or '#' are comments
-    if (auto const first = line.find_first_not_of(" \t"); first != string::npos && (line[first] == ';' || line[first] == '#')) { continue; }
+    if (isCommentLine(line)) { continue; }
     try {
       optional<TuneEntry> const e = parseTuneLine(line);
       if (!e) {
@@ -122,11 +127,38 @@ vector<KeyVal> TuneEntry::usesFor(const Args& args, const FFTConfig& fft) {
 }
 
 void TuneEntry::writeTuneFile(const vector<TuneEntry>& results) {
+  // The comments of the tune.txt being replaced, each run of them with the max exponent of the entry that followed it (or none at
+  // the end).  A run is written again before the first entry whose max exponent is at least that, so it stays above its entry,
+  // or above the entry that took its place.
+  vector<pair<string, optional<u64>>> comments;
+  {
+    File fi = File::openRead("tune.txt");
+    if (fi) {
+      fi.allowUnterminatedLastLine();
+      string run;
+      for (const string& line : fi) {
+        if (isCommentLine(line)) {
+          run += rstripNewline(line) + '\n';
+          continue;
+        }
+        if (run.empty()) { continue; }
+        try {
+          if (optional<TuneEntry> const e = parseTuneLine(line)) { comments.emplace_back(std::move(run), e->fft.maxExp()); run.clear(); }
+        } catch (const char*) {}
+      }
+      if (!run.empty()) { comments.emplace_back(std::move(run), std::nullopt); }
+    }
+    // In case the file was not in max exponent order; the end run stays last
+    std::ranges::stable_sort(comments, {}, [](const auto& c) { return c.second.value_or(UINT64_MAX); });
+  }
+
   [[maybe_unused]] u64 prevMaxExp{};
   [[maybe_unused]] double prevCost{};
   CycleFile tune{"tune.txt"};
+  auto c = comments.begin();
   for (const TuneEntry& r : results) {
     u64 const maxExp = r.fft.maxExp();
+    for (; c != comments.end() && c->second && *c->second <= maxExp; ++c) { tune->printf("%s", c->first.c_str()); }
     assert(r.cost >= prevCost && maxExp > prevMaxExp);
     prevCost = r.cost;
     prevMaxExp = maxExp;
@@ -134,4 +166,5 @@ void TuneEntry::writeTuneFile(const vector<TuneEntry>& results) {
     for (const auto& [key, val] : r.uses) { uses += ", " + key + '=' + val; }
     tune->printf("%6.1f %14s # %" PRIu64 "%s\n", r.cost, r.fft.spec().c_str(), maxExp, uses.c_str());
   }
+  for (; c != comments.end(); ++c) { tune->printf("%s", c->first.c_str()); }
 }
