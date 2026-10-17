@@ -347,7 +347,7 @@ u32 pfaFpTailTrigBase(u32 line) { return (line / PFA_TW * PFA_L + PFA * (line % 
 #define LOG2_ROOT_TWO61 ((u32) (((1ULL << 60) / NWORDS) % 61))
 #define LOG2_ROOT_TWO31 ((u32) (((1ULL << 30) / NWORDS) % 31))
 #endif
-// log2 of MIDDLE's share of the NTT's output scale.  With PFA the factor PFA is removed in fftMiddleOut, see PFA_INVR_*, leaving PFA_M2.
+// log2 of MIDDLE's share of the NTT's output scale.  With PFA the factor PFA is removed in fftMiddleOut, see pfaTwiddleInv, leaving PFA_M2.
 #define LOG2_MIDDLE_NTT (PFA ? (MIDDLE / PFA == 8 ? 3 : MIDDLE / PFA == 4 ? 2 : MIDDLE / PFA == 2 ? 1 : 0) : MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4)
 
 // The host sets NO_FP64 for devices without cl_khr_fp64 (e.g. Mesa rusticl on AMD).  Such devices can still run the FFT types

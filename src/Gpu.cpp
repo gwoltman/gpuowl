@@ -614,14 +614,13 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     defines += toDefine("PFA", R);
     defines += toDefine("PFA_LINV", invModR(rowL));
     defines += toDefine("PFA_BHINV", invModR(rowBH));
-    // For each prime: R^-1 mod q (weights), R^-1 mod p (normalization), and the root w of the radix-R.  The radix-R DFTs (the GF
-    // sections of fftN.cl) hardwire their constants from this same root and #error if PFA_W31 / PFA_W61 differs.
+    // For each prime: R^-1 mod q (weights) and the root w of the radix-R (R^-1 mod p, the normalization, is folded into the middle
+    // trig table).  The radix-R DFTs (the GF sections of fftN.cl) hardwire their constants from this same root and #error if
+    // PFA_W31 / PFA_W61 differs.
     for (u32 q : {31u, 61u}) {
       if ((q == 31 && !fft.NTT_GF31) || (q == 61 && !fft.NTT_GF61)) { continue; }
-      u64 const p = (u64(1) << q) - 1;
       string const suffix = q == 61 ? "ull" : "u";
       defines += toDefine("PFA_RINV" + to_string(q), [&]{ for (u32 x = 1; x < q; ++x) { if (R * x % q == 1) { return x; } } return 0u; }());
-      defines += toDefine("PFA_INVR_" + to_string(q), to_string(pfaPowMod(q, R, p - 2)) + suffix);
       defines += toDefine("PFA_W" + to_string(q), to_string(pfaRootOfUnity(q, R)) + suffix);
     }
     // The FP side of a hybrid needs no constants from here: its radix-PFA is the hand-tuned fftN (fft-middle.cl pfaDftR)
