@@ -94,7 +94,7 @@ u32 i96_hi32(i96 val) { return val.hi32; }
 u32 i96_mid32(i96 val) { return hi32(val.lo64); }
 u32 i96_lo32(i96 val) { return val.lo64; }
 u64 i96_lo64(i96 val) { return val.lo64; }
-u64 i96_hi64(i96 val) { return make_64(val.hi32, i96_mid32(val)); }
+u64 i96_hi64(i96 val) { return make_u64(val.hi32, i96_mid32(val)); }
 i96 OVERLOAD add(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 + b.lo64; val.hi32 = a.hi32 + b.hi32 + (val.lo64 < a.lo64); return val; }
 i96 OVERLOAD add(i96 a, i64 b) { return add(a, make_i96(b)); }
 i96 OVERLOAD sub(i96 a, i96 b) { i96 val; val.lo64 = a.lo64 - b.lo64; val.hi32 = a.hi32 - b.hi32 - (val.lo64 > a.lo64); return val; }
