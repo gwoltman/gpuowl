@@ -117,14 +117,6 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #endif
 #endif
 
-// Nontemporal reads and writes might be a little bit faster on many GPUs by keeping more reusable data in the caches.
-// However, on those GPUs with large caches there should be a significant speed gain from keeping FFT data in the caches.
-// Default to the big win when caching is beneficial rather than the tiny gain when non-temporal is better.
-#if !defined(NONTEMPORAL)
-#define NONTEMPORAL 0
-#endif
-
-
 // FFT variant is in 3 parts.  One digit for WIDTH, one digit for MIDDLE, one digit for HEIGHT.
 // For WIDTH and HEIGHT there are 3 variants:
 // 0   compute one trig, bcast, chainmul
