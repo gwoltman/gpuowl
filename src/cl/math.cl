@@ -1220,6 +1220,16 @@ GF61 OVERLOAD csqaq(GF61 a, GF61 c, u32 x_m61_count, u32 y_m61_count) {
   return U2(re, im);
 }
 GF61 OVERLOAD csqaq(GF61 a, GF61 c, const u32 m61_count) { return csqaq(a, c, m61_count, m61_count); }
+
+// -a^2 + c, quick.  -(x + i*y)^2 = (y + x)*(y - x) - i*2xy: one neg(x) serves both products, so this costs what csqaq does.
+GF61 OVERLOAD csqnaq(GF61 a, GF61 c, u32 x_m61_count, u32 y_m61_count) {
+  if (x_m61_count + y_m61_count >= 9) { a = modM61(a), x_m61_count = 2, y_m61_count = 2; }
+  Z61 negx = neg(a.x, x_m61_count);                                   // M61-..x_m61_count*M61
+  Z61 re = weakMulAdd(a.y + a.x, a.y + negx, c.x, x_m61_count + y_m61_count - 1, x_m61_count + y_m61_count);
+  Z61 im = weakMulAdd(negx, a.y + a.y, c.y, x_m61_count + 1, y_m61_count + y_m61_count - 1);
+  return U2(re, im);
+}
+GF61 OVERLOAD csqnaq(GF61 a, GF61 c, const u32 m61_count) { return csqnaq(a, c, m61_count, m61_count); }
 GF61 OVERLOAD csqa(GF61 a, GF61 c, const u32 x_m61_count, const u32 y_m61_count) { return modM61(csqaq(a, c, x_m61_count, y_m61_count)); }
 GF61 OVERLOAD csqa(GF61 a, GF61 c, const u32 m61_count) { return csqa(a, c, m61_count, m61_count); }
 GF61 OVERLOAD csqa(GF61 a, GF61 c) { return csqa(a, c, 2); }
@@ -1377,6 +1387,9 @@ void OVERLOAD X2qt4(GF61 *a, GF61 *b) { Z61 by = b->y; b->y = a->y - b->x; a->y 
 void OVERLOAD X2qconjb(GF61 *a, GF61 *b) { GF61 t = *a; a->x += b->x; a->y -= b->y; b->x = t.x - b->x; b->y = t.y + b->y; }
 void OVERLOAD X2q_mul_t4(GF61 *a, GF61 *b) { Z61 by = b->y; b->y = a->x - b->x; a->x = a->x + b->x; b->x = by - a->y; a->y = a->y + by; }
 void OVERLOAD X2q_conjb(GF61 *a, GF61 *b) { GF61 t = *a; *a = t + *b; b->x = t.x - b->x; b->y = b->y - t.y; }
+// X2q(a, -b), then b = conjugate(b):  a = a - b, b = conjugate(a + b).  ("t2": b times the 2nd root of unity, -1, before the X2.)
+// b.y comes out negated (u64 wraps); the caller's modM61q count covers it.
+void OVERLOAD X2qt2_conjb(GF61 *a, GF61 *b) { GF61 t = *a; *a = t - *b; b->x = t.x + b->x; b->y = -(t.y + b->y); }
 
 GF61 OVERLOAD mul_t8q(GF61 a, const u32 m61_count) { return shl30(U2(m61_count * M61 + (a.y - a.x), m61_count * M61 - (a.x + a.y))); }
 GF61 OVERLOAD mul_3t8q(GF61 a, const u32 m61_count) { return shl30(U2(m61_count * M61 + a.x + a.y, m61_count * M61 + (a.y - a.x))); }

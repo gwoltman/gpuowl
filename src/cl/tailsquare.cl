@@ -976,14 +976,14 @@ KERNEL_CAP(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTri
 
 void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_type) {
   GF61 a = *pa, b = *pb;
-  GF61 a2, b2, b2t2, ab, addin, c, d;
+  GF61 a2, b2, b2t2, ab, c, d;
 
 // This code saves one wideMul but could result in higher register usage or less freedom scheduling integer ops.  The real world benefit from this
 // version is miniscule.  The old code is still available (for now).
 #if !DISABLE_NEW_ONEPAIRSQ
   X2qconjb(&a, &b);                             // X2(a, conjugate(b)).  a.x range is 0..2+, a.y range is -1-..1+, b.x range is -1-..1+, b.y range is 0..2+
-  // Compute 2ab as (a + b)^2 - a^2 - b^2.  a + b is twice the original a: the conjugate(b) terms cancel, so ab range is 0..2+ (a negative
-  // a.y or b.x wraps harmlessly in u64).  Before the M61 offsets below, so csqaq needs no modM61 of ab.
+  // Compute -2ab as a^2 + b^2 - (a + b)^2.  a + b is twice the original a: the conjugate(b) terms cancel, so ab range is 0..2+ (a negative
+  // a.y or b.x wraps harmlessly in u64).  Before the M61 offsets below, so csqnaq needs no modM61 of ab.
   ab = addq(a, b);
   a.y += 2*M61;                                 // a range is  0..2+ / 1-..3+
   b.x += 2*M61;                                 // b range is 1-..3+ / 0..2+
@@ -991,34 +991,34 @@ void OVERLOAD onePairSq(GF61* pa, GF61* pb, GF61 t_squared, const u32 t_squared_
   a2 = csqq(a, 3, 4);                           // a2 = a^2, a2 range is 0..2+
   b2 = csq(b, 4, 3);                            // b2 = b^2, b2 range is 0..1+
 
-  addin = neg(addq(a2, b2), 4);                 // add this into the csq of a+b, addin range is 0..4
-  d = csqaq(ab, addin, 3);                      // d = 2ab, range is 0..2+ (128-bit weakModM61s)
+  d = csqnaq(ab, a2, 3);                        // a^2 - (a + b)^2, range is 0..2+ (128-bit weakModM61s)
+  d = addq(d, b2);                              // d = -2ab = a^2 + b^2 - (a + b)^2, range is 0..3+
 
   b2t2 = cmul(b2, t_squared);                   // b2t2 = b^2 * t_squared, b2t2 range is 0..1+
 
   if (t_squared_type == 0) {                    // mul t_squared by 1
     c = subq(a2, b2t2);                         // c range is -1-..2+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c range is -1-..4+, d.x range is -3-..2+, d.y range is -2-..3+
-    c = modM61q(c, 2);
-    d = modM61q(d, 4, 3);
+    X2qt2_conjb(&c, &d);                        // X2(c, -d); d = conjugate(d); c range is -4-..2+, d.x range is -1-..5+, d.y range is -5-..1+
+    c = modM61q(c, 5);
+    d = modM61q(d, 2, 6);
   }
   if (t_squared_type == 1) {                    // mul t_squared by i
     c = subiq(a2, b2t2);                        // c.x range is 0..3+, c.y range is -1-..2+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is 0..5+, c.y range is -1-..4+, d.x range is -2-..3+, d.y range is -2-..3+
-    c = modM61q(c, 0, 2);
-    d = modM61q(d, 3, 3);
+    X2qt2_conjb(&c, &d);                        // X2(c, -d); d = conjugate(d); c.x range is -3-..3+, c.y range is -4-..2+, d.x range is 0..6+, d.y range is -5-..1+
+    c = modM61q(c, 4, 5);
+    d = modM61q(d, 0, 6);
   }
   if (t_squared_type == 2) {                    // mul t_squared by -1
     c = addq(a2, b2t2);                         // c range is 0..3+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c range is 0..5+, d.x range is -2-..3+, d.y range is -3-..2+
-    c = modM61q(c, 0);
-    d = modM61q(d, 3, 4);
+    X2qt2_conjb(&c, &d);                        // X2(c, -d); d = conjugate(d); c range is -3-..3+, d.x range is 0..6+, d.y range is -6-..0
+    c = modM61q(c, 4);
+    d = modM61q(d, 0, 7);
   }
   if (t_squared_type == 3) {                    // mul t_squared by -i
     c = addiq(a2, b2t2);                        // c.x range is -1-..2+, c.y range is 0..3+
-    X2q_conjb(&c, &d);                          // X2(c, d); d = conjugate(d); c.x range is -1-..4+, c.y range is 0..5+, d.x range is -3-..2+, d.y range is -3-..2+
-    c = modM61q(c, 2, 0);
-    d = modM61q(d, 4, 4);
+    X2qt2_conjb(&c, &d);                        // X2(c, -d); d = conjugate(d); c.x range is -4-..2+, c.y range is -3-..3+, d.x range is -1-..5+, d.y range is -6-..0
+    c = modM61q(c, 5, 4);
+    d = modM61q(d, 2, 7);
   }
 #else
   X2conjb(a, b);                                // X2(a, conjugate(b))
