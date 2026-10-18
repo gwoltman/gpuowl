@@ -912,21 +912,20 @@ string Gpu::numRegisters(enum WHICH_KERNEL which_kernel) {
   if (args.value("NOREG", 0)) return string("");
   string const use_override = regKey(which_kernel);
 #if CUDA_BACKEND
-  // 0 or -1 = compiler default, 1..16 = launch bounds minimum blocks per SM, more than 16 = maximum register count.
+  // 0 or -1 = compiler default, 1..20 = launch bounds minimum blocks per SM, more than 20 = maximum register count (REG_MAX_OCCUPANCY).
   // These are not NVRTC options: KernelCompiler applies them to the compiled PTX (see cudaSetKernelRegLimit).
   int const regs = args.value(use_override, -1);
   if (regs <= 0) return string("");
   // SMEM_SPILL=1: the registers the limit spills go to shared memory (sm_75 and up), see cudaSetKernelRegLimit.  Off by default
   // until its effect is understood: spilling is extra work, which may cost more than it saves when queues overlap (MULTI_Q).
   bool const smemSpill = args.value("SMEM_SPILL", 0) && getNvidiaComputeCapability(shared.context->deviceId()) >= 750;
-  return string(regs <= 16 ? "--minblocks=" : "--maxrregcount=") + to_string(regs) + (smemSpill ? " --smemspill " : " ");
+  return string(regs <= REG_MAX_OCCUPANCY ? "--minblocks=" : "--maxrregcount=") + to_string(regs) + (smemSpill ? " --smemspill " : " ");
 #else
   return amdRegisterOption(which_kernel, args.value(use_override, 0));
 #endif
 }
 
-#ifdef CUDA_BACKEND
-vector<Gpu::RegTunable> Gpu::regTunables() const {
+vector<Gpu::RegTunable> Gpu::regTunables() {
   vector<RegTunable> ret;
   for (auto [which, kernel] : initializer_list<pair<WHICH_KERNEL, const Kernel*>>{
          {CARRYFUSED, &kCarryFused},
@@ -935,15 +934,19 @@ vector<Gpu::RegTunable> Gpu::regTunables() const {
          {MIDOUT, &kfftMidOut}, {MIDOUT31, &kfftMidOutGF31}, {MIDOUT61, &kfftMidOutGF61}}) {
     const TimeInfo* t = kernel->getTimeInfo();
     if (!kernel->isLoaded() || !t->n) { continue; }
-    ret.push_back({regKey(which), t->name, t->times[2] * 1e-3 / t->n, cudaKernelResources(kernel->handle())});
+#ifdef CUDA_BACKEND
+    ret.push_back({regKey(which), t->name, t->times[2] * 1e-3 / t->n, cudaKernelResources(kernel->handle()), false});
+#else
+    ret.push_back({regKey(which), t->name, t->times[2] * 1e-3 / t->n, amdKernelResources(kernel->handle(), shared.context->deviceId()),
+                   !amdRegisterOption(which, 0).empty()});
+#endif
   }
   return ret;
 }
-#endif
 
 // AMD analog of the CUDA register cap, driven by the same REGxxxx options.  override_regs is the value of the kernel's option:
 //    0 = not specified (use the default below),  -1 = compiler default (no cap),
-//    1..10 = minimum waves per SIMD (like CUDA's launch bounds; 10 is the GCN maximum), more than 10 = explicit VGPR count.
+//    1..20 = minimum waves per SIMD (like CUDA's launch bounds; GCN allows 10, RDNA up to 20), more than 20 = explicit VGPR count.
 // A minimum-waves request caps VGPR usage.  On gfx9 (256 VGPRs per lane, allocated in units of 4) the occupancy crossovers are:
 // 128 VGPRs for 2 waves, 84 for 3, 64 for 4, 48 for 5.  A kernel a few VGPRs above the 128 boundary runs with one wave per SIMD;
 // capping it costs a few spills but doubles occupancy.  Only that one-wave cliff is worth a default: on a Radeon VII / MI50 the in-place
@@ -953,7 +956,7 @@ string Gpu::amdRegisterOption([[maybe_unused]] enum WHICH_KERNEL which_kernel, i
   cl_device_id const id = shared.context->deviceId();
   if (!isAmdGpu(id)) return string("");
   if (override_regs < 0) return string("");
-  if (override_regs > 10) return string("-DAMD_NUM_VGPR=") + to_string(override_regs) + " ";
+  if (override_regs > REG_MAX_OCCUPANCY) return string("-DAMD_NUM_VGPR=") + to_string(override_regs) + " ";
   if (override_regs > 0) return string("-DAMD_WAVES_PER_EU=") + to_string(override_regs) + " ";
   // Default: 2 waves per SIMD for the in-place middle kernels on Vega class GPUs (gfx900/902/904/906/909/90c: 256 VGPRs per lane).
   // Other architectures are untested.

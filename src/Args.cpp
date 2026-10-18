@@ -307,16 +307,16 @@ named "config.txt" in the prpll run directory.
                                         The groups fp32, fp6431, 1k256, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
                                         config.txt settings are then not tuned, and the FFTs already in tune.txt are kept.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
-                         regs         - (CUDA) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,
+                         regs         - (CUDA, AMD) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,
                                         if given, and of the entries used for exponents from minexp to maxexp, if either is given).
                                         -tune does this after timing the FFTs.  Rerun it after a new CUDA driver/toolkit or
                                         PRPLL version.  The best limits are added to each tune.txt line as REGxxxx=<val> settings.
                          variants     - Time all the other variants of FFT shapes already in tune.txt.  Only FFTs with an FP64
                                         part (FP64 and FP64+M31) have variants.  More accurate variants extend an entry's
-                                        max exponent a bit.  Variants that earn a tune.txt entry then get their register usage tuned (CUDA).
+                                        max exponent a bit.  Variants that earn a tune.txt entry then get their register usage tuned (CUDA, AMD).
                                         Only variants with a max exponent from minexp to maxexp (if given) are timed.  Warning: this
                                         can take a long time, so a narrow minexp/maxexp range is recommended.
-                         fine         - (CUDA) Time FFTs as -tune does, but an FFT within 2%% of earning a tune.txt entry gets its register
+                         fine         - (CUDA, AMD) Time FFTs as -tune does, but an FFT within 2%% of earning a tune.txt entry gets its register
                                         limits tuned, and is added if it then earns the entry.  config.txt settings are not tuned.
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
 -device <N>        : select the GPU at position N in the list of devices

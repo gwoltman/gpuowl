@@ -44,6 +44,9 @@ vector<string> split(const string& s, char delim) {
 
 namespace {
 
+// The device's occupancy limits for register tuning: per SM on CUDA, per SIMD on AMD (defined with the register tuning below)
+RegLimits regLimits(cl_device_id id);
+
 vector<TuneConfig> permute(const vector<pair<string, vector<string>>>& params) {
   vector<TuneConfig> configs;
 
@@ -473,10 +476,10 @@ void Tune::tune() {
   // -tune fine looks for FFTs that earn a tune.txt entry once their register limits are tuned.  The config.txt settings are left alone.
   if (fine_pct > 0) {
     tune_config = false;
-#ifndef CUDA_BACKEND
-    log("-tune fine: register limits are only tuned in the CUDA build.  Timing FFTs as -tune does.\n");
-    fine_pct = 0;
-#endif
+    if (!canTuneRegs()) {
+      log("-tune fine: register limits are only tuned in the CUDA build and on AMD.  Timing FFTs as -tune does.\n");
+      fine_pct = 0;
+    }
   }
 
   // Giving only one of minexp=/maxexp= leaves the other at its default (75M/350M), so e.g. "-tune maxexp=50000000"
@@ -1335,9 +1338,7 @@ skip_some_WH_variants = 2;   // should default be 1??
   for (const TuneEntry& e : results) { oldSpecs.insert(e.fft.spec()); }
   set<string> addedSpecs;                       // the entries this run added (the register limits are tuned for these)
 
-#ifdef CUDA_BACKEND
-  CudaSmLimits const sm = cudaSmLimits();
-#endif
+  RegLimits const sm = regLimits(shared.context->deviceId());
 
   // Time FFT shapes smallest-to-largest exponent handled
   std::ranges::stable_sort(shapes, [](const FFTShape& a, const FFTShape& b) { return a.maxExp() < b.maxExp(); });
@@ -1484,14 +1485,12 @@ skip_some_WH_variants = 2;   // should default be 1??
 
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
         TuneEntry entry{cost, fft, {}};
-#ifdef CUDA_BACKEND
         // -tune fine: an FFT that earns a tune.txt entry, or comes within fine_pct of one, gets its best register limits.  Then it
         // has to earn the entry with them.
         if (fine_pct > 0 && std::isfinite(cost) && TuneEntry{cost * (1 - fine_pct / 100), fft, {}}.willUpdate(results)) {
           log("~ %6.1f %12s %9" PRIu64 " is within %g%% of a tune.txt entry: tuning its register limits\n", cost, fft.spec().c_str(), fft.maxExp(), fine_pct);
           entry = regTuneEntry(entry, quick, sm);
         }
-#endif
         bool const isUseful = std::isfinite(entry.cost) && entry.update(results);
         log("%c %6.1f %12s %9" PRIu64 "\n", isUseful ? '*' : ' ', entry.cost, fft.spec().c_str(), fft.maxExp());
         if (isUseful) {
@@ -1549,11 +1548,9 @@ skip_some_WH_variants = 2;   // should default be 1??
   }
   pruneAbove();      // a middle variant 1 may now be the cheapest above max_exponent
 
-#ifdef CUDA_BACKEND
   // The FFTs were timed with the compiler's default registers.  Now find the best register limits for the entries this run
   // added.  The other entries keep theirs (-tune regs retunes them).  -tune fine has already done this for every FFT that earned an entry.
   if (fine_pct == 0) { regTune(quick, args->fftSpec.empty() ? vector<FFTShape>{} : shapes, &addedSpecs); }
-#endif
 }
 
 void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlyShapes, u64 minExp, u64 maxExp) {
@@ -1616,26 +1613,39 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
     }
   }
 
-#ifdef CUDA_BACKEND
   // The variants were timed with the compiler's default registers, as -tune does.  Now tune the registers of those that earned an entry.
   regTune(quick, {}, &addedSpecs);
+}
+
+bool Tune::canTuneRegs() {
+#ifdef CUDA_BACKEND
+  return true;
+#else
+  cl_device_id const id = shared.context->deviceId();
+  return isAmdGpu(id) && amdHasKernelInfo(id);
 #endif
 }
 
-void Tune::regTune([[maybe_unused]] int quick, [[maybe_unused]] const vector<FFTShape>& onlyShapes, [[maybe_unused]] const set<string>* onlySpecs,
-                   [[maybe_unused]] u64 minExp, [[maybe_unused]] u64 maxExp) {
-#ifndef CUDA_BACKEND
-  log("-tune regs: register limits are only tuned in the CUDA build\n");
-#else
+void Tune::regTune(int quick, const vector<FFTShape>& onlyShapes, const set<string>* onlySpecs, u64 minExp, u64 maxExp) {
+  if (!canTuneRegs()) {
+    // Only -tune regs says so: after -tune, on such a device, there is nothing to do
+    if (!onlySpecs) { log("-tune regs: register limits are only tuned in the CUDA build and on AMD GPUs whose runtime reports VGPRs\n"); }
+    return;
+  }
   vector<TuneEntry> const entries = TuneEntry::readTuneFile(*shared.args);
   if (entries.empty()) {
     log("-tune regs: tune.txt has no entries to tune\n");
     return;
   }
-  CudaSmLimits const sm = cudaSmLimits();
+  RegLimits const sm = regLimits(shared.context->deviceId());
   log("\n");
+#ifdef CUDA_BACKEND
   log("Tuning register usage of %stune.txt entries.  Per SM: %d registers, %d threads, %d blocks, %d bytes shared memory.\n",
       onlySpecs ? "new " : "", sm.regsPerSM, sm.maxThreadsPerSM, sm.maxBlocksPerSM, sm.sharedPerSM);
+#else
+  log("Tuning register usage of %stune.txt entries.  Per SIMD: %d VGPRs (allocated by %d), %d waves; %d bytes LDS per CU.\n",
+      onlySpecs ? "new " : "", sm.vgprs, sm.granule, sm.maxWaves, sm.ldsPerCU);
+#endif
 
   vector<TuneEntry> done;
   for (u32 i = 0; i < entries.size(); ++i) {
@@ -1653,33 +1663,44 @@ void Tune::regTune([[maybe_unused]] int quick, [[maybe_unused]] const vector<FFT
     for (u32 j = i + 1; j < entries.size(); ++j) { entries[j].update(results); }
     TuneEntry::writeTuneFile(results);
   }
-#endif
 }
 
-#ifdef CUDA_BACKEND
 namespace {
 
-// A kernel's occupancy as its registers set it.  The registers of a block are allocated per warp in units of 256, and occupancy
-// changes where the blocks that fit in the SM's register file change.  k0 is the blocks per SM with the compiler's default
-// registers, maxBlocks the most that the other limits (blocks, threads, shared memory per SM) allow.
+// A kernel's occupancy as its registers set it.
+// CUDA: the registers of a block are allocated per warp in units of 256, and occupancy changes where the blocks that fit in the SM's
+// register file change.  k0 is the blocks per SM with the compiler's default registers, maxBlocks the most that the other limits
+// (blocks, threads, shared memory per SM) allow.
+// AMD: occupancy is in waves per SIMD, set by the VGPRs (allocated by the granule) and capped by the LDS the CU's workgroups need.
+// k0 is the waves per SIMD with the compiler's default registers, maxBlocks the most waves the LDS and the SIMD allow.
 struct Occupancy {
   int k0{};
   int maxBlocks{};
   int warps{};
   int maxRegs{};
   int regsPerSM{};
+  int granule{};       // AMD only, 0 on CUDA
 
-  // The most registers a thread can use with this many blocks per SM
-  [[nodiscard]] int regsFor(int blocks) const { return std::min(maxRegs, regsPerSM / (blocks * warps) / 256 * 256 / 32); }
+  // The most registers a thread can use with this many blocks per SM (AMD: waves per SIMD)
+  [[nodiscard]] int regsFor(int blocks) const {
+    if (granule) { return std::min(maxRegs, regsPerSM / blocks / granule * granule); }
+    return std::min(maxRegs, regsPerSM / (blocks * warps) / 256 * 256 / 32);
+  }
 
   // Whether launch bounds of this many blocks can be tried.  One block per SM below the default occupancy was always slower.
-  // REGxxxx values up to 16 are launch bounds.
+  // REGxxxx values up to Gpu::REG_MAX_OCCUPANCY are launch bounds.
+  // AMD: only more waves than the default (a minimum can't lower the occupancy); REGxxxx values up to REG_MAX_OCCUPANCY are waves per SIMD.
   [[nodiscard]] bool canTry(int blocks) const {
-    return blocks >= 1 && (blocks >= 2 || blocks == k0) && blocks <= std::min(maxBlocks, 16) && regsFor(blocks) >= 24;
+    int const most = std::min(maxBlocks, Gpu::REG_MAX_OCCUPANCY);
+    if (granule) { return blocks > k0 && blocks <= most && regsFor(blocks) >= 32; }
+    return blocks >= 1 && (blocks >= 2 || blocks == k0) && blocks <= most && regsFor(blocks) >= 24;
   }
 };
 
-Occupancy occupancy(const CudaKernelResources& r, const CudaSmLimits& sm) {
+#ifdef CUDA_BACKEND
+RegLimits regLimits(cl_device_id) { return cudaSmLimits(); }
+
+Occupancy occupancy(const KernelResources& r, const CudaSmLimits& sm) {
   Occupancy o{};
   if (r.threads <= 0 || r.regs <= 0) { return o; }
   o.warps = (r.threads + 31) / 32;
@@ -1690,16 +1711,38 @@ Occupancy occupancy(const CudaKernelResources& r, const CudaSmLimits& sm) {
   o.k0 = std::min(sm.regsPerSM / ((r.regs * 32 + 255) / 256 * 256 * o.warps), o.maxBlocks);
   return o;
 }
+#else
+RegLimits regLimits(cl_device_id id) { return amdSimdLimits(id); }
 
-// The search for one kernel's best register limit.  Launch bounds come first, as minimum blocks per SM: k0 (the default occupancy,
-// which still compiles differently), k0 - 1 (more registers), k0 + 1 (less), and k0 + 2 if k0 + 1 was faster than k0.  Then,
-// the maximum register count of the fastest of those occupancies (or of k0 if the default was fastest): a maximum
-// register count compiles differently from launch bounds of the same occupancy, sometimes better.
+Occupancy occupancy(const KernelResources& r, const AmdSimdLimits& l) {
+  Occupancy o{};
+  if (r.threads <= 0 || r.regs <= 0 || l.simdPerCU <= 0 || l.waveSize <= 0) { return o; }
+  o.warps = (r.threads + l.waveSize - 1) / l.waveSize;
+  o.maxRegs = l.maxRegs;
+  o.regsPerSM = l.vgprs;
+  o.granule = l.granule;
+  o.maxBlocks = l.maxWaves;
+  // The workgroups whose LDS fits in a CU, as waves per SIMD (e.g. 7 workgroups of 2 waves over 4 SIMDs: 3.5, so 3)
+  if (r.sharedBytes) { o.maxBlocks = std::min(o.maxBlocks, l.ldsPerCU / r.sharedBytes * o.warps / l.simdPerCU); }
+  o.k0 = std::min(l.vgprs / ((r.regs + l.granule - 1) / l.granule * l.granule), l.maxWaves);
+  return o;
+}
+#endif
+
+// The search for one kernel's best register limit.
+// CUDA: launch bounds come first, as minimum blocks per SM: k0 (the default occupancy, which still compiles differently), k0 - 1 (more
+// registers), k0 + 1 (less), and k0 + 2 if k0 + 1 was faster than k0.  Then, the maximum register count of the fastest of those
+// occupancies (or of k0 if the default was fastest): a maximum register count compiles differently from launch bounds of the same
+// occupancy, sometimes better.
+// AMD: minimum waves per SIMD of k0 + 1, and k0 + 2 if k0 + 1 was faster.  On a Radeon VII fewer waves (amdgpu_waves_per_eu with a
+// maximum) and an explicit VGPR count were slower, and so was more waves where LDS keeps the occupancy down: the compiler then only spills.
 struct KernelSearch {
   Gpu::RegTunable base;
   Occupancy occ;
   int step = 0;
   map<int, double> us;              // the time of each candidate tried, by REGxxxx value
+
+  [[nodiscard]] bool amd() const { return occ.granule != 0; }
 
   [[nodiscard]] double usOf(int v) const { auto it = us.find(v); return it == us.end() ? numeric_limits<double>::infinity() : it->second; }
 
@@ -1707,7 +1750,7 @@ struct KernelSearch {
   [[nodiscard]] int bestBlocks() const {
     int best = occ.k0;
     double bestUs = base.usPerCall;
-    for (auto [v, t] : us) { if (v <= 16 && t < bestUs) { bestUs = t; best = v; } }
+    for (auto [v, t] : us) { if (v <= Gpu::REG_MAX_OCCUPANCY && t < bestUs) { bestUs = t; best = v; } }
     return best;
   }
 
@@ -1716,20 +1759,26 @@ struct KernelSearch {
     int const k0 = occ.k0;
     while (step < 5) {
       switch (step++) {
-      case 0: if (occ.canTry(k0)) { return k0; } break;
-      case 1: if (occ.canTry(k0 - 1)) { return k0 - 1; } break;
+      case 0: if (!amd() && occ.canTry(k0)) { return k0; } break;
+      case 1: if (!amd() && occ.canTry(k0 - 1)) { return k0 - 1; } break;
       case 2: if (occ.canTry(k0 + 1)) { return k0 + 1; } break;
       case 3: if (occ.canTry(k0 + 2) && usOf(k0 + 1) < std::min(usOf(k0), base.usPerCall)) { return k0 + 2; } break;
-      case 4: if (int const regs = occ.regsFor(bestBlocks()); regs > 16 && !us.contains(regs)) { return regs; } break;
+      case 4: if (int const regs = occ.regsFor(bestBlocks()); !amd() && regs > Gpu::REG_MAX_OCCUPANCY && !us.contains(regs)) { return regs; } break;
       }
     }
     return 0;
   }
 
-  // What will be tried, for the log
+  // What will be tried, for the log.  Empty if nothing.
   [[nodiscard]] string plan() const {
     int const k0 = occ.k0;
     string s;
+    if (amd()) {
+      if (!occ.canTry(k0 + 1)) { return ""; }
+      s = to_string(k0 + 1);
+      if (occ.canTry(k0 + 2)) { s += " (" + to_string(k0 + 2) + ")"; }
+      return s + " waves";
+    }
     for (int k : {k0 - 1, k0, k0 + 1}) { if (occ.canTry(k)) { s += (s.empty() ? "" : ", ") + to_string(k); } }
     if (occ.canTry(k0 + 2)) { s += (s.empty() ? "(" : " (") + to_string(k0 + 2) + ")"; }
     if (!s.empty()) { s += " blocks"; }
@@ -1738,23 +1787,29 @@ struct KernelSearch {
   }
 };
 
-// A candidate as "R regs " or "K blocks", both 9 characters for lining up the log
-string regValueName(int v) {
+// A candidate as "R regs ", "K blocks" or "W waves ", all 9 characters for lining up the log
+string regValueName(int v, bool amd) {
   char buf[32];
-  snprintf(buf, sizeof(buf), v <= 16 ? "%2d blocks" : "%3d regs ", v);
+  snprintf(buf, sizeof(buf), amd ? "%2d waves " : v <= Gpu::REG_MAX_OCCUPANCY ? "%2d blocks" : "%3d regs ", v);
   return buf;
 }
 
 } // namespace
 
-TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& sm) {
+TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) {
   Args* args = shared.args;
   u64 const exponent = primes.prevPrime(e.fft.maxExp());
   string const spec = e.fft.spec();
 
-  // The line's settings other than the register limits and WMUL apply to every timing.  WMUL is decided here too (see below).
+#ifdef CUDA_BACKEND
+  bool const amd = false;
+#else
+  bool const amd = true;
+#endif
+
+  // The line's settings other than the register limits apply to every timing.  On CUDA WMUL is decided here too (see below).
   vector<KeyVal> uses;
-  for (const KeyVal& kv : e.uses) { if (!Args::isRegisterKey(kv.first) && kv.first != "WMUL") { uses.push_back(kv); } }
+  for (const KeyVal& kv : e.uses) { if (!Args::isRegisterKey(kv.first) && (amd || kv.first != "WMUL")) { uses.push_back(kv); } }
 
   // One timing with per-kernel profiling.  Empty if the GPU can't run it.  wmul, if given, receives the WMUL it ran with.
   auto timeKernels = [&](const vector<KeyVal>& regConf, u32* wmul = nullptr) -> vector<Gpu::RegTunable> {
@@ -1780,23 +1835,34 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
   bool const oldProfile = args->profile;
   args->profile = true;
   vector<KernelSearch> searches;
+  vector<string> allKeys;             // every kernel's key: those not searched stay at the compiler's default
+  vector<string> defaultCapKeys;      // AMD: the kernels that have a cap of their own without a REGxxxx value
   u32 wmul = 0;
   for (const Gpu::RegTunable& t : timeKernels({{"NOREG", "1"}}, &wmul)) {
+    allKeys.push_back(t.key);
+    if (t.defaultCap) { defaultCapKeys.push_back(t.key); }
     KernelSearch k{t, occupancy(t.res, sm), 0, {}};
     string const plan = k.occ.k0 ? k.plan() : "";
-    log("%-18s%3d regs, %d threads, %d bytes shared:%6.1f us.  %s%s\n", t.kernelName.c_str(), t.res.regs, t.res.threads,
-        t.res.sharedBytes, t.usPerCall, plan.empty() ? "Nothing to try" : "Will try ", plan.c_str());
+    if (amd) {
+      log("%-18s%3d VGPRs, %d waves, %d threads, %d bytes LDS:%6.1f us.  %s%s\n", t.kernelName.c_str(), t.res.regs, k.occ.k0,
+          t.res.threads, t.res.sharedBytes, t.usPerCall, plan.empty() ? "Nothing to try" : "Will try ", plan.c_str());
+    } else {
+      log("%-18s%3d regs, %d threads, %d bytes shared:%6.1f us.  %s%s\n", t.kernelName.c_str(), t.res.regs, t.res.threads,
+          t.res.sharedBytes, t.usPerCall, plan.empty() ? "Nothing to try" : "Will try ", plan.c_str());
+    }
     if (!plan.empty()) { searches.push_back(std::move(k)); }
   }
 
   // Each pass times every kernel's next candidate, those whose search is done at the compiler's default
   while (true) {
-    vector<KeyVal> conf{{"NOREG", "0"}};
+    map<string, string> m{{"NOREG", "0"}};
+    for (const string& key : allKeys) { m[key] = "-1"; }
     vector<int> trying(searches.size());
     for (size_t i = 0; i < searches.size(); ++i) {
       trying[i] = searches[i].next();
-      conf.emplace_back(searches[i].base.key, trying[i] ? to_string(trying[i]) : "-1");
+      if (trying[i]) { m[searches[i].base.key] = to_string(trying[i]); }
     }
+    vector<KeyVal> const conf(m.begin(), m.end());
     if (std::ranges::all_of(trying, [](int v) { return v == 0; })) { break; }
 
     vector<Gpu::RegTunable> const times = timeKernels(conf);
@@ -1807,7 +1873,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
         searches[i].us[trying[i]] = t.usPerCall;
         char got[32];
         snprintf(got, sizeof(got), "%3d regs%s:", t.res.regs, t.res.localBytes ? " (spills)" : "");
-        log("%-18s Trying %s -> got %-19s %6.1f us\n", t.kernelName.c_str(), regValueName(trying[i]).c_str(), got, t.usPerCall);
+        log("%-18s Trying %s -> got %-19s %6.1f us\n", t.kernelName.c_str(), regValueName(trying[i], amd).c_str(), got, t.usPerCall);
       }
     }
   }
@@ -1827,18 +1893,18 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
   int wmul1Blocks = 0;
   double wmul1Us = 0;
   size_t const cf = std::ranges::find_if(searches, [](const KernelSearch& k) { return k.base.key.starts_with("REGCF"); }) - searches.begin();
-  if (wmul == 2 && cf < searches.size()) {
+  if (!amd && wmul == 2 && cf < searches.size()) {
     const KernelSearch& k = searches[cf];
     int const lbcf = k.bestBlocks();
     wmul1Blocks = 2 * lbcf + 1;
-    CudaKernelResources half = k.base.res;
+    KernelResources half = k.base.res;
     half.threads /= 2;
     half.sharedBytes /= 2;
     Occupancy const occ1 = occupancy(half, sm);
     string const key = to_string(int(e.fft.shape.fft_type)) + ':' + to_string(e.fft.shape.width) + ':' + to_string(variant_W(e.fft.variant))
                        + ':' + to_string(int(e.fft.carry)) + ':' + to_string(lbcf);
     auto const known = wmul1Results.find(key);
-    if (!occ1.k0 || wmul1Blocks > std::min(occ1.maxBlocks, 16) || occ1.regsFor(wmul1Blocks) < 24) {
+    if (!occ1.k0 || wmul1Blocks > std::min(occ1.maxBlocks, Gpu::REG_MAX_OCCUPANCY) || occ1.regsFor(wmul1Blocks) < 24) {
       log("%-18s WMUL=1 can't run %d blocks per SM\n", k.base.kernelName.c_str(), wmul1Blocks);
     } else if (known != wmul1Results.end() && !known->second) {
       log("%-18s WMUL=1 with %d blocks was slower for an earlier FFT with this carryFused, not trying it\n", k.base.kernelName.c_str(), wmul1Blocks);
@@ -1853,7 +1919,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
         wmul1Wins = wmul1Us < bestUs[cf];
         char got[32];
         snprintf(got, sizeof(got), "%3d regs%s:", t.res.regs, t.res.localBytes ? " (spills)" : "");
-        log("%-18s Trying %s -> got %-19s %6.1f us, WMUL=1\n", t.kernelName.c_str(), regValueName(wmul1Blocks).c_str(), got, t.usPerCall);
+        log("%-18s Trying %s -> got %-19s %6.1f us, WMUL=1\n", t.kernelName.c_str(), regValueName(wmul1Blocks, amd).c_str(), got, t.usPerCall);
       }
       wmul1Results[key] = wmul1Wins;
     }
@@ -1887,7 +1953,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
   // The settings for a timing: every kernel at the compiler's default, except for these wins
   auto confOf = [&](const vector<const Win*>& with) {
     map<string, string> m{{"NOREG", "0"}};
-    for (const KernelSearch& k : searches) { m[k.base.key] = "-1"; }
+    for (const string& key : allKeys) { m[key] = "-1"; }
     for (const Win* w : with) { for (const auto& [key, val] : w->settings) { m[key] = val; } }
     return vector<KeyVal>(m.begin(), m.end());
   };
@@ -1955,10 +2021,13 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& 
     out.cost = tunedCost;
     out.uses.insert(out.uses.end(), winners.begin(), winners.end());
   }
+  // AMD: a kernel left at the compiler's default that would otherwise get a cap of its own (see Gpu::amdRegisterOption) says so
+  for (const string& key : defaultCapKeys) {
+    if (std::ranges::none_of(out.uses, [&](const KeyVal& kv) { return kv.first == key; })) { out.uses.emplace_back(key, "-1"); }
+  }
   string settings;
   for (const KeyVal& kv : out.uses) { if (Args::isRegisterKey(kv.first) || kv.first == "WMUL") { settings += ' ' + kv.first + '=' + kv.second; } }
   log("%-18s %.1f us/iter with the compiler's default registers, %.1f tuned.  tune.txt:%s\n", "Final result:", baseCost, tunedCost,
       settings.empty() ? " default registers" : settings.c_str());
   return out;
 }
-#endif

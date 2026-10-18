@@ -1377,9 +1377,9 @@ int clSetKernelArgSVMPointer(cl_kernel k, unsigned pos, const void* ptr) {
 
 } // extern "C"
 
-CudaKernelResources cudaKernelResources(cl_kernel k) {
+KernelResources cudaKernelResources(cl_kernel k) {
   ensureContextCurrent();
-  CudaKernelResources r{};
+  KernelResources r{};
   cuFuncGetAttribute(&r.regs, CU_FUNC_ATTRIBUTE_NUM_REGS, k->func);
   cuFuncGetAttribute(&r.localBytes, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, k->func);
   cuFuncGetAttribute(&r.sharedBytes, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, k->func);

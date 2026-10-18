@@ -17,6 +17,12 @@ class RoeInfo;
 class Gpu;
 class TuneEntry;
 struct CudaSmLimits;
+struct AmdSimdLimits;
+#ifdef CUDA_BACKEND
+using RegLimits = CudaSmLimits;
+#else
+using RegLimits = AmdSimdLimits;
+#endif
 
 using TuneConfig = vector<KeyVal>;
 
@@ -30,10 +36,11 @@ private:
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
 
-#ifdef CUDA_BACKEND
+  // Whether this device's register usage can be tuned: CUDA, and AMD where the runtime reports the kernels' VGPRs
+  bool canTuneRegs();
+
   // Find the best register limits for one tune.txt entry: returns the entry with its new cost and REGxxxx settings
-  TuneEntry regTuneEntry(const TuneEntry& e, int quick, const CudaSmLimits& sm);
-#endif
+  TuneEntry regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm);
 
 public:
   Tune(GpuCommon shared) : shared{shared} {}

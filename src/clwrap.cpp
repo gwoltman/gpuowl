@@ -251,6 +251,63 @@ bool isAmdCdna2Plus(cl_device_id id) {
   return name.find("gfx90a") != string::npos || name.find("gfx94") != string::npos || name.find("gfx95") != string::npos;
 }
 
+#ifndef CUDA_BACKEND
+// clGetKernelInfoAMD (cl_amd_kernel_info, not in the Khronos headers): the AMD runtime's per-kernel resource query.  The values are
+// size_t.  Checked against the compiler's assembly on gfx906 (ROCm 6.3).
+namespace {
+using GetKernelInfoAMD = int (*)(cl_kernel, cl_device_id, unsigned, size_t, void*, size_t*);
+enum : unsigned { KERNELINFO_USED_LDS_SIZE = 0x7, KERNELINFO_USED_VGPRS = 0xd };
+
+GetKernelInfoAMD getKernelInfoAMD(cl_device_id id) {
+  static GetKernelInfoAMD const f = [id] {
+    cl_platform_id platform{};
+    if (clGetDeviceInfo(id, CL_DEVICE_PLATFORM, sizeof(platform), &platform, nullptr) != CL_SUCCESS) { return GetKernelInfoAMD{}; }
+    return reinterpret_cast<GetKernelInfoAMD>(clGetExtensionFunctionAddressForPlatform(platform, "clGetKernelInfoAMD"));
+  }();
+  return f;
+}
+}
+
+bool amdHasKernelInfo(cl_device_id id) { return getKernelInfoAMD(id) != nullptr; }
+
+KernelResources amdKernelResources(cl_kernel k, cl_device_id id) {
+  KernelResources r{-1, 0, 0, 0};
+  GetKernelInfoAMD const f = getKernelInfoAMD(id);
+  if (!f) { return r; }
+  auto query = [&](unsigned param) -> long {
+    size_t v = 0;
+    return f(k, id, param, sizeof(v), &v, nullptr) == CL_SUCCESS ? long(v) : -1;
+  };
+  long const vgprs = query(KERNELINFO_USED_VGPRS);
+  long const lds = query(KERNELINFO_USED_LDS_SIZE);
+  if (vgprs <= 0) { return r; }
+  u64 scratch = 0;
+  clGetKernelWorkGroupInfo(k, id, CL_KERNEL_PRIVATE_MEM_SIZE, sizeof(scratch), &scratch, nullptr);
+  size_t size[3]{};
+  clGetKernelWorkGroupInfo(k, id, CL_KERNEL_COMPILE_WORK_GROUP_SIZE, sizeof(size), &size, nullptr);
+  return {int(vgprs), int(scratch), int(std::max(lds, 0L)), int(size[0])};
+}
+
+// The VGPR file and allocation granule as LLVM's AMDGPU backend has them (AMDGPUBaseInfo getTotalNumVGPRs, getVGPRAllocGranule).
+// Only GCN5 (gfx906) is verified; the others are untested.
+AmdSimdLimits amdSimdLimits(cl_device_id id) {
+  string const name = getDeviceName(id);
+  string const gfx = name.substr(0, name.find(':'));
+  int const waveSize = int(getAmdWavefrontWidth(id));
+  bool const wave32 = waveSize == 32;
+  AmdSimdLimits l{256, 4, 256, 10, int(getAmdSimdPerComputeUnit(id)), waveSize, int(getLocalMemSize(id))};
+  if (gfx == "gfx90a" || gfx.starts_with("gfx94") || gfx.starts_with("gfx95")) {               // CDNA2, CDNA3: AGPRs and VGPRs unified
+    l.vgprs = 512; l.granule = 8; l.maxRegs = 512; l.maxWaves = 8;
+  } else if (gfx.size() > 6) {                                                                    // RDNA
+    bool const fullVgprs = gfx == "gfx1100" || gfx == "gfx1101" || gfx == "gfx1151";              // 1.5x the VGPRs
+    l.vgprs = (fullVgprs ? 1536 : 1024) / (wave32 ? 1 : 2);
+    l.granule = (fullVgprs ? 24 : gfx.starts_with("gfx101") ? 8 : 16) / (wave32 ? 1 : 2);
+    l.maxWaves = gfx.starts_with("gfx101") ? 20 : 16;
+  }
+  return l;
+}
+#endif
+
 bool amdFastBarrierUnsafe(cl_device_id id) {
   if (!isAmdGpu(id)) { return false; }
   if (getAmdWavefrontWidth(id) != 64) { return true; }

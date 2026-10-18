@@ -333,18 +333,21 @@ public:
 
   double timePRP(int quick = 7);
 
-#ifdef CUDA_BACKEND
+  // REGxxxx values up to this are an occupancy: minimum blocks per SM (CUDA launch bounds) or waves per SIMD (AMD).  Larger values
+  // are a register count.  20 is the most waves per SIMD of any AMD GPU (RDNA1); no kernel runs usefully in so few registers.
+  static constexpr int REG_MAX_OCCUPANCY = 20;
+
   // A kernel whose registers a REGxxxx key limits, as it ran on this Gpu: its resources and average time per call.
   // The time needs a Gpu made with args.profile (-time).
   struct RegTunable {
     string key;
     string kernelName;
     double usPerCall;
-    CudaKernelResources res;
+    KernelResources res;
+    bool defaultCap;      // AMD: without a REGxxxx value the kernel gets a cap of its own (see amdRegisterOption), not the compiler's default
   };
   // The REGxxxx keys of this FFT, each with the main kernel it limits, for the kernels that have run (e.g. in timePRP)
-  [[nodiscard]] vector<RegTunable> regTunables() const;
-#endif
+  [[nodiscard]] vector<RegTunable> regTunables();
 
   tuple<bool, u64, RoeInfo, RoeInfo> measureROE(bool quick);
   tuple<bool, RoeInfo> measureCarry(bool mul3 = false);

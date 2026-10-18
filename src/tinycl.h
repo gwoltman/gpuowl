@@ -92,6 +92,7 @@ int clWaitForEvents(unsigned numEvents, const cl_event *);
 int clGetKernelInfo(cl_kernel, cl_kernel_info, size_t, void *, size_t *);
 int clGetKernelArgInfo(cl_kernel, unsigned, cl_kernel_arg_info, size_t, void *, size_t *);
 int clGetKernelWorkGroupInfo(cl_kernel, cl_device_id, cl_kernel_work_group_info, size_t, void *, size_t *);
+void* clGetExtensionFunctionAddressForPlatform(cl_platform_id, const char *);
 
 int clGetEventInfo(cl_event, cl_event_info paramName, size_t paramValueSize, void* paramValue, size_t* sizeRet);
 int clGetEventProfilingInfo(cl_event, cl_profiling_info, size_t, void*, size_t* sizeRet);
@@ -212,6 +213,7 @@ int clSetKernelArgSVMPointer(cl_kernel, unsigned, const void *);
 
 #define CL_KERNEL_WORK_GROUP_SIZE         0x11B0
 #define CL_KERNEL_COMPILE_WORK_GROUP_SIZE 0x11B1
+#define CL_KERNEL_PRIVATE_MEM_SIZE        0x11B4
 
 // nVidia
 #define CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV     0x4000
