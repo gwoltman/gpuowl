@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <filesystem>
+#include <optional>
 
 namespace fs = std::filesystem;
 
@@ -24,6 +25,9 @@ public:
   static vector<KeyVal> splitArgLine(const std::string& inputLine);
   static vector<KeyVal> splitUses(std::string ss);
   static std::string mergeArgs(int argc, char **argv);
+  // An exponent as a whole number or with a K, M or G suffix (thousand, million, billion), e.g. 150000000, 150M or 142.5M.  Nothing
+  // if not one, or if it is not a whole number.
+  static std::optional<u64> parseExponent(const std::string& s);
 
   explicit Args(bool silent = false) : silent{silent} {}
 

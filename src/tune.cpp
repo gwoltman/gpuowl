@@ -451,8 +451,15 @@ void Tune::tune() {
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
       if (keyVal.front() == "quick") quick = stoi(keyVal.back());
-      if (keyVal.front() == "minexp") { min_exponent = stoull(keyVal.back()); range_given = true; }
-      if (keyVal.front() == "maxexp") { max_exponent = stoull(keyVal.back()); range_given = true; }
+      // Args checked these up front (checkTuneOptions)
+      if (keyVal.front() == "minexp") { min_exponent = Args::parseExponent(keyVal.back()).value(); range_given = true; }
+      if (keyVal.front() == "maxexp") { max_exponent = Args::parseExponent(keyVal.back()).value(); range_given = true; }
+      if (keyVal.front() == "exp") {
+        auto const range = split(keyVal.back(), '-');
+        min_exponent = Args::parseExponent(range.front()).value();
+        max_exponent = Args::parseExponent(range.back()).value();
+        range_given = true;
+      }
       if (keyVal.front() == "1k256") time_1K_256 = stoi(keyVal.back());
       if (keyVal.front() == "m61") time_M61 = stoi(keyVal.back());
       if (keyVal.front() == "pfa") time_PFA = stoi(keyVal.back());
@@ -488,7 +495,7 @@ void Tune::tune() {
   // user asked for.  Fail loudly instead of leaving the user staring at an empty tune.txt.
   if (min_exponent > max_exponent) {
     log("-tune: minexp=%" PRIu64 " is greater than maxexp=%" PRIu64 "; give both minexp= and maxexp= to tune a "
-        "narrow range, e.g. -tune minexp=10000000,maxexp=20000000 for a small exponent such as PRP-CF at 18M\n",
+        "narrow range, e.g. -tune exp=10M-20M for a small exponent such as PRP-CF at 18M\n",
         min_exponent, max_exponent);
     throw "-tune minexp/maxexp range";
   }

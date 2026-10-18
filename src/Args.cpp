@@ -96,6 +96,34 @@ vector<KeyVal> Args::splitUses(string ss) { // pass by value is intentional
   return ret;
 }
 
+std::optional<u64> Args::parseExponent(const string& s) {
+  u64 mult = 1;
+  string digits = s;
+  if (!digits.empty()) {
+    char const c = char(toupper((unsigned char) digits.back()));
+    if (c == 'K' || c == 'M' || c == 'G') {
+      mult = c == 'K' ? 1'000 : c == 'M' ? 1'000'000 : 1'000'000'000;
+      digits.pop_back();
+    }
+  }
+  size_t const dot = digits.find('.');
+  string const whole = digits.substr(0, dot);
+  string const frac = dot == string::npos ? "" : digits.substr(dot + 1);
+  if (whole.empty() || (dot != string::npos && (frac.empty() || mult == 1))) { return {}; }
+  u64 n = 0;
+  auto [end, ec] = std::from_chars(whole.data(), whole.data() + whole.size(), n);
+  if (ec != std::errc{} || end != whole.data() + whole.size() || n > UINT64_MAX / mult) { return {}; }
+  n *= mult;
+  // The fraction must come out a whole number: at most as many digits as the suffix has zeros, e.g. 142.5M but not 142.5000001M
+  u64 scale = mult;
+  for (char ch : frac) {
+    if (!isdigit((unsigned char) ch) || scale < 10) { return {}; }
+    scale /= 10;
+    n += u64(ch - '0') * scale;
+  }
+  return n;
+}
+
 // Checks the comma separated -tune options up front: Tune::tune() silently skips anything it does not recognise,
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
@@ -105,19 +133,37 @@ static void checkTuneOptions(const string& options) {
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
     bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431" || key == "fp32";
-    if (pos != string::npos && (key == "quick" || key == "minexp" || key == "maxexp" || key == "fine" || isGroup)) {
+    if (pos != string::npos && (key == "minexp" || key == "maxexp")) {
+      if (!Args::parseExponent(s.substr(pos + 1))) {
+        log("-tune %s expects an exponent, e.g. 150000000 or 150M (found '%s')\n", key.c_str(), s.substr(pos + 1).c_str());
+        throw "-tune option value";
+      }
+      continue;
+    }
+    if (pos != string::npos && key == "exp") {
+      string const val = s.substr(pos + 1);
+      size_t const dash = val.find('-');
+      auto const lo = dash == string::npos ? std::nullopt : Args::parseExponent(val.substr(0, dash));
+      auto const hi = dash == string::npos ? std::nullopt : Args::parseExponent(val.substr(dash + 1));
+      if (!lo || !hi || *lo > *hi) {
+        log("-tune exp expects a range of exponents, e.g. exp=140M-142M (found '%s')\n", val.c_str());
+        throw "-tune option value";
+      }
+      continue;
+    }
+    if (pos != string::npos && (key == "quick" || key == "fine" || isGroup)) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
       auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
       if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (isGroup && n > 2)
           || (key == "fine" && (n < 1 || n > 50))) {
         log("-tune %s expects %s (found '%s')\n", key.c_str(),
-            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : key == "fine" ? "a percentage from 1 to 50" : "a whole number, e.g. 5000000000", val.c_str());
+            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : "a percentage from 1 to 50", val.c_str());
         throw "-tune option value";
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -294,11 +340,13 @@ named "config.txt" in the prpll run directory.
                          ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.
                          fp32=0       - Do not time FFTs with an FP32 part, nor tune settings that affect them.  Some openCL compilers
                                         have trouble with FP32.
-                         minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.  Default 75000000.
-                         maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.  Default 350000000.
+                         minexp=<val> - Time FFTs to find the best one for exponents greater than <val>.  Default 75M.
+                         maxexp=<val> - Time FFTs to find the best one for exponents less than <val>.  Default 350M.
+                                        Exponents can be whole numbers or use a K, M or G suffix: 150000000, 150M, 142.5M.
                                         Without an -fft <spec>, only FFTs in [minexp, maxexp] are timed, so tuning
                                         for a small exponent (e.g. PRP-CF at 18M) needs both ends set low, e.g.
-                                        -tune minexp=10000000,maxexp=20000000
+                                        -tune exp=10M-20M
+                         exp=<min>-<max> - Same as minexp=<min>,maxexp=<max>.
                          fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
                                         fp6431=2 times only them, e.g. to add them to a tune.txt made with -tune fp64.
                          1k256        - Also time the 1K:256 and 256:1K shapes.  512:512 is almost always better.
