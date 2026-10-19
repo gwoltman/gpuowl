@@ -111,6 +111,9 @@ typedef unsigned long long u64;
 #ifndef M_SQRT1_2
 #define M_SQRT1_2 0.70710678118654752440
 #endif
+#ifndef M_SQRT1_2_F
+#define M_SQRT1_2_F 0.70710678118654752440f
+#endif
 
 // ---- Vector arithmetic operators ----
 // OpenCL supports +, -, *, / on vector types natively. CUDA does not.

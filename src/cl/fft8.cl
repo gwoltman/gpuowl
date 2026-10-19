@@ -59,8 +59,8 @@ void OVERLOAD fft8_skip1(T2 *u) {
 void OVERLOAD fft4CoreSpecial(F2 *u) {
   X2(u[0], u[2]);
   X2t4_mul_t4(u[1], u[3]);                                      // u[3] = mul_t4(u[3]); X2(u[1], u[3]); u[3] = mul_t4(u[3]);
-  X2ad(u[0], u[1], M_SQRT1_2);
-  X2ad(u[2], u[3], M_SQRT1_2);
+  X2ad(u[0], u[1], M_SQRT1_2_F);
+  X2ad(u[2], u[3], M_SQRT1_2_F);
 }
 
 void OVERLOAD fft8Core(F2 *u) {
@@ -242,10 +242,10 @@ void OVERLOAD fft8_16a(F2 *u) {
   fft8(u);
 }
 void OVERLOAD fft8_16b(F2 *u) {
-  const float C1 = 0.92387953251128674, // cos(tau/16)
-              S1 = 0.38268343236508978, // sin(tau/16)
-              S1_over_C1 = 0.4142135623730950488017,
-              C1_over_S1 = 2.4142135623730950488017;
+  const float C1 = 0.92387953251128674f, // cos(tau/16)
+              S1 = 0.38268343236508978f, // sin(tau/16)
+              S1_over_C1 = 0.4142135623730950488017f,
+              C1_over_S1 = 2.4142135623730950488017f;
 
   X2t4(u[0], u[4]);
   X2t4(u[1], u[5]);
@@ -255,7 +255,7 @@ void OVERLOAD fft8_16b(F2 *u) {
   u[1] = partial_cmul(u[1], S1_over_C1);  // delays a mul by C1
   u[2] = mul_t8_delayed(u[2]);            // delays a mul by M_SQRT1_2
   u[3] = partial_cmul(u[3], C1_over_S1);  // delays a mul by S1
-  X2ad(u[0], u[2], M_SQRT1_2);
+  X2ad(u[0], u[2], M_SQRT1_2_F);
   X2ad_mul_t4(u[1], u[3], S1_over_C1);    // mul by S1/C1, now both are delaying a mul by C1
   X2ad(u[0], u[1], C1);                   // apply delayed mul by C1
   X2ad(u[2], u[3], C1);                   // apply delayed mul by C1
@@ -263,7 +263,7 @@ void OVERLOAD fft8_16b(F2 *u) {
   u[5] = partial_cmul(u[5], C1_over_S1);  // delays a mul by S1
   u[6] = mul_t8_delayed(u[6]);            // delays a mul by i*M_SQRT1_2 (a negation cheaper than mul_3t8_delayed)
   u[7] = partial_cmul(u[7], S1_over_C1);  // delays a mul by -C1
-  X2t4ad(u[4], u[6], M_SQRT1_2);
+  X2t4ad(u[4], u[6], M_SQRT1_2_F);
   X2ad_mul_t4(u[5], u[7], -C1_over_S1);   // mul by -C1/S1, now both are delaying a mul by S1
   X2ad(u[4], u[5], S1);                   // apply delayed mul by S1
   X2ad(u[6], u[7], S1);                   // apply delayed mul by S1

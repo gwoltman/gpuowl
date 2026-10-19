@@ -640,16 +640,16 @@ F2 OVERLOAD mul_t4(F2 a)  { return U2(-a.y, a.x); } // i.e. a * i
 
 F2 OVERLOAD mul_t8(F2 a)  { // mul(a, U2(1, 1)) * (F)(M_SQRT1_2); }
   // One mul, two FMAs
-  F ay = a.y * (float) M_SQRT1_2;
-  return U2(fma(a.x, (float) M_SQRT1_2, -ay), fma(a.x, (float) M_SQRT1_2, ay));
+  F ay = a.y * M_SQRT1_2_F;
+  return U2(fma(a.x, M_SQRT1_2_F, -ay), fma(a.x, M_SQRT1_2_F, ay));
 // Two adds, two muls
 //  return U2(a.x - a.y, a.x + a.y) * M_SQRT1_2;
 }
 
 F2 OVERLOAD mul_3t8(F2 a) { // mul(a, U2(-1, 1)) * (F)(M_SQRT1_2); }
   // One mul, two FMAs
-  F ay = a.y * (float) M_SQRT1_2;
-  return U2(fma(-a.x, (float) M_SQRT1_2, -ay), fma(a.x, (float) M_SQRT1_2, -ay));
+  F ay = a.y * M_SQRT1_2_F;
+  return U2(fma(-a.x, M_SQRT1_2_F, -ay), fma(a.x, M_SQRT1_2_F, -ay));
 // Two adds, two muls
 //  return U2(-(a.x + a.y), a.x - a.y) * M_SQRT1_2;
 }

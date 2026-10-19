@@ -580,8 +580,17 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   defines += toDefine("STATS_SIZE", u32(std::min<u32>(ROE_SIZE, CARRY_SIZE)));
 
   if (fft.FFT_FP64 || fft.FFT_FP32) {
-    defines += toDefine("WEIGHT_STEP", weightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
-    defines += toDefine("IWEIGHT_STEP", invWeightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1));
+    double const weightStep = weightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1);
+    double const iweightStep = invWeightM1(N, E, fft.shape.height * fft.shape.middle, 0, 0, 1);
+    if (fft.FFT_FP64) {
+      defines += toDefine("WEIGHT_STEP", weightStep);
+      defines += toDefine("IWEIGHT_STEP", iweightStep);
+    } else {
+      // FP32 only: pass float literals.  The kernels would round a double literal to float anyway, but on a device without
+      // cl_khr_fp64 (e.g. Intel Arc) every double literal is a "double precision constant requires cl_khr_fp64" warning.
+      defines += toDefine("WEIGHT_STEP", float(weightStep));
+      defines += toDefine("IWEIGHT_STEP", float(iweightStep));
+    }
     if (fft.FFT_FP64) defines += toDefine("TAILT", root1Fancy(fft.shape.height * 2, 1));
     else defines += toDefine("TAILT", root1FancyFP32(fft.shape.height * 2, 1));
 
