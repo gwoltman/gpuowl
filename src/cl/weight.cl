@@ -29,10 +29,39 @@ u64 comboFracBits(u32 i) {
 // The NTT kernels' 64-bit weight counter (low 32 bits frac_bits, high 32 bits the weight shift) for the first word of the pair
 // at column x of line g, computed from scratch as the kernels do for their first pair.  With PFA a line's pairs are not a
 // constant word distance apart, so the kernels call this for every pair.  q is 31 or 61, extra_shift is added to the shift.
-u64 pfaCombo(u32 x, u32 g, u32 q, u32 bigword_weight_shift_minus1, u32 extra_shift) {
-  u32 word_index = pfaPair(x, g) * 2;
+u64 pfaComboOfPair(u32 pair, u32 q, u32 bigword_weight_shift_minus1, u32 extra_shift) {
+  u32 word_index = pair * 2;
   u64 c = comboFracBits(word_index) + make_u64(word_index % q * bigword_weight_shift_minus1, 0xFFFFFFFF);
   return make_u64(((u32) (c >> 32) % q + extra_shift) % q, (u32) c);
+}
+u64 pfaCombo(u32 x, u32 g, u32 q, u32 bigword_weight_shift_minus1, u32 extra_shift) {
+  return pfaComboOfPair(pfaPair(x, g), q, bigword_weight_shift_minus1, extra_shift);
+}
+// The combo step for a distance of dpair pairs (may be negative): the exact fixed-point frac of the word distance (no -1) and its weight
+// shift mod q.  A negative distance is taken as dpair + NWORDS / 2 pairs, the same frac with (EXP % NWORDS) + NWORDS * shift_minus1 more
+// in the weight shift, which is taken off again.  With constant arguments the compiler folds all of it.
+u64 pfaComboStep(i32 dpair, u32 q, u32 bigword_weight_shift_minus1) {
+  u32 dw = (u32) (dpair < 0 ? 2 * dpair + NWORDS : 2 * dpair);
+  u64 f = (u64) dw * FRAC_BPW_HI + (((u64) dw * FRAC_BPW_LO) >> 32);
+  u32 h = (u32) (((f >> 32) + (u64) dw * bigword_weight_shift_minus1) % q);
+  if (dpair < 0) { h = (h + q - (u32) (((u64) (EXP % NWORDS) + (u64) NWORDS * bigword_weight_shift_minus1) % q)) % q; }
+  return make_u64(h, (u32) f);
+}
+
+// The same for carryFused's i-th pair of thread lowMe (column lowMe + i * G_W).  Its distance from the thread's pair 0 is a compile-time
+// constant, one of two as pfaRowI wraps or not, so its combo is pair 0's plus that step: a 64-bit add and one subtract instead of a
+// comboFracBits and three % q.  The frac bits come out one unit low (two truncations instead of one), which changes no big/little word
+// flag, weight shift or weight decision (checked exhaustively).
+u64 pfaComboI(u32 lowMe, u32 i, u32 g, u32 q, u32 bigword_weight_shift_minus1, u32 extra_shift) {
+  u32 r0 = pfaRow0(lowMe, g);
+  u64 c0 = pfaComboOfPair(lowMe * PFA_BH + g % PFA_BH + PFA_L * r0, q, bigword_weight_shift_minus1, extra_shift);
+  if (i == 0) { return c0; }
+  u32 ci = (PFA - i * (G_W * PFA_BH % PFA * PFA_LINV % PFA) % PFA) % PFA;     // pfaRowI's step
+  i32 dpair = (i32) (i * G_W * PFA_BH + PFA_L * ci);
+  u64 c = c0 + (r0 + ci >= PFA ? pfaComboStep(dpair - (i32) (PFA_L * PFA), q, bigword_weight_shift_minus1)
+                               : pfaComboStep(dpair, q, bigword_weight_shift_minus1));
+  u32 h = (u32) (c >> 32);                                                   // < 2q: both parts below q, plus a carry
+  return make_u64(h >= q ? h - q : h, (u32) c);
 }
 
 // The FP weights of the pair p at column x of line g.  With p = x * PFA_BH + b + PFA_L * r (b = g % PFA_BH, r the row offset),
@@ -40,7 +69,6 @@ u64 pfaCombo(u32 x, u32 g, u32 q, u32 bigword_weight_shift_minus1, u32 extra_shi
 // per-thread weights) and those of word 2 * (b + PFA_L * r), minus one, at THREAD_WEIGHTS[WIDTH + b + PFA_BH * r].  The weight of
 // word k is 2^(extra(k) / NWORDS) with extra(k) = k * STEP % NWORDS, so the product of the two is too large by 2 exactly when the
 // extras wrap, i.e. when extra(2p) < extra(2 * x * PFA_BH).  w0 gets the (inverse weight, weight) of word 2p, w1 that of 2p + 1.
-u32 pfaExtra(u32 k) { return (u32) ((u64) k * STEP % NWORDS); }
 
 #endif
 
@@ -200,30 +228,42 @@ u32 adjust_m61_weight_shift (u32 weight_shift) {
 
 #if PFA
 #if FFT_FP32
-void pfaWeights(u32 x, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
-  u32 b = g % PFA_BH;
+// x the column, b = g % PFA_BH and r the row of the pair at column x of line g (see pfaPair)
+void pfaWeightsOf(u32 x, u32 b, u32 r, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
   u32 q = x * PFA_BH + b;
-  u32 r = (g % PFA + PFA - q % PFA) * PFA_LINV % PFA;
-  u32 e = pfaExtra(2 * (q + PFA_L * r));
-  bool wrap = e < pfaExtra(2 * x * PFA_BH);
+  // fracBits(k) is (1 - extra(k) / NWORDS) * 2^32 - 1 (wrapping), so the extras wrap exactly when the frac bits do not, and the second
+  // word's extra wraps exactly when its frac bits do not (the test the non-PFA code uses).  No 64-bit % NWORDS.
+  u32 fp = fracBits(2 * (q + PFA_L * r));
+  bool wrap = fp > fracBits(2 * x * PFA_BH);                 // extra(2p) < extra(2 * x * PFA_BH)
   F2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));
   w = U2(optionalDouble(w.x, wrap), optionalHalve(w.y, wrap));
-  bool wrap1 = e + STEP >= NWORDS;
+  bool wrap1 = fp + FRAC_BPW_HI > FRAC_BPW_HI;               // extra(2p) + STEP >= NWORDS
   *w0 = w;
   *w1 = U2(optionalDouble(fancyMul(w.x, IWEIGHT_STEP), wrap1), optionalHalve(fancyMul(w.y, WEIGHT_STEP), wrap1));
+}
+void pfaWeights(u32 x, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
+  u32 b = g % PFA_BH;
+  pfaWeightsOf(x, b, (g % PFA + PFA - (x * PFA_BH + b) % PFA) * PFA_LINV % PFA, THREAD_WEIGHTS, w0, w1);
+}
+void pfaWeightsI(u32 lowMe, u32 i, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
+  pfaWeightsOf(lowMe + i * G_W, g % PFA_BH, pfaRowI(pfaRow0(lowMe, g), i), THREAD_WEIGHTS, w0, w1);
 }
 #endif
 
 #if FFT_FP64
 // The FP64 weights are kept in [2, 4) (inverse weights in [1, 2)), which optionalHalve / optionalDouble restore from the value.
-void pfaWeights(u32 x, u32 g, BigTab THREAD_WEIGHTS, T2 *w0, T2 *w1) {
-  u32 b = g % PFA_BH;
-  u32 q = x * PFA_BH + b;
-  u32 r = (g % PFA + PFA - q % PFA) * PFA_LINV % PFA;
+void pfaWeightsOf(u32 x, u32 b, u32 r, BigTab THREAD_WEIGHTS, T2 *w0, T2 *w1) {
   T2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));
   w = U2(optionalDouble(w.x), optionalHalve(w.y));
   *w0 = w;
   *w1 = U2(optionalDouble(fancyMul(w.x, IWEIGHT_STEP)), optionalHalve(fancyMul(w.y, WEIGHT_STEP)));
+}
+void pfaWeights(u32 x, u32 g, BigTab THREAD_WEIGHTS, T2 *w0, T2 *w1) {
+  u32 b = g % PFA_BH;
+  pfaWeightsOf(x, b, (g % PFA + PFA - (x * PFA_BH + b) % PFA) * PFA_LINV % PFA, THREAD_WEIGHTS, w0, w1);
+}
+void pfaWeightsI(u32 lowMe, u32 i, u32 g, BigTab THREAD_WEIGHTS, T2 *w0, T2 *w1) {
+  pfaWeightsOf(lowMe + i * G_W, g % PFA_BH, pfaRowI(pfaRow0(lowMe, g), i), THREAD_WEIGHTS, w0, w1);
 }
 #endif
 #endif

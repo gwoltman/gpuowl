@@ -288,6 +288,14 @@ u32 pfaPair(u32 x, u32 g) {
   u32 q = x * PFA_BH + g % PFA_BH;
   return q + PFA_L * ((g % PFA + PFA - q % PFA) * PFA_LINV % PFA);
 }
+// carryFused's thread lowMe holds the pairs at columns lowMe + i * G_W of its line.  Their rows (pfaPair's multiplier of PFA_L) differ by a
+// compile-time step: moving G_W columns moves q by G_W * PFA_BH, so the row by -(G_W * PFA_BH % PFA) * PFA_LINV mod PFA.  pfaRow0 is the same
+// for all i (the compiler computes it once), pfaRowI steps it without a runtime % PFA.
+u32 pfaRow0(u32 lowMe, u32 g) { u32 q = lowMe * PFA_BH + g % PFA_BH; return (g % PFA + PFA - q % PFA) * PFA_LINV % PFA; }
+u32 pfaRowI(u32 r0, u32 i) {
+  u32 r = r0 + (PFA - i * (G_W * PFA_BH % PFA * PFA_LINV % PFA) % PFA) % PFA;
+  return r >= PFA ? r - PFA : r;
+}
 // Does line g take its carries from column x - 1 of the previous line?
 bool pfaRotatedLine(u32 g) { return g % PFA_BH == 0; }
 // The u line of the g-th tail pair, numbering the pairs kx = 0..PFA_TW/2-1 (or 1..PFA_TW/2-1 without the self-paired lines) of each k3.

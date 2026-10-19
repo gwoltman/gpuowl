@@ -241,6 +241,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
   T invBase = optionalDouble(weights.x);
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
     T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
     T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
@@ -312,6 +313,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Calculate inverse weights
   T base = optionalHalve(weights.y);
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
     T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
     T weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
@@ -357,11 +359,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (gr < H / WMUL) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -375,6 +379,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Then apply the weights -- or if FUSE_WEIGHT_BUTTERFLY apply weights only for the "low" i indices.
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
@@ -476,6 +481,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
 
   F invBase = weights.x;
   u32 frac_bits = base_frac_bits;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
     F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
@@ -584,11 +590,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (gr < H / WMUL) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -604,6 +612,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
   // Apply each 32 or 64 bit carry to the 2 words
   F base = weights.y;
   frac_bits = base_frac_bits;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
     // Calculate inverse weights
     F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
@@ -713,9 +722,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
+    combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
@@ -835,11 +845,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
 
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     if (!rotatedCarries) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -853,9 +865,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, 0);
+    combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, 0);
 #endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
@@ -957,9 +970,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 61, bigword_weight_shift_minus1, log2_NWORDS + 1);
+    combo_counter = pfaComboI(lowMe, i, line, 61, bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
@@ -1080,11 +1094,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (!rotatedCarries) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -1098,9 +1114,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 61, bigword_weight_shift_minus1, 0);
+    combo_counter = pfaComboI(lowMe, i, line, 61, bigword_weight_shift_minus1, 0);
 #endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
@@ -1220,15 +1237,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
   T invBase = optionalDouble(weights.x);
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
+    combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the FP64 weights and second GF31 weight shift
     T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
     T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
 #if PFA
-    { T2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+    { T2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
 #endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -1310,11 +1328,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Calculate inverse weights
   T base = optionalHalve(weights.y);
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
     T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
     T weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
 #if PFA
-    { T2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+    { T2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
 #endif
     u[i] = U2(weight1, weight2);
   }
@@ -1358,11 +1377,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (!rotatedCarries) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -1376,9 +1397,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, 0);
+    combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, 0);
 #endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
@@ -1526,15 +1548,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
   F invBase = weights.x;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
+    combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the FP32 weights and second GF31 weight shift
     F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
-    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+    { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
 #endif
     u32 weight_shift0 = weight_shift;
     combo_counter += combo_step;
@@ -1653,11 +1676,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (!rotatedCarries) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -1672,14 +1697,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 31, bigword_weight_shift_minus1, 0);
+    combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, 0);
 #endif
     F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
-    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+    { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
 #endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
@@ -1828,15 +1854,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
   F invBase = weights.x;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 61, bigword_weight_shift_minus1, log2_NWORDS + 1);
+    combo_counter = pfaComboI(lowMe, i, line, 61, bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the FP32 weights and second GF61 weight shift
     F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
-    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+    { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
 #endif
 
     u32 weight_shift0 = weight_shift;
@@ -1956,11 +1983,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (!rotatedCarries) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -1975,15 +2004,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    combo_counter = pfaCombo(lowMe + i * G_W, line, 61, bigword_weight_shift_minus1, 0);
+    combo_counter = pfaComboI(lowMe, i, line, 61, bigword_weight_shift_minus1, 0);
 #endif
     // Calculate inverse weights
     F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
-    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+    { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
 #endif
     // Generate the second weight shift
     u32 weight_shift0 = weight_shift;
@@ -2121,10 +2151,11 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
-    m31_combo_counter = pfaCombo(lowMe + i * G_W, line, 31, m31_bigword_weight_shift_minus1, log2_NWORDS + 1);
-    m61_combo_counter = pfaCombo(lowMe + i * G_W, line, 61, m61_bigword_weight_shift_minus1, log2_NWORDS + 1);
+    m31_combo_counter = pfaComboI(lowMe, i, line, 31, m31_bigword_weight_shift_minus1, log2_NWORDS + 1);
+    m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
@@ -2252,11 +2283,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (!rotatedCarries) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
@@ -2270,10 +2303,11 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    m31_combo_counter = pfaCombo(lowMe + i * G_W, line, 31, m31_bigword_weight_shift_minus1, 0);
-    m61_combo_counter = pfaCombo(lowMe + i * G_W, line, 61, m61_bigword_weight_shift_minus1, 0);
+    m31_combo_counter = pfaComboI(lowMe, i, line, 31, m31_bigword_weight_shift_minus1, 0);
+    m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, 0);
 #endif
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
@@ -2435,16 +2469,17 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
   F invBase = weights.x;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
-    m31_combo_counter = pfaCombo(lowMe + i * G_W, line, 31, m31_bigword_weight_shift_minus1, log2_NWORDS + 1);
-    m61_combo_counter = pfaCombo(lowMe + i * G_W, line, 61, m61_bigword_weight_shift_minus1, log2_NWORDS + 1);
+    m31_combo_counter = pfaComboI(lowMe, i, line, 31, m31_bigword_weight_shift_minus1, log2_NWORDS + 1);
+    m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the FP32 weights and second GF31 and GF61 weight shift
     F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
-    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
+    { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
 #endif
     u32 m31_weight_shift0 = m31_weight_shift;
     m31_combo_counter += m31_combo_step;
@@ -2570,11 +2605,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
     if (!rotatedCarries) {
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         csLoad(carryShuttle, (gr - 1) * WIDTH + CarryShuttleAccess(me, i), &carry[i]);
       }
     } else {
 
+      #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         csLoad(carryShuttle, (gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i), &carry[i]);
       }
@@ -2589,16 +2626,17 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y;
+  #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    m31_combo_counter = pfaCombo(lowMe + i * G_W, line, 31, m31_bigword_weight_shift_minus1, 0);
-    m61_combo_counter = pfaCombo(lowMe + i * G_W, line, 61, m61_bigword_weight_shift_minus1, 0);
+    m31_combo_counter = pfaComboI(lowMe, i, line, 31, m31_bigword_weight_shift_minus1, 0);
+    m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, 0);
 #endif
     // Calculate inverse weights
     F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
-    { F2 pw0, pw1; pfaWeights(lowMe + i * G_W, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+    { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
 #endif
     // Generate the second weight shifts
     u32 m31_weight_shift0 = m31_weight_shift;
