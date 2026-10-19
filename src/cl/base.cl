@@ -107,14 +107,6 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define OLD_FENCE 1
 #endif
 
-// CS_FENCE=1 makes carryFused's hand-offs between workgroups (the carry shuttle and the in-place lines-read flag) use device-scope
-// release/acquire fences, as the OpenCL 2.0 memory model requires: the data is written and read with plain loads and stores, and
-// write_mem_fence/read_mem_fence and barrier(CLK_LOCAL_MEM_FENCE) only order memory within a workgroup.  AMD and nVidia have run
-// without them for years, so they stay off there.  Elsewhere (Intel, whose L1 caches are not coherent with each other) they are on.
-#if !defined(CS_FENCE)
-#define CS_FENCE (!AMDGPU && !NVIDIAGPU)
-#endif
-
 // The default is the in-place FFT data layout for nVidia GPUs, not in-place otherwise.
 // This must match the in_place default in clDefines() in Gpu.cpp.
 #if !defined(INPLACE)

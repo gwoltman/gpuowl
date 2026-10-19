@@ -317,7 +317,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 			      "L2_STRIPING",
 			      "MIDDLE_CHAIN31",
                               "MIDDLE_CHAIN61",
-                              "M61_SM120"
+                              "M61_SM120",
+                              "CS_FENCE"                // Experimental: device-scope fences in carryFused's hand-offs (see carryfused.cl)
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
@@ -352,8 +353,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "MODM31",
                               "LOADS","STORES",
                               "WMUL",
-                              "MULTI_Q",
-                              "CS_FENCE"
+                              "MULTI_Q"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
       // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)

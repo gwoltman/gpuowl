@@ -27,7 +27,15 @@ void spin() {
 #endif
 }
 
-// The two sides of a hand-off between workgroups (see CS_FENCE in base.cl).  Every work-item that wrote shared data calls
+// CS_FENCE=1 makes carryFused's hand-offs between workgroups (the carry shuttle and the in-place lines-read flag) use device-scope
+// release/acquire fences, as the OpenCL 2.0 memory model requires: the data is written and read with plain loads and stores, and
+// write_mem_fence/read_mem_fence and barrier(CLK_LOCAL_MEM_FENCE) only order memory within a workgroup.  AMD and nVidia have run
+// without them for years, so they stay off there.  Elsewhere (Intel, whose L1 caches are not coherent with each other) they are on.
+#if !defined(CS_FENCE)
+#define CS_FENCE (!AMDGPU && !NVIDIAGPU)
+#endif
+
+// The two sides of a hand-off between workgroups (see CS_FENCE above).  Every work-item that wrote shared data calls
 // csReleaseFence() before the barrier that precedes the ready-flag store, and every work-item that reads it calls csAcquireFence()
 // after the barrier that follows the flag wait: the acquire is what makes an Intel GPU drop stale L1 lines of the carry shuttle,
 // which every iteration rewrites in place.
