@@ -148,7 +148,7 @@ i96 OVERLOAD weightAndCarryOne(T u, Z31 u31, T invWeight, u32 m31_invWeight, boo
 
   // Apply inverse weight and get the Z31 data
   u31 = shr(u31, m31_invWeight);
-  u32 n31 = get_Z31(u31);
+  u32 n31 = u31;                                // May be M31 (zero): n64 below is then one less and n64 * M31 + n31 the same
 
   // The final result must be n31 mod M31.  Use FP64 data to calculate this value.
   u = fma(u, invWeight, - (double) n31);                               // This should be close to a multiple of M31
@@ -184,7 +184,7 @@ i64 OVERLOAD weightAndCarryOne(F uF, Z31 u31, F F2_invWeight, u32 m31_invWeight,
 
   // Apply inverse weight and get the Z31 data
   u31 = shr(u31, m31_invWeight);
-  u32 n31 = get_Z31(u31);
+  u32 n31 = u31;                                // May be M31 (zero): nF below is then one less and nF * M31 + n31 the same
 
   // The final result must be n31 mod M31.  Use FP32 data to calculate this value.
   uF = fma(uF, F2_invWeight, - (float) n31);                              // This should be close to a multiple of M31
@@ -255,14 +255,14 @@ i96 OVERLOAD weightAndCarryOne(Z31 u31, Z61 u61, u32 m31_invWeight, u32 m61_invW
   u61 = shr(u61, m61_invWeight);
 
   // Use chinese remainder theorem to create a 92-bit result.  Loosely copied from Yves Gallot's mersenne2 program.
-  u32 n31 = get_Z31(u31);
+  // n31 may be M31, the other representation of zero: the CRT then computes n61 - 1 and n61 * M31 + n31 below is the same.
+  u32 n31 = u31;
   u61 += make_u64(hi32(M61), lo32(M61) - n31);   // u61 - u31
   u61 += shl(u61, 31);                           // u61 + (u61 << 31)
 
-  // The resulting value will be get_Z61(u61) * M31 + n31 and if larger than ~M31*M61/2 return a negative value by subtracting M31 * M61.
-  // We can save a little work by determining if the result will be large using just u61 and returning (get_Z61(u61) - M61) * M31 + n31.
-  // This simplifies to get_balanced_Z61(u61) * M31 + n31.
-  i64 n61 = get_balanced_Z61(modM61(u61));
+  // The resulting value will be n61 * M31 + n31 with n61 the balanced value of u61 (-M61/2 to M61/2), so that a value larger than
+  // ~M31*M61/2 is returned as a negative value.
+  i64 n61 = balancedModM61(u61);
 
   // Optionally calculate roundoff error as proximity to M61/2.  28 bits of accuracy should be sufficient.
   u32 roundoff = (u32) abs((i32)hi32(n61));
@@ -295,10 +295,11 @@ i128 OVERLOAD weightAndCarryOne(F uF, Z31 u31, Z61 u61, F F2_invWeight, u32 m31_
   u31 = shr(u31, m31_invWeight);
   u61 = shr(u61, m61_invWeight);
   // Use chinese remainder theorem to create a 92-bit result.  Loosely copied from Yves Gallot's mersenne2 program.
-  u32 n31 = get_Z31(u31);
+  // n31 may be M31 and n61 a little over M61, other representations of the same values: the CRT and nF below compensate.
+  u32 n31 = u31;
   u61 += make_u64(hi32(M61), lo32(M61) - n31);       // u61 - u31
   u61 += shl(u61, 31);                               // u61 + (u61 << 31)
-  u64 n61 = get_Z61(modM61(u61));
+  u64 n61 = modM61(u61);
   // Let's call the 92-bit CRT result n3161.  At this point, n3161 = n61 * M31 + n31.
 
   // The final result mod M31*M61 must be n3161.  Use FP32 data to calculate how many multiples of M31*M61 need to be added to n3161.

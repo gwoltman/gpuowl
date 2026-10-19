@@ -1045,6 +1045,10 @@ Z61 OVERLOAD modM61(Z61 a) {
 #endif
 }
 GF61 OVERLOAD modM61(GF61 a) { return U2(modM61(a.x), modM61(a.y)); }
+// get_balanced_Z61(modM61(a)) without get_balanced_Z61's compare and selects: reduce a + 2^60 and take 2^60 off again (both only touch the
+// high word).  Gives -2^60..2^60+epsilon, the right representative for any value well inside -M61/2..M61/2.  a must be below 2^63 - 2^60.
+// Cheaper than get_balanced_Z61 only when the modM61 is needed anyway.
+i64 OVERLOAD balancedModM61(Z61 a) { return (i64) modM61(a + (1ULL << 60)) - (1LL << 60); }
 // Internal routine to negate a value by adding the specified number of M61s -- no mod M61 reduction
 Z61 OVERLOAD neg(Z61 a, const u32 m61_count) { return m61_count * M61 - a; }
 GF61 OVERLOAD neg(GF61 a, const u32 m61_count) { return U2(neg(a.x, m61_count), neg(a.y, m61_count)); }
