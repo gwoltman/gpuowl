@@ -32,6 +32,14 @@ private:
   Primes primes;
   // Whether WMUL=1 made carryFused faster, by a key of what determines carryFused (see regTuneEntry), for the rest of the tune
   std::map<std::string, bool> wmul1Results;
+  // How the other TAIL_KERNELS choices did in regTuneEntry, by FFT type and TAIL_KERNELS value, for the rest of the tune
+  // wins/losses/badLosses: against the entry's own choice.  beatSibling/lostToSibling: 3 vs 13 (or 1 vs 11), the same kernels with and
+  // without a queue of their own.
+  struct TailAltRecord { int wins = 0, losses = 0, badLosses = 0, beatSibling = 0, lostToSibling = 0; };
+  std::map<std::string, TailAltRecord> tailAltResults;
+  // -tune tk=: 0 (the default, until there is more data from users' GPUs) never tries the other TAIL_KERNELS choices, auto (-1) tries them,
+  // N > 0 only times TAIL_KERNELS=N
+  int tkOption = 0;
 
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
@@ -40,7 +48,12 @@ private:
   bool canTuneRegs();
 
   // Find the best register limits for one tune.txt entry: returns the entry with its new cost and REGxxxx settings
-  TuneEntry regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm);
+  // tailOnly: only the tail kernels' register limits are searched, the line's other REGxxxx settings and WMUL are kept as they are,
+  // and the other TAIL_KERNELS choices are not tried (regTuneEntry's own use, for those choices).
+  // fwdOcc/fwdDir (tailOnly): each tail kernel tries only the occupancy of its best in the other TAIL_KERNELS choice (fwdOcc, by REGxxxx key)
+  // and fwdDir more (two kernels: fewer registers) or fewer (one kernel), and twice that if the first step won.
+  TuneEntry regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm, bool tailOnly = false,
+                         const std::map<std::string, int>* fwdOcc = nullptr, int fwdDir = 0);
 
 public:
   Tune(GpuCommon shared) : shared{shared} {}

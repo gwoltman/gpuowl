@@ -114,6 +114,10 @@ private:
 
   Queue queue;
   vector<Queue> auxQueues;
+  // TAIL_KERNELS 1 or 3: the tail*Zero kernels run beside tailSquare / tailMul in a queue of their own.  zeroQueues[0] pairs with
+  // queue, zeroQueues[1 + i] with auxQueues[i].
+  vector<Queue> zeroQueues;
+  Queue* zeroQueueFor(const Queue* q);
   KernelCompiler compiler;
 
   /* Kernels for FFT_FP64 or FFT_FP32 */
@@ -190,6 +194,7 @@ private:
   u32 multi_q;                          // MULTI_Q, L2_STRIPING and GRAPHS as adjusted for this FFT and device (see clDefines)
   u32 l2_striping;
   bool graphs;
+  bool zero_q;          // TAIL_KERNELS 11 or 13: the tail*Zero kernels run in their own queue(s), see replay_one
 
   // Twiddles: trigonometry constant buffers, used in FFTs.
   // The twiddles depend only on FFT config and do not depend on the exponent.

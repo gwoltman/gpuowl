@@ -140,6 +140,14 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
+    if (pos != string::npos && key == "tk") {
+      string const val = s.substr(pos + 1);
+      if (val != "auto" && val != "0" && val != "1" && val != "2" && val != "3" && val != "11" && val != "13") {
+        log("-tune tk expects auto, 0 (off) or a TAIL_KERNELS value: 1, 2, 3, 11 or 13 (found '%s')\n", val.c_str());
+        throw "-tune option value";
+      }
+      continue;
+    }
     if (pos != string::npos && key == "exp") {
       string const val = s.substr(pos + 1);
       size_t const dash = val.find('-');
@@ -163,7 +171,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -206,7 +214,7 @@ Args Args::withFftUses(const string& fftSpec, const vector<KeyVal>& uses, bool d
     applied += (applied.empty() ? "" : ", ") + key + '=' + val;
     ret.flags[key] = val;
   }
-  if (doLog && !applied.empty()) { log("%s: tune.txt sets %s\n", fftSpec.c_str(), applied.c_str()); }
+  if (doLog && !doTune && !applied.empty()) { log("%s: tune.txt sets %s\n", fftSpec.c_str(), applied.c_str()); }
   return ret;
 }
 
@@ -311,6 +319,7 @@ named "config.txt" in the prpll run directory.
                      1 = single wide, two kernels
                      2 = double wide, single kernel
                      3 = double wide, two kernels
+                     11, 13 = 1, 3 with the second kernel (the self-paired lines) in a queue of its own
   -use TAIL_TRIGS=<val> : change how tailSquare computes final trig values according to <val>:
                      2 = calculate from scratch, no memory read
                      1 = calculate using one complex multiply from cached memory and uncached memory
@@ -364,6 +373,10 @@ named "config.txt" in the prpll run directory.
                                         max exponent a bit.  Variants that earn a tune.txt entry then get their register usage tuned (CUDA, AMD).
                                         Only variants with a max exponent from minexp to maxexp (if given) are timed.  Warning: this
                                         can take a long time, so a narrow minexp/maxexp range is recommended.
+                         tk=<val>     - (CUDA, AMD) tk=auto: the register tuning of a tune.txt entry also tries the other TAIL_KERNELS
+                                        choices of its width (one kernel vs. two kernels, two kernels with or without a queue of
+                                        their own).  tk=<N> only times TAIL_KERNELS=N, with the entry's register limits.  tk=0
+                                        (the default) tries neither.
                          fine         - (CUDA, AMD) Time FFTs as -tune does, but an FFT within 2%% of earning a tune.txt entry gets its register
                                         limits tuned, and is added if it then earns the entry.  config.txt settings are not tuned.
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.

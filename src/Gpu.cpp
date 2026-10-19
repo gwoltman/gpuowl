@@ -275,7 +275,7 @@ CARRY_SIZE = 100000
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 nH, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
-                 u32 &multi_q, u32 &l2_striping, bool &graphs) {
+                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -292,6 +292,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = false, tail_single_kernel = true;         // Default tailSquare is double-wide in one kernel
+  zero_q = false;
   in_place = isNvidiaGpu(id) ? 1 : 0;                   // Default is in-place for nVidia, not in-place for others (must match base.cl)
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
@@ -378,16 +379,17 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     }
 
     // Some -use options are needed in both OpenCL code and C++ initialization code
+    // TAIL_KERNELS 11 and 13 are 1 and 3 with the tail*Zero kernels in queues of their own (zero_q, see Gpu::replay_one).  Only the C++
+    // code sees the tens digit: the kernels get TAIL_KERNELS % 10 (fixed up after this loop).
     if (k == "TAIL_KERNELS") {
       int const tailKernels = atoi(v.c_str());
-      if (tailKernels < 0 || tailKernels > 3) {
-        log("Invalid TAIL_KERNELS=%d, must be 0..3\n", tailKernels);
+      if (tailKernels < 0 || (tailKernels > 3 && tailKernels != 11 && tailKernels != 13)) {
+        log("Invalid TAIL_KERNELS=%d, must be 0, 1, 2, 3, 11 or 13\n", tailKernels);
         throw "invalid TAIL_KERNELS";
       }
-      if (tailKernels == 0) tail_single_wide = true, tail_single_kernel = true;
-      if (tailKernels == 1) tail_single_wide = true, tail_single_kernel = false;
-      if (tailKernels == 2) tail_single_wide = false, tail_single_kernel = true;
-      if (tailKernels == 3) tail_single_wide = false, tail_single_kernel = false;
+      tail_single_wide = tailKernels % 10 < 2;
+      tail_single_kernel = tailKernels % 2 == 0;
+      zero_q = tailKernels >= 10;
     }
     if (k == "INPLACE") in_place = atoi(v.c_str());
     if (k == "WMUL") wmul = atoi(v.c_str());
@@ -475,6 +477,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // profile would show those kernels -- most of an iteration -- as one call of ~0 ns.
   // (Only the CUDA build has graphs.  Leave the OpenCL build's flags alone, or the next Gpu would report GRAPHS as having no effect.)
   graphs = configValue("GRAPHS", 1);
+  if (zero_q) { config["TAIL_KERNELS"] = to_string(configValue("TAIL_KERNELS", 2) % 10); }
 #if CUDA_BACKEND
   if (args.profile && graphs) {
     graphs = false;
@@ -1028,7 +1031,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   queue{*shared.context, args.profile},
       
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
-                               multi_q, l2_striping, graphs)},
+                               multi_q, l2_striping, graphs, zero_q)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
@@ -1288,6 +1291,9 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   if (multi_q) {
     auxQueues.push_back(Queue{*shared.context, args.profile, true});
   }
+  if (zero_q) {
+    for (size_t i = 0; i <= auxQueues.size(); ++i) { zeroQueues.push_back(Queue{*shared.context, args.profile, true}); }
+  }
 
   // Set flag indicating we're going to use CUDA graphs.
   use_graphs = graph_square[0].isSupported(shared.context->deviceId()) && graphs;
@@ -1315,6 +1321,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
       // it must get the same window too, or its buf1 traffic gets no persisting treatment at all.
       cudaSetL2Persistent(queue.get(), l2bufs);
       for (auto& auxQueue : auxQueues) { cudaSetL2Persistent(auxQueue.get(), l2bufs); }
+      for (auto& zeroQueue : zeroQueues) { cudaSetL2Persistent(zeroQueue.get(), l2bufs); }
     }
 #endif
 
@@ -1725,9 +1732,31 @@ void Gpu::replay() {
   recorded_kernel_args.clear();
 }
 
+Queue* Gpu::zeroQueueFor(const Queue* q) {
+  for (size_t i = 0; i < auxQueues.size(); ++i) { if (q == &auxQueues[i]) { return &zeroQueues[1 + i]; } }
+  return &zeroQueues[0];
+}
+
 // Replay one recorded kernel on the specified queue, with specified base and kernelsToExecute.  Two dimensional work groups are supported for some kernels.
 // A kernelsToExecuteX of zero is permitted - used for the default kernelsToExecute (a.k.a. workSize) set at kernel creation that operates on all the FFT data.
 void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Queue *q, int base, int kernelsToExecuteX, int kernelsToExecuteY) {
+  Queue* const tailQ = q ? q : &queue;
+
+  // The tail kernels: with two tail kernels (TAIL_KERNELS 1 or 3) the tail*Zero kernel does the self-paired lines.  With 11 or 13 it runs
+  // in its own queue, forked from the tail queue and joined back before the next kernel there, and the tail kernel, which has more work,
+  // is queued first.  Measured 2-7% faster for NTTs on a TITAN V but 3% slower for FP64, and 60-70% slower on a Radeon VII (ROCm).
+  auto tailWithZero = [&](auto runTail, auto runZero) {
+    if (tail_single_kernel || base != 0) { runTail(tailQ); return; }
+    if (kernelsToExecuteX) kernelsToExecuteX--;
+    if (!zero_q) { runZero(tailQ); runTail(tailQ); return; }
+    Queue* const zeroQ = zeroQueueFor(tailQ);
+    EventHolder ready = tailQ->createSyncEvent();
+    zeroQ->waitForSyncEvent(&ready);
+    runTail(tailQ);
+    runZero(zeroQ);
+    EventHolder done = zeroQ->createSyncEvent();
+    tailQ->waitForSyncEvent(&done);
+  };
 
   // Call the appropriate kernel
   if (kern == KMIDIN) {
@@ -1753,15 +1782,15 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     // If not in place, the output is to the scratch buffer
     Buffer<double> const *in = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
-    if (!tail_single_kernel && base == 0) {
-      if (cache_group == 1) { ktailSquareZero.setQueue(q); ktailSquareZero(*out, *in); }
-      if (cache_group == 2) { ktailSquareZeroGF31.setQueue(q); ktailSquareZeroGF31(*out, *in); }
-      if (cache_group == 3) { ktailSquareZeroGF61.setQueue(q); ktailSquareZeroGF61(*out, *in); }
-      if (kernelsToExecuteX) kernelsToExecuteX--;
-    }
-    if (cache_group == 1) { ktailSquare.setQueue(q); ktailSquare.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquare(*out, *in, base); }
-    if (cache_group == 2) { ktailSquareGF31.setQueue(q); ktailSquareGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF31(*out, *in, base); }
-    if (cache_group == 3) { ktailSquareGF61.setQueue(q); ktailSquareGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF61(*out, *in, base); }
+    tailWithZero([&](Queue* tq) {
+      if (cache_group == 1) { ktailSquare.setQueue(tq); ktailSquare.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquare(*out, *in, base); }
+      if (cache_group == 2) { ktailSquareGF31.setQueue(tq); ktailSquareGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF31(*out, *in, base); }
+      if (cache_group == 3) { ktailSquareGF61.setQueue(tq); ktailSquareGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF61(*out, *in, base); }
+    }, [&](Queue* zq) {
+      if (cache_group == 1) { ktailSquareZero.setQueue(zq); ktailSquareZero(*out, *in); }
+      if (cache_group == 2) { ktailSquareZeroGF31.setQueue(zq); ktailSquareZeroGF31(*out, *in); }
+      if (cache_group == 3) { ktailSquareZeroGF61.setQueue(zq); ktailSquareZeroGF61(*out, *in); }
+    });
   }
 
   if (kern == KTAILMUL) {
@@ -1770,15 +1799,15 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     // If not in place, the output is to the scratch buffer
     Buffer<double> const *in1 = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
-    if (!tail_single_kernel && base == 0) {
-      if (cache_group == 1) { ktailMulZero.setQueue(q); ktailMulZero(*out, *in1, *in2); }
-      if (cache_group == 2) { ktailMulZeroGF31.setQueue(q); ktailMulZeroGF31(*out, *in1, *in2); }
-      if (cache_group == 3) { ktailMulZeroGF61.setQueue(q); ktailMulZeroGF61(*out, *in1, *in2); }
-      if (kernelsToExecuteX) kernelsToExecuteX--;
-    }
-    if (cache_group == 1) { ktailMul.setQueue(q); ktailMul.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMul(*out, *in1, *in2, base); }
-    if (cache_group == 2) { ktailMulGF31.setQueue(q); ktailMulGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF31(*out, *in1, *in2, base); }
-    if (cache_group == 3) { ktailMulGF61.setQueue(q); ktailMulGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF61(*out, *in1, *in2, base); }
+    tailWithZero([&](Queue* tq) {
+      if (cache_group == 1) { ktailMul.setQueue(tq); ktailMul.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMul(*out, *in1, *in2, base); }
+      if (cache_group == 2) { ktailMulGF31.setQueue(tq); ktailMulGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF31(*out, *in1, *in2, base); }
+      if (cache_group == 3) { ktailMulGF61.setQueue(tq); ktailMulGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF61(*out, *in1, *in2, base); }
+    }, [&](Queue* zq) {
+      if (cache_group == 1) { ktailMulZero.setQueue(zq); ktailMulZero(*out, *in1, *in2); }
+      if (cache_group == 2) { ktailMulZeroGF31.setQueue(zq); ktailMulZeroGF31(*out, *in1, *in2); }
+      if (cache_group == 3) { ktailMulZeroGF61.setQueue(zq); ktailMulZeroGF61(*out, *in1, *in2); }
+    });
   }
 
   if (kern == KTAILMULLOW) {
@@ -1787,15 +1816,15 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     // If not in place, the output is to the scratch buffer
     Buffer<double> const *in1 = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
-    if (!tail_single_kernel && base == 0) {
-      if (cache_group == 1) { ktailMulLowZero.setQueue(q); ktailMulLowZero(*out, *in1, *in2); }
-      if (cache_group == 2) { ktailMulLowZeroGF31.setQueue(q); ktailMulLowZeroGF31(*out, *in1, *in2); }
-      if (cache_group == 3) { ktailMulLowZeroGF61.setQueue(q); ktailMulLowZeroGF61(*out, *in1, *in2); }
-      if (kernelsToExecuteX) kernelsToExecuteX--;
-    }
-    if (cache_group == 1) { ktailMulLow.setQueue(q); ktailMulLow.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLow(*out, *in1, *in2, base); }
-    if (cache_group == 2) { ktailMulLowGF31.setQueue(q); ktailMulLowGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF31(*out, *in1, *in2, base); }
-    if (cache_group == 3) { ktailMulLowGF61.setQueue(q); ktailMulLowGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF61(*out, *in1, *in2, base); }
+    tailWithZero([&](Queue* tq) {
+      if (cache_group == 1) { ktailMulLow.setQueue(tq); ktailMulLow.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLow(*out, *in1, *in2, base); }
+      if (cache_group == 2) { ktailMulLowGF31.setQueue(tq); ktailMulLowGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF31(*out, *in1, *in2, base); }
+      if (cache_group == 3) { ktailMulLowGF61.setQueue(tq); ktailMulLowGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF61(*out, *in1, *in2, base); }
+    }, [&](Queue* zq) {
+      if (cache_group == 1) { ktailMulLowZero.setQueue(zq); ktailMulLowZero(*out, *in1, *in2); }
+      if (cache_group == 2) { ktailMulLowZeroGF31.setQueue(zq); ktailMulLowZeroGF31(*out, *in1, *in2); }
+      if (cache_group == 3) { ktailMulLowZeroGF61.setQueue(zq); ktailMulLowZeroGF61(*out, *in1, *in2); }
+    });
   }
 
   if (kern == KMIDOUT) {

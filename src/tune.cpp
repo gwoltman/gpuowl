@@ -466,6 +466,7 @@ void Tune::tune() {
       if (keyVal.front() == "fp6431") time_FFT6431 = stoi(keyVal.back());
       if (keyVal.front() == "fp32") time_FP32 = stoi(keyVal.back());
       if (keyVal.front() == "fine") fine_pct = stod(keyVal.back());
+      if (keyVal.front() == "tk") tkOption = keyVal.back() == "auto" ? -1 : stoi(keyVal.back());
     }
   }
   quick = std::max(quick, 1);
@@ -550,14 +551,14 @@ void Tune::tune() {
       }
     }
     // If user specified FP64-timings, time a wavefront exponent using an 7.5M FFT
-    // If user specified NTT-timings, time a wavefront exponent using an 4M M31+M61 NTT
+    // If user specified NTT-timings, time a wavefront exponent using a 3.5M M31+M61 NTT (PFA 7, so the PFA kernels are tuned too)
     else if (time_FFTs || time_NTTs) {
       if (time_FFTs) {
         defaultFFTShape = FFTShape(FFT64, 512, 15, 512);
         defaultShape = &defaultFFTShape;
       }
       if (time_NTTs) {
-        defaultNTTShape = FFTShape(FFT3161, 512, 8, 512);
+        defaultNTTShape = FFTShape(FFT3161, 512, 7, 512);
         defaultShape = &defaultNTTShape;
       }
     }
@@ -568,7 +569,7 @@ void Tune::tune() {
       FFTConfig const fft{defaultFFTShape, 101, CARRY_32};
       double const fp64_time = timeConfig(141000001, shared, fft, {}, quick);
       log("Time for FP64 FFT %12s is %6.1f\n", fft.spec().c_str(), fp64_time);
-      defaultNTTShape = FFTShape(FFT3161, 512, 8, 512);
+      defaultNTTShape = FFTShape(FFT3161, 512, 7, 512);
       FFTConfig const ntt{defaultNTTShape, 202, CARRY_AUTO};
       double const ntt_time = timeConfig(141000001, shared, ntt, {}, quick);
       log("Time for M31*M61 NTT %12s is %6.1f\n", ntt.spec().c_str(), ntt_time);
@@ -888,29 +889,6 @@ void Tune::tune() {
     }
 #endif
 
-    // Find best TAIL_KERNELS setting
-    if (true) {
-      FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
-      u64 const exponent = primes.prevPrime(fft.maxExp());
-      u32 best_tail_kernels = 0;
-      u32 const current_tail_kernels = args->value("TAIL_KERNELS", 2);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 const tail_kernels : {0, 1, 2, 3}) {
-        args->flags["TAIL_KERNELS"] = to_string(tail_kernels);
-        double const cost = timeConfig(exponent, shared, fft, {}, quick);
-        log("Time for %12s using TAIL_KERNELS=%u is %6.1f\n", fft.spec().c_str(), tail_kernels, cost);
-        if (tail_kernels == current_tail_kernels) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_kernels = tail_kernels; }
-      }
-      if (best_tail_kernels & 1)
-        log("Best TAIL_KERNELS is %u.  Default TAIL_KERNELS is 2.\n", best_tail_kernels);
-      else
-        log("Best TAIL_KERNELS is %u (but best may be %u when running two workers on one GPU).  Default TAIL_KERNELS is 2.\n", best_tail_kernels, best_tail_kernels | 1);
-      configsUpdate(current_cost, best_cost, 0.000, "TAIL_KERNELS", best_tail_kernels, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
-    }
-
     // Find best TAIL_TRIGS setting
     if (time_FFTs) {
       FFTConfig const fft{defaultFFTShape, 101, CARRY_AUTO};
@@ -934,7 +912,7 @@ void Tune::tune() {
     // Find best TAIL_TRIGS31 setting
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_trigs = 0;
       u32 const current_tail_trigs = args->value("TAIL_TRIGS31", 0);
@@ -976,7 +954,7 @@ void Tune::tune() {
     // Find best TAIL_TRIGS61 setting
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_trigs = 0;
       u32 const current_tail_trigs = args->value("TAIL_TRIGS61", 0);
@@ -1017,7 +995,7 @@ void Tune::tune() {
     // Find best TABMUL_CHAIN31 setting
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
       u32 const current_tabmul_chain = args->value("TABMUL_CHAIN31", 0);
@@ -1059,7 +1037,7 @@ void Tune::tune() {
     // Find best TABMUL_CHAIN61 setting
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
       u32 const current_tabmul_chain = args->value("TABMUL_CHAIN61", 0);
@@ -1080,7 +1058,7 @@ void Tune::tune() {
     // Find best MODM31 setting
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_modm31 = 0;
       u32 const current_modm31 = args->value("MODM31", 0);
@@ -1204,7 +1182,7 @@ void Tune::tune() {
     // Since FFT6431 is rarely used and FFT3161 is very common, we case off the time_NTTs boolean.
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_multi_q = 0;
       u32 current_multi_q = args->value("MULTI_Q", 0);
@@ -1265,6 +1243,31 @@ void Tune::tune() {
     }
 
 #endif
+
+    // Find best TAIL_KERNELS setting.  After MULTI_Q and GRAPHS: 11 and 13 add queues (one per tail queue, see Gpu::replay_one), whose cost
+    // depends on the queues already in use and on whether graphs hide the extra kernel launches.  On a Radeon VII (ROCm) every extra
+    // queue costs dearly; on nVidia 13 matched 2 for a PFA NTT.
+    if (true) {
+      FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
+      u64 const exponent = primes.prevPrime(fft.maxExp());
+      u32 best_tail_kernels = 0;
+      u32 const current_tail_kernels = args->value("TAIL_KERNELS", 2);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 const tail_kernels : {0, 1, 11, 2, 3, 13}) {
+        args->flags["TAIL_KERNELS"] = to_string(tail_kernels);
+        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using TAIL_KERNELS=%u is %6.1f\n", fft.spec().c_str(), tail_kernels, cost);
+        if (tail_kernels == current_tail_kernels) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tail_kernels = tail_kernels; }
+      }
+      if (best_tail_kernels % 2)
+        log("Best TAIL_KERNELS is %u.  Default TAIL_KERNELS is 2.\n", best_tail_kernels);
+      else
+        log("Best TAIL_KERNELS is %u (but best may be %u when running two workers on one GPU).  Default TAIL_KERNELS is 2.\n", best_tail_kernels, best_tail_kernels + 1);
+      configsUpdate(current_cost, best_cost, 0.000, "TAIL_KERNELS", best_tail_kernels, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
+    }
 
     // Find best BIGLIT setting
     if (false && time_FFTs) {        // Deprecated
@@ -1694,6 +1697,12 @@ struct Occupancy {
     return std::min(maxRegs, regsPerSM / (blocks * warps) / 256 * 256 / 32);
   }
 
+  // The blocks per SM (AMD: waves per SIMD) a kernel using this many registers gets
+  [[nodiscard]] int blocksFor(int regs) const {
+    if (granule) { return std::min(maxBlocks, regsPerSM / ((regs + granule - 1) / granule * granule)); }
+    return std::min(maxBlocks, regsPerSM / ((regs * 32 + 255) / 256 * 256 * warps));
+  }
+
   // Whether launch bounds of this many blocks can be tried.  One block per SM below the default occupancy was always slower.
   // REGxxxx values up to Gpu::REG_MAX_OCCUPANCY are launch bounds.
   // AMD: only more waves than the default (a minimum can't lower the occupancy); REGxxxx values up to REG_MAX_OCCUPANCY are waves per SIMD.
@@ -1748,8 +1757,13 @@ struct KernelSearch {
   Occupancy occ;
   int step = 0;
   map<int, double> us;              // the time of each candidate tried, by REGxxxx value
+  int fwd = 0;                      // forwarded mode (fwdDir != 0, see Tune::regTuneEntry): the other TAIL_KERNELS choice's best occupancy
+  int fwdDir = 0;
 
   [[nodiscard]] bool amd() const { return occ.granule != 0; }
+
+  // A forwarded candidate: two kernels (fwdDir > 0) look for more occupancy, so nothing below this kernel's own default
+  [[nodiscard]] bool fwdOk(int blocks) const { return blocks >= 1 && occ.canTry(blocks) && (fwdDir < 0 || blocks >= occ.k0); }
 
   [[nodiscard]] double usOf(int v) const { auto it = us.find(v); return it == us.end() ? numeric_limits<double>::infinity() : it->second; }
 
@@ -1763,6 +1777,16 @@ struct KernelSearch {
 
   // The next candidate to time, 0 when the search is done
   int next() {
+    if (fwdDir) {
+      while (step < 3) {
+        switch (step++) {
+        case 0: if (fwdOk(fwd)) { return fwd; } break;
+        case 1: if (fwdOk(fwd + fwdDir)) { return fwd + fwdDir; } break;
+        case 2: if (fwdOk(fwd + 2 * fwdDir) && usOf(fwd + fwdDir) < std::min(usOf(fwd), base.usPerCall)) { return fwd + 2 * fwdDir; } break;
+        }
+      }
+      return 0;
+    }
     int const k0 = occ.k0;
     while (step < 5) {
       switch (step++) {
@@ -1780,6 +1804,12 @@ struct KernelSearch {
   [[nodiscard]] string plan() const {
     int const k0 = occ.k0;
     string s;
+    if (fwdDir) {
+      for (int k : {fwd, fwd + fwdDir}) { if (fwdOk(k)) { s += (s.empty() ? "" : ", ") + to_string(k); } }
+      if (s.empty()) { return ""; }
+      if (fwdOk(fwd + 2 * fwdDir)) { s += " (" + to_string(fwd + 2 * fwdDir) + ")"; }
+      return s + (amd() ? " waves" : " blocks");
+    }
     if (amd()) {
       if (!occ.canTry(k0 + 1)) { return ""; }
       s = to_string(k0 + 1);
@@ -1803,7 +1833,7 @@ string regValueName(int v, bool amd) {
 
 } // namespace
 
-TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) {
+TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm, bool tailOnly, const map<string, int>* fwdOcc, int fwdDir) {
   Args* args = shared.args;
   u64 const exponent = primes.prevPrime(e.fft.maxExp());
   string const spec = e.fft.spec();
@@ -1815,8 +1845,24 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
 #endif
 
   // The line's settings other than the register limits apply to every timing.  On CUDA WMUL is decided here too (see below).
+  // tailOnly keeps WMUL and the other kernels' register limits (fixed) and searches only the tail kernels'.
   vector<KeyVal> uses;
-  for (const KeyVal& kv : e.uses) { if (!Args::isRegisterKey(kv.first) && (amd || kv.first != "WMUL")) { uses.push_back(kv); } }
+  map<string, string> fixed;
+  for (const KeyVal& kv : e.uses) {
+    if (!Args::isRegisterKey(kv.first)) {
+      if (amd || tailOnly || kv.first != "WMUL") { uses.push_back(kv); }
+    } else if (tailOnly && !kv.first.starts_with("REGTS")) {
+      fixed[kv.first] = kv.second;
+    }
+  }
+  // The register settings a kernel has when not searched or not won: the compiler's default, or with tailOnly the fixed ones
+  auto defaultOf = [&](const string& key) { auto it = fixed.find(key); return it == fixed.end() ? string("-1") : it->second; };
+  // The baseline: the compiler's default registers, or with tailOnly the fixed ones and the tail kernels at the compiler's default
+  vector<KeyVal> baseConf{{"NOREG", "1"}};
+  if (tailOnly) {
+    baseConf = {{"NOREG", "0"}, {"REGTS64", "-1"}, {"REGTS32", "-1"}, {"REGTS31", "-1"}, {"REGTS61", "-1"}};
+    baseConf.insert(baseConf.end(), fixed.begin(), fixed.end());
+  }
 
   // One timing with per-kernel profiling.  Empty if the GPU can't run it.  wmul, if given, receives the WMUL it ran with.
   auto timeKernels = [&](const vector<KeyVal>& regConf, u32* wmul = nullptr) -> vector<Gpu::RegTunable> {
@@ -1838,17 +1884,34 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   };
 
   log("\n");
-  log("Tuning %s\n", spec.c_str());
+  if (tailOnly) {
+    string tk;
+    for (const KeyVal& kv : uses) { if (kv.first == "TAIL_KERNELS") { tk = kv.second; } }
+    int const tkv = atoi(tk.c_str());
+    if (tkv % 2) { tk += '/' + to_string(tkv + 10); }      // the search with 1 or 3 serves 11 or 13 too
+    log("Tuning %s with TAIL_KERNELS=%s (tail kernels only)\n", spec.c_str(), tk.c_str());
+  } else {
+    log("Tuning %s\n", spec.c_str());
+  }
   bool const oldProfile = args->profile;
   args->profile = true;
   vector<KernelSearch> searches;
   vector<string> allKeys;             // every kernel's key: those not searched stay at the compiler's default
   vector<string> defaultCapKeys;      // AMD: the kernels that have a cap of their own without a REGxxxx value
+  map<string, int> tailOcc;           // each tail kernel's occupancy with its best setting, for the other TAIL_KERNELS choices
   u32 wmul = 0;
-  for (const Gpu::RegTunable& t : timeKernels({{"NOREG", "1"}}, &wmul)) {
+  for (const Gpu::RegTunable& t : timeKernels(baseConf, &wmul)) {
+    if (tailOnly && !t.key.starts_with("REGTS")) { allKeys.push_back(t.key); continue; }
     allKeys.push_back(t.key);
     if (t.defaultCap) { defaultCapKeys.push_back(t.key); }
     KernelSearch k{t, occupancy(t.res, sm), 0, {}};
+    if (t.key.starts_with("REGTS")) { tailOcc[t.key] = k.occ.k0; }
+    if (fwdOcc && fwdDir) {
+      auto const it = fwdOcc->find(t.key);
+      if (it == fwdOcc->end()) { continue; }
+      k.fwd = it->second;
+      k.fwdDir = fwdDir;
+    }
     string const plan = k.occ.k0 ? k.plan() : "";
     if (amd) {
       log("%-18s%3d VGPRs, %d waves, %d threads, %d bytes LDS:%6.1f us.  %s%s\n", t.kernelName.c_str(), t.res.regs, k.occ.k0,
@@ -1863,7 +1926,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   // Each pass times every kernel's next candidate, those whose search is done at the compiler's default
   while (true) {
     map<string, string> m{{"NOREG", "0"}};
-    for (const string& key : allKeys) { m[key] = "-1"; }
+    for (const string& key : allKeys) { m[key] = defaultOf(key); }
     vector<int> trying(searches.size());
     for (size_t i = 0; i < searches.size(); ++i) {
       trying[i] = searches[i].next();
@@ -1890,6 +1953,11 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   for (size_t i = 0; i < searches.size(); ++i) {
     bestUs[i] = searches[i].base.usPerCall;
     for (auto [v, t] : searches[i].us) { if (t < bestUs[i]) { bestUs[i] = t; bestValue[i] = v; } }
+    const KernelSearch& k = searches[i];
+    if (k.base.key.starts_with("REGTS")) {
+      int const v = bestValue[i];
+      tailOcc[k.base.key] = v == 0 ? k.occ.k0 : v <= Gpu::REG_MAX_OCCUPANCY ? v : k.occ.blocksFor(v);
+    }
   }
 
   // WMUL=1 halves carryFused's threads per block, so it can run an odd number of blocks per SM: an occupancy WMUL=2 can't have.
@@ -1900,7 +1968,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   int wmul1Blocks = 0;
   double wmul1Us = 0;
   size_t const cf = std::ranges::find_if(searches, [](const KernelSearch& k) { return k.base.key.starts_with("REGCF"); }) - searches.begin();
-  if (!amd && wmul == 2 && cf < searches.size()) {
+  if (!amd && !tailOnly && wmul == 2 && cf < searches.size()) {
     const KernelSearch& k = searches[cf];
     int const lbcf = k.bestBlocks();
     wmul1Blocks = 2 * lbcf + 1;
@@ -1960,7 +2028,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   // The settings for a timing: every kernel at the compiler's default, except for these wins
   auto confOf = [&](const vector<const Win*>& with) {
     map<string, string> m{{"NOREG", "0"}};
-    for (const string& key : allKeys) { m[key] = "-1"; }
+    for (const string& key : allKeys) { m[key] = defaultOf(key); }
     for (const Win* w : with) { for (const auto& [key, val] : w->settings) { m[key] = val; } }
     return vector<KeyVal>(m.begin(), m.end());
   };
@@ -1968,7 +2036,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   for (const Win& w : wins) { accepted.push_back(&w); }
 
   // tune.txt costs are whole iterations without profiling
-  double baseCost = timeConfig(exponent, shared, e.fft, {{"NOREG", "1"}}, quick, nullptr, uses);
+  double baseCost = timeConfig(exponent, shared, e.fft, baseConf, quick, nullptr, uses);
   double tunedCost = baseCost;
 
   // When the kernels of two queues overlap (MULTI_Q on an FFT with two or more number types), a kernel's time alone does not say
@@ -2015,7 +2083,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   if (!winners.empty() && tunedCost >= baseCost && std::isfinite(tunedCost) && predicted > 0.005 * baseCost) {
     log("%-18s %.1f us/iter with the compiler's default registers, %.1f tuned, but the kernels predict %.1f%% less.  Timing again.\n",
         "", baseCost, tunedCost, 100.0 * predicted / baseCost);
-    double const baseCost2 = timeConfig(exponent, shared, e.fft, {{"NOREG", "1"}}, quick, nullptr, uses);
+    double const baseCost2 = timeConfig(exponent, shared, e.fft, baseConf, quick, nullptr, uses);
     double const tunedCost2 = timeConfig(exponent, shared, e.fft, tunedConf, quick, nullptr, uses);
     if (std::isfinite(baseCost2) && std::isfinite(tunedCost2)) {
       baseCost = (baseCost + baseCost2) / 2;
@@ -2024,6 +2092,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   }
 
   TuneEntry out{baseCost, e.fft, uses};
+  out.uses.insert(out.uses.end(), fixed.begin(), fixed.end());
   if (tunedCost < baseCost) {
     out.cost = tunedCost;
     out.uses.insert(out.uses.end(), winners.begin(), winners.end());
@@ -2036,5 +2105,76 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm)
   for (const KeyVal& kv : out.uses) { if (Args::isRegisterKey(kv.first) || kv.first == "WMUL") { settings += ' ' + kv.first + '=' + kv.second; } }
   log("%-18s %.1f us/iter with the compiler's default registers, %.1f tuned.  tune.txt:%s\n", "Final result:", baseCost, tunedCost,
       settings.empty() ? " default registers" : settings.c_str());
-  return out;
+  if (tailOnly) { return out; }
+
+  // The other TAIL_KERNELS choices of the same width (0, 1, 11 or 2, 3, 13).  Two kernels (1, 3) leave tailSquare without its special
+  // case, so it may get by with fewer registers and more occupancy; one kernel saves a launch.  11 and 13 are 1 and 3 with the second kernel
+  // in a queue of their own: the same kernels, so one register search (with 1 or 3) serves both, and each is then timed once.  The search
+  // only tries the occupancy the entry's tail kernels have and one or two steps toward what the other choice is after (fwdDir).  For the
+  // rest of the tune, for this FFT type, a choice is no longer tried once it has lost to the entry's choice by more than 5% twice, or four
+  // times, without ever winning (on a Radeon VII 11 and 13 cost 60-70%), or once it has lost to its sibling (3 vs 13) twice without ever
+  // beating it.
+  if (tkOption == 0) { return out; }
+  int const tk0 = [&] { for (const KeyVal& kv : out.uses) { if (kv.first == "TAIL_KERNELS") { return atoi(kv.second.c_str()); } } return args->value("TAIL_KERNELS", 2); }();
+  int const one = tk0 % 10 < 2 ? 0 : 2;                 // the one-kernel choice of this width
+  auto recOf = [&](int tk) -> TailAltRecord& { return tailAltResults[to_string(int(e.fft.shape.fft_type)) + ':' + to_string(tk)]; };
+  auto skipped = [&](int tk) {
+    const TailAltRecord& r = recOf(tk);
+    bool const skip = (r.wins == 0 && (r.badLosses >= 2 || r.losses >= 4)) || (r.beatSibling == 0 && r.lostToSibling >= 2);
+    if (skip) { log("%-18s TAIL_KERNELS=%d keeps losing for this FFT type, not trying it\n", "", tk); }
+    return skip;
+  };
+  auto withTk = [](TuneEntry x, int tk, bool dropTailRegs) {
+    std::erase_if(x.uses, [&](const KeyVal& kv) { return kv.first == "TAIL_KERNELS" || (dropTailRegs && kv.first.starts_with("REGTS")); });
+    x.uses.emplace_back("TAIL_KERNELS", to_string(tk));
+    return x;
+  };
+  // One whole-iteration timing of x with TAIL_KERNELS=tk and x's register limits
+  auto timeAs = [&](const TuneEntry& x, int tk) {
+    TuneEntry y = withTk(x, tk, false);
+    y.cost = timeConfig(exponent, shared, e.fft, {}, quick, nullptr, y.uses);
+    return y;
+  };
+  TuneEntry best = out;
+  auto consider = [&](const TuneEntry& r, int tk) {
+    bool const win = std::isfinite(r.cost) && r.cost < best.cost;
+    log("%-18s TAIL_KERNELS=%d: %.1f us/iter vs %.1f with TAIL_KERNELS=%d%s\n", "", tk, r.cost, out.cost, tk0, win ? ", better" : "");
+    TailAltRecord& rec = recOf(tk);
+    if (std::isfinite(r.cost) && r.cost < out.cost) {
+      ++rec.wins;
+    } else {
+      ++rec.losses;
+      if (!std::isfinite(r.cost) || r.cost > 1.05 * out.cost) { ++rec.badLosses; }
+    }
+    if (win) { best = r; }
+  };
+  auto siblings = [&](int winner, int loser) { ++recOf(winner).beatSibling; ++recOf(loser).lostToSibling; };
+
+  if (tkOption > 0) {
+    if (tkOption != tk0) { consider(timeAs(out, tkOption), tkOption); }
+  } else if (tk0 == one) {
+    // One kernel now: two kernels, at the tail kernels' occupancy and one or two more.  The register search runs without the extra queue
+    // (1 or 3): with it, the profiled times of the overlapping tail kernels are inflated.  Its result is the timing of 1 or 3; 11 or 13
+    // is then timed once with the same register limits.
+    bool const tryTwo = !skipped(one + 1), tryTwoQ = !skipped(one + 11);
+    if (tryTwo || tryTwoQ) {
+      TuneEntry const r = regTuneEntry(withTk(out, one + 1, true), quick, sm, true, &tailOcc, +1);
+      if (tryTwo) { consider(r, one + 1); }
+      if (tryTwoQ && std::isfinite(r.cost)) {
+        TuneEntry const r2 = timeAs(r, one + 11);
+        consider(r2, one + 11);
+        if (tryTwo && std::isfinite(r2.cost)) { r2.cost < r.cost ? siblings(one + 11, one + 1) : siblings(one + 1, one + 11); }
+      }
+    }
+  } else {
+    // Two kernels now: the sibling with the same register limits, then one kernel at the tail kernels' occupancy and one or two fewer
+    int const sibling = tk0 >= 10 ? tk0 - 10 : tk0 + 10;
+    if (!skipped(sibling)) {
+      TuneEntry const r = timeAs(out, sibling);
+      consider(r, sibling);
+      if (std::isfinite(r.cost)) { r.cost < out.cost ? siblings(sibling, tk0) : siblings(tk0, sibling); }
+    }
+    if (!skipped(one)) { consider(regTuneEntry(withTk(out, one, true), quick, sm, true, &tailOcc, -1), one); }
+  }
+  return best;
 }
