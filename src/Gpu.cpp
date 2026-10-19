@@ -352,7 +352,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "MODM31",
                               "LOADS","STORES",
                               "WMUL",
-                              "MULTI_Q"
+                              "MULTI_Q",
+                              "CS_FENCE"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
       // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)

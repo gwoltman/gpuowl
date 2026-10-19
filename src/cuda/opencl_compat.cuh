@@ -304,6 +304,8 @@ __device__ __forceinline__ unsigned int atomic_load_uint(volatile unsigned int* 
 #define memory_order_acquire 0
 #define memory_order_release 0
 #define memory_scope_device 0
+// Device-scope fence, for -use CS_FENCE=1 (base.cl).  Flags, order and scope are ignored: __threadfence() orders all memory at device scope.
+#define atomic_work_item_fence(flags, order, scope) __threadfence()
 typedef volatile unsigned int atomic_uint;
 
 // ---- Inline assembly ----

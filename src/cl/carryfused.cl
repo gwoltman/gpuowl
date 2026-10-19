@@ -27,6 +27,23 @@ void spin() {
 #endif
 }
 
+// The two sides of a hand-off between workgroups (see CS_FENCE in base.cl).  Every work-item that wrote shared data calls
+// csReleaseFence() before the barrier that precedes the ready-flag store, and every work-item that reads it calls csAcquireFence()
+// after the barrier that follows the flag wait: the acquire is what makes an Intel GPU drop stale L1 lines of the carry shuttle,
+// which every iteration rewrites in place.
+void csReleaseFence(void) {
+  write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+#if CS_FENCE
+  atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_release, memory_scope_device);
+#endif
+}
+void csAcquireFence(void) {
+  read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+#if CS_FENCE
+  atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_acquire, memory_scope_device);
+#endif
+}
+
 // Increasing WMUL to 2 reduces carryShuttle activity.  This led to a 1% speedup on Titan V.  Testing on other GPUs is needed.
 #ifndef WMUL
 #define WMUL 2
@@ -68,6 +85,7 @@ void OVERLOAD csLoad(P(i64) cs, u32 pos, i96 *c) {
 
 void signalLinesRead(P(u32) ready) {
   if (!INPLACE) return;
+  csReleaseFence();   // group 0's reads of the lines are ordered before the flag (on Intel: complete before it is raised)
   bar();     // every work-item of group 0 is done reading
   if (get_local_id(0) == 0) { atomic_store((global atomic_uint *) &ready[LINES_READ_FLAG], 1); }
 }
@@ -79,6 +97,7 @@ void waitLinesRead(P(u32) ready) {
     ready[LINES_READ_FLAG] = 0;
   }
   bar();
+  csAcquireFence();   // the last group's writes of the lines come after group 0's reads
 }
 
 // The last WMUL workgroup's carries have been written to global memory.  Now we shuffle WMUL-1 workgroups carries up using local memory.
@@ -274,7 +293,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -329,7 +348,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -338,7 +357,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -509,7 +528,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) { 
@@ -556,7 +575,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -565,7 +584,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -753,7 +772,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -808,7 +827,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -817,7 +836,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -997,7 +1016,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -1052,7 +1071,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -1061,7 +1080,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -1265,7 +1284,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -1330,7 +1349,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -1339,7 +1358,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -1571,7 +1590,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -1625,7 +1644,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -1634,7 +1653,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -1874,7 +1893,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -1928,7 +1947,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -1937,7 +1956,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -2169,7 +2188,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -2224,7 +2243,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -2233,7 +2252,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
@@ -2488,7 +2507,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     for (i32 i = 0; i < NW; ++i) { csStore(carryShuttle, gr * WIDTH + CarryShuttleAccess(lowMe, i), carry[i]); }
 
     // Tell next group that its carries are ready
-    write_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
@@ -2542,7 +2561,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
   if (me < G_W) {
 #if OLD_FENCE
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me == 0) ready[gr - 1] = 0;
 #else
@@ -2551,7 +2570,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
       do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
     }
     sync();
-    read_mem_fence(CLK_GLOBAL_MEM_FENCE);
+    csAcquireFence();
     // Clear carry ready flag for next iteration
     if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
 #endif
