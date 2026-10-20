@@ -31,6 +31,7 @@ void spin() {
 // release/acquire fences, as the OpenCL 2.0 memory model requires: the data is written and read with plain loads and stores, and
 // write_mem_fence/read_mem_fence and barrier(CLK_LOCAL_MEM_FENCE) only order memory within a workgroup.  AMD and nVidia have run
 // without them for years, so they stay off there.  Elsewhere (Intel, whose L1 caches are not coherent with each other) they are on.
+// On an Intel Arc A770 the fences alone were not enough (see CS_ATOMIC below); they stay on there to order CS_ATOMIC's relaxed atomics.
 #if !defined(CS_FENCE)
 #define CS_FENCE (!AMDGPU && !NVIDIAGPU)
 #endif
@@ -52,12 +53,14 @@ void csAcquireFence(void) {
 #endif
 }
 
-// CS_ATOMIC=1 (experimental, off by default): every carry shuttle store and load is a relaxed device-scope atomic on each 32-bit piece
-// of the carry.  Atomics go to the device's coherent cache level (on Intel the L3, not the per-core L1), so a stale cached copy cannot
-// be read whatever the fences do.  This is a diagnostic: if carryFused errors on some GPU stop with it, the carry hand-off is reading
-// stale data.  The pieces need no ordering among themselves: the hand-off's ready flag and fences order the whole carry.
+// CS_ATOMIC=1: every carry shuttle store and load is a relaxed device-scope atomic on each 32-bit piece of the carry.  Atomics go to
+// the device's coherent cache level (on Intel the L3, not the per-core L1), so a stale cached copy cannot be read whatever the fences
+// do.  The pieces need no ordering among themselves: the hand-off's ready flag and fences order the whole carry.
+// On an Intel Arc A770 (driver 32.0.101.9034) carryFused gave EEs about once per 100000 iterations with CS_FENCE=1 alone (M31+M61
+// 1:512:8:512:202 failed 3 runs of 3), and on every attempt with WMUL=1 (FP32+M61), while the same runs passed on a TITAN V and a
+// Radeon VII.  With CS_ATOMIC=1 they passed, at about 1% cost.  So it is on except on AMD and nVidia, which compile as before.
 #if !defined(CS_ATOMIC)
-#define CS_ATOMIC 0
+#define CS_ATOMIC (!AMDGPU && !NVIDIAGPU)
 #endif
 #if CS_ATOMIC
 #define CS_AT(p) ((global atomic_uint *) (p))
