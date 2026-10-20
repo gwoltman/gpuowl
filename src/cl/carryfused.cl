@@ -52,6 +52,31 @@ void csAcquireFence(void) {
 #endif
 }
 
+// CS_ATOMIC=1 (experimental, off by default): every carry shuttle store and load is a relaxed device-scope atomic on each 32-bit piece
+// of the carry.  Atomics go to the device's coherent cache level (on Intel the L3, not the per-core L1), so a stale cached copy cannot
+// be read whatever the fences do.  This is a diagnostic: if carryFused errors on some GPU stop with it, the carry hand-off is reading
+// stale data.  The pieces need no ordering among themselves: the hand-off's ready flag and fences order the whole carry.
+#if !defined(CS_ATOMIC)
+#define CS_ATOMIC 0
+#endif
+#if CS_ATOMIC
+#define CS_AT(p) ((global atomic_uint *) (p))
+void OVERLOAD csAtomicStore(P(i32) p, i32 v) { atomic_store_explicit(CS_AT(p), (uint) v, memory_order_relaxed, memory_scope_device); }
+void OVERLOAD csAtomicStore(P(i64) p, i64 v) { csAtomicStore((P(i32)) p, (i32) v); csAtomicStore((P(i32)) p + 1, (i32) (v >> 32)); }
+void OVERLOAD csAtomicStore(P(i96) p, i96 v) {
+  csAtomicStore((P(i32)) p, v.hi32); csAtomicStore((P(i32)) p + 1, (i32) v.mid32); csAtomicStore((P(i32)) p + 2, (i32) v.lo32);
+}
+i32 OVERLOAD csAtomicLoad(P(i32) p) { return (i32) atomic_load_explicit(CS_AT(p), memory_order_relaxed, memory_scope_device); }
+i64 OVERLOAD csAtomicLoad(P(i64) p) { u32 lo = (u32) csAtomicLoad((P(i32)) p); i32 hi = csAtomicLoad((P(i32)) p + 1); return ((i64) hi << 32) | lo; }
+i96 OVERLOAD csAtomicLoad(P(i96) p) {
+  i96 v; v.hi32 = csAtomicLoad((P(i32)) p); v.mid32 = (u32) csAtomicLoad((P(i32)) p + 1); v.lo32 = (u32) csAtomicLoad((P(i32)) p + 2); return v;
+}
+#undef CSSTORE
+#undef CSLOAD
+#define CSSTORE(mem, val) csAtomicStore((mem), (val))
+#define CSLOAD(mem)       csAtomicLoad(mem)
+#endif
+
 // Increasing WMUL to 2 reduces carryShuttle activity.  This led to a 1% speedup on Titan V.  Testing on other GPUs is needed.
 #ifndef WMUL
 #define WMUL 2

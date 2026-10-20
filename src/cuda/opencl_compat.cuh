@@ -300,6 +300,7 @@ __device__ __forceinline__ unsigned int atomic_load_uint(volatile unsigned int* 
 }
 #define atomic_store(p, v) atomic_store_uint((volatile unsigned int*)(p), (unsigned int)(v))
 #define atomic_load_explicit(p, order, scope) atomic_load_uint((volatile unsigned int*)(p))
+#define atomic_store_explicit(p, v, order, scope) atomic_store_uint((volatile unsigned int*)(p), (unsigned int)(v))
 #define memory_order_relaxed 0
 #define memory_order_acquire 0
 #define memory_order_release 0
