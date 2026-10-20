@@ -57,11 +57,16 @@ void csAcquireFence(void) {
 #define WMUL 2
 #endif
 
+// AMD (GCN) pays per load instruction: each lane's carries go 16 bytes at a time (global_load_dwordx4), with neighboring lanes adjacent.
+// CS_GROUP is the carries in 16 bytes, taken from the carry[] array at the call site (all of them use it): 4 for 32-bit carries, 2 for
+// 64-bit, 1 (no grouping) for FFT323161's 96-bit carries, which are kept in two planes.  On a Radeon VII this was 11% faster than unit
+// stride for 32-bit carries (512:16:512) and 1-2% for 64-bit (types 1, 2), and up to 2% faster than each lane's NW carries in a row.
+// nVidia coalesces per instruction and is fastest with unit stride (3-6% on a TITAN V; 16-byte groups were 0.3-1.5% slower).
 #if AMDGPU
-#define CarryShuttleAccess(me,i)        ((me) * NW + (i))                       // Generates denser global_load_dwordx4 instructions
-//#define CarryShuttleAccess(me,i)      ((me) * 4 + (i)%4 + (i)/4 * 4*G_W)      // Also generates global_load_dwordx4 instructions and unit stride when NW=8
+#define CS_GROUP                        (16 / (u32) sizeof(carry[0]))
+#define CarryShuttleAccess(me,i)        ((me) * CS_GROUP + (i) % CS_GROUP + (i) / CS_GROUP * CS_GROUP * G_W)
 #else
-#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)                      // nVidia likes this unit stride better
+#define CarryShuttleAccess(me,i)        ((me) + (i) * G_W)
 #endif
 
 // Carry shuttle stores and loads.  A 96-bit carry is kept in two planes, its low 64 bits and then its high 32 bits, so each part is a
