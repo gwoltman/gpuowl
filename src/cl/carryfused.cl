@@ -506,11 +506,11 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = weights.x;
+  F invBase = weights.x, invBase2 = invBase + invBase;     // Pre-doubled: fancyMul(2a, b) is exactly 2 * fancyMul(a, b)
   u32 frac_bits = base_frac_bits;
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight1 = i == 0 ? invBase : fancyMul(frac_bits > base_frac_bits ? invBase2 : invBase, iweightStep(i));
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     frac_bits += FRAC_BPW_HI;
 
@@ -637,12 +637,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
   }
 
   // Apply each 32 or 64 bit carry to the 2 words
-  F base = weights.y;
+  F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
   frac_bits = base_frac_bits;
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
     // Calculate inverse weights
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight1 = i == 0 ? base : fancyMul(frac_bits > base_frac_bits ? baseHalf : base, fweightStep(i));
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
     frac_bits += FRAC_BPW_HI;
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
@@ -1574,14 +1574,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = weights.x;
+  F invBase = weights.x, invBase2 = invBase + invBase;     // Pre-doubled: fancyMul(2a, b) is exactly 2 * fancyMul(a, b)
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
     combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the FP32 weights and second GF31 weight shift
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight1 = i == 0 ? invBase : fancyMul(frac_bits > base_frac_bits ? invBase2 : invBase, iweightStep(i));
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
     { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
@@ -1723,13 +1723,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
-  F base = weights.y;
+  F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
     combo_counter = pfaComboI(lowMe, i, line, 31, bigword_weight_shift_minus1, 0);
 #endif
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight1 = i == 0 ? base : fancyMul(frac_bits > base_frac_bits ? baseHalf : base, fweightStep(i));
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
     { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
@@ -1880,14 +1880,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = weights.x;
+  F invBase = weights.x, invBase2 = invBase + invBase;     // Pre-doubled: fancyMul(2a, b) is exactly 2 * fancyMul(a, b)
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
     combo_counter = pfaComboI(lowMe, i, line, 61, bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the FP32 weights and second GF61 weight shift
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight1 = i == 0 ? invBase : fancyMul(frac_bits > base_frac_bits ? invBase2 : invBase, iweightStep(i));
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
     { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
@@ -2030,14 +2030,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
-  F base = weights.y;
+  F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
     combo_counter = pfaComboI(lowMe, i, line, 61, bigword_weight_shift_minus1, 0);
 #endif
     // Calculate inverse weights
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight1 = i == 0 ? base : fancyMul(frac_bits > base_frac_bits ? baseHalf : base, fweightStep(i));
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
     { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
@@ -2495,7 +2495,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
-  F invBase = weights.x;
+  F invBase = weights.x, invBase2 = invBase + invBase;     // Pre-doubled: fancyMul(2a, b) is exactly 2 * fancyMul(a, b)
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
 #if PFA
@@ -2503,7 +2503,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, log2_NWORDS + 1);
 #endif
     // Generate the FP32 weights and second GF31 and GF61 weight shift
-    F invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)), frac_bits > base_frac_bits);
+    F invWeight1 = i == 0 ? invBase : fancyMul(frac_bits > base_frac_bits ? invBase2 : invBase, iweightStep(i));
     F invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
     { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
@@ -2652,7 +2652,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   }
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
-  F base = weights.y;
+  F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
@@ -2660,7 +2660,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, 0);
 #endif
     // Calculate inverse weights
-    F weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)), frac_bits > base_frac_bits);
+    F weight1 = i == 0 ? base : fancyMul(frac_bits > base_frac_bits ? baseHalf : base, fweightStep(i));
     F weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP), frac_bits + FRAC_BPW_HI > FRAC_BPW_HI);
 #if PFA
     { F2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
