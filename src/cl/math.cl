@@ -201,14 +201,6 @@ i32 OVERLOAD optional_mod(i32 a, const i32 b) {
 
 #define M61 ((((Z61) 1) << 61) - 1)
 
-// M61_SM120: M61 reductions shaped for sm_120 (RTX 50x0), whose native 64-bit add ptxas uses even where an operand must first be zero-filled
-// into a register pair.  modM61 adds its top 3 bits with a 32-bit carry chain, and weakModM61 uses plain 64-bit code instead of 32-bit asm
-// pieces.  On an RTX 5080 that removes nearly all the zero-filling moves (8% of carryFused's instructions, 11% of tailSquareGF61's) and
-// makes iterations 2-4% faster (types 1, 3, 4).  Older GPUs and sm_100 compile modM61 identically either way.  -use M61_SM120=0/1 overrides.
-#if !defined(M61_SM120)
-#define M61_SM120 (HAS_PTX >= 1200)
-#endif
-
 // Optionally add a constant value if first arg is negative.
 i64 OVERLOAD optional_addM61(i64 a) {
 #if HAS_PTX >= 100        // setp/add instruction requires sm_10 support or higher
@@ -724,7 +716,11 @@ F2 OVERLOAD subq(F2 a, F2 b) { return sub(a, b); }
 // bits in reduced mod M.
 #define M31 ((((Z31) 1) << 31) - 1)
 
-// Internal routines to return value in 0..M31 range
+// Internal routines to return value in 0..M31 range.
+// Another possible form for future architectures:  with h = a >> 31, (a & M31) + h = a - h * M31 = a + h * 0x80000001 (mod 2^32), a shift and an IMAD
+// (a + h * 0x7FFFFFFF for a signed input).  On nVidia an IMAD runs on the FMA pipe and LOP3/SHF/LEA/IADD3 on the ALU pipe.  Timed on an
+// RTX 5080 (sm_120) in Oct 2026 it tied MODM31=1/2:  sm_120's ISETP/SEL/IADD issue on either pipe, so MODM31=1/2 already balance the pipes.
+// (Getting h from mul.hi(a, 2) instead of a shift was slower:  IMAD.HI is half rate on sm_120.)
 #if MODM31 == 0
 Z31 OVERLOAD modM31(Z31 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
 Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
@@ -1032,13 +1028,15 @@ i64 OVERLOAD get_balanced_Z61(Z61 a) { return (hi32(a) >= 0x10000000) ? (i64)(a 
 
 // Internal routine to bring Z61 value into the range 0..M61+epsilon
 Z61 OVERLOAD modM61(Z61 a) {
-#if M61_SM120 && HAS_PTX >= 200
+#if HAS_PTX >= 1200
+  // (a & M61) + (a >> 61) with top = a >> 61:  the high word less top << 29 is hi + top * 0xE0000000 (mod 2^32), so a shift, an add with
+  // carry out, and an IMAD with carry in.  On sm_120 that is one ALU op, one FMA-pipe op and one that issues on either pipe, instead of an
+  // AND and the add of top bits on the ALU pipe.  Slower on TitanV (up to 2.5%):  ptxas does better there with plain code it can merge.
   uint2 r = as_uint2(a);
   u32 top;
-  __asm("shr.b32    %2, %1, 29;\n\t"           // The top 3 bits
-        "and.b32    %1, %1, 536870911;\n\t"     // a & M61
-        "add.cc.u32 %0, %0, %2;\n\t"
-        "addc.u32   %1, %1, 0;" : "+r"(r.x), "+r"(r.y), "=r"(top));
+  __asm("shr.b32     %2, %1, 29;\n\t"
+        "add.cc.u32  %0, %0, %2;\n\t"
+        "madc.lo.u32 %1, %2, 3758096384, %1;" : "+r"(r.x), "+r"(r.y), "=r"(top));
   return as_ulong(r);
 #else
   return (a & M61) + (a >> 61);
@@ -1067,15 +1065,15 @@ GF61 OVERLOAD neg(GF61 a) { return U2(neg(a.x), neg(a.y)); }
 // fft8_16a and fft8_16b call this on -2-..2+ values with a m61_count of 2 -- expecting a return in the range 0-..2+.  modM61 needs to add
 // (m61_count+1)*M61 to guarantee a positive value to reduce (and the input's upper bound plus m61_count+1 must stay below 8 M61s).  The 0..1+
 // returned range is a subset of the range the caller is expecting.
-Z61 OVERLOAD lessneg(Z61 a, const u32 m61_count) { return M61_SM120 ? (Z61) optional_add((i64) a, m61_count * M61) : modM61(a + (m61_count + 1) * M61); }
+Z61 OVERLOAD lessneg(Z61 a, const u32 m61_count) { return HAS_PTX >= 1200 ? (Z61) optional_add((i64) a, m61_count * M61) : modM61(a + (m61_count + 1) * M61); }
 GF61 OVERLOAD lessneg(GF61 a, const u32 m61_count) { return U2(lessneg(a.x, m61_count), lessneg(a.y, m61_count)); }
 
 // Assumes k reduced mod 61.
-Z61 OVERLOAD shr(Z61 a, u32 k) { return (a >> k) + ((a << (61 - k)) & M61); }         // Return range 0..M61+2^(61-k), can handle 64-bit inputs but small k is big epsilon
+Z61 OVERLOAD shr(Z61 a, u32 k) { return (a >> k) + ((a << (61 - k)) & M61); }            // Return range 0..M61+2^(61-k), can handle 64-bit inputs but small k is big epsilon
 GF61 OVERLOAD shr(GF61 a, u32 k) { return U2(shr(a.x, k), shr(a.y, k)); }
-Z61 OVERLOAD shl(Z61 a, u32 k) { return shr(a, 61 - k); }         // Return range 0..M61+2^k, can handle 64-bit inputs but large k yields big epsilon
-//Z61 OVERLOAD shl(Z61 a, u32 k) { return modM61(a << k) + ((a >> (64 - k)) << 3); }         // Return range 0..M61+2^k, can handle 64-bit inputs but large k is big epsilon
-//Z61 OVERLOAD shl(Z61 a, u32 k) { return modM61((a << k) + ((a >> (64 - k)) << 3)); }       // Return range 0..M61+epsilon, input must be M61+epsilon a full 62-bit value can overflow
+Z61 OVERLOAD shl(Z61 a, u32 k) { return shr(a, 61 - k); }                                // Return range 0..M61+2^k, can handle 64-bit inputs but large k yields big epsilon
+//Z61 OVERLOAD shl(Z61 a, u32 k) { return modM61(a << k) + ((a >> (64 - k)) << 3); }     // Return range 0..M61+2^k, can handle 64-bit inputs but large k is big epsilon
+//Z61 OVERLOAD shl(Z61 a, u32 k) { return modM61((a << k) + ((a >> (64 - k)) << 3)); }   // Return range 0..M61+epsilon, input must be M61+epsilon a full 62-bit value can overflow
 GF61 OVERLOAD shl(GF61 a, u32 k) { return U2(shl(a.x, k), shl(a.y, k)); }
 
 // Maybe we can make shl faster
@@ -1121,28 +1119,35 @@ Z61 OVERLOAD shl31(Z61 a) {
 GF61 OVERLOAD shl31(GF61 a) { return U2(shl31(a.x), shl31(a.y)); }
 
 u64 OVERLOAD weakModM61(u128 a, u32 num_bits) {
-// This is faster on TitanV, CUDA 13.0.  On sm_120 the plain code below is shorter (see M61_SM120).
-#if HAS_PTX >= 320 && !M61_SM120        // shf instruction requires sm_32 support or higher
-  uint2 alo = as_uint2(u128_lo64(a));
-  uint2 ahi = as_uint2(u128_hi64(a));
-  if (num_bits <= 125) {
-    __asm("shf.r.clamp.b32 %3, %2, %3, 29;\n\t"
-          "shf.r.clamp.b32 %2, %1, %2, 29;\n\t"
-          "and.b32         %1, %1, 536870911;"
-          : "+r"(alo.x), "+r"(alo.y), "+r"(ahi.x), "+r"(ahi.y) : );
-    return (u64)as_ulong(ahi) + (u64)as_ulong(alo);
-  } else {
-    uint top6;
-    __asm("shr.u32         %4, %3, 26;\n\t"
-          "shf.r.clamp.b32 %3, %2, %3, 29;\n\t"
-          "shf.r.clamp.b32 %2, %1, %2, 29;\n\t"
-          "and.b32         %1, %1, 536870911;\n\t"
-          "and.b32         %3, %3, 536870911;\n\t"
-          "add.cc.u32      %0, %0, %4;\n\t"
-          "addc.u32        %1, %1, 0;"
-          : "+r"(alo.x), "+r"(alo.y), "+r"(ahi.x), "+r"(ahi.y), "=r"(top6) : );
-    return (u64)as_ulong(ahi) + (u64)as_ulong(alo);
+// Funnel shifts plus a 32-bit carry chain in one asm block, so ptxas neither builds register pairs for 64-bit adds (IADD.64, which on
+// sm_120 takes a slot on both the ALU and FMA pipes, plus zero-filling moves) nor splits a << 3 into shift + or:  5 instructions for
+// <= 125 bits, 7 for 128 bits.  The carry-chain adds can issue on either pipe.
+#if HAS_PTX >= 320        // shf instruction requires sm_32 support or higher
+  uint2 l = as_uint2(u128_lo64(a));
+  uint2 h = as_uint2(u128_hi64(a));
+  uint2 r;
+  if (num_bits <= 125) {          // (a & M61) + (a >> 61); a >> 61 fits in 64 bits.  Caller insures the sum does not overflow.
+    __asm("{.reg .u32 f0, f1, m;\n\t"
+          "shf.l.clamp.b32 f0, %3, %4, 3;\n\t"       // bits 61..92 of a
+          "shf.l.clamp.b32 f1, %4, %5, 3;\n\t"       // bits 93..124
+          "and.b32         m, %3, 536870911;\n\t"    // bits 32..60
+          "add.cc.u32      %0, %2, f0;\n\t"
+          "addc.u32        %1, m, f1;}"
+          : "=r"(r.x), "=r"(r.y) : "r"(l.x), "r"(l.y), "r"(h.x), "r"(h.y));
+  } else {                        // (a & M61) + ((a >> 61) & M61) + (a >> 122):  max value is 2*M61 + 63
+    __asm("{.reg .u32 f0, f1, m, t;\n\t"
+          "shf.l.clamp.b32 f0, %3, %4, 3;\n\t"       // bits 61..92 of a
+          "shf.l.clamp.b32 f1, %4, %5, 3;\n\t"       // bits 93..124
+          "shr.b32         t, %5, 26;\n\t"           // bits 122..127
+          "and.b32         m, %3, 536870911;\n\t"    // bits 32..60
+          "and.b32         f1, f1, 536870911;\n\t"   // bits 93..121
+          "add.cc.u32      %0, %2, f0;\n\t"
+          "addc.u32        %1, m, f1;\n\t"
+          "add.cc.u32      %0, %0, t;\n\t"
+          "addc.u32        %1, %1, 0;}"
+          : "=r"(r.x), "=r"(r.y) : "r"(l.x), "r"(l.y), "r"(h.x), "r"(h.y));
   }
+  return as_ulong(r);
 #else
   u64 lo = u128_lo64(a), hi = u128_hi64(a);
   u64 lo61 = lo & M61;                                  // Max value is M61

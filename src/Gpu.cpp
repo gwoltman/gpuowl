@@ -318,8 +318,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 			      "L2_STRIPING",
 			      "MIDDLE_CHAIN31",
                               "MIDDLE_CHAIN61",
-                              "M61_SM120",
-                              "CS_FENCE",               // Experimental: device-scope fences in carryFused's hand-offs (see carryfused.cl)
+                              "CS_FENCE",               // Device-scope fences in carryFused's hand-offs (see carryfused.cl).  Required for Intel Arc GPUs.
                               "CS_ATOMIC"               // Experimental: carryFused's carry shuttle accessed with atomics (see carryfused.cl)
                             };
   for (const auto& [k, v] : config) {
