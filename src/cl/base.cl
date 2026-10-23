@@ -977,15 +977,6 @@ void PREFETCHL2(const __global void *addr) {
 #define FAST_BARRIER 0
 #endif
 
-// Default settings for USE_REGISTER_BARSYNC.  OpenCL on nVidia has compiler issues when USE_REGISTER_BARSYNC=0.  Annoying, as register bar.sync is slower in many cases.
-#ifndef USE_REGISTER_BARSYNC
-#if CUDA_BACKEND
-#define USE_REGISTER_BARSYNC 0
-#else
-#define USE_REGISTER_BARSYNC 1
-#endif
-#endif
-
 // Force divergent threads in a warp to converge.  AMD GCN does not require this, all threads in a WAVEFRONT operate in lockstep.  Early CUDA versions did also.
 // The sync is needed in cases where one thread is setting a flag or state on behalf of all the threads in a WAVEFRONT.  For example, carryFused has thread 0 set
 // the carries-are-ready flag on behalf of all 32 threads in a warp.
@@ -1003,6 +994,49 @@ void sync(void) {
 void OVERLOAD bar(void) {
   barrier(FAST_BARRIER ? 0 : CLK_LOCAL_MEM_FENCE);
 }
+
+// Create a barrier across all threads.  Like bar(), primarily used to coordinate access to local memory.
+// However a local memory fence is NOT optional, guaranteeing safe behavior.
+// On Radeon VII and Radeon PRO VII barrier it was discoverred that 4 byte shufls in shufl.cl required a local memory barrier.
+// My theory is something like 8-byte writes store LSW, then MSW.  An 8-byte read accesses LSW first, with the write of MSW giving just
+// enough cushion for the read of LSW to be safe.  That cushion disappears with 4-byte writes and reads.  Alas, that theory does not
+// hold up in real practice.
+void OVERLOAD barFence(void) {
+  barrier(CLK_LOCAL_MEM_FENCE);
+}
+
+// A barrier over this thread's sub-workgroup of WG threads, one of numWG (at most 4) in the block, as a PTX named barrier:  ids 1..numWG,
+// as barrier 0 is bar()'s.  WG must be a multiple of 32.  In the CUDA build the id is an immediate under a predicate:  an id in a register
+// makes ptxas reserve all 16 hardware barriers, which on sm_120 leaves room for one block per SM (why register bar.sync was "horribly slow
+// on an RTX 5070Ti"), and a branch per id splits the code into basic blocks.  nVidia's OpenCL hangs on the predicated form (TITAN V,
+// driver 580) and miscompiled the branch form, so OpenCL keeps the id in a register.
+#if HAS_PTX >= 200         // bar.sync with thread count requires sm_20 support or higher
+void subBarrier(const u32 numWG, const u32 WG) {
+  u32 const grp = get_local_id(0) / WG;
+#if !CUDA_BACKEND
+  __asm volatile("bar.sync %0, %1;" : : "r"(grp + 1), "n"(WG) : "memory");
+#else
+  if (numWG <= 2) {
+    __asm volatile("{.reg .pred %%p;\n\t"
+                   " setp.eq.u32 %%p, %0, 0;\n\t"
+                   " @%%p bar.sync 1, %1;\n\t"
+                   " @!%%p bar.sync 2, %1;}"
+                   : : "r"(grp), "n"(WG) : "memory");
+  } else {
+    __asm volatile("{.reg .pred %%p0, %%p1, %%p2, %%p3;\n\t"
+                   " setp.eq.u32 %%p0, %0, 0;\n\t"
+                   " setp.eq.u32 %%p1, %0, 1;\n\t"
+                   " setp.eq.u32 %%p2, %0, 2;\n\t"
+                   " setp.eq.u32 %%p3, %0, 3;\n\t"
+                   " @%%p0 bar.sync 1, %1;\n\t"
+                   " @%%p1 bar.sync 2, %1;\n\t"
+                   " @%%p2 bar.sync 3, %1;\n\t"
+                   " @%%p3 bar.sync 4, %1;}"
+                   : : "r"(grp), "n"(WG) : "memory");
+  }
+#endif
+}
+#endif
 
 // Create a barrier across a subset of threads OR across all threads if that is faster.
 // Again, the local memory fence is optional controlled by the FAST_BARRIER setting.
@@ -1024,27 +1058,10 @@ void OVERLOAD bar(const u32 WG) {
     return;
 #endif
   }
-#if ENABLE_BARSYNC && HAS_PTX >= 200         // bar.sync with thread count requires sm_20 support or higher.  Slower on TitanV, need to try on later nVidia GPUs.
-  __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
-// The above is GROSSLY slow on an RTX 5070Ti.  The code below is much faster (may need to be expanded to handle more than four named barriers).
-// WARNING, WARNING, WARNING: On TitanV using CUDA 12.9 tools and driver 580, similar code in LDSbar does not work in openCL (but works in CUDA build).
-//    if (get_local_id(0) / WG + 1 == 1) __asm("bar.sync 1, %0;" : : "n"(WG));
-//    else if (get_local_id(0) / WG + 1 == 2) __asm("bar.sync 2, %0;" : : "n"(WG));
-//    else if (get_local_id(0) / WG + 1 == 2) __asm("bar.sync 3, %0;" : : "n"(WG));
-//    else __asm("bar.sync 4, %0;" : : "n"(WG));
-#else
+  // A full barrier, not subBarrier:  on an RTX 5080 syncing only the sub-workgroup was slower (carryFused with WMUL=2 +2.5%, the double-wide
+  // tailSquare +2%), probably as the sub-workgroups' memory accesses drift apart.  Callers also pass thread counts that change from call to
+  // call (updateStats), which fixed named barrier ids cannot follow:  that crashed with an illegal instruction.
   bar();
-#endif
-}
-
-// Create a barrier across all threads.  Like bar(), primarily used to coordinate access to local memory.
-// However a local memory fence is NOT optional, guaranteeing safe behavior.
-// On Radeon VII and Radeon PRO VII barrier it was discoverred that 4 byte shufls in shufl.cl required a local memory barrier.
-// My theory is something like 8-byte writes store LSW, then MSW.  An 8-byte read accesses LSW first, with the write of MSW giving just
-// enough cushion for the read of LSW to be safe.  That cushion disappears with 4-byte writes and reads.  Alas, that theory does not
-// hold up in real practice.
-void OVERLOAD barFence(void) {
-  barrier(CLK_LOCAL_MEM_FENCE);
 }
 
 // Like bar(WG), except a local memory fence is NOT optional, guaranteeing safe behavior.
@@ -1057,6 +1074,31 @@ void OVERLOAD barFence(const u32 WG) {
 #endif
   }
   bar(WG);
+}
+
+// Like bar(WG), for code where the block holds numWG independent sub-workgroups of WG threads, each with an LDS region of its own (carryFused
+// with WMUL > 1, the double-wide tailSquare/tailMul).  With the hidden -use ENABLE_SUBBARRIER on nVidia, sync only this thread's sub-workgroup
+// (see subBarrier) instead of the whole block:  ENABLE_SUBBARRIER=1 syncs every sub-workgroup on its own, =2 does the same except that four
+// sub-workgroups (carryFused with WMUL=4) are synced in pairs.  Off by default.  RTX 5080, 4:256:11:512:  WMUL=2 carryFused +3.3%; the
+// double-wide tailSquareGF61 +4.8%; WMUL=4 carryFused -0.3% (=1), -2.2% (=2, pairs), though WMUL=4 itself was 7% slower than WMUL=2.
+// TITAN V: slower in every case.  Another AI saw a gain with WMUL=4 on an RTX PRO 6000.
+void OVERLOAD bar(const u32 numWG, const u32 WG) {
+#if ENABLE_SUBBARRIER && HAS_PTX >= 200
+  if (numWG > 1 && WG > WAVEFRONT) {
+    if (ENABLE_SUBBARRIER == 2 && numWG == 4) subBarrier(2, 2 * WG); 
+    else subBarrier(numWG, WG);
+    return;
+  }
+#endif
+  bar(WG);
+}
+
+// Like bar(numWG, WG), except a local memory fence is NOT optional (see barFence(WG)).  subBarrier's bar.sync already orders local memory.
+void OVERLOAD barFence(const u32 numWG, const u32 WG) {
+#if ENABLE_SUBBARRIER && HAS_PTX >= 200
+  if (numWG > 1 && WG > WAVEFRONT) { bar(numWG, WG); return; }
+#endif
+  barFence(WG);
 }
 
 // Create a barrier across a subset of threads.  Substituting a barrier on all threads is not permitted, so this is only
@@ -1073,16 +1115,7 @@ void barsync(const u32 numWG, const u32 WG) {
 #endif
     return;
   }
-#if USE_REGISTER_BARSYNC   // bar.sync with a register is horribly slow on an RTX 5070Ti.
-  __asm("bar.sync %0, %1;" : : "r"(get_local_id(0) / WG + 1), "n"(WG));
-#else                      // WARNING, WARNING, WARNING: On TitanV using CUDA 12.9 tools and driver 580, this branch does not work in openCL (but works in CUDA build).
-  for (u32 i = 1; i <= numWG; i++) {
-    if (i == get_local_id(0) / WG + 1) {
-      __asm("bar.sync %0, %1;" : : "n"(i), "n"(WG));
-      break;
-    }
-  }
-#endif
+  subBarrier(numWG, WG);
 }
 #endif
 

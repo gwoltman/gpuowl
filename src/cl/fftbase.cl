@@ -28,11 +28,11 @@ local void * OVERLOAD LDSsharing_ptr(local void *lds, const u32 numWG) {
 }
 
 void OVERLOAD LDSbar(const u32 numWG) {
-  bar(WG);
+  bar(numWG, WG);
 }
 
 void OVERLOAD LDSbar_with_fence(const u32 numWG) {
-  barFence(WG);
+  barFence(numWG, WG);
 }
 
 void OVERLOAD LDStx_start(local void *lds, const u32 numWG) {
@@ -126,7 +126,7 @@ void OVERLOAD LDSbar(const u32 numWG) {
   // If were not using semaphores to share LDS access, perform a standard bar.  The standard bar is free to implement a full bar across
   // all threads if that is more efficient than a bar across a subset of threads.
   if (!SHARING_LDS(numWG)) {
-    bar(WG);
+    bar(numWG, WG);
     return;
   }
 

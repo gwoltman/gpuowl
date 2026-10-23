@@ -1429,7 +1429,7 @@ Z61q OVERLOAD madq(Z61 x, Z61 c, Z61 acc) { return makeZ61q(mad64(x, c, acc)); }
 GF61q OVERLOAD madq(GF61 a, Z61 c, GF61q acc) { return makeGF61q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
 GF61q OVERLOAD madq(GF61 a, Z61 c, GF61 acc) { return makeGF61q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
 
-// The caller passes n with a below n * M61^2.  n <= 7 uses the cheaper 125-bit weakModM61, result below (n + 1) * M61; a larger n uses the
+// The caller passes n indicating a is below n * M61^2.  n <= 7 uses the cheaper 125-bit weakModM61, result below (n + 1) * M61; a larger n uses the
 // 128-bit one, result below 3 * M61.
 Z61 OVERLOAD weakModM61q(Z61q a, const u32 n) { return weakModM61(a.v, n <= 7 ? 125 : 128); }
 GF61 OVERLOAD weakModM61q(GF61q a, const u32 n) { return U2(weakModM61q(a.x, n), weakModM61q(a.y, n)); }
