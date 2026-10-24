@@ -243,7 +243,7 @@ void Task::execute(GpuCommon shared, u32 instance) {
   LogContext const pushContext(std::to_string(exponent));
 
   vector<KeyVal> fftUses;
-  vector<FFTConfig> const ffts = FFTConfig::bestFits(*shared.args, exponent, shared.args->fftSpec, &fftUses);
+  vector<FFTConfig> const ffts = FFTConfig::bestFits(*shared.args, exponent, shared.args->fftSpec, &fftUses, kind != LL && kind != CERT);
 
   // Without -fft or a tune.txt line there are several untuned candidates.  If the kernels of one can't be built (e.g. an OpenCL
   // compiler that can't build the FP32 code), move on to the next.  Kernels compile on first use, so this can surface after the

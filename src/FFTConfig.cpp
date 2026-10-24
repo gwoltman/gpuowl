@@ -363,29 +363,54 @@ float FFTConfig::maxBpw() const {
   return (carry == CARRY_32 && twoWidths) ? std::min(shape.narrowCarryBPW(), b) : b;
 }
 
-FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses) {
-  return bestFits(args, E, spec, uses).front();
+FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses, bool errorChecked) {
+  return bestFits(args, E, spec, uses, errorChecked).front();
 }
 
-vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses) {
+// The FFTs of an -fft spec in order:  a list is split at the commas, a size range gives all its shapes smallest first
+// (FP64 only unless a type prefix says otherwise, as for a bare size), anything else is one FFT.
+static vector<FFTConfig> specFfts(const string& spec) {
+  vector<FFTConfig> ret;
+  for (const string& s : split(spec, ',')) {
+    if (s.find('-') == string::npos) { ret.emplace_back(s); continue; }
+    auto shapes = FFTShape::multiSpec(s);
+    if (split(s, ':').size() == 1) { std::erase_if(shapes, [](const FFTShape& sh) { return sh.fft_type != FFT64; }); }
+    for (const FFTShape& shape : shapes) { ret.emplace_back(shape, LAST_VARIANT, CARRY_AUTO); }
+  }
+  return ret;
+}
+
+vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses, bool errorChecked) {
   if (uses) { uses->clear(); }
 
-  // A FFT-spec was given, simply take the first FFT from the spec that can handle E
+  // An FFT that can't handle E (above maxExp, extended by -od) or too large for it (below minBpw: the Gpu constructor would throw
+  // "FFT size too large").
+  auto const tooSmall = [&](const FFTConfig& fft) { return fft.maxExp() * args.fftOverdrive < E; };
+  auto const tooLarge = [&](const FFTConfig& fft) { return E / float(fft.size()) < fft.minBpw(); };
+  auto const fits = [&](const FFTConfig& fft) { return !tooSmall(fft) && !tooLarge(fft); };
+
+  // A FFT-spec was given:  take the first FFT from the spec that can handle E.  If none can, a too small FFT is still used for
+  // error-checked work (PRP's Gerbicz check catches the errors, and -fft with -prp/-iters is a quick way to time an FFT), but for
+  // LL and CERT, which have no error check and would silently produce a wrong result, and for a too large FFT the FFT is chosen
+  // as if there were no -fft.
   if (!spec.empty()) {
-    FFTConfig fft{spec};
-    if (fft.maxExp() * args.fftOverdrive < E) {
-      log("Warning: %s (max %" PRIu64 ") may be too small for %" PRIu64 "\n", fft.spec().c_str(), fft.maxExp(), E);
+    vector<FFTConfig> const ffts = specFfts(spec);
+    auto it = std::ranges::find_if(ffts, fits);
+    if (it == ffts.end() && errorChecked) { it = std::ranges::find_if(ffts, [&](const FFTConfig& fft) { return !tooLarge(fft); }); }
+    if (it != ffts.end()) {
+      if (tooSmall(*it)) { log("Warning: %s (max %" PRIu64 ") may be too small for %" PRIu64 "\n", it->spec().c_str(), it->maxExp(), E); }
+      if (uses) { *uses = TuneEntry::usesFor(args, *it); }
+      return {*it};
     }
-    if (uses) { *uses = TuneEntry::usesFor(args, fft); }
-    return {fft};
+    log("-fft %s can't handle %" PRIu64 " (%s); choosing the FFT as without -fft\n", spec.c_str(), E,
+        std::ranges::any_of(ffts, tooSmall) ? (errorChecked ? "too small" : "too small for work without an error check; -od extends the range")
+                                            : "too large");
   }
 
   // Devices without FP64 can only use the FFT types that have no FP64 data
   bool const fp64 = hasFP64(getDevice(args.device));
 
   // No FFT-spec given, so choose from tune.txt the fastest FFT that can handle E
-  // An FFT too large for E (below minBpw) would make the Gpu constructor throw "FFT size too large", so skip those too.
-  auto const fits = [&](const FFTConfig& fft) { return E <= fft.maxExp() * args.fftOverdrive && !(E / float(fft.size()) < fft.minBpw()); };
 
   vector<TuneEntry> const tunes = TuneEntry::readTuneFile(args);
   for (const TuneEntry& e : tunes) {

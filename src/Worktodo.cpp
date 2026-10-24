@@ -113,9 +113,9 @@ std::optional<Task> parse(const std::string& line) {
 
 // Whether Task::execute can run exponent E: FFTConfig::bestFit throws "No FFT" when E is above every FFT's maxExp,
 // and the Gpu constructor throws "FFT size too large" when E gives fewer bits/word than the chosen FFT's minimum.
-static bool fftFits(const Args& args, u64 E) {
+static bool fftFits(const Args& args, u64 E, bool errorChecked) {
   try {
-    FFTConfig const fft = FFTConfig::bestFit(args, E, args.fftSpec);
+    FFTConfig const fft = FFTConfig::bestFit(args, E, args.fftSpec, nullptr, errorChecked);
     float const bitsPerWord = E / float(fft.size());
     return !(bitsPerWord < fft.minBpw());
   } catch (const char* mes) {
@@ -148,7 +148,7 @@ static std::optional<Task> bestTask(const Args& args, const fs::path& fileName) 
                  || ((best->kind != Task::CERT || task->kind == Task::CERT) && smallest && task->exponent < best->exponent))) {
       // A PRP/LL exponent that no FFT can run would throw in Task::execute and end the worker; the line is never
       // deleted, so every restart would pick it and die again, and the work behind it would never run.  Skip it.
-      if (task->kind != Task::CERT && !fftFits(args, task->exponent)) {
+      if (task->kind != Task::CERT && !fftFits(args, task->exponent, task->kind == Task::PRP)) {
         log("No FFT can run exponent %" PRIu64 "; skipping worktodo line \"%s\"\n", task->exponent, rstripNewline(task->line).c_str());
         continue;
       }
