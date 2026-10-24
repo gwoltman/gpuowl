@@ -355,7 +355,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "MODM31",
                               "LOADS","STORES",
                               "WMUL",
-                              "MULTI_Q"
+                              "MULTI_Q",
+                              "SLEEP_WAIT"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
       // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)
@@ -1030,7 +1031,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   nW(fft.shape.nW(args.radix8At256(fft.shape.spec(), false))),
   nH(fft.shape.nH(args.radix8At256(fft.shape.spec(), true))),
   useLongCarry{args.carry == CARRY_64},
-  queue{*shared.context, args.profile},
+  queue{*shared.context, args.profile, false, args.value("SLEEP_WAIT", -1)},
       
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
                                multi_q, l2_striping, graphs, zero_q)},

@@ -314,6 +314,8 @@ named "config.txt" in the prpll run directory.
                      may not work on Nvidia GPUs.  It is ignored on RDNA and on MI200 and later
                      AMD GPUs, where the faster barrier gives wrong results.
   -use NO_ASM      : do not use __asm() blocks (inline assembly); also accepted as NOASM
+  -use SLEEP_WAIT=<0|1>: 1 = when the GPU's queue is full, wait by sleeping and polling (the default on all but AMD GPUs);
+                     0 = wait in clFinish (the AMD default).  Try SLEEP_WAIT=1 if PRPLL uses 100%% of a CPU core per worker on AMD.
   -use TAIL_KERNELS=<val> : change how tailSquare and tailMul operate according to <val>:
                      0 = single wide, single kernel
                      1 = single wide, two kernels

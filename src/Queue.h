@@ -34,7 +34,8 @@ class Queue : public QueueHolder {
 public:
   const Context* context;
 
-  Queue(const Context& context, bool profile, bool auxQueue = false);
+  // sleepWait: 1 = wait for the queue to drain by sleep-polling a marker event, 0 = clFinish, -1 = the device's default (see Queue.cpp)
+  Queue(const Context& context, bool profile, bool auxQueue = false, int sleepWait = -1);
 
   static int registerThread();
   static int tid();
@@ -63,6 +64,7 @@ public:
 
 private:                            // This replaces the "call queue->finish every 400 squarings" code in Gpu.cpp.  Solves the busy wait on nVidia GPUs.
   int MAX_QUEUE_COUNT;              // Queue size before a marker will be enqueued.  Typically, 100 to 1000 squarings.
+  bool sleepWait;                   // Sleep-poll a marker event instead of calling finish when the queue is full
   EventHolder markerEvent;          // Event associated with an enqueued marker placed in the queue every MAX_QUEUE_COUNT entries and before r/w operations.
   bool markerQueued{false};                // TRUE if a marker and event have been queued
   int queueCount{0};                   // Count of items added to the queue since last marker
