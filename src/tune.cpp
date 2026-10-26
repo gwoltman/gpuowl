@@ -566,12 +566,30 @@ void Tune::tune() {
     else {
       log("Checking whether this GPU is better suited for double-precision FFTs or integer NTTs.\n");
       defaultFFTShape = FFTShape(FFT64, 512, 16, 512);
-      FFTConfig const fft{defaultFFTShape, 101, CARRY_32};
-      double const fp64_time = timeConfig(141000001, shared, fft, {}, quick);
-      log("Time for FP64 FFT %12s is %6.1f\n", fft.spec().c_str(), fp64_time);
       defaultNTTShape = FFTShape(FFT3161, 512, 7, 512);
-      FFTConfig const ntt{defaultNTTShape, 202, CARRY_AUTO};
-      double const ntt_time = timeConfig(141000001, shared, ntt, {}, quick);
+      FFTConfig fft{defaultFFTShape, 101, CARRY_32};
+      FFTConfig ntt{defaultNTTShape, 202, CARRY_AUTO};
+      u64 probe_exponent = 141000001;
+      // An exponent range without 141M (e.g. exp=10M-20M) is decided in the middle of the range, with the smallest FP64 FFT and
+      // M31*M61 NTT that handle it:  smaller FFTs fit in the caches differently and are more bound by kernel launches.
+      if (range_given && (probe_exponent < min_exponent || probe_exponent > max_exponent)) {
+        probe_exponent = primes.prevPrime(min_exponent / 2 + max_exponent / 2);
+        vector<FFTShape> sizes = FFTShape::allShapes();
+        std::ranges::stable_sort(sizes, [](const FFTShape& a, const FFTShape& b) { return a.size() < b.size(); });
+        auto const smallest = [&](enum FFT_TYPES type, u32 variant, FFTConfig current) {
+          for (const FFTShape& shape : sizes) {
+            FFTConfig const c{shape, variant, CARRY_AUTO};
+            if (shape.fft_type == type && shape.isFavoredShape() && c.maxExp() >= probe_exponent) { return c; }
+          }
+          return current;
+        };
+        fft = smallest(FFT64, 101, fft);
+        ntt = smallest(FFT3161, 202, ntt);
+        log("Timing them at %" PRIu64 ", the middle of the exponent range\n", probe_exponent);
+      }
+      double const fp64_time = timeConfig(probe_exponent, shared, fft, {}, quick);
+      log("Time for FP64 FFT %12s is %6.1f\n", fft.spec().c_str(), fp64_time);
+      double const ntt_time = timeConfig(probe_exponent, shared, ntt, {}, quick);
       log("Time for M31*M61 NTT %12s is %6.1f\n", ntt.spec().c_str(), ntt_time);
       if (fp64_time < ntt_time) {
         defaultShape = &defaultFFTShape;
