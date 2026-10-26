@@ -6,6 +6,14 @@
 // NOTE:  tailSquare, with its ability to optionally define tailSquareZero, does not allow us to know numWG at #include time.
 // Thus, we must define macros that take numWG as in input argument.  This could be rectified by making tailSquareZero obey the TAIL_KERNELS setting.
 
+// BCAST_SLOT: variant 2 broadcasts the f > 1 twiddles through a private slot of 2*WG doubles placed after the shufl data of each
+// workgroup's LDS region, rather than through the start of the shufl region.  Only for the variant 2 paths with f > 1 partial tabMuls.
+#if BCAST_SLOT && VARIANT == 2 && FFT_FP64 && ((WG == 64 && (RADIX == 4 || RADIX == 8)) || (WG == 256 && RADIX == 4) || (WG == 512 && RADIX == 8))
+#define LDS_BCAST_BYTES           (2 * WG * 8)
+#else
+#define LDS_BCAST_BYTES           0
+#endif
+
 // This section is not necessary.  On TitanV, CUDA 12.9, I see a 0.5% slowdown when not LDS sharing but compiled with the LDS sharing code.
 
 #if LDSMUL == 1      // Not sharing LDS memory, use simplified code.
@@ -13,7 +21,8 @@
 #define SHARING_LDS(numWG)        0
 #define SBMUL(numWG)              1
 #define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? (SHUFL_BYTES == 4 ? WG - 16 : 12) : SHUFL_BYTES >= 16 ? 7 : WG == 256 ? (SHUFL_BYTES == 4 ? 252 : 126) : 56)
-#define LDS_SHUFL_BYTES(numWG)    ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
+#define LDS_BCAST_OFFSET(numWG)   ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
+#define LDS_SHUFL_BYTES(numWG)    (LDS_BCAST_OFFSET(numWG) + LDS_BCAST_BYTES)
 #define LDS_BYTES(numWG)          (numWG * LDS_SHUFL_BYTES(numWG))
 
 void OVERLOAD LDSinit(void local *lds, const u32 numWG) {
@@ -59,6 +68,7 @@ void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
 #define LDSPAD_COUNT(numWG)       (!LDSPAD ? 0 : RADIX == 4 ? (SBMUL(numWG) * SHUFL_BYTES == 4 ? WG - 16 : 12) : SBMUL(numWG) * SHUFL_BYTES >= 16 ? 7 : WG == 256 ? (SBMUL(numWG) * SHUFL_BYTES == 4 ? 252 : 126) : 56)
 // LDS_SHUFL_BYTES is the number of LDS bytes *allocated* for each workgroup (SBMUL > 1 means the workgroup can *access* some multiple of LDS_SHUFL_BYTES)
 #define LDS_SHUFL_BYTES(numWG)    ((WG * RADIX + LDSPAD_COUNT(numWG)) * SHUFL_BYTES)
+#define LDS_BCAST_OFFSET(numWG)   LDS_SHUFL_BYTES(numWG)     // Unused: variant 2 is not supported when sharing
 // The workgroups are partitioned into groups of SBMUL that share one LDS region and one semaphore.
 // SBMUL need not divide numWG, so round up: the last group is short but still spans SBMUL regions and
 // owns a semaphore of its own.  Allocating only numWG regions, and only ever four semaphores, is not
@@ -550,6 +560,12 @@ void preload_tabMul4_trig(Trig trig, T *preloads, u32 f, u32 numWG, u32 me) {
   preloads[1] = sine_over_cosines.y;
   // Read 3rd line
   preloads[2] = TFLOAD(&trig1[2*WG + me]);
+
+  // BCAST_SLOT: load the values broadcast for the f > 1 tabMuls now; partial_tabMul4 writes them to the slot before the first shufl
+  if (LDS_BCAST_BYTES) {
+    preloads[4] = TFLOAD(&trig1[3*WG + me]);
+    if (HOIST < 3) preloads[5] = TFLOAD(&trig1[4*WG + 4*WG + me]);
+  }
 }
 
 // Do a partial tabMul.  Save the mul-by-cosine for later FMA instructions.
@@ -558,9 +574,11 @@ void partial_tabMul4(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
   TrigSingle trig1 = (TrigSingle) trig;
   trig1 += 4*WG;                // Skip past sine_over_cosine values
 
-  // Use LDS memory to distribute preloaded trig values.
-  if (f > 1) {
-    bar(WG);
+  // Use LDS memory to distribute preloaded trig values.  With BCAST_SLOT they are written once, at f == 1, to a slot the shufls
+  // do not touch; the shufl that follows orders the writes before the f > 1 reads, so no barriers are needed for them.
+  if (LDS_BCAST_BYTES) lds1 = (local T *) ((local char *) lds + LDS_BCAST_OFFSET(numWG));
+  if (LDS_BCAST_BYTES ? f == 1 : f > 1) {
+    if (!LDS_BCAST_BYTES) bar(WG);
     lds1[me] = preloads[4];     // Preloaded sine/cosine values
     // Cosine j is stored at WG + (j ^ ((j / (WG/4)) & 3)).  Without the XOR, the f == 4 reads below hit 4 addresses WG/4 apart
     // (the same LDS bank) in every group of 16 lanes, a 4-way bank conflict.
@@ -568,7 +586,7 @@ void partial_tabMul4(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
   }
 
   // Apply sine/cosines
-  bar(WG);
+  if (!LDS_BCAST_BYTES || f == 1) bar(WG);
   for (u32 i = 1; i < 4; ++i) {
     T sine_over_cosine;
     if (f == 1) sine_over_cosine = preloads[i-1];
@@ -635,7 +653,7 @@ void finish_tabMul4_fft4(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
 
   // Preload one line of sine/cosines and one line of cosines for later tabMuls.  We'll later broadcast these values as needed using LDS.
   if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
-  if (f == 1) {
+  if (f == 1 && !LDS_BCAST_BYTES) {
     preloads[4] = TFLOAD(&trig1[3*WG + me]);             // Sine/cosines for later tabMuls
     if (HOIST < 3) preloads[5] = TFLOAD(&trig1[4*WG + 4*WG + me]);      // Cosines for later tabMuls
   }
@@ -665,6 +683,12 @@ void preload_tabMul8_trig(Trig trig, T *preloads, u32 f, u32 numWG, u32 me) {
   }
   // Read 7th line
   preloads[6] = TFLOAD(&trig1[6*WG + me]);
+
+  // BCAST_SLOT: load the values broadcast for the f > 1 tabMuls now; partial_tabMul8 writes them to the slot before the first shufl
+  if (LDS_BCAST_BYTES) {
+    preloads[8] = TFLOAD(&trig1[7*WG + me]);
+    if (HOIST < 3) preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);
+  }
 }
 
 // Do a partial tabMul.  Save the mul-by-cosine for later FMA instructions.
@@ -673,15 +697,17 @@ void partial_tabMul8(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
   TrigSingle trig1 = (TrigSingle) trig;
   trig1 += 8*WG;                // Skip past sine_over_cosine values
 
-  // Use LDS memory to distribute preloaded trig values.
-  if (f > 1) {
-    bar(WG);
+  // Use LDS memory to distribute preloaded trig values.  With BCAST_SLOT they are written once, at f == 1, to a slot the shufls
+  // do not touch; the shufl that follows orders the writes before the f > 1 reads, so no barriers are needed for them.
+  if (LDS_BCAST_BYTES) lds1 = (local T *) ((local char *) lds + LDS_BCAST_OFFSET(numWG));
+  if (LDS_BCAST_BYTES ? f == 1 : f > 1) {
+    if (!LDS_BCAST_BYTES) bar(WG);
     lds1[me] = preloads[8];     // Preloaded sine/cosine values
     if (HOIST < 3) lds1[WG+me] = preloads[9];  // Preloaded cosine values
   }
 
   // Apply sine/cosines
-  bar(WG);
+  if (!LDS_BCAST_BYTES || f == 1) bar(WG);
   for (u32 i = 1; i < 8; ++i) {
     T sine_over_cosine;
     if (f == 1) sine_over_cosine = preloads[i-1];
@@ -756,7 +782,7 @@ void finish_tabMul8_fft8(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
 
     // Preload one line of sine/cosines and one line of cosines for second tabMul.  We'll later broadcast these values as needed using LDS.
     if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
-    if (f == 1) {
+    if (f == 1 && !LDS_BCAST_BYTES) {
       preloads[8] = TFLOAD(&trig1[7*WG + me]);             // Sine/cosines for second tabMul
       if (HOIST < 3) preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
     }
@@ -788,7 +814,7 @@ void finish_tabMul8_fft8(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
 
     // Preload one line of sine/cosines and one line of cosines for second tabMul.  We'll later broadcast these values as needed using LDS.
     if (HOIST >= 2) OPAQUE(me);       // The next stage's preloads are not issued before this point (see HOIST_W/H)
-    if (f == 1) {
+    if (f == 1 && !LDS_BCAST_BYTES) {
       preloads[8] = TFLOAD(&trig1[7*WG + me]);             // Sine/cosines for second tabMul
       if (HOIST < 3) preloads[9] = TFLOAD(&trig1[8*WG + 8*WG + me]);      // Cosines for second tabMul
     }
