@@ -38,6 +38,8 @@
 #include "fft19.cl"
 #elif MIDDLE == 21
 #include "fft21.cl"
+#elif MIDDLE == 25
+#include "fft25.cl"
 #elif MIDDLE == 33
 #include "fft33.cl"
 #endif
@@ -129,6 +131,8 @@ void OVERLOAD fft_MIDDLE(T2 *u) {
   fft19(u);
 #elif MIDDLE == 21
   fft21(u);
+#elif MIDDLE == 25
+  fft25(u);
 #elif MIDDLE == 33
   fft33(u);
 #else
@@ -432,6 +436,8 @@ void OVERLOAD pfaDftR(T2 *a) {
   fft15(a);
 #elif PFA == 21
   fft21(a);
+#elif PFA == 25
+  fft25(a);
 #elif PFA == 33
   fft33(a);
 #else
@@ -590,6 +596,8 @@ void OVERLOAD fft_MIDDLE(F2 *u) {
   fft19(u);
 #elif MIDDLE == 21
   fft21(u);
+#elif MIDDLE == 25
+  fft25(u);
 #elif MIDDLE == 33
   fft33(u);
 #else
@@ -889,6 +897,8 @@ void OVERLOAD pfaDftR(F2 *a) {
   fft15(a);
 #elif PFA == 21
   fft21(a);
+#elif PFA == 25
+  fft25(a);
 #elif PFA == 33
   fft33(a);
 #else
@@ -1353,6 +1363,8 @@ void OVERLOAD pfaDftR(GF61 *a) {
   fft15(a);
 #elif PFA == 21
   fft21(a);
+#elif PFA == 25
+  fft25(a);
 #elif PFA == 33
   fft33(a);
 #else
