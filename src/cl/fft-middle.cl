@@ -38,6 +38,8 @@
 #include "fft19.cl"
 #elif MIDDLE == 21
 #include "fft21.cl"
+#elif MIDDLE == 33
+#include "fft33.cl"
 #endif
 
 #if !defined(MM_CHAIN) && !defined(MM2_CHAIN) && FFT_VARIANT_M == 0
@@ -127,6 +129,8 @@ void OVERLOAD fft_MIDDLE(T2 *u) {
   fft19(u);
 #elif MIDDLE == 21
   fft21(u);
+#elif MIDDLE == 33
+  fft33(u);
 #else
 #error UNRECOGNIZED MIDDLE
 #endif
@@ -428,6 +432,8 @@ void OVERLOAD pfaDftR(T2 *a) {
   fft15(a);
 #elif PFA == 21
   fft21(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif
@@ -584,6 +590,8 @@ void OVERLOAD fft_MIDDLE(F2 *u) {
   fft19(u);
 #elif MIDDLE == 21
   fft21(u);
+#elif MIDDLE == 33
+  fft33(u);
 #else
 #error UNRECOGNIZED MIDDLE
 #endif
@@ -881,6 +889,8 @@ void OVERLOAD pfaDftR(F2 *a) {
   fft15(a);
 #elif PFA == 21
   fft21(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif
@@ -1072,6 +1082,8 @@ void OVERLOAD pfaDftR(GF31 *a) {
   fft11(a);
 #elif PFA == 21
   fft21(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif
@@ -1341,6 +1353,8 @@ void OVERLOAD pfaDftR(GF61 *a) {
   fft15(a);
 #elif PFA == 21
   fft21(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif
