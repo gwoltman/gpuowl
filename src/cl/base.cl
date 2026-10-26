@@ -20,6 +20,9 @@ HOIST_W, HOIST_H: 0..3.  Limits how early the compiler may compute fft_WIDTH's /
   2 = additionally, twiddle loads and power chains not before that step's butterflies (applied in tabMul and chainMul), and
       variant 2's next-stage preloads not before the point partial_tabMul / finish_tabMul issue them.
   3 = variant 2 only: additionally, load the cosines after the shufl instead of keeping them live across it.  Default: 0.
+BCAST_SLOT_W, BCAST_SLOT_H: 0, 1.  Variant 2 only: 1 = broadcast the f > 1 twiddles through a private LDS slot (2*WG doubles per line,
+  written before the first shufl) instead of the start of the shufl region, saving the 2 barriers around each f > 1 broadcast.
+  Pays only where bar(WG) is a real barrier (WG > WAVEFRONT, e.g. nVidia, RDNA).  Default: 0.
 */
 
 /* List of code-specific macros. These are set by the C++ host code or derived
@@ -221,6 +224,13 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #endif
 #if !defined(HOIST_H)
 #define HOIST_H 0
+#endif
+
+#if !defined(BCAST_SLOT_W)
+#define BCAST_SLOT_W 0
+#endif
+#if !defined(BCAST_SLOT_H)
+#define BCAST_SLOT_H 0
 #endif
 
 #if !defined(ZEROHACK_W)
