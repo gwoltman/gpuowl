@@ -142,7 +142,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
   // Same limits FFTConfig applies to a full spec.  Shapes can also arrive here from -tune / -info / size ranges, and a
   // too-small one (e.g. 128:2:128) drives middle to 0 in the fallback below and then loops forever.
   if ((w != 256 && w != 512 && w != 1024 && w != 2048 && w != 4096) || !validMiddle(m) || (h != 256 && h != 512 && h != 1024 && h != 2048)) {
-    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 1..16, 17 or 21, height 256/512/1024/2048)\n", w, m, h);
+    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 1..16, 17, 19 or 21, height 256/512/1024/2048)\n", w, m, h);
     throw "Invalid FFT shape";
   }
 
@@ -292,7 +292,7 @@ FFTConfig::FFTConfig(const string& spec) {
       throw "Invalid FFT spec";
     }
     if (!FFTShape::validMiddle(m)) {
-      log("Middle must be between 1 and 16, or 17 or 21.\n");
+      log("Middle must be between 1 and 16, or 17, 19 or 21.\n");
       throw "Invalid FFT spec";
     }
     if (h != 256 && h != 512 && h != 1024 && h != 2048) {
