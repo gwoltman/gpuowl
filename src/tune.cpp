@@ -1116,6 +1116,46 @@ void Tune::tune() {
       args->flags["UNROLL_H"] = to_string(best_unroll_h);
     }
 
+    // Time a key's values on the default shape, as the blocks above, and keep the fastest.  These keys move the time by well under
+    // 1 % on the GPUs measured so far, about the noise of one timing, so only a 1 % gain is written to config.txt (the rest are suggested).
+    auto const tuneKey = [&](const char *key, initializer_list<u32> values, u32 deflt) {
+      FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
+      u64 const exponent = primes.prevPrime(fft.maxExp());
+      u32 best_value = deflt;
+      u32 const current_value = args->value(key, deflt);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 const value : values) {
+        args->flags[key] = to_string(value);
+        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using %s=%u is %6.1f\n", fft.spec().c_str(), key, value, cost);
+        if (value == current_value) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_value = value; }
+      }
+      log("Best %s is %u.  Default %s is %u.\n", key, best_value, key, deflt);
+      configsUpdate(current_cost, best_cost, 0.01, key, best_value, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags[key] = to_string(best_value);
+    };
+
+    // Find best SHUFL_BYTES_W/H settings: the bytes moved per LDS transpose step of fft_WIDTH/fft_HEIGHT (more LDS, fewer barriers)
+    tuneKey("SHUFL_BYTES_W", {4, 8, 16}, 8);
+    tuneKey("SHUFL_BYTES_H", {4, 8, 16}, 8);
+
+    // Find best HOIST_W/H settings (3 is for variant 2 only, see base.cl)
+    tuneKey("HOIST_W", variant_W(variant) == 2 ? initializer_list<u32>{0, 1, 2, 3} : initializer_list<u32>{0, 1, 2}, 0);
+    tuneKey("HOIST_H", variant_H(variant) == 2 ? initializer_list<u32>{0, 1, 2, 3} : initializer_list<u32>{0, 1, 2}, 0);
+
+    // Find best FUSE_WEIGHT_BUTTERFLY setting.  Only the FP64 and FP32 parts have weights to fuse (see base.cl).
+    if (FFTConfig{*defaultShape, variant, CARRY_AUTO}.FFT_FP64 || FFTConfig{*defaultShape, variant, CARRY_AUTO}.FFT_FP32) {
+      tuneKey("FUSE_WEIGHT_BUTTERFLY", {0, 1}, AMDGPU ? 1 : 0);
+    }
+
+    // Find best OLD_FENCE setting (two fewer full barriers per carryFused group without it).  nVidia only: off AMD and nVidia
+    // OLD_FENCE=0 is not safe (see Gpu.cpp), and on AMD, where 0 is the default, OLD_FENCE=1 measured no faster (7900 XTX).
+    if (NVIDIAGPU) {
+      tuneKey("OLD_FENCE", {1, 0}, 1);
+    }
+
     // Find best ZEROHACK_W setting
     if (true) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
