@@ -124,6 +124,35 @@ static double root1cosover(u32 N, u32 k, double over) {
 
 static const constexpr bool LOG_TRIG_ALLOC = false;
 
+// DD_TRIG: the rounding error of a root1 (fancy: root1Fancy) table value hi, i.e. the exact value minus hi.  cos - 1 is computed as
+// -2 sin^2(angle/2), which has no cancellation.
+static double2 root1Lo(u32 N, u32 k, bool fancy, double2 hi) {
+  long double const angle = M_PIl * k / (N / 2);
+  long double const s2 = sinl(angle / 2);
+  long double const c = fancy ? -2 * s2 * s2 : cosl(angle);
+  return {double(c - hi.first), double(sinl(angle) - hi.second)};
+}
+
+// DD_TRIG: the low parts of the tabMul table (the first size entries of genSmallTrigFP64, the original fft_WIDTH/fft_HEIGHT twiddles)
+static vector<double2> genSmallTrigLoFP64(const vector<double2>& tab, u32 size, u32 radix) {
+  u32 const WG = size / radix;
+  vector<double2> lo;
+  for (u32 line = 1; line < radix; ++line) {
+    for (u32 col = 0; col < WG; ++col) {
+      lo.push_back(root1Lo(size, col * line, radix / line >= 8, tab[lo.size()]));
+    }
+  }
+  if (size == 2048 && radix == 8) {
+    for (u32 line = 1; line < 16; ++line) {
+      for (u32 col = 0; col < 16; ++col) {
+        lo.push_back(root1Lo(size, 8 * col * line, false, tab[lo.size()]));
+      }
+    }
+  }
+  lo.resize(size);
+  return lo;
+}
+
 // Interleave two lines of trig values so that AMD GPUs can use global_load_dwordx4 instructions
 static void T2shuffle(u32 size, u32 radix, u32 line, vector<double> &tab) {
   vector<double> line1, line2;
@@ -1088,13 +1117,18 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
 /*  Build all the needed trig values into one big buffer  */
 /**********************************************************/
 
-static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix, bool chain31) {
+static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix, bool chain31, bool ddTrig) {
   vector<double2> tab;
   size_t tabsize;
 
   if (fft.FFT_FP64) {
     tab = genSmallTrigFP64(size, radix);
     tab.resize(SMALLTRIG_FP64_SIZE(size, 0, 0, 0, 0));
+    // DD_TRIG (FP64-only FFTs): the low parts of the tabMul twiddles follow, at 5 * size (see tabMul in fftbase.cl)
+    if (ddTrig) {
+      vector<double2> const lo = genSmallTrigLoFP64(tab, size, radix);
+      tab.insert(tab.end(), lo.begin(), lo.end());
+    }
   }
 
   if (fft.FFT_FP32) {
@@ -1238,6 +1272,18 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
 
 TrigBufCache::~TrigBufCache() = default;
 
+// -use DD_TRIG=1 appends the low parts of the tabMul twiddles to an FP64-only FFT's small trig tables.  The tail's precomputed trig
+// values (TAIL_TRIGS 0 and 1) would sit at the same place, so DD_TRIG needs the default TAIL_TRIGS=2.  Not for the 256 radix-8 layout.
+static bool ddTrigTable(Args *args, FFTConfig fft, u32 tail_trigs, u32 size, u32 radix) {
+  if (!args->value("DD_TRIG", 0)) { return false; }
+  if (!fft.FFT_FP64 || fft.FFT_FP32 || fft.NTT_GF31 || fft.NTT_GF61 || (size == 256 && radix == 8)) { return false; }
+  if (tail_trigs != 2) {
+    log("DD_TRIG needs TAIL_TRIGS=2\n");
+    throw "DD_TRIG needs TAIL_TRIGS=2";
+  }
+  return true;
+}
+
 TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u32 middle, u32 height, u32 nH, bool tail_single_wide) {
   std::scoped_lock const lock{mut};
   auto& m = small;
@@ -1248,7 +1294,9 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
   u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
   bool const chain31 = chainTablesGF31(args, false);
-  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31);
+  bool const ddTrig = ddTrigTable(args, fft, tail_trigs, width, nW);
+  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31)
+                       | (u32(ddTrig) << 18);
 
   // See if there is an existing smallTrigCombo that we can return (using only a subset of the data)
   // In theory, we could match any smallTrigCombo where width matches.  However, SMALLTRIG_GF31_SIZE wouldn't be able to figure out the size.
@@ -1265,7 +1313,7 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   if (it != m.end() && (p = it->second.lock())) return p;
 
   // Create a new non-combo
-  p = make_shared<TrigBuf>(context, genSmallTrig(fft, width, nW, chain31));
+  p = make_shared<TrigBuf>(context, genSmallTrig(fft, width, nW, chain31, ddTrig));
   m[key] = p;
   smallCache.add(p);
   return p;
