@@ -133,7 +133,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
-  local F lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : MIDDLE)];
+  local F lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : (MIDDLE + 1) / 2 * 2)];
   middleShuffle(lds, u, OUT_WG, OUT_SIZEX);
   outF2 += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
@@ -200,7 +200,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
-  local Z31 lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : MIDDLE)];
+  local Z31 lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : (MIDDLE + 1) / 2 * 2)];
   middleShuffle(lds, u, OUT_WG, OUT_SIZEX);
   out31 += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
