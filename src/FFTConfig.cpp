@@ -40,11 +40,14 @@ u32 parseInt(const string& s) {
 
 // The middles above 16 are offered (by allShapes(): -tune, a size range in -fft, the -h list) only in the shapes whose BPW has been
 // checked.  For the pure NTTs (FFT3161, FFT61) the interpolated BPW (see the FFTShape constructor) is within 0.05 of, or below, a
-// closed-form model of the CRT wrap at every width and height; they are offered up to 1K:M:1K, the sizes that have been run.
+// closed-form model of the CRT wrap at every width and height; they are offered up to 1K:M:1K, the sizes that have been run.  Not
+// at MIDDLE=33: their GF61 middle spills, and on a 7900 XTX they were 26-52% slower than the next larger FFT.
 // The other types have roundoff that interpolation can only guess at, so only their shapes with a measured fftbpw.h row are
-// offered (FP64 rows are stored as W >= H and cover the mirrored shape too).
+// offered (FP64 rows are stored as W >= H and cover the mirrored shape too), and 2:256:25:512, whose interpolated 34.22 was
+// validated (50000 iterations at the worst-ROE options of the FFT3261 rows: ROEmax .312).
 bool checkedAbove16(enum FFT_TYPES t, u32 w, u32 m, u32 h) {
-  if (t == FFT3161 || t == FFT61) { return m == 21 && w <= 1024 && h <= 1024; }
+  if (t == FFT3161 || t == FFT61) { return (m == 21 || m == 25) && w <= 1024 && h <= 1024; }
+  if (t == FFT3261 && w == 256 && m == 25 && h == 512) { return true; }
   auto const spec = [&](u32 a, u32 b) { return (t ? to_string(t) + ':' : "") + numberK(a) + ':' + numberK(m) + ':' + numberK(b); };
   return BPW.contains(spec(w, h)) || (t == FFT64 && h > w && BPW.contains(spec(h, w)));
 }
