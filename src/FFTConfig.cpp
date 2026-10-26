@@ -189,7 +189,7 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
     } else if (m > 16) {
       // A shape above MIDDLE=16 without a row of its own.  Interpolate in log2(size) between W:16:H and the twice-as-large 2W:16:H
       // (W:16:2H at the largest width), as the PFA rule above, less the margin the fallback below takes.  At 512:21:512 this gives
-      // 17.78..18.08, 0.08..0.16 below what -ztune measured for its row.
+      // 17.78..18.08, 0.08..0.16 below what -ztune measured for its row, but at 512:25:512 up to 0.14 above.
       FFTShape const lo{t, w, 16, h}, hi = w < 4096 ? FFTShape{t, 2 * w, 16, h} : FFTShape{t, w, 16, 2 * h};
       float const f = float(log2(m / 16.0));
       for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] = lo.bpw[j] + f * (hi.bpw[j] - lo.bpw[j]) - 0.05f;
