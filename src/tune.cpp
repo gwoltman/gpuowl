@@ -727,7 +727,7 @@ void Tune::tune() {
       u32 best_inplace = 0;
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 const inplace : {0, 1}) {
+      for (u32 const inplace : {0, 1, 2}) {        // 1 = nVidia friendly layout, 2 = AMD friendly layout
         args->flags["INPLACE"] = to_string(inplace);
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
         log("Time for %12s using INPLACE=%u is %6.1f\n", fft.spec().c_str(), inplace, cost);
