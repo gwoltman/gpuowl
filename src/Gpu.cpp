@@ -320,7 +320,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 			      "MIDDLE_CHAIN31",
                               "MIDDLE_CHAIN61",
                               "CS_FENCE",               // Device-scope fences in carryFused's hand-offs (see carryfused.cl).  Required for Intel Arc GPUs.
-                              "CS_ATOMIC"               // Experimental: carryFused's carry shuttle accessed with atomics (see carryfused.cl)
+                              "CS_ATOMIC",              // Experimental: carryFused's carry shuttle accessed with atomics (see carryfused.cl)
+                              "CS_RING"                 // Experimental: carryFused's carry shuttle as a ring of this many groups' slots (see carryfused.cl)
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
