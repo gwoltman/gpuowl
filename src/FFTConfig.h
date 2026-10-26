@@ -77,9 +77,9 @@ public:
     return r == 3 || r == 7 || r == 9 || r == 11 || r == 21 || ((r == 5 || r == 15) && (t == FFT61 || t == FFT3261));
   }
   [[nodiscard]] u32 pfaRadix() const { return pfaRadix(middle); }
-  // MIDDLE 1..16, plus the odd middles above 16 that have a radix (fft21.cl).  Those are only run when asked for by an explicit
+  // MIDDLE 1..16, plus the odd middles above 16 that have a radix (fft17.cl for the FP types, fft21.cl).  Those are only run when asked for by an explicit
   // -fft spec: allShapes() leaves them out until their BPW is measured (see the FFTShape constructor).
-  [[nodiscard]] static bool validMiddle(u32 m) { return (m >= 1 && m <= 16) || m == 21; }
+  [[nodiscard]] static bool validMiddle(u32 m) { return (m >= 1 && m <= 16) || m == 17 || m == 21; }
   [[nodiscard]] bool isPfa() const { return pfaMiddle(middle, fft_type) && pfaType(fft_type); }
 };
 

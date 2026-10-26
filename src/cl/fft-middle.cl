@@ -32,6 +32,8 @@
 #include "fft15.cl"
 #elif MIDDLE == 16
 #include "fft16.cl"
+#elif MIDDLE == 17
+#include "fft17.cl"
 #elif MIDDLE == 21
 #include "fft21.cl"
 #endif
@@ -117,6 +119,8 @@ void OVERLOAD fft_MIDDLE(T2 *u) {
   fft15(u);
 #elif MIDDLE == 16
   fft16(u);
+#elif MIDDLE == 17
+  fft17(u);
 #elif MIDDLE == 21
   fft21(u);
 #else
@@ -570,6 +574,8 @@ void OVERLOAD fft_MIDDLE(F2 *u) {
   fft15(u);
 #elif MIDDLE == 16
   fft16(u);
+#elif MIDDLE == 17
+  fft17(u);
 #elif MIDDLE == 21
   fft21(u);
 #else
