@@ -1116,6 +1116,46 @@ void Tune::tune() {
       args->flags["UNROLL_H"] = to_string(best_unroll_h);
     }
 
+    // Find best 256RADIX8_W setting.  It only matters at a width of 256, so time the default shape with width and height 256.
+    if (true) {
+      FFTConfig const fft{FFTShape(defaultShape->fft_type, 256, defaultShape->middle, 256), variant, CARRY_AUTO};
+      u64 const exponent = primes.prevPrime(fft.maxExp());
+      u32 best_radix8_w = 0;
+      u32 const current_radix8_w = args->value("256RADIX8_W", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 const radix8_w : {0, 1}) {
+        args->flags["256RADIX8_W"] = to_string(radix8_w);
+        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using 256RADIX8_W=%u is %6.1f\n", fft.spec().c_str(), radix8_w, cost);
+        if (radix8_w == current_radix8_w) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_radix8_w = radix8_w; }
+      }
+      log("Best 256RADIX8_W is %u.  Default 256RADIX8_W is 0.\n", best_radix8_w);
+      configsUpdate(current_cost, best_cost, 0.003, "256RADIX8_W", best_radix8_w, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["256RADIX8_W"] = to_string(best_radix8_w);
+    }
+
+    // Find best 256RADIX8_H setting.  It only matters at a height of 256, so time the default shape with height and width 256.
+    if (true) {
+      FFTConfig const fft{FFTShape(defaultShape->fft_type, 256, defaultShape->middle, 256), variant, CARRY_AUTO};
+      u64 const exponent = primes.prevPrime(fft.maxExp());
+      u32 best_radix8_h = 0;
+      u32 const current_radix8_h = args->value("256RADIX8_H", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 const radix8_h : {0, 1}) {
+        args->flags["256RADIX8_H"] = to_string(radix8_h);
+        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using 256RADIX8_H=%u is %6.1f\n", fft.spec().c_str(), radix8_h, cost);
+        if (radix8_h == current_radix8_h) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_radix8_h = radix8_h; }
+      }
+      log("Best 256RADIX8_H is %u.  Default 256RADIX8_H is 0.\n", best_radix8_h);
+      configsUpdate(current_cost, best_cost, 0.003, "256RADIX8_H", best_radix8_h, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["256RADIX8_H"] = to_string(best_radix8_h);
+    }
+
     // Find best ZEROHACK_W setting
     if (true) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
