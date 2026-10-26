@@ -423,6 +423,7 @@ void Tune::tune() {
   u32 time_FFT6431 = 0;                         // FP64+M31 FFTs, an optional group like the ones below
   // Optional groups of FFTs: 0 = don't time them, 1 = time them, 2 = time only the groups set to 2.  A bare name means 1.
   u32 time_1K_256 = 0;                          // 1K:256 and 256:1K shapes (512:512 is almost always better)
+  u32 time_4K = 0;                              // The 4K-wide shapes that are not favored (height < 1K or middle < 9)
   u32 time_M61 = 0;                             // Type 3, M61-only NTTs
   u32 time_PFA = 1;                             // Hybrid FFT/NTTs (an FP32 or FP64 part) with a non-power-of-two middle.  Timed by default.
   bool time_inplace_only = NVIDIAGPU;           // Default is nVidia is better off with INPLACE=1, AMD GPUs need to time extra options used when INPLACE=0
@@ -446,6 +447,7 @@ void Tune::tune() {
     if (s == "fp32") time_FP32 = 1;
     if (s == "inplace") time_inplace_only = true;
     if (s == "1k256") time_1K_256 = 1;
+    if (s == "4k") time_4K = 1;
     if (s == "m61") time_M61 = 1;
     if (s == "pfa") time_PFA = 1;
     auto keyVal = split(s, '=');
@@ -461,6 +463,7 @@ void Tune::tune() {
         range_given = true;
       }
       if (keyVal.front() == "1k256") time_1K_256 = stoi(keyVal.back());
+      if (keyVal.front() == "4k") time_4K = stoi(keyVal.back());
       if (keyVal.front() == "m61") time_M61 = stoi(keyVal.back());
       if (keyVal.front() == "pfa") time_PFA = stoi(keyVal.back());
       if (keyVal.front() == "fp6431") time_FFT6431 = stoi(keyVal.back());
@@ -521,7 +524,7 @@ void Tune::tune() {
 
   // A group set to 2 asks to time only those FFTs, e.g. fp6431=2 to add FFT6431 to a tune.txt made with -tune fp64.  The config.txt
   // settings are left as they are.
-  bool const onlyGroups = time_1K_256 == 2 || time_M61 == 2 || time_PFA == 2 || time_FFT6431 == 2 || time_FP32 == 2;
+  bool const onlyGroups = time_1K_256 == 2 || time_4K == 2 || time_M61 == 2 || time_PFA == 2 || time_FFT6431 == 2 || time_FP32 == 2;
   // A group set to 2 must not be left out by the FFT types timed: the FFTs with an FP32 part are NTT hybrids, and the PFA hybrids
   // are FP32 (NTT) or FP64+M31 FFTs
   if (time_FP32 == 2 || time_PFA == 2) { time_NTTs = true; }
@@ -1368,6 +1371,7 @@ skip_some_WH_variants = 2;   // should default be 1??
       FFTConfig const anyVariant{shape, 202, CARRY_AUTO};
       bool skip = false, inOnlyGroup = false;
       for (auto [inGroup, setting] : {pair{(shape.width == 256 && shape.height == 1024) || (shape.width == 1024 && shape.height == 256), time_1K_256},
+                                      pair{shape.width == 4096 && !shape.isFavoredShape(), time_4K},
                                       pair{shape.fft_type == FFT61, time_M61},
                                       pair{shape.fft_type == FFT6431, time_FFT6431},
                                       pair{shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231 || shape.fft_type == FFT32, time_FP32},
@@ -1419,8 +1423,8 @@ skip_some_WH_variants = 2;   // should default be 1??
       // If only one shape was specified on the command line, time it.  This lets the user time any shape, including non-favored ones.
       if (shapes.size() > 1) {
 
-        // Skip less-favored shapes
-        if (!shape.isFavoredShape()) continue;
+        // Skip less-favored shapes (the 4k group asks for those of width 4K)
+        if (!shape.isFavoredShape() && !(time_4K && shape.width == 4096)) continue;
 
         // Skip some combinations that are unlikely to be fruitful
         if (shape.width == 256 && shape.height == 2048 && skip_2K_256) continue;

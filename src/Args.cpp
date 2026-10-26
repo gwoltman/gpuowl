@@ -129,10 +129,10 @@ std::optional<u64> Args::parseExponent(const string& s) {
 static void checkTuneOptions(const string& options) {
   for (const string& s : split(options, ',')) {
     if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "fp32" || s == "inplace"
-        || s == "1k256" || s == "m61" || s == "pfa") { continue; }
+        || s == "1k256" || s == "4k" || s == "m61" || s == "pfa") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
-    bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431" || key == "fp32";
+    bool const isGroup = key == "1k256" || key == "4k" || key == "m61" || key == "pfa" || key == "fp6431" || key == "fp32";
     if (pos != string::npos && (key == "minexp" || key == "maxexp")) {
       if (!Args::parseExponent(s.substr(pos + 1))) {
         log("-tune %s expects an exponent, e.g. 150000000 or 150M (found '%s')\n", key.c_str(), s.substr(pos + 1).c_str());
@@ -171,7 +171,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, 4k, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -361,9 +361,11 @@ named "config.txt" in the prpll run directory.
                          fp6431       - Time FP64+M31 FFTs for tune.txt.  Only GPUs with great FP64 performance will find this beneficial.
                                         fp6431=2 times only them, e.g. to add them to a tune.txt made with -tune fp64.
                          1k256        - Also time the 1K:256 and 256:1K shapes.  512:512 is almost always better.
+                         4k           - Also time the 4K-wide shapes with a height below 1K or a middle below 9 (e.g. 4K:2:512).  Their
+                                        bits per word are estimates, not measured.
                          m61          - Also time M61-only NTTs (FFT type 3).
                          pfa=0        - Do not time hybrid FFTs (FP32 or FP64 with M31 and/or M61) with a non-power-of-two middle.  By default they are timed.
-                                        The groups fp32, fp6431, 1k256, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
+                                        The groups fp32, fp6431, 1k256, 4k, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
                                         config.txt settings are then not tuned, and the FFTs already in tune.txt are kept.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
                          regs         - (CUDA, AMD) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,
