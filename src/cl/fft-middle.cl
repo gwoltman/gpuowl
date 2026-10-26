@@ -1219,6 +1219,8 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
 
 #if !MIDDLE_CHAIN61           // Read all trig values from memory
 
+  // Left to itself ROCm keeps this loop and the one in middleMul2 rolled at MIDDLE=16, which puts u[] in scratch
+  #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
     WADD(k, TFLOAD(&trig[s]));
     s += SMALL_HEIGHT;
@@ -1381,6 +1383,7 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
   GF61 base = cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
 
   WADD(0, base);
+  #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
     base = cmul(base, w);
     WADD(k, base);
