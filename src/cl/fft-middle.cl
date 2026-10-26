@@ -39,7 +39,7 @@
 #define MM2_CHAIN 0
 #endif
 
-#if !defined(MM_CHAIN) && !defined(MM2_CHAIN) && FFT_VARIANT_M == 1
+#if !defined(MM_CHAIN) && !defined(MM2_CHAIN) && (FFT_VARIANT_M == 1 || FFT_VARIANT_M == 3)     // 3 is PFA, which uses neither
 #define MM_CHAIN 1
 #define MM2_CHAIN 2
 #endif
