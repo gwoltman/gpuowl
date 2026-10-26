@@ -348,7 +348,7 @@ float FFTConfig::maxBpw() const {
   // Look up the pre-computed maximum bpw.  The lookup table contains data for variants 000, 101, 202, 010, 111, 212.
   // For 4K width, the lookup table contains data for variants 100, 101, 202, 110, 111, 212 since BCAST only works for width <= 1024.
   // Middle variant 2 has no entries of its own:  it gets middle variant 1's.
-  u32 const m = std::min(variant_M(variant), 1u);
+  u32 const m = variant_M(variant) == 3 ? 0 : std::min(variant_M(variant), 1u);
   if (variant_W(variant) == variant_H(variant) ||
       (shape.width > 1024 && variant_W(variant) == 1 && variant_H(variant) == 0)) {
     b = shape.bpw[m * 3 + variant_H(variant)];

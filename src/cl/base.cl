@@ -128,14 +128,15 @@ G_H        "group height" == SMALL_HEIGHT / NH
 // 0   full length chainmul
 // 1   lots of computing trigs, very short chainmul for maximum accuracy
 // 2   FP64: read all trigs but one per thread from tables, no chainmul (FP32: as 1)
+// 3   FP64 with an odd MIDDLE factor: a Good-Thomas (PFA) middle, as the FP part of FFT6431 (the host defines PFA)
 #define FFT_VARIANT_W    (FFT_VARIANT / 100)
 #define FFT_VARIANT_M    (FFT_VARIANT % 100 / 10)
 #define FFT_VARIANT_H    (FFT_VARIANT % 10)
 #if FFT_VARIANT_W > 2
 #error FFT_VARIANT_W must be between 0 and 2
 #endif
-#if FFT_VARIANT_M > 2
-#error FFT_VARIANT_M must be between 0 and 2
+#if FFT_VARIANT_M > 3
+#error FFT_VARIANT_M must be between 0 and 3
 #endif
 #if FFT_VARIANT_H > 2
 #error FFT_VARIANT_H must be between 0 and 2

@@ -81,10 +81,16 @@ public:
   [[nodiscard]] bool isPfa() const { return pfaMiddle(middle, fft_type) && pfaType(fft_type); }
   // Middle variant 2 differs from middle variant 1 only in the FP64 twiddles of a non-PFA MIDDLE above 2
   [[nodiscard]] bool hasVariant2M() const { return middle > 2 && !isPfa() && (fft_type == FFT64 || fft_type == FFT6431); }
+  // FFT64 with middle variant 3 does an odd MIDDLE (times 1, 2 or 4) as a Good-Thomas transform as the FP part of FFT6431 does.  Radix 13
+  // has no PFA code.
+  [[nodiscard]] bool hasVariant3M() const {
+    u32 const r = pfaRadix();
+    return fft_type == FFT64 && (r == 3 || r == 5 || r == 7 || r == 9 || r == 11 || r == 15);
+  }
 };
 
 static const u32 N_VARIANT_W = 3;
-static const u32 N_VARIANT_M = 3;
+static const u32 N_VARIANT_M = 4;
 static const u32 N_VARIANT_H = 3;
 static const u32 LAST_VARIANT = (N_VARIANT_W - 1) * 100 + (N_VARIANT_M - 1) * 10 + N_VARIANT_H - 1;
 // The variant of an FFT spec without one:  middle variant 1.  Middle variant 2 (FP64 middle twiddles from tables) does fewer FP64
@@ -134,4 +140,6 @@ public:
 
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }
   [[nodiscard]] float maxBpw() const;
+  // A Good-Thomas MIDDLE:  the NTT and hybrid types' PFA shapes, and FFT64 with middle variant 3
+  [[nodiscard]] bool isPfa() const { return shape.isPfa() || (variant_M(variant) == 3 && shape.hasVariant3M()); }
 };

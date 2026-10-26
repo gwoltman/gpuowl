@@ -1392,6 +1392,7 @@ skip_some_WH_variants = 2;   // should default be 1??
       // that earned an entry.  Middle variant 2 (as accurate as 1, fewer FP64 ops, more table reads) only by -tune variants.
       if (variant != 202 && !FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) continue;
       if (variant_M(variant) == 1 || variant_M(variant) == 2) continue;
+      if (variant_M(variant) == 3) continue;            // PFA FFT64 has no bpw entries of its own yet:  only with an explicit -fft
 
       // Only AMD GPUs profitably support variant zero (BCAST) and only if width <= 1024.  CLANG doesn't support builtins.  Have NO_ASM bypass variant zero.
       // nVidia now supports variant zero, but is slower on TitanV
@@ -1586,6 +1587,7 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
       if (variant_W(variant) == 0 && (!variant0 || !shape.hasVariant0W(shared.args->radix8At256(shape.spec(), false)))) { continue; }
       if (variant_H(variant) == 0 && (!variant0 || !shape.hasVariant0H(shared.args->radix8At256(shape.spec(), true)))) { continue; }
       if (variant_M(variant) == 2 && !shape.hasVariant2M()) { continue; }
+      if (variant_M(variant) == 3) { continue; }        // only with an explicit -fft, see above
       vector carries{CARRY_AUTO};
       if (shape.fft_type == FFT64) {
         carries = {CARRY_32};

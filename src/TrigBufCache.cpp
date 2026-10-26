@@ -1186,12 +1186,12 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
   size_t tabsize;
 
   if (fft.FFT_FP64) {
-    tab = fft.shape.isPfa() ? genPfaMiddleTrigFP<double2>(smallH, middle, width, root1) : genMiddleTrigFP64(smallH, middle, width);
+    tab = fft.isPfa() ? genPfaMiddleTrigFP<double2>(smallH, middle, width, root1) : genMiddleTrigFP64(smallH, middle, width);
     tab.resize(MIDDLETRIG_FP64_SIZE(width, middle, smallH));
   }
 
   if (fft.FFT_FP32) {
-    vector<float2> tab1 = fft.shape.isPfa() ? genPfaMiddleTrigFP<float2>(smallH, middle, width, root1FP32) : genMiddleTrigFP32(smallH, middle, width);
+    vector<float2> tab1 = fft.isPfa() ? genPfaMiddleTrigFP<float2>(smallH, middle, width, root1FP32) : genMiddleTrigFP32(smallH, middle, width);
     tab1.resize(MIDDLETRIG_FP32_SIZE(width, middle, smallH));
     // Append tab1 to tab
     tabsize = tab.size();
@@ -1296,7 +1296,7 @@ TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 m
 TrigPtr TrigBufCache::middleTrig(Args * /*args*/, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 width) {
   std::scoped_lock const lock{mut};
   auto& m = middle;
-  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, 0);
+  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, fft.isPfa());   // FFT64 may or may not be PFA
   decay_t<decltype(m)>::key_type const key{SMALL_H, MIDDLE, width, key_part};
 
   TrigPtr p{};

@@ -251,6 +251,11 @@ void pfaWeightsI(u32 lowMe, u32 i, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 
 #endif
 
 #if FFT_FP64
+// FFT64 carryFused's big-word test value (fracBits + FRAC_BPW_HI, as without PFA) of the first word of its i-th pair
+u32 pfaFracBitsI(u32 lowMe, u32 i, u32 g) {
+  return fracBits(2 * ((lowMe + i * G_W) * PFA_BH + g % PFA_BH + PFA_L * pfaRowI(pfaRow0(lowMe, g), i))) + FRAC_BPW_HI;
+}
+
 // The FP64 weights are kept in [2, 4) (inverse weights in [1, 2)), which optionalHalve / optionalDouble restore from the value.
 void pfaWeightsOf(u32 x, u32 b, u32 r, BigTab THREAD_WEIGHTS, T2 *w0, T2 *w1) {
   T2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));

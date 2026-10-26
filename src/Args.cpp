@@ -484,6 +484,7 @@ void Args::parse(const string& line) {
       for (const FFTShape& shape : FFTShape::multiSpec(s)) {
         for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
           if (variant != DEFAULT_VARIANT && shape.fft_type != FFT64) continue;
+          if (variant_M(variant) == 3 && !shape.hasVariant3M()) continue;
           FFTConfig const fft{shape, variant, CARRY_AUTO};
           log("%12s | %.2f | %5.1f\n", fft.spec().c_str(), fft.maxBpw(), fft.maxExp() / 1'000'000.0);
         }
