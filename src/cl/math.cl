@@ -330,8 +330,13 @@ u128 OVERLOAD mul64(u64 a, u64 b) {
         : "=r"(rlo2.x), "=r"(rlo2.y), "=r"(rhi2.x), "=r"(rhi2.y)
         : "r"(a2.x), "r"(a2.y), "r"(b2.x), "r"(b2.y));
   return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
-#else    // May cause clang to hang!
-  return make_u128(mul_hi(a, b), a * b);
+#else    // Four u32*u32 partial products, one v_mad_u64_u32 each on AMD; mul_hi(a, b) + a * b formed the cross terms twice
+  u32 al = (u32) a, ah = (u32) (a >> 32), bl = (u32) b, bh = (u32) (b >> 32);
+  u64 ll = (u64) al * bl;
+  u64 lh = (u64) al * bh + (ll >> 32);
+  u64 hl = (u64) ah * bl + (u32) lh;
+  u64 hh = (u64) ah * bh + (lh >> 32) + (hl >> 32);
+  return make_u128(hh, (hl << 32) | (u32) ll);
 #endif
 }
 
