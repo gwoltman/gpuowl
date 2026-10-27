@@ -52,7 +52,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
   double factor = 1.0 / (4 * 4 * NWORDS);
 
 #if PFA
-  pfaMiddleOut(u, y, x, factor, trig);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, factor, trig, !MIDDLE_OUT_LDS_TRANSPOSE);       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, factor, trig);
 #endif
@@ -62,7 +62,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
   local T lds[OUT_WG / 2 * (MIDDLE <= 8 ? 2 * MIDDLE : MIDDLE)];
-  middleShuffle(lds, u, OUT_WG, OUT_SIZEX);
+  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, true, x);   // With PFA, also rotates the rows (see pfaMiddleOut)
   out += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
   // Adjust out pointer to effect a transpose of x and y values
@@ -124,7 +124,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
   const float factor = 1.0f / (NWORDS * 2);
 
 #if PFA
-  pfaMiddleOut(u, y, x, factor, trigF2);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, factor, trigF2, !MIDDLE_OUT_LDS_TRANSPOSE || MIDDLE > 16);       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, factor, trigF2);
 #endif
@@ -134,7 +134,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
   local F lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : MIDDLE)];
-  middleShuffle(lds, u, OUT_WG, OUT_SIZEX);
+  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, MIDDLE <= 16, x);   // With PFA, also rotates the rows (not above MIDDLE 16, see pfaMiddleOut)
   outF2 += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
   // Adjust out pointer to effect a transpose of x and y values
@@ -187,7 +187,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
   readMiddleOutLine(u, in31, y, x);
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig31);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig31, !MIDDLE_OUT_LDS_TRANSPOSE || MIDDLE > 16);       // y is the width position, x the height position
 #else
   middleMul(u, x, trig31);
 
@@ -201,7 +201,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
   local Z31 lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : MIDDLE)];
-  middleShuffle(lds, u, OUT_WG, OUT_SIZEX);
+  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, MIDDLE <= 16, x);   // With PFA, also rotates the rows (not above MIDDLE 16, see pfaMiddleOut)
   out31 += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
   // Adjust out pointer to effect a transpose of x and y values
@@ -254,7 +254,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF61(P(T2) out, CP(T2) in, u32 base, Trig trig) {
   readMiddleOutLine(u, in61, y, x);
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig61);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig61, !MIDDLE_OUT_LDS_TRANSPOSE);       // y is the width position, x the height position
 #else
   middleMul(u, x, trig61);
 
@@ -268,7 +268,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF61(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
   local Z61 lds[OUT_WG / 2 * (MIDDLE <= 8 ? 2 * MIDDLE : MIDDLE)];
-  middleShuffle(lds, u, OUT_WG, OUT_SIZEX);
+  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, true, x);   // With PFA, also rotates the rows (see pfaMiddleOut)
   out61 += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
   // Adjust out pointer to effect a transpose of x and y values
@@ -364,7 +364,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   double factor = 1.0 / (4 * 4 * NWORDS);
 
 #if PFA
-  pfaMiddleOut(u, y, x, factor, trig);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, factor, trig, true);       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, factor, trig);
 #endif
@@ -427,7 +427,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   const float factor = 1.0f / (NWORDS * 2);
 
 #if PFA
-  pfaMiddleOut(u, y, x, factor, trigF2);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, factor, trigF2, true);       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, factor, trigF2);
 #endif
@@ -487,7 +487,7 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #endif
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig31);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig31, true);       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, trig31);
 #endif
@@ -547,7 +547,7 @@ KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #endif
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig61);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig61, true);       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, trig61);
 #endif
