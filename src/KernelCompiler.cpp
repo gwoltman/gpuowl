@@ -19,6 +19,7 @@
 #include <fstream>
 #include <sstream>
 #include <map>
+#include <mutex>
 #include <regex>
 #include <set>
 
@@ -170,6 +171,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   linkArgs{},   // no compile-only options here: clLinkProgram accepts only linker options (POCL enforces it)
   baseArgs{},
   useCache{args.useCache},
+  useMemCache{args.doTune || args.doZtune || args.doCtune || args.carryTune},
   verbose{args.verbose},
   saveTemps{runtimeSavesTemps()},
   // main() re-execs with the compiler options set (Linux, AMD); otherwise the user may have set them (e.g. on Windows)
@@ -494,6 +496,15 @@ static string takeRegLimit(const string& args, int& maxRegs, int& minBlocks, boo
 }
 #endif
 
+// The tuners build a Gpu for every FFT and setting they time, and many of those compile kernels with exactly the same source and
+// defines as an earlier one (in a -tune config phase about 30% of the compiles).  So while tuning, the binaries of this process's
+// compiles are kept in memory, under the same key as the -cache files, and loaded from there.  Bounded: past the limit new binaries
+// are simply not kept.
+static std::mutex memCacheMutex;
+static std::map<u64, string> memCache;
+static size_t memCacheBytes = 0;
+static constexpr size_t MEM_CACHE_LIMIT = size_t(1) << 30;
+
 KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kernelName, const string& args) const {
   Timer const timer;
   bool fromCache = true;
@@ -508,11 +519,23 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
 
   Program program;
   string cacheFile;
+  u64 const key = SHA3::hash(contextHash, fileName, kernelName, compileArgs)[0];
 
   if (useCache) {
-    string const f = kernelName + '-' + to_hex(SHA3::hash(contextHash, fileName, kernelName, compileArgs)[0]);
+    string const f = kernelName + '-' + to_hex(key);
     cacheFile = cacheDir + '/' + f;
     program = loadBinary(context, deviceId, cacheFile);
+  }
+
+  if (!program && useMemCache) {
+    string bytes;
+    {
+      std::lock_guard lock{memCacheMutex};
+      if (auto it = memCache.find(key); it != memCache.end()) { bytes = it->second; }
+    }
+    if (!bytes.empty()) {
+      program = loadBinaryBytes(context, deviceId, bytes, kernelName);
+    }
   }
 
   if (!program) {
@@ -533,6 +556,15 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
   if (!fromCache && useCache) {
     if (verbose) { log("saving binary to '%s'\n", cacheFile.c_str()); }
     saveBinary(program.get(), cacheFile);
+  }
+
+  if (!fromCache && useMemCache) {
+    string bytes = getBinary(program.get());
+    std::lock_guard lock{memCacheMutex};
+    if (memCacheBytes + bytes.size() <= MEM_CACHE_LIMIT) {
+      memCacheBytes += bytes.size();
+      memCache.emplace(key, std::move(bytes));
+    }
   }
 
 #ifdef CUDA_BACKEND
