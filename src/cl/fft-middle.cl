@@ -84,6 +84,10 @@ void middleShuffleIdx(u32 workgroupSize, u32 blockSize, u32 *p1idx, u32 *p2idx) 
   }
 }
 
+// The LDS row that middleShuffle writes u[i] to.  PFA fftMiddleOut passes pfaRows: pfaMiddleOut leaves out its rotation of the rows
+// by t, and writing u[i] to row pfaInIndex(i, y) puts each value on the line the rotation would have given it (see pfaInIndex).
+#define SHUFFLE_ROW(i) (pfaRows ? MIDDLE_IN_INDEX(i, y) : (i))
+
 #if FFT_FP64
 
 void OVERLOAD fft2(T2* u) { X2(u[0], u[1]); }
@@ -341,18 +345,18 @@ void OVERLOAD middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
 }
 
 // Do a partial transpose during fftMiddleIn/Out
-void OVERLOAD middleShuffle(local T *lds, T2 *u, u32 workgroupSize, u32 blockSize) {
+void OVERLOAD middleShuffle(local T *lds, T2 *u, u32 workgroupSize, u32 blockSize, bool pfaRows, u32 y) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 8) {
     u32 p1idx, p2idx;
     middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local T *p1 = lds + p1idx;
     local T *p2 = lds + p2idx;
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].y; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
@@ -363,20 +367,20 @@ void OVERLOAD middleShuffle(local T *lds, T2 *u, u32 workgroupSize, u32 blockSiz
     local int *p2 = ((local int*) lds) + p2idx;
     int4 *pu = (int4 *)u;
 
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].x; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].x = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].y; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].y = p2[workgroupSize * i]; }
     bar();
 
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].z; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].z; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].z = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].w; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].w; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].w = p2[workgroupSize * i]; }
   }
@@ -494,10 +498,8 @@ void OVERLOAD pfaMiddleIn(T2 *u, u32 x, u32 y, Trig trig) {
   }
 #endif
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
-    T2 a[PFA];
+    T2 a[PFA];                                   // readMiddleInLine did the rotation by t (see pfaInIndex)
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
@@ -506,14 +508,14 @@ void OVERLOAD pfaMiddleIn(T2 *u, u32 x, u32 y, Trig trig) {
 
 // fftMiddleOut for PFA on the SWAP_XY'd data of the inverse transform, see pfaMiddleOut for GF61.  factor is the stock
 // normalization (NWORDS includes the factor PFA of the radix-PFA).
-void OVERLOAD pfaMiddleOut(T2 *u, u32 x, u32 y, T factor, Trig trig) {
+void OVERLOAD pfaMiddleOut(T2 *u, u32 x, u32 y, T factor, Trig trig, bool rotate) {
   for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
     T2 a[PFA];
     for (u32 k3 = 0; k3 < PFA; ++k3) { a[k3] = u[m2 + PFA_M2 * k3]; }
     pfaDftR(a);
-    pfaRotate(a, t, false);
+    if (rotate) { pfaRotate(a, t, false); }       // Else middleShuffle does it (see SHUFFLE_ROW)
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = a[j * (PFA_BH % PFA) % PFA]; }
   }
 #if PFA_M2 > 2                                   // Chained, as pfaMiddleIn
@@ -797,7 +799,7 @@ void OVERLOAD middleMul2(F2 *u, u32 x, u32 y, float factor, TrigFP32 trig) {
 }
 
 // Do a partial transpose during fftMiddleIn/Out
-void OVERLOAD middleShuffle(local F *lds, F2 *u, u32 workgroupSize, u32 blockSize) {
+void OVERLOAD middleShuffle(local F *lds, F2 *u, u32 workgroupSize, u32 blockSize, bool pfaRows, u32 y) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 16) {
     // Diagonal addressing, conflict-free at the default IN_SIZEX/OUT_SIZEX (see middleShuffleIdx)
@@ -805,11 +807,11 @@ void OVERLOAD middleShuffle(local F *lds, F2 *u, u32 workgroupSize, u32 blockSiz
     middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local F *p1 = lds + p1idx;
     local F *p2 = lds + p2idx;
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].y; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
@@ -947,10 +949,8 @@ void OVERLOAD pfaMiddleIn(F2 *u, u32 x, u32 y, TrigFP32 trig) {
   }
 #endif
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
-    F2 a[PFA];
+    F2 a[PFA];                                   // readMiddleInLine did the rotation by t (see pfaInIndex)
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
@@ -959,14 +959,14 @@ void OVERLOAD pfaMiddleIn(F2 *u, u32 x, u32 y, TrigFP32 trig) {
 
 // fftMiddleOut for PFA on the SWAP_XY'd data of the inverse transform, see pfaMiddleOut for GF61.  factor is the stock
 // normalization (NWORDS includes the factor PFA of the radix-PFA).
-void OVERLOAD pfaMiddleOut(F2 *u, u32 x, u32 y, F factor, TrigFP32 trig) {
+void OVERLOAD pfaMiddleOut(F2 *u, u32 x, u32 y, F factor, TrigFP32 trig, bool rotate) {
   for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
     F2 a[PFA];
     for (u32 k3 = 0; k3 < PFA; ++k3) { a[k3] = u[m2 + PFA_M2 * k3]; }
     pfaDftR(a);
-    pfaRotate(a, t, false);
+    if (rotate) { pfaRotate(a, t, false); }       // Else middleShuffle does it (see SHUFFLE_ROW)
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = a[j * (PFA_BH % PFA) % PFA]; }
   }
 #if PFA_M2 > 2                                   // Chained, as pfaMiddleIn
@@ -1126,19 +1126,17 @@ void OVERLOAD pfaRowMiddle(GF31 *u, u32 y, TrigGF31 trig, bool inverse) {
 #endif
 }
 
-// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line m*SMALL_HEIGHT + y, which is row
-// (m*SMALL_HEIGHT + y) % PFA at binary middle index m % PFA_M2.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
+// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line pfaInIndex(m, y)*SMALL_HEIGHT + y
+// (binary middle index m % PFA_M2), see pfaInIndex.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
 void OVERLOAD pfaMiddleIn(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     GF31 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for all rows
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    // u[m2 + PFA_M2*j] is row (t + j*s) % PFA.  Put the rows in order: a fixed permutation, then a rotation by t.
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
+    // Put the rows in order: a fixed permutation (readMiddleInLine did the rotation by t = (m2*SMALL_HEIGHT + y) % PFA, see pfaInIndex)
     GF31 a[PFA];
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
@@ -1149,14 +1147,14 @@ void OVERLOAD pfaMiddleIn(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
 // inverse are forward transforms (conjugating a unit-circle root inverts it), but the root of unity of the radix-PFA is in Z/pZ
 // and is its own conjugate, so the inverse radix-PFA is an explicit inverse DFT.  1/PFA is folded into the row twiddle
 // (multiplying by an element of Z/pZ commutes with SWAP_XY), which leaves a power-of-two scale for the carry step to shift out.
-void OVERLOAD pfaMiddleOut(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
+void OVERLOAD pfaMiddleOut(GF31 *u, u32 x, u32 y, TrigGF31 trig, bool rotate) {
   for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
     GF31 a[PFA];
     for (u32 k3 = 0; k3 < PFA; ++k3) { a[k3] = u[m2 + PFA_M2 * k3]; }
     pfaIdftR(a);
-    pfaRotate(a, t, false);
+    if (rotate) { pfaRotate(a, t, false); }       // Else middleShuffle does it (see SHUFFLE_ROW)
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = a[j * (PFA_BH % PFA) % PFA]; }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
@@ -1189,7 +1187,7 @@ void OVERLOAD middleMul2(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
 }
 
 // Do a partial transpose during fftMiddleIn/Out
-void OVERLOAD middleShuffle(local Z31 *lds, GF31 *u, u32 workgroupSize, u32 blockSize) {
+void OVERLOAD middleShuffle(local Z31 *lds, GF31 *u, u32 workgroupSize, u32 blockSize, bool pfaRows, u32 y) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 16) {
     // Diagonal addressing, conflict-free at the default IN_SIZEX/OUT_SIZEX (see middleShuffleIdx)
@@ -1197,11 +1195,11 @@ void OVERLOAD middleShuffle(local Z31 *lds, GF31 *u, u32 workgroupSize, u32 bloc
     middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local Z31 *p1 = lds + p1idx;
     local Z31 *p2 = lds + p2idx;
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].y; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
@@ -1287,6 +1285,8 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
 
 #if !MIDDLE_CHAIN61           // Read all trig values from memory
 
+  // Left to itself ROCm keeps this loop and the one in middleMul2 rolled at MIDDLE=16, which puts u[] in scratch
+  #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
     WADD(k, TFLOAD(&trig[s]));
     s += SMALL_HEIGHT;
@@ -1395,19 +1395,17 @@ void OVERLOAD pfaRowMiddle(GF61 *u, u32 y, TrigGF61 trig, bool inverse) {
 #endif
 }
 
-// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line m*SMALL_HEIGHT + y, which is row
-// (m*SMALL_HEIGHT + y) % PFA at binary middle index m % PFA_M2.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
+// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line pfaInIndex(m, y)*SMALL_HEIGHT + y
+// (binary middle index m % PFA_M2), see pfaInIndex.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
 void OVERLOAD pfaMiddleIn(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     GF61 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for all rows
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    // u[m2 + PFA_M2*j] is row (t + j*s) % PFA.  Put the rows in order: a fixed permutation, then a rotation by t.
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
+    // Put the rows in order: a fixed permutation (readMiddleInLine did the rotation by t = (m2*SMALL_HEIGHT + y) % PFA, see pfaInIndex)
     GF61 a[PFA];
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
@@ -1418,14 +1416,14 @@ void OVERLOAD pfaMiddleIn(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
 // inverse are forward transforms (conjugating a unit-circle root inverts it), but the root of unity of the radix-PFA is in Z/pZ
 // and is its own conjugate, so the inverse radix-PFA is an explicit inverse DFT.  1/PFA is folded into the row twiddle
 // (multiplying by an element of Z/pZ commutes with SWAP_XY), which leaves a power-of-two scale for the carry step to shift out.
-void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
+void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig, bool rotate) {
   for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
     GF61 a[PFA];
     for (u32 k3 = 0; k3 < PFA; ++k3) { a[k3] = u[m2 + PFA_M2 * k3]; }
     pfaIdftR(a);
-    pfaRotate(a, t, false);
+    if (rotate) { pfaRotate(a, t, false); }       // Else middleShuffle does it (see SHUFFLE_ROW)
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = a[j * (PFA_BH % PFA) % PFA]; }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
@@ -1451,6 +1449,7 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
   GF61 base = cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
 
   WADD(0, base);
+  #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
     base = cmul(base, w);
     WADD(k, base);
@@ -1458,18 +1457,18 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
 }
 
 // Do a partial transpose during fftMiddleIn/Out
-void OVERLOAD middleShuffle(local Z61 *lds, GF61 *u, u32 workgroupSize, u32 blockSize) {
+void OVERLOAD middleShuffle(local Z61 *lds, GF61 *u, u32 workgroupSize, u32 blockSize, bool pfaRows, u32 y) {
   u32 me = get_local_id(0);
   if (MIDDLE <= 8) {
     u32 p1idx, p2idx;
     middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
     local Z61 *p1 = lds + p1idx;
     local Z61 *p2 = lds + p2idx;
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].x; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = u[i].y; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
   } else {
@@ -1480,20 +1479,20 @@ void OVERLOAD middleShuffle(local Z61 *lds, GF61 *u, u32 workgroupSize, u32 bloc
     local int *p2 = ((local int*) lds) + p2idx;
     int4 *pu = (int4 *)u;
 
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].x; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].x; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].x = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].y; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].y = p2[workgroupSize * i]; }
     bar();
 
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].z; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].z; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].z = p2[workgroupSize * i]; }
     bar();
-    for (int i = 0; i < MIDDLE; ++i) { p1[i * workgroupSize] = pu[i].w; }
+    for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = pu[i].w; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { pu[i].w = p2[workgroupSize * i]; }
   }

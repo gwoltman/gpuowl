@@ -427,7 +427,10 @@ string getBuildLog(cl_program program, cl_device_id deviceId) {
 Program loadBinary(cl_context context, cl_device_id id, string_view fileName) {
   File f = File::openRead(fileName);
   if (!f) { return {}; }
-  string const bytes = f.readAll();
+  return loadBinaryBytes(context, id, f.readAll(), fileName);
+}
+
+Program loadBinaryBytes(cl_context context, cl_device_id id, const string& bytes, string_view fileName) {
   size_t const size = bytes.size();
   const auto *ptr = reinterpret_cast<const unsigned char *>(bytes.c_str());
   int err = 0;
@@ -444,7 +447,7 @@ Program loadBinary(cl_context context, cl_device_id id, string_view fileName) {
   return holder;
 }
 
-static string getBinary(cl_program program) {
+string getBinary(cl_program program) {
   size_t size = 0;
   CHECK1(clGetProgramInfo(program, CL_PROGRAM_BINARY_SIZES, sizeof(size), &size, nullptr));
   auto buf = make_unique<char[]>(size + 1);
