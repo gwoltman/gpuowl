@@ -296,6 +296,15 @@ u32 pfaRowI(u32 r0, u32 i) {
   u32 r = r0 + (PFA - i * (G_W * PFA_BH % PFA * PFA_LINV % PFA) % PFA) % PFA;
   return r >= PFA ? r - PFA : r;
 }
+// fftMiddleIn's u[m2 + PFA_M2*j] (line (m2 + PFA_M2*j) * SMALL_HEIGHT + y) is row (t + j * PFA_BH) % PFA, t = (m2*SMALL_HEIGHT + y) % PFA.
+// pfaMiddleIn needs the rows in the order j * PFA_BH % PFA rotated by t, so readMiddleInLine loads u[m2 + PFA_M2*j] from the line of
+// j - t * PFA_BHINV (mod PFA) instead of moving the registers around with selects afterwards.
+u32 pfaInIndex(u32 i, u32 y) {
+  u32 m2 = i % PFA_M2, j = i / PFA_M2;
+  u32 tc = (m2 * SMALL_HEIGHT + y) % PFA * PFA_BHINV % PFA;
+  return m2 + PFA_M2 * (j < tc ? j + PFA - tc : j - tc);
+}
+#define MIDDLE_IN_INDEX(i, y) pfaInIndex(i, y)
 // Does line g take its carries from column x - 1 of the previous line?
 bool pfaRotatedLine(u32 g) { return g % PFA_BH == 0; }
 // The u line of the g-th tail pair, numbering the pairs kx = 0..PFA_TW/2-1 (or 1..PFA_TW/2-1 without the self-paired lines) of each k3.
@@ -335,6 +344,7 @@ u32 pfaFpTailTrigBase(u32 line) { return (line / PFA_TW * PFA_L + PFA * (line % 
 #define TAIL_PARTNER(line)      ((line) ? WIDTH * MIDDLE - (line) : WIDTH * MIDDLE / 2)
 #define TAIL_TRIG_LINE(line)    (line)
 #define TAIL_SELF_PAIRED(line)  (!(line))             // Not "== 0", see above
+#define MIDDLE_IN_INDEX(i, y)   (i)
 #endif
 
 // 2 is a primitive q-th root of unity mod Mq, so the NWORDS-th root of two used by the IBDWT weights is 2^(NWORDS^-1 mod q).

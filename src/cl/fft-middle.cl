@@ -480,10 +480,8 @@ void OVERLOAD pfaMiddleIn(T2 *u, u32 x, u32 y, Trig trig) {
   }
 #endif
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
-    T2 a[PFA];
+    T2 a[PFA];                                   // readMiddleInLine did the rotation by t (see pfaInIndex)
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
@@ -903,10 +901,8 @@ void OVERLOAD pfaMiddleIn(F2 *u, u32 x, u32 y, TrigFP32 trig) {
   }
 #endif
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
-    F2 a[PFA];
+    F2 a[PFA];                                   // readMiddleInLine did the rotation by t (see pfaInIndex)
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
@@ -1080,19 +1076,17 @@ void OVERLOAD pfaRowMiddle(GF31 *u, u32 y, TrigGF31 trig, bool inverse) {
 #endif
 }
 
-// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line m*SMALL_HEIGHT + y, which is row
-// (m*SMALL_HEIGHT + y) % PFA at binary middle index m % PFA_M2.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
+// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line pfaInIndex(m, y)*SMALL_HEIGHT + y
+// (binary middle index m % PFA_M2), see pfaInIndex.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
 void OVERLOAD pfaMiddleIn(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     GF31 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for all rows
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    // u[m2 + PFA_M2*j] is row (t + j*s) % PFA.  Put the rows in order: a fixed permutation, then a rotation by t.
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
+    // Put the rows in order: a fixed permutation (readMiddleInLine did the rotation by t = (m2*SMALL_HEIGHT + y) % PFA, see pfaInIndex)
     GF31 a[PFA];
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
@@ -1327,19 +1321,17 @@ void OVERLOAD pfaRowMiddle(GF61 *u, u32 y, TrigGF61 trig, bool inverse) {
 #endif
 }
 
-// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line m*SMALL_HEIGHT + y, which is row
-// (m*SMALL_HEIGHT + y) % PFA at binary middle index m % PFA_M2.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
+// fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line pfaInIndex(m, y)*SMALL_HEIGHT + y
+// (binary middle index m % PFA_M2), see pfaInIndex.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
 void OVERLOAD pfaMiddleIn(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     GF61 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for all rows
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
-    // u[m2 + PFA_M2*j] is row (t + j*s) % PFA.  Put the rows in order: a fixed permutation, then a rotation by t.
-    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
+    // Put the rows in order: a fixed permutation (readMiddleInLine did the rotation by t = (m2*SMALL_HEIGHT + y) % PFA, see pfaInIndex)
     GF61 a[PFA];
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
-    pfaRotate(a, t, true);
     pfaDftR(a);
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
