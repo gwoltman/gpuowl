@@ -8,6 +8,11 @@
 #define INCLUDE_FILE "middle.cl"
 #include "expand.cl"
 
+#if CARRY_SPLIT > 1
+// carryFused launched in CARRY_SPLIT parts (see Gpu::carryFused): the workgroups of a part are numbered from its global offset
+#define get_group_id(d) (get_group_id(d) + (u32) get_global_offset(d) / (G_W * WMUL))
+#endif
+
 // Accept a priority scale of 0 to 3
 void setPriority(int p) {
 #if defined(__has_builtin) && __has_builtin(__builtin_amdgcn_s_setprio)

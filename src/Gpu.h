@@ -193,6 +193,8 @@ private:
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
   u32 multi_q;                          // MULTI_Q, L2_STRIPING and GRAPHS as adjusted for this FFT and device (see clDefines)
   u32 l2_striping;
+  u32 tail_split[4];                    // TAIL_SPLIT: number of dispatches per tail kernel, by cache group (see replay_one)
+  u32 carry_split;                      // CARRY_SPLIT: number of dispatches per carryFused (see runCarryFused)
   bool graphs;
   bool zero_q;          // TAIL_KERNELS 11 or 13: the tail*Zero kernels run in their own queue(s), see replay_one
 
@@ -267,6 +269,7 @@ private:
   void carryA(Buffer<Word>& out, Buffer<double>& in);
   void carryM(Buffer<Word>& out, Buffer<double>& in);
   void carryLL(Buffer<Word>& out, Buffer<double>& in);
+  template<typename... A> void runCarryFused(Kernel& k, const A&... args);
   void carryFused(Buffer<double>& buf);
   void carryFusedMul(Buffer<double>& buf);
   void carryFusedLL(Buffer<double>& buf);

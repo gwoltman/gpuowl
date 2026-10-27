@@ -80,8 +80,8 @@ void Queue::copyBuf(cl_mem src, cl_mem dst, size_t size, TimeInfo* tInfo) {
   add(::copyBuf(get(), {}, src, dst, size, hasEvents), tInfo);
 }
 
-void Queue::run(cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY, TimeInfo* tInfo) {
-  add(::run(get(), kernel, groupSizeX, workSizeX, workSizeY, {}, tInfo->name, hasEvents), tInfo);
+void Queue::run(cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY, TimeInfo* tInfo, size_t offsetX) {
+  add(::run(get(), kernel, groupSizeX, workSizeX, workSizeY, {}, tInfo->name, hasEvents, offsetX), tInfo);
 }
 
 void Queue::finish() {
