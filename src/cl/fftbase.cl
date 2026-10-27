@@ -197,6 +197,17 @@ void OVERLOAD LDStx_end(local void *lds, const u32 numWG) {
 
 #if FFT_FP64
 
+// DD_TRIG=1 (FP64-only FFTs): tabMul multiplies by the exact twiddle hi + lo, with lo, the rounding error of the table value hi, read from
+// a second table at 5 * WG * RADIX (see genSmallTrigLoFP64).  The lo products are folded into cmul's FMAs: 4 more FMAs per twiddle.
+// This removes the twiddles' representation error from the tabMul steps, for more bits per word where FP64 ALU is not the bottleneck.
+#if !defined(DD_TRIG)
+#define DD_TRIG 0
+#endif
+#define DD_TABMUL (DD_TRIG && FFT_TYPE == FFT64 && !(WG == 32 && RADIX == 8))
+
+T2 cmulDD(T2 a, T2 b, T2 lo) { return cfma(a, b, cmul(a, lo)); }
+T2 cmulFancyDD(T2 a, T2 b, T2 lo) { return cfma(a, b, cfma(a, lo, a)); }
+
 void OVERLOAD chainMul4(T2 *u, T2 w) {
   u[1] = cmul(u[1], w);
 
@@ -381,6 +392,22 @@ void OVERLOAD tabMul(Trig trig, T2 *u, u32 f, u32 me) {
 
 // Theoretically, maximum accuracy.  Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 // Radeon VII loves this case, it is faster than the chainmul case.  nVidia Titan V hates this case.
+
+  if (!TABMUL_CHAIN && DD_TABMUL) {
+    Trig lo = trig + 5 * WG * RADIX;
+    T2 w = TFLOAD(&trig[p]);
+
+    if (RADIX >= 8) {
+      u[1] = cmulFancyDD(u[1], w, TFLOAD(&lo[p]));
+    } else {
+      u[1] = cmulDD(u[1], w, TFLOAD(&lo[p]));
+    }
+
+    for (u32 i = 2; i < RADIX; ++i) {
+      u[i] = cmulDD(u[i], TFLOAD(&trig[(i-1)*WG + p]), TFLOAD(&lo[(i-1)*WG + p]));
+    }
+    return;
+  }
 
   if (!TABMUL_CHAIN) {
     T2 w = TFLOAD(&trig[p]);
