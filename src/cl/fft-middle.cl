@@ -1328,30 +1328,92 @@ void OVERLOAD pfaRowMiddle(GF61 *u, u32 y, TrigGF61 trig, bool inverse) {
 #endif
 }
 
+// MIDDLE 10, 12 and 14 (PFA_M2 > 1) on AMD:  rolled m2 and k3 loops index u[] at run time, which puts it in scratch (176-240 bytes on
+// gfx1100 and gfx906), so every loop is unrolled.  Unrolled, fftMiddleOut interleaves the columns and hoists their twiddle loads until it
+// needs up to 2.5x the registers (gfx1100 MIDDLE 14: 98 -> 244 VGPRs), and so does fftMiddleIn at MIDDLE 14 on gfx906 (past the 128-VGPR
+// cliff).  There each column applies its twiddle in the radix-PFA pass, and PFA_FENCE at the start of each column (and before the rows)
+// keeps the columns apart; y passes through it so that the column's twiddle loads stay after it.  Elsewhere the fence costs about 1 %.
+#define PFA_M2_UNROLL (HAS_ASM && PFA_M2 > 1 && MIDDLE > 8)
+#if PFA_M2_UNROLL
+#define PFA_UNROLL _Pragma("unroll")
+#define PFA_FENCE(b) do { for (u32 i = 0; i < MIDDLE; ++i) { OPAQUE(u[i].x); OPAQUE(u[i].y); } OPAQUE(b); } while (0)
+#else
+#define PFA_UNROLL
+#endif
+
 // fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line pfaInIndex(m, y)*SMALL_HEIGHT + y
 // (binary middle index m % PFA_M2), see pfaInIndex.  On output u[km + PFA_M2*k3] is row frequency k3, middle frequency km.
+#if PFA_M2_UNROLL && PFA >= 7
 void OVERLOAD pfaMiddleIn(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
+  #pragma unroll
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    u32 yf = y;
+    PFA_FENCE(yf);
+    GF61 w = pfaTwiddle(x, yf + SMALL_HEIGHT * m2, trig);                // The same for all rows
+    // Put the rows in order: a fixed permutation (readMiddleInLine did the rotation by t = (m2*SMALL_HEIGHT + y) % PFA, see pfaInIndex)
+    GF61 a[PFA];
+    #pragma unroll
+    for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = cmul(u[m2 + PFA_M2 * j], w); }
+    pfaDftR(a);
+    #pragma unroll
+    for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
+  }
+  u32 yf = y;
+  PFA_FENCE(yf);
+  #pragma unroll
+  for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, false); }
+}
+#else
+void OVERLOAD pfaMiddleIn(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
+  PFA_UNROLL
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     GF61 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for all rows
 #if PFA >= 9    // A rolled loop indexes u[] at run time, which puts it in scratch (below 9 the kernels have none either way)
     #pragma unroll
+#else
+    PFA_UNROLL
 #endif
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
+  PFA_UNROLL
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     // Put the rows in order: a fixed permutation (readMiddleInLine did the rotation by t = (m2*SMALL_HEIGHT + y) % PFA, see pfaInIndex)
     GF61 a[PFA];
+    PFA_UNROLL
     for (u32 j = 0; j < PFA; ++j) { a[j * (PFA_BH % PFA) % PFA] = u[m2 + PFA_M2 * j]; }
     pfaDftR(a);
+    PFA_UNROLL
     for (u32 k3 = 0; k3 < PFA; ++k3) { u[m2 + PFA_M2 * k3] = a[k3]; }
   }
+  PFA_UNROLL
   for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, false); }
 }
+#endif
 
 // fftMiddleOut for PFA, the inverse of pfaMiddleIn on the SWAP_XY'd data of the inverse transform.  The binary parts of the
 // inverse are forward transforms (conjugating a unit-circle root inverts it), but the root of unity of the radix-PFA is in Z/pZ
 // and is its own conjugate, so the inverse radix-PFA is an explicit inverse DFT.  1/PFA is folded into the row twiddle
 // (multiplying by an element of Z/pZ commutes with SWAP_XY), which leaves a power-of-two scale for the carry step to shift out.
+#if PFA_M2_UNROLL
+void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig, bool rotate) {
+  #pragma unroll
+  for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
+  #pragma unroll
+  for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
+    u32 yf = y;
+    PFA_FENCE(yf);
+    u32 t = (m2 * SMALL_HEIGHT + y) % PFA;
+    GF61 a[PFA];
+    #pragma unroll
+    for (u32 k3 = 0; k3 < PFA; ++k3) { a[k3] = u[m2 + PFA_M2 * k3]; }
+    pfaIdftR(a);
+    if (rotate) { pfaRotate(a, t, false); }       // Else middleShuffle does it (see SHUFFLE_ROW)
+    GF61 w = pfaTwiddleInv(x, yf + SMALL_HEIGHT * m2, trig);
+    #pragma unroll
+    for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(a[j * (PFA_BH % PFA) % PFA], w); }
+  }
+}
+#else
 void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig, bool rotate) {
   for (u32 k3 = 0; k3 < PFA; ++k3) { pfaRowMiddle(u + PFA_M2 * k3, y, trig, true); }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
@@ -1370,6 +1432,7 @@ void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig, bool rotate) {
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
 }
+#endif
 
 #endif
 
