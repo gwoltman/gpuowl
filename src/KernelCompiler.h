@@ -19,6 +19,7 @@ class KernelCompiler {
   std::string linkArgs;
   std::string baseArgs;
   const bool useCache;
+  const bool useMemCache;   // -tune, -ztune, -ctune, -carryTune: reuse this process's compiles (see memCache in KernelCompiler.cpp)
   const int verbose;
   const bool saveTemps; // The AMD OpenCL runtime writes -save-temps files into the current directory (AMD_OCL_BUILD_OPTIONS_APPEND or
                         // AMD_OCL_LINK_OPTIONS_APPEND has -save-temps, set by -v 10 or by the user): they are deleted after each compile.
