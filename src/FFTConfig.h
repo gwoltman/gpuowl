@@ -67,16 +67,19 @@ public:
   [[nodiscard]] bool isFavoredShape() const;
   // A MIDDLE with an odd factor R times a power of two on an NTT or hybrid FFT/NTT type is done as a Good-Thomas prime-factor
   // transform: R rows of a power-of-two transform, the radix-R in fftMiddleIn/Out uses only an R-th root of unity (in Z/pZ for M31
-  // and M61, complex for the FP part of a hybrid) and no twiddles.  R = 3, 7, 9 and 11 divide both M31 - 1 and M61 - 1.  R = 5 and 15
+  // and M61, complex for the FP part of a hybrid) and no twiddles.  R = 3, 7, 9, 11 and 21 divide both M31 - 1 and M61 - 1.  R = 5 and 15
   // divide only M61 - 1 (GF(M31^2) has no 5th roots of unity), so they are for the types with GF61 and without GF31.  The pure FP
   // types use ordinary odd radices.
   [[nodiscard]] static bool pfaType(enum FFT_TYPES t) { return t != FFT64 && t != FFT32; }
   [[nodiscard]] static u32 pfaRadix(u32 m) { return m / (m & (~m + 1)); }     // The odd part of m
   [[nodiscard]] static bool pfaMiddle(u32 m, enum FFT_TYPES t) {
     u32 const r = pfaRadix(m);
-    return r == 3 || r == 7 || r == 9 || r == 11 || ((r == 5 || r == 15) && (t == FFT61 || t == FFT3261));
+    return r == 3 || r == 7 || r == 9 || r == 11 || r == 21 || ((r == 5 || r == 15) && (t == FFT61 || t == FFT3261));
   }
   [[nodiscard]] u32 pfaRadix() const { return pfaRadix(middle); }
+  // MIDDLE 1..16, plus the odd middles above 16 that have a radix (fft21.cl).  allShapes() offers them only in the shapes whose
+  // BPW has been checked, and the untuned FFT choice (no tune.txt) never picks them.
+  [[nodiscard]] static bool validMiddle(u32 m) { return (m >= 1 && m <= 16) || m == 21; }
   [[nodiscard]] bool isPfa() const { return pfaMiddle(middle, fft_type) && pfaType(fft_type); }
 };
 
