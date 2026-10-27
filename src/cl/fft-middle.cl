@@ -1286,6 +1286,9 @@ void OVERLOAD pfaIdftR(GF61 *a) {
 void OVERLOAD pfaRotate(GF61 *a, u32 t, bool right) {
   for (u32 bit = 1; bit < PFA; bit *= 2) {
     GF61 r[PFA];
+#if HAS_ASM && PFA >= 9    // Select values, not addresses: else LLVM loads a[] at a selected index, which keeps a[] in scratch
+    for (u32 i = 0; i < PFA; ++i) { OPAQUE(a[i].x); OPAQUE(a[i].y); }
+#endif
     for (u32 i = 0; i < PFA; ++i) { r[i] = (t & bit) ? a[(i + (right ? PFA - bit : bit)) % PFA] : a[i]; }
     for (u32 i = 0; i < PFA; ++i) { a[i] = r[i]; }
   }
