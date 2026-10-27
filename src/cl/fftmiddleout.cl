@@ -364,7 +364,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   double factor = 1.0 / (4 * 4 * NWORDS);
 
 #if PFA
-  pfaMiddleOut(u, y, x, factor, trig, true);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, factor, trig, false);      // y is the width position, x the height position.  writeMiddleOutLine rotates the rows
 #else
   middleMul2(u, y, x, factor, trig);
 #endif
@@ -427,7 +427,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   const float factor = 1.0f / (NWORDS * 2);
 
 #if PFA
-  pfaMiddleOut(u, y, x, factor, trigF2, true);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, factor, trigF2, false);      // y is the width position, x the height position.  writeMiddleOutLine rotates the rows
 #else
   middleMul2(u, y, x, factor, trigF2);
 #endif
@@ -487,7 +487,7 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #endif
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig31, true);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig31, false);      // y is the width position, x the height position.  writeMiddleOutLine rotates the rows
 #else
   middleMul2(u, y, x, trig31);
 #endif
@@ -547,7 +547,10 @@ KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #endif
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig61, true);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig61, false);      // y is the width position, x the height position.  writeMiddleOutLine rotates the rows
+#if HAS_ASM    // Keep writeMiddleOutLine's row addresses out of the radix-PFA (else up to 256 VGPRs and scratch at MIDDLE 15 on gfx1100)
+  for (u32 i = 0; i < MIDDLE; ++i) { OPAQUE(u[i].x); OPAQUE(u[i].y); }
+#endif
 #else
   middleMul2(u, y, x, trig61);
 #endif
