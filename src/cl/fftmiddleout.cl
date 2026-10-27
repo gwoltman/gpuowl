@@ -124,7 +124,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
   const float factor = 1.0f / (NWORDS * 2);
 
 #if PFA
-  pfaMiddleOut(u, y, x, factor, trigF2, !MIDDLE_OUT_LDS_TRANSPOSE);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, factor, trigF2, !MIDDLE_OUT_LDS_TRANSPOSE || MIDDLE > 16);       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, factor, trigF2);
 #endif
@@ -134,7 +134,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
   local F lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : MIDDLE)];
-  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, true, x);   // With PFA, also rotates the rows (see pfaMiddleOut)
+  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, MIDDLE <= 16, x);   // With PFA, also rotates the rows (not above MIDDLE 16, see pfaMiddleOut)
   outF2 += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
   // Adjust out pointer to effect a transpose of x and y values
@@ -187,7 +187,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
   readMiddleOutLine(u, in31, y, x);
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig31, !MIDDLE_OUT_LDS_TRANSPOSE);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig31, !MIDDLE_OUT_LDS_TRANSPOSE || MIDDLE > 16);       // y is the width position, x the height position
 #else
   middleMul(u, x, trig31);
 
@@ -201,7 +201,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if MIDDLE_OUT_LDS_TRANSPOSE
   // Transpose the x and y values
   local Z31 lds[OUT_WG / 2 * (MIDDLE <= 16 ? 2 * MIDDLE : MIDDLE)];
-  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, true, x);   // With PFA, also rotates the rows (see pfaMiddleOut)
+  middleShuffle(lds, u, OUT_WG, OUT_SIZEX, MIDDLE <= 16, x);   // With PFA, also rotates the rows (not above MIDDLE 16, see pfaMiddleOut)
   out31 += me;  // Threads write sequentially to memory since x and y values are already transposed
 #else
   // Adjust out pointer to effect a transpose of x and y values
