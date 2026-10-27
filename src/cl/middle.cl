@@ -92,10 +92,10 @@ void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
   // Rather than having u[i] also increment by one, we choose a larger pad increment
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
   in += y * WIDTH + y * PAD_SIZE + (y / SMALL_HEIGHT) * BIG_PAD_SIZE + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
 #else
   in += y * WIDTH + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SMALL_HEIGHT * WIDTH]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SMALL_HEIGHT * WIDTH]); }
 #endif
 }
 
@@ -418,10 +418,10 @@ void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
   // Rather than having u[i] also increment by one, we choose a larger pad increment
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
   in += y * WIDTH + y * PAD_SIZE + (y / SMALL_HEIGHT) * BIG_PAD_SIZE + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
 #else
   in += y * WIDTH + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SMALL_HEIGHT * WIDTH]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SMALL_HEIGHT * WIDTH]); }
 #endif
 }
 
@@ -738,7 +738,7 @@ void OVERLOAD writeCarryFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) 
 
 void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
   in += (x / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, y / 16) * 16) + (x % 16);
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SIZEM]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM]); }
 }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.
@@ -857,7 +857,7 @@ void OVERLOAD writeCarryFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) 
 
 void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
   in += (x / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, y / 16) * 16) + (x % 16);
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SIZEM32]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM32]); }
 }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.

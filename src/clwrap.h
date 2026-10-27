@@ -94,6 +94,8 @@ cl_context createContext(cl_device_id id);
 string getBuildLog(cl_program program, cl_device_id deviceId);
 
 Program loadBinary(cl_context context, cl_device_id deviceId, string_view fileName);
+Program loadBinaryBytes(cl_context context, cl_device_id deviceId, const string& bytes, string_view name);
+string getBinary(cl_program program);
 Program loadSource(cl_context context, const string& source);
 bool hasAmdBcastBuiltins(cl_context context, cl_device_id deviceId);
 cl_kernel loadKernel(cl_program program, const char *name);
