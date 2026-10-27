@@ -41,6 +41,10 @@ private:
   // N > 0 only times TAIL_KERNELS=N
   int tkOption = 0;
 
+  int workers = 1;              // -tune workers=N: time -use options with N concurrent workers
+
+  double timeOption(u64 exponent, FFTConfig fft, int quick, u32* usedWmul = nullptr);
+
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
 
