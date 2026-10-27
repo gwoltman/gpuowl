@@ -511,11 +511,12 @@ void finish(cl_queue q) { CHECK1(clFinish(q)); }
 EventHolder run(cl_queue queue, cl_kernel kernel,
                 size_t groupSizeX, size_t workSizeX, size_t workSizeY,
                 vector<cl_event>&& waits,
-                const string &name, bool genEvent) {
+                const string &name, bool genEvent, size_t offsetX) {
   cl_event event{};
   size_t workSizes[2] = {workSizeX, workSizeY};
   size_t groupSizes[2] = {groupSizeX, 1};
-  CHECK2(clEnqueueNDRangeKernel(queue, kernel, workSizeY == 1 ? 1 : 2, nullptr, workSizes, groupSizes,
+  size_t offsets[2] = {offsetX, 0};
+  CHECK2(clEnqueueNDRangeKernel(queue, kernel, workSizeY == 1 ? 1 : 2, offsetX ? offsets : nullptr, workSizes, groupSizes,
                                 u32(waits.size()), waits.empty() ? 0 : waits.data(), genEvent ? &event : nullptr),
          name.c_str());
   return genEvent ? EventHolder{event} : EventHolder{};

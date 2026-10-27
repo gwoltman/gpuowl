@@ -25,6 +25,8 @@ class Kernel {
 
   Queue* queue;
   size_t workSizeX;
+  size_t const defaultWorkSizeX;
+  size_t workOffsetX = 0;
   size_t workSizeY;
   u32 groupSize = 0;
   
@@ -54,6 +56,12 @@ public:
   // Change number of kernels to execute.  Usually this is set by Gpu.cpp at object creation (by setting the total number of work-items in workSizeX).
   // L2 striping requires the ability to change this setting on-the-fly.  One and two dimensional kernels are supported.
   void setKernelsToExecute(size_t nX, size_t nY = 1);
+
+  // The number of workgroups of the work size set at object creation
+  [[nodiscard]] u32 defaultGroups();
+
+  // Start the next launches at this workgroup (the global work offset; the kernel must add it to its group ids itself)
+  void setGroupOffset(u32 groups);
 
   template<typename... Args> void setFixedArgs(int pos, const Args &...tail) { setArgs(pos, tail...); }
 
