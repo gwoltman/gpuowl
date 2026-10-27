@@ -1982,6 +1982,9 @@ void OVERLOAD tabMul(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
   if (!TABMUL_CHAIN31) {
+#if TABMUL_UNROLL31
+    #pragma unroll
+#endif
     for (u32 i = 1; i < RADIX; ++i) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
@@ -2095,6 +2098,9 @@ void OVERLOAD tabMul8_4b(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
     u32 p = (me/4) & ~(f/4 - 1);     // Generate index into condensed trig table that does not have duplicated trig values
     trig += 6 * WG;                  // Skip over the trig values used in tabmul8_4a
 
+#if TABMUL_UNROLL31
+    #pragma unroll
+#endif
     for (u32 i = 1; i < RADIX; ++i) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*(WG/4) + p]));
     }
