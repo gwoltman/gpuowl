@@ -1330,6 +1330,9 @@ void OVERLOAD pfaRowMiddle(GF61 *u, u32 y, TrigGF61 trig, bool inverse) {
 void OVERLOAD pfaMiddleIn(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     GF61 w = pfaTwiddle(x, y + SMALL_HEIGHT * m2, trig);                 // The same for all rows
+#if PFA >= 9    // A rolled loop indexes u[] at run time, which puts it in scratch (below 9 the kernels have none either way)
+    #pragma unroll
+#endif
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
@@ -1358,6 +1361,9 @@ void OVERLOAD pfaMiddleOut(GF61 *u, u32 x, u32 y, TrigGF61 trig, bool rotate) {
   }
   for (u32 m2 = 0; m2 < PFA_M2; ++m2) {
     GF61 w = pfaTwiddleInv(x, y + SMALL_HEIGHT * m2, trig);
+#if PFA >= 9    // A rolled loop indexes u[] at run time, which puts it in scratch (below 9 the kernels have none either way)
+    #pragma unroll
+#endif
     for (u32 j = 0; j < PFA; ++j) { u[m2 + PFA_M2 * j] = cmul(u[m2 + PFA_M2 * j], w); }
   }
 }
