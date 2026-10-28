@@ -1064,7 +1064,7 @@ void Tune::tune() {
       u32 const current_modm31 = args->value("MODM31", 0);
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 const modm31 : {0, 1, 2}) {
+      for (u32 const modm31 : {0, 1, 2, 3}) {
         args->flags["MODM31"] = to_string(modm31);
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
         log("Time for %12s using MODM31=%u is %6.1f\n", fft.spec().c_str(), modm31, cost);
