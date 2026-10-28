@@ -198,7 +198,12 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define TABMUL_CHAIN61 0
 #endif
 #if !defined(MODM31)
+#if AMDGPU && WAVEFRONT == 32
+#define MODM31 3      // Timed 1.5-2.8 % faster than 0 on an RX 7900 XTX.  Not on wave64 AMD:  on gfx906 it takes the 1K-wide carryFused of
+                      // FFT6431 and FFT323161 past 128 VGPRs (occupancy 2 -> 1)
+#else
 #define MODM31 0
+#endif
 #endif
 
 #if !defined(MIDDLE_CHAIN31)

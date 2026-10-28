@@ -726,7 +726,11 @@ F2 OVERLOAD subq(F2 a, F2 b) { return sub(a, b); }
 // (a + h * 0x7FFFFFFF for a signed input).  On nVidia an IMAD runs on the FMA pipe and LOP3/SHF/LEA/IADD3 on the ALU pipe.  Timed on an
 // RTX 5080 (sm_120) in Oct 2026 it tied MODM31=1/2:  sm_120's ISETP/SEL/IADD issue on either pipe, so MODM31=1/2 already balance the pipes.
 // (Getting h from mul.hi(a, 2) instead of a shift was slower:  IMAD.HI is half rate on sm_120.)
-#if MODM31 == 0
+#if MODM31 == 3
+// The reduction Stwo and Plonky3 use for M31:  one subtract and an unsigned min (v_min_u32 is full rate on AMD).  A below M31 wraps a - M31 above a.
+Z31 OVERLOAD modM31(Z31 a) { return min(a, a - M31); }                                 // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+Z31 OVERLOAD modM31(i32 a) { return min((u32) a, (u32) a + M31); }                     // Assumes a is not 0x80000000 (which would return 0x80000000)
+#elif MODM31 == 0
 Z31 OVERLOAD modM31(Z31 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
 Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
 #elif MODM31 == 1
