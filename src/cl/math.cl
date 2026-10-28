@@ -340,9 +340,9 @@ u128 OVERLOAD mul64(u64 a, u64 b) {
 #endif
 }
 
-// mul64 when a + b < 2^64 (as integers).  The middle sum ah * bl + al * bh + hi32(al * bl) is then below a + b, so it fits in 64 bits and the
-// partial products chain through v_mad_u64_u32's 64-bit addend with no carry-propagating add:  4 mads and 2 moves instead of 4 mads,
-// 3 moves and a 64-bit add on AMD.
+// mul64 when a + b < 2^64 (as integers).  The middle sum ah * bl + al * bh + hi32(al * bl) is then below a + b, so it fits in 64 bits and
+// is built in one 64-bit accumulator through v_mad_u64_u32's addend.  ROCm emits 4 mads, 1 move and one 64-bit add (it adds hi32(al * bl)
+// last) instead of 4 mads, 3 moves and a 64-bit add.
 u128 OVERLOAD mul64s(u64 a, u64 b) {
 #if HAS_PTX
   return mul64(a, b);
