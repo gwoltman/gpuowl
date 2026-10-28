@@ -785,10 +785,13 @@ void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
+// With PFA the caller's pfaMiddleOut leaves out its rotation of the rows, and u[i] goes to line MIDDLE_IN_INDEX(i, xs) instead (as SHUFFLE_ROW
+// does in the out-of-place middleShuffle), xs the x of the thread whose values the 16x16 transpose brought here.
 void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 {
+  u32 xs = x / 16 * 16 + y % 16;
   out += (y / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, x / 16) * 16) + (x % 16);
-  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM], u[i]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[MIDDLE_IN_INDEX(i, xs) * SIZEM], u[i]); }
 }
 
 #endif
@@ -904,10 +907,12 @@ void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
 }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
+// With PFA, u[i] goes to line MIDDLE_IN_INDEX(i, xs), see writeMiddleOutLine above.
 void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 {
+  u32 xs = x / 16 * 16 + y % 16;
   out += (y / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, x / 16) * 16) + (x % 16);
-  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM32], u[i]); }
+  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[MIDDLE_IN_INDEX(i, xs) * SIZEM32], u[i]); }
 }
 
 #endif
