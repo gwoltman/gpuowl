@@ -177,9 +177,9 @@ void OVERLOAD fft4Core(GF61 *u) {
   X2q(&u[0], &u[2]);           // u[0] = 0..2+, u[2] = -1-..1+
   X2q_mul_t4(&u[1], &u[3]);    // u[1] = 0..2+, u[3] = -1-..1+
   X2q(&u[0], &u[1]);           // u[0] = 0..4+, u[1] = -2-..2+
-  X2q(&u[2], &u[3]);           // u[2] = -2..2+, u[0] = -2-..2+
+  X2q_modM61q(&u[2], &u[3], 3); // u[2] = -2..2+, u[3] = -2-..2+ before the mods
   u[0] = modM61q(u[0], 0);
-  for (u32 i = 1; i <= 3; ++i) u[i] = modM61q(u[i], 3);
+  u[1] = modM61q(u[1], 3);
 }
 
 // 16 ADD
@@ -200,16 +200,13 @@ void OVERLOAD fft4by(GF61 *u, u32 base, u32 step, u32 M) {
   Z61 b0 = y0 + y1;             // 0..4+
   Z61 b1 = y0 - y1;             // -2-..2+
 
-  Z61 a2 = x2 + x3;             // -2-..2+
-  Z61 a3 = x2 - x3;             // -2-..2+
-
-  Z61 b2 = y2 + y3;             // -2-..2+
-  Z61 b3 = y2 - y3;             // -2-..2+
+  GF61 a2b2 = U2(x2, y2), a3b3 = U2(x3, y3);
+  X2q_modM61q(&a2b2, &a3b3, 3); // -2-..2+ before the mods
 
   A(0) = modM61q(U2(a0, b0), 0);
-  A(1) = modM61q(U2(a2, b2), 3);
+  A(1) = a2b2;
   A(2) = modM61q(U2(a1, b1), 3);
-  A(3) = modM61q(U2(a3, b3), 3);
+  A(3) = a3b3;
 }
 
 void OVERLOAD fft4(GF61 *u) { fft4by(u, 0, 1, 4); }
