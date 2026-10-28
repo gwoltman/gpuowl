@@ -1153,6 +1153,15 @@ u64 OVERLOAD weakModM61(u128 a, u32 num_bits) {
           : "=r"(r.x), "=r"(r.y) : "r"(l.x), "r"(l.y), "r"(h.x), "r"(h.y));
   }
   return as_ulong(r);
+#elif AMDGPU && defined(__has_builtin) && __has_builtin(__builtin_amdgcn_alignbit) && !(MIDDLE_KERNEL && MIDDLE >= 16)
+  // The same sums with a >> 61 from two funnel shifts of the 32-bit halves (v_alignbit_b32) instead of a 64-bit shift (v_lshlrev_b64,
+  // slower than a 32-bit op on RDNA3), a 32-bit shift and an or
+  // Not in the middle kernels at MIDDLE >= 16:  there it raises their VGPRs past an occupancy step, and timed slower on an RX 7900 XTX
+  uint2 l = as_uint2(u128_lo64(a)), h = as_uint2(u128_hi64(a));
+  u32 f0 = __builtin_amdgcn_alignbit(h.x, l.y, 29), f1 = __builtin_amdgcn_alignbit(h.y, h.x, 29);    // bits 61..92, 93..124
+  u64 lo61 = as_ulong((uint2)(l.x, l.y & 0x1FFFFFFF));
+  if (num_bits <= 125) return lo61 + as_ulong((uint2)(f0, f1));
+  return lo61 + as_ulong((uint2)(f0, f1 & 0x1FFFFFFF)) + (h.y >> 26);
 #else
   u64 lo = u128_lo64(a), hi = u128_hi64(a);
   u64 lo61 = lo & M61;                                  // Max value is M61
