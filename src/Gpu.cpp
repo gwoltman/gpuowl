@@ -965,7 +965,10 @@ vector<Gpu::RegTunable> Gpu::regTunables() {
 // A minimum-waves request caps VGPR usage.  On gfx9 (256 VGPRs per lane, allocated in units of 4) the occupancy crossovers are:
 // 128 VGPRs for 2 waves, 84 for 3, 64 for 4, 48 for 5.  A kernel a few VGPRs above the 128 boundary runs with one wave per SIMD;
 // capping it costs a few spills but doubles occupancy.  Only that one-wave cliff is worth a default: on a Radeon VII / MI50 the in-place
-// fftMiddleIn / fftMiddleOut kernels use 133 VGPRs, and requiring 2 waves per SIMD recovers most of their slowdown.  Capping to reach 3 or more
+// fftMiddleIn / fftMiddleOut kernels use 133 VGPRs, and requiring 2 waves per SIMD recovers most of their slowdown.  The out-of-place FP64
+// fftMiddleIn at MIDDLE 16 sits on the same cliff (129-133 VGPRs, ROCm 7.2.4): asking for 2 waves gives 127 VGPRs with no spill and otherwise
+// the same code.  Smaller FP64 middles and the NTT middles are left alone: they already fit 2 waves, and the request can let the compiler use
+// more registers there (e.g. 256:14:256 fftMiddleIn 81 -> 85 VGPRs, 3 -> 2 waves).  Capping to reach 3 or more
 // waves, or capping tailSquare / carryFused, was measured slower.  An explicit VGPR count makes rocm generate its usual code and then spill to fit.
 string Gpu::amdRegisterOption([[maybe_unused]] enum WHICH_KERNEL which_kernel, int override_regs) {
   cl_device_id const id = shared.context->deviceId();
@@ -973,13 +976,14 @@ string Gpu::amdRegisterOption([[maybe_unused]] enum WHICH_KERNEL which_kernel, i
   if (override_regs < 0) return string("");
   if (override_regs > REG_MAX_OCCUPANCY) return string("-DAMD_NUM_VGPR=") + to_string(override_regs) + " ";
   if (override_regs > 0) return string("-DAMD_WAVES_PER_EU=") + to_string(override_regs) + " ";
-  // Default: 2 waves per SIMD for the in-place middle kernels on Vega class GPUs (gfx900/902/904/906/909/90c: 256 VGPRs per lane).
-  // Other architectures are untested.
+  // Default: 2 waves per SIMD for the in-place middle kernels, and the FP64 middle kernels from MIDDLE 16 up, on Vega class GPUs
+  // (gfx900/902/904/906/909/90c: 256 VGPRs per lane).  Other architectures are untested.
   bool const is_middle = which_kernel == MIDIN || which_kernel == MIDIN31 || which_kernel == MIDIN61 ||
                          which_kernel == MIDOUT || which_kernel == MIDOUT31 || which_kernel == MIDOUT61;
+  bool const big_fp64_middle = (which_kernel == MIDIN || which_kernel == MIDOUT) && fft.FFT_FP64 && fft.shape.middle >= 16;
   string const name = getDeviceName(id);
   bool const vega = name.rfind("gfx90", 0) == 0 && name.size() > 5 && string("02469c").find(name[5]) != string::npos;
-  return (in_place && is_middle && vega) ? string("-DAMD_WAVES_PER_EU=2 ") : string("");
+  return ((in_place && is_middle) || big_fp64_middle) && vega ? string("-DAMD_WAVES_PER_EU=2 ") : string("");
 }
 
 // Kernels are compiled one at a time, but OpenCL source files contain multiple kernels.  This routine set the #defines necessary so that only one kernel is compiled.
