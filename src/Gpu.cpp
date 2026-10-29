@@ -314,6 +314,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "ENABLE_SUBBARRIER",      // Experimental, nVidia: LDSbar syncs only its sub-workgroup, 1 = each, 2 = four in pairs (see base.cl)
                               "NONTEMPORAL",            // Deprecated
 			      "HOIST_W","HOIST_H",
+                              "SHUFL_BYTES_W","SHUFL_BYTES_H",   // Bytes per LDS transpose step of fft_WIDTH/fft_HEIGHT (-tune sweeps them)
+                              "FUSE_WEIGHT_BUTTERFLY",  // -tune sweeps it
+                              "OLD_FENCE",              // -tune sweeps it on nVidia (see the OLD_FENCE check below)
 			      "LDSPAD_W","LDSPAD_H",
 			      "LDSSWIZ_W","LDSSWIZ_H",
 			      "L2_STRIPING",
