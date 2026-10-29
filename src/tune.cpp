@@ -1150,11 +1150,14 @@ void Tune::tune() {
       tuneKey("FUSE_WEIGHT_BUTTERFLY", {0, 1}, AMDGPU ? 1 : 0);
     }
 
-    // Find best OLD_FENCE setting (two fewer full barriers per carryFused group without it).  nVidia only: off AMD and nVidia
-    // OLD_FENCE=0 is not safe (see Gpu.cpp), and on AMD, where 0 is the default, OLD_FENCE=1 measured no faster (7900 XTX).
+    // Find best OLD_FENCE setting (two fewer full barriers per carryFused group without it).  CUDA build only: off AMD and nVidia
+    // OLD_FENCE=0 is not safe (see Gpu.cpp), on AMD, where 0 is the default, OLD_FENCE=1 measured no faster (7900 XTX), and nVidia's
+    // OpenCL fails to link OLD_FENCE=0's atomic_store on a global atomic_uint (RTX 4070 SUPER).
+#if CUDA_BACKEND
     if (NVIDIAGPU) {
       tuneKey("OLD_FENCE", {1, 0}, 1);
     }
+#endif
 
     // Find best ZEROHACK_W setting
     if (true) {
