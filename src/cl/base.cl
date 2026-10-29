@@ -1164,7 +1164,9 @@ void dependentLaunch() {
 
 void dependentLaunchWait() {
 #if CUDA_BACKEND && HAS_PTX >= 900 && PDL
-  __asm volatile("griddepcontrol.wait;");                 // same as cudaGridDependencySynchronize();
+  // The compiler must not hoist dependent loads above the grid wait. A volatile
+  // asm without a memory clobber only preserves the instruction itself.
+  __asm volatile("griddepcontrol.wait;" ::: "memory");  // cudaGridDependencySynchronize()
 #if PDL_EARLY
   // Data reads still follow the full predecessor wait. Only the notification
   // allowing the next kernel's independent setup is moved earlier.

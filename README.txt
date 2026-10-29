@@ -1,5 +1,35 @@
 PRPLL "purrple cat[egorizer]"
 
+CUDA execution tuning (integer optimization build)
+--------------------------------------------------
+
+An ordinary ./prpll -tune now measures and saves GRAPH_BATCH, GRAPH_TAIL,
+L2PERSIST, L2PERSISTPCT, PDL and PDL_EARLY automatically. For M31/M61 transforms
+it also searches NTT_WEIGHT_TABLE, INPLACE_TILE31/61 and NTT_TRANSPOSE31/61.
+GRAPHS is searched together with batch size. No RTX 5090-specific values need
+to be entered before tuning on another machine.
+
+To retune just these settings with an existing installation:
+  ./prpll -fft 1:512:7:512 -tune execution
+
+The ordinary PRP, LL, checkpoint and proof workflows are unchanged. The new
+settings are appended to config.txt, including explicit disabled values to
+override previous settings. The execution-only command leaves tune.txt alone.
+The usual -tune noconfig, regs, variants and fine modes retain their scope.
+
+Timing uses real serial graph batches, with graph construction before the
+timer. Candidates undergo Gerbicz checking. Two grouped search passes are
+followed by a longer ABBA comparison with the starting settings; unverified
+or slower results are not selected. This is a bounded empirical search,
+not a guarantee of the globally fastest configuration. Run tuning on an idle
+GPU and rerun it after changing GPU, driver or the main transform geometry.
+
+Compatibility: early PDL notification together with repeated child graphs
+failed full-residue checks on the RTX 5090. Tuning tests early notification only
+with GRAPH_BATCH=1. Repeated batches retain ordinary late PDL notification.
+The runtime also forces PDL_EARLY=0 for a manually requested incompatible pair
+and logs the adjustment. The dependency wait includes a compiler memory barrier.
+
 Build
 -----
 

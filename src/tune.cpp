@@ -152,6 +152,9 @@ double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<Ke
   }
   if (Signal::stopRequested()) { throw "stop requested"; }
   try {
+#ifdef CUDA_BACKEND
+    cudaResetL2ForTune();
+#endif
     auto gpu = Gpu::make(exponent, shared, fft, config, false, fftUses);
     if (usedWmul) { *usedWmul = gpu->effectiveWmul(); }
     double const cost = gpu->timePRP(quick);
@@ -167,6 +170,111 @@ double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<Ke
 }
 
 } // namespace
+
+#ifdef CUDA_BACKEND
+// Host execution settings interact: batching can change which PDL/cache choice
+// wins. Search groups twice, then confirm the winner against the starting
+// configuration in ABBA order. Every timing includes a Gerbicz check.
+TuneConfig Tune::tuneExecution(FFTConfig fft, int quick, const vector<KeyVal>& fftUses) {
+  // Per-kernel profiling disables batching. Always compare real batch execution
+  // here, even when the caller requested profiling elsewhere in the tune run.
+  Args executionArgs = shared.args->withFftUses(fft.spec(), fftUses, false);
+  executionArgs.profile = false;
+  GpuCommon executionShared = shared;
+  executionShared.args = &executionArgs;
+  Args* args = &executionArgs;
+  u64 const exponent = primes.prevPrime(fft.maxExp());
+  map<string, string> current;
+  auto add = [&](const char* key, int fallback) { current[key] = to_string(args->value(key, fallback)); };
+  add("GRAPHS", 1);
+  add("GRAPH_BATCH", 1); add("GRAPH_TAIL", 0);
+  add("L2PERSIST", 0); add("L2PERSISTPCT", 100);
+  add("PDL", 0); add("PDL_EARLY", 0);
+  bool const pdlSupported = getNvidiaComputeCapability(shared.context->deviceId()) >= 900;
+  if (!pdlSupported) current["PDL"] = current["PDL_EARLY"] = "0";
+  if (fft.shape.fft_type == FFT3161) {
+    add("NTT_WEIGHT_TABLE", 0);
+    add("INPLACE_TILE31", args->value("INPLACE_TILE", 16));
+    add("INPLACE_TILE61", args->value("INPLACE_TILE", 16));
+    add("NTT_TRANSPOSE31", 0); add("NTT_TRANSPOSE61", 0);
+  }
+  auto compatible = [](map<string, string>& values) {
+    if (values["PDL"] != "0" && values["GRAPHS"] != "0" && stoi(values["GRAPH_BATCH"]) > 1)
+      values["PDL_EARLY"] = "0";
+  };
+  compatible(current);
+  auto const initial = current;
+  int const screenQuick = min(quick, 3); // >=8000 iterations; production's 1000-iteration check blocks
+  auto time = [&](const map<string, string>& values, int q) {
+    TuneConfig config(values.begin(), values.end());
+    double cost = timeConfig(exponent, executionShared, fft, config, q, nullptr, fftUses);
+    log("Execution tune %s: %.2f us/iter (%s)\n", fft.spec().c_str(), cost, toString(config).c_str());
+    return cost;
+  };
+  auto search = [&](const char* label, const vector<TuneConfig>& candidates) {
+    log("Execution tune: %s\n", label);
+    auto best = current;
+    double bestCost = time(current, screenQuick);
+    for (auto const& overrides : candidates) {
+      auto candidate = current;
+      for (auto const& [key, value] : overrides) candidate[key] = value;
+      compatible(candidate);
+      if (candidate == current) continue;
+      double const cost = time(candidate, screenQuick);
+      if (isfinite(cost) && cost < bestCost * 0.997) { best = std::move(candidate); bestCost = cost; }
+    }
+    current = std::move(best);
+  };
+  log("Tuning CUDA execution settings; graph construction is outside the timed interval.\n");
+  for (int pass = 0; pass < 2; ++pass) {
+    if (fft.shape.fft_type == FFT3161 && pass == 0) {
+      search("precomputed NTT weights", {{{"NTT_WEIGHT_TABLE", "0"}}, {{"NTT_WEIGHT_TABLE", "1"}}});
+      vector<TuneConfig> layouts;
+      for (int tile31 : {8, 16}) for (int tile61 : {8, 16}) for (int transpose : {0, 1})
+        layouts.push_back({{"INPLACE_TILE31", to_string(tile31)}, {"INPLACE_TILE61", to_string(tile61)},
+                           {"NTT_TRANSPOSE31", to_string(transpose)}, {"NTT_TRANSPOSE61", to_string(transpose)}});
+      search("NTT tiles and transposes", layouts);
+    }
+    vector<TuneConfig> batches{{{"GRAPHS", "0"}, {"GRAPH_BATCH", "1"}, {"GRAPH_TAIL", "0"}}};
+    for (int batch : {1, 4, 16, 64, 128, 256}) for (int tail : {0, 1}) {
+      if (batch == 1 && tail) continue;
+      batches.push_back({{"GRAPHS", "1"}, {"GRAPH_BATCH", to_string(batch)}, {"GRAPH_TAIL", to_string(tail)}});
+    }
+    search("graph batch and remainder handling", batches);
+    vector<TuneConfig> pdl{{{"PDL", "0"}, {"PDL_EARLY", "0"}}};
+    if (pdlSupported) {
+      pdl.push_back({{"PDL", "1"}, {"PDL_EARLY", "0"}});
+      // Early notification is only eligible without repeated child graphs.
+      pdl.push_back({{"PDL", "1"}, {"PDL_EARLY", "1"}, {"GRAPH_BATCH", "1"}, {"GRAPH_TAIL", "0"}});
+    }
+    search("programmatic dependent launch", pdl);
+    vector<TuneConfig> cache;
+    for (int mask = 0; mask < 8; ++mask)
+      cache.push_back({{"L2PERSIST", to_string(mask)}, {"L2PERSISTPCT", "100"}});
+    search("persisting L2 buffers", cache);
+    if (current["L2PERSIST"] != "0") {
+      vector<TuneConfig> limits;
+      for (int pct : {25, 50, 75, 100}) limits.push_back({{"L2PERSISTPCT", to_string(pct)}});
+      search("persisting L2 reservation", limits);
+    }
+  }
+  // A short screen can pick clock drift. Recheck both configurations over 20k
+  // iterations per sample, and do not save an unverified or slower candidate.
+  double const a1 = time(initial, 1);
+  double const b1 = time(current, 1);
+  double const b2 = time(current, 1);
+  double const a2 = time(initial, 1);
+  double const a = (a1 + a2) / 2, b = (b1 + b2) / 2;
+  bool const accept = isfinite(b) && (!isfinite(a) || b < a * 0.997);
+  log("Execution tune confirmation: start %.2f, candidate %.2f us/iter; %s\n",
+      a, b, accept ? "keeping candidate" : "keeping starting settings");
+  if (!accept) current = initial;
+  if (!isfinite(accept ? b : a)) throw "no verified CUDA execution configuration";
+  TuneConfig result(current.begin(), current.end());
+  log("Selected execution settings: %s\n", toString(result).c_str());
+  return result;
+}
+#endif
 
 float Tune::maxBpw(FFTConfig fft) {
 
@@ -421,6 +529,7 @@ void Tune::tune() {
         || (NVIDIAGPU && getNvidiaComputeCapability(shared.context->deviceId()) >= 300));
 
   bool tune_config = true;
+  bool execution_only = false;
   bool regs_only = false;
   bool variants_only = false;
   double fine_pct = 0;                          // -tune fine: FFTs within this percent of earning a tune.txt entry get their register limits tuned
@@ -443,6 +552,7 @@ void Tune::tune() {
   for (const string& s : split(args->tune, ',')) {
     if (s.empty()) continue;
     if (s == "noconfig") tune_config = false;
+    if (s == "execution") execution_only = true;
     if (s == "regs") regs_only = true;
     if (s == "variants") variants_only = true;
     if (s == "fine") fine_pct = 2;
@@ -478,6 +588,22 @@ void Tune::tune() {
   }
   quick = std::max(quick, 1);
   quick = std::min(quick, 10);
+
+  if (execution_only) {
+#ifdef CUDA_BACKEND
+    if (!tune_config || regs_only || variants_only || fine_pct > 0) throw "-tune execution cannot be combined with noconfig, regs, variants or fine";
+    FFTShape const shape = args->fftSpec.empty() ? FFTShape(FFT3161, 512, 7, 512) : shapes.front();
+    FFTConfig const fft{shape, shape.fft_type == FFT64 ? 101u : 202u, CARRY_AUTO};
+    auto const fftUses = TuneEntry::usesFor(*args, fft);
+    auto const selected = tuneExecution(fft, quick, fftUses);
+    File config = File::openAppend("config.txt");
+    config.write("\n# CUDA execution settings selected and checked by -tune execution.\n-use ");
+    config.write(toString(selected) + "\n");
+    return;
+#else
+    throw "-tune execution requires the CUDA build";
+#endif
+  }
 
   // Only (re)tune the register limits of the existing tune.txt entries -- those of the -fft shapes, if given, and those used for the
   // exponents between minexp and maxexp, if either is given
@@ -540,6 +666,9 @@ void Tune::tune() {
 
   // Look for best settings of various options.  Append best settings to config.txt.
   if (tune_config) {
+#ifdef CUDA_BACKEND
+    auto const originalFlags = args->flags;
+#endif
     vector<pair<string,int>> newConfigKeyVals;
     vector<pair<string,int>> suggestedConfigKeyVals;
 
@@ -1295,6 +1424,22 @@ void Tune::tune() {
       configsUpdate(current_cost, best_cost, 0.003, "BIGLIT", best_biglit, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["BIGLIT"] = to_string(best_biglit);
     }
+
+#ifdef CUDA_BACKEND
+    // These are enabled by an ordinary -tune, including on a fresh machine.
+    // Persist explicit off values too, so a rerun replaces old machine settings.
+    // Earlier searches also keep tentative sub-threshold winners in args, but
+    // only suggest them in comments. Time the configuration a restart will use.
+    args->flags = originalFlags;
+    for (auto const& [key, value] : newConfigKeyVals) args->flags[key] = to_string(value);
+    FFTConfig const executionFFT{*defaultShape, variant, CARRY_AUTO};
+    for (auto const& [key, value] : tuneExecution(executionFFT, quick)) {
+      std::erase_if(newConfigKeyVals, [&](auto const& kv) { return kv.first == key; });
+      std::erase_if(suggestedConfigKeyVals, [&](auto const& kv) { return kv.first == key; });
+      newConfigKeyVals.emplace_back(key, stoi(value));
+      args->flags[key] = value;
+    }
+#endif
 
     // Output new settings to config.txt
     File config = File::openAppend("config.txt");

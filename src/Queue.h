@@ -96,14 +96,17 @@ public:
   void endRecording(Queue *q) { q->endRecording(&graph); }
   bool isRecorded() { return graph != NULL; }
   void launch(Queue *q) { q->playRecording(graph); }
-  void launchRepeated(Queue *q, unsigned count) {
+  cl_graph prepareRepeated(unsigned count) {
     auto it = repeated.find(count);
     if (it == repeated.end()) {
       cl_graph g = nullptr;
       CHECK1(clGraphRepeat(graph, count, &g));
       it = repeated.emplace(count, g).first;
     }
-    q->playRecording(it->second, count);
+    return it->second;
+  }
+  void launchRepeated(Queue *q, unsigned count) {
+    q->playRecording(prepareRepeated(count), count);
   }
 
 private:

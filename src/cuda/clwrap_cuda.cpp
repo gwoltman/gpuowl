@@ -1524,7 +1524,10 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 
   // Query the device's max access policy window size
   int maxWindowSize = 0;
-  cuDeviceGetAttribute(&maxWindowSize, CU_DEVICE_ATTRIBUTE_MAX_ACCESS_POLICY_WINDOW_SIZE, 0);
+  CUdevice device;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) return;
+  cuDeviceGetAttribute(&maxWindowSize, CU_DEVICE_ATTRIBUTE_MAX_ACCESS_POLICY_WINDOW_SIZE, device);
+  if (maxWindowSize <= 0) return;
   if (maxWindowSize > 0 && std::cmp_greater(spanBytes, maxWindowSize)) {
     fprintf(stderr, "L2 persist: span %zuMB exceeds max window %dMB, clamping\n",
             spanBytes / (1024*1024), maxWindowSize / (1024*1024));
@@ -1567,7 +1570,9 @@ void cudaSetL2PersistLimit(int pct) {
   ensureContextCurrent();
 
   int maxPersist = 0;
-  cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, 0);
+  CUdevice device;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) return;
+  cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, device);
   if (maxPersist <= 0) return;
 
   pct = std::clamp(pct, 0, 100);
@@ -1581,8 +1586,21 @@ void cudaSetL2PersistLimit(int pct) {
             target / (1024*1024), maxPersist / (1024*1024), pct);
   }
 }
+void cudaResetL2ForTune() {
+  ensureContextCurrent();
+  cudaSetL2PersistLimit(0);
+  // Unsupported devices have no persisting cache to reset.
+  CUdevice device;
+  int maxPersist = 0;
+  if (cuCtxGetDevice(&device) == CUDA_SUCCESS &&
+      cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, device) == CUDA_SUCCESS && maxPersist > 0) {
+    CUresult const r = cuCtxResetPersistingL2Cache();
+    if (r != CUDA_SUCCESS) throw std::string("Cannot reset persisting L2 cache for tuning");
+  }
+}
 #else
 void cudaSetL2PersistLimit(int) {}
+void cudaResetL2ForTune() {}
 #endif
 
 
