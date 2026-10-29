@@ -843,8 +843,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T2_GF61 val1 = lds[i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 7))];
         T2_GF61 val2 = lds[4 * WG + i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 7))];
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -858,8 +857,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
     for (u32 i = 0; i < RADIX; ++i) {
       T2_GF61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
       T2_GF61 val2 = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)];
-      if (lowMe < WG / 2) u[i] = addq(val1, val2);
-      else u[i] = subq(val1, val2);
+      u[i] = addsubq(val1, val2, lowMe, WG / 2);
     }
     LDStx_end(lds2, numWG);
     return;
@@ -884,8 +882,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         u32 k = (m / 32) * 8 * (32 + 2) + (rb & 7) * (32 + 2) + m % 32;
         T_Z61 val1 = lds[k];
         T_Z61 val2 = lds[k + (WG / 64) * 8 * (32 + 2)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 2)] = u[i].y; }
@@ -895,8 +892,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         u32 k = (m / 32) * 8 * (32 + 2) + (rb & 7) * (32 + 2) + m % 32;
         T_Z61 val1 = lds[k];
         T_Z61 val2 = lds[k + (WG / 64) * 8 * (32 + 2)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -916,8 +912,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         // Read val2 from the standard shufl's i = i/2 + 4, lowMe = lowMe % WG/2 + (i&1) * WG/2
         T_Z61 val1 = lds[(i / 2)     * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
         T_Z61 val2 = lds[(i / 2 + 4) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2); 
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[i * (WG + 8) + lowMe] = u[i].y; }
@@ -927,8 +922,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         // Read val2 from the standard shufl's i = i/2 + 4, lowMe = lowMe % WG/2 + (i&1) * WG/2
         T_Z61 val1 = lds[(i / 2)     * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
         T_Z61 val2 = lds[(i / 2 + 4) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -945,8 +939,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T_Z61 val1 = lds[i * (WG / 2 + 8) + rb];
         T_Z61 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].y; }
@@ -954,8 +947,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T_Z61 val1 = lds[i * (WG / 2 + 8) + rb];
         T_Z61 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -979,8 +971,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 16)) & 15) * 8));
         T_Z61 val1 = *(local T_Z61*)(root + a1);
         T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
@@ -990,8 +981,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 16)) & 15) * 8));
         T_Z61 val1 = *(local T_Z61*)(root + a1);
         T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1016,8 +1006,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 2) / 8) & 8) * 8));
         T_Z61 val1 = *(local T_Z61*)(root + a1);
         T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       if (SWIZ_RECOMPUTE) { OPAQUE(wa); OPAQUE(ra); }
@@ -1028,8 +1017,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
         u32 a1 = i * (WG / 2) * 8 + (ra ^ (((i * (WG / 2) / 8) & 8) * 8));
         T_Z61 val1 = *(local T_Z61*)(root + a1);
         T_Z61 val2 = *(local T_Z61*)(root + a1 + 4 * WG * 8);
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1046,8 +1034,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T_Z61 val1 = lds[i * (WG / 2) + (rb ^ ((i & 1) * 8))];
         T_Z61 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 1) * 8))];
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].y; }
@@ -1055,8 +1042,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T_Z61 val1 = lds[i * (WG / 2) + (rb ^ ((i & 1) * 8))];
         T_Z61 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 1) * 8))];
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1070,8 +1056,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
     for (u32 i = 0; i < RADIX; ++i) {
       T_Z61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
       T_Z61 val2 = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)];
-      if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-      else u[i].x = subq(val1, val2);
+      u[i].x = addsubq(val1, val2, lowMe, WG / 2);
     }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i].y; }
@@ -1079,8 +1064,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
     for (u32 i = 0; i < RADIX; ++i) {
       T_Z61 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
       T_Z61 val2 = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)];
-      if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-      else u[i].y = subq(val1, val2);
+      u[i].y = addsubq(val1, val2, lowMe, WG / 2);
     }
     LDStx_end(lds2, numWG);
     return;
@@ -1126,8 +1110,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T2_GF61 val1 = as_T2_GF61(v1[i]);
         T2_GF61 val2 = as_T2_GF61(v2[i]);
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       return;
     }
@@ -1168,8 +1151,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T2_GF61 val1 = as_T2_GF61(v1[i]);
         T2_GF61 val2 = as_T2_GF61(v2[i]);
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       return;
     }
@@ -1200,8 +1182,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T2_GF61 val1 = as_T2_GF61(v1[i]);
         T2_GF61 val2 = as_T2_GF61(v2[i]);
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       return;
     }
@@ -1238,8 +1219,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T2_GF61 val1 = as_T2_GF61(v1[i]);
         T2_GF61 val2 = as_T2_GF61(v2[i]);
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       return;
     }
@@ -1290,8 +1270,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T2_GF61 val1 = as_T2_GF61(v1[i]);
         T2_GF61 val2 = as_T2_GF61(v2[i]);
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       return;
     }
@@ -1328,8 +1307,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         T2_GF61 val1 = as_T2_GF61(v1[i]);
         T2_GF61 val2 = as_T2_GF61(v2[i]);
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       return;
     }
@@ -1360,8 +1338,7 @@ void OVERLOAD shufl_and_fft2(local T2_GF61 *lds2, T2_GF61 *u, u32 f, u32 numWG, 
     for (u32 i = 0; i < RADIX; ++i) {
       T2_GF61 val1 = as_T2_GF61(v1[i]);
       T2_GF61 val2 = as_T2_GF61(v2[i]);
-      if (lowMe < WG / 2) u[i] = addq(val1, val2);
-      else u[i] = subq(val1, val2);
+      u[i] = addsubq(val1, val2, lowMe, WG / 2);
     }
     return;
   }
@@ -1695,8 +1672,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
         u32 k = (m / 32) * 8 * (32 + 2) + (rb & 7) * (32 + 2) + m % 32;
         F2_GF31 val1 = lds[k];
         F2_GF31 val2 = lds[k + (WG / 64) * 8 * (32 + 2)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1716,8 +1692,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
         // Read val2 from the standard shufl's i = i/2 + 4, lowMe = lowMe % WG/2 + (i&1) * WG/2
         F2_GF31 val1 = lds[(i / 2)     * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
         F2_GF31 val2 = lds[(i / 2 + 4) * (WG / 64) * 8 + (((i & 1) * (WG / 2)) / 64) * 8 + ((lowMe % (WG / 2)) / 64) * 8 + ((lowMe / 8) & 7) * (WG + 8) + (lowMe & 7)];
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1734,8 +1709,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F2_GF31 val1 = lds[i * (WG / 2 + 8) + rb];
         F2_GF31 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1755,8 +1729,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F2_GF31 val1 = lds[i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 15))];
         F2_GF31 val2 = lds[4 * WG + i * (WG / 2) + (ra ^ ((i * (WG / 16)) & 15))];
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1773,8 +1746,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F2_GF31 val1 = lds[i * (WG / 2) + (rb ^ ((i & 1) * 8))];
         F2_GF31 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 1) * 8))];
-        if (lowMe < WG / 2) u[i] = addq(val1, val2);
-        else u[i] = subq(val1, val2);
+        u[i] = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1788,8 +1760,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
     for (u32 i = 0; i < RADIX; ++i) {
       F2_GF31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
       F2_GF31 val2 = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)];
-      if (lowMe < WG / 2) u[i] = addq(val1, val2);
-      else u[i] = subq(val1, val2);
+      u[i] = addsubq(val1, val2, lowMe, WG / 2);
     }
     LDStx_end(lds2, numWG);
     return;
@@ -1814,8 +1785,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
         u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
         F_Z31 val1 = lds[k];
         F_Z31 val2 = lds[k + (WG / 64) * 8 * (32 + 4)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * (32 + 4)] = u[i].y; }
@@ -1825,8 +1795,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
         u32 k = (m / 32) * 8 * (32 + 4) + (rb & 7) * (32 + 4) + m % 32;
         F_Z31 val1 = lds[k];
         F_Z31 val2 = lds[k + (WG / 64) * 8 * (32 + 4)];      // val2 is m + WG / 2, i.e. WG / 64 chunks later
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1843,8 +1812,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F_Z31 val1 = lds[i * (WG / 2 + 8) + rb];
         F_Z31 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; ++i) { lds[wb + i * 16] = u[i].y; }
@@ -1852,8 +1820,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F_Z31 val1 = lds[i * (WG / 2 + 8) + rb];
         F_Z31 val2 = lds[(i + 8) * (WG / 2 + 8) + rb];
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1873,8 +1840,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F_Z31 val1 = lds[i * (WG / 2) + ra];
         F_Z31 val2 = lds[4 * WG + i * (WG / 2) + ra];
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       ((local int4*)lds)[lowMe * 2 +  ((lowMe / 4) & 1)     ] = int4_of(as_int(u[0].y), as_int(u[1].y), as_int(u[2].y), as_int(u[3].y));
@@ -1883,8 +1849,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F_Z31 val1 = lds[i * (WG / 2) + ra];
         F_Z31 val2 = lds[4 * WG + i * (WG / 2) + ra];
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1904,8 +1869,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F_Z31 val1 = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))];
         F_Z31 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))];
-        if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-        else u[i].x = subq(val1, val2);
+        u[i].x = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDSbar(numWG);
       for (u32 i = 0; i < RADIX; i += 2) { lds[wa[0] + (i / 2) * 32] = u[i].y; }           // even i first so that same-base stores are adjacent
@@ -1914,8 +1878,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
       for (u32 i = 0; i < RADIX; ++i) {
         F_Z31 val1 = lds[i * (WG / 2) + (rb ^ ((i & 3) * 8))];
         F_Z31 val2 = lds[(i + 8) * (WG / 2) + (rb ^ ((i & 3) * 8))];
-        if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-        else u[i].y = subq(val1, val2);
+        u[i].y = addsubq(val1, val2, lowMe, WG / 2);
       }
       LDStx_end(lds2, numWG);
       return;
@@ -1929,8 +1892,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
     for (u32 i = 0; i < RADIX; ++i) {
       F_Z31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
       F_Z31 val2 = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)];
-      if (lowMe < WG / 2) u[i].x = addq(val1, val2);
-      else u[i].x = subq(val1, val2);
+      u[i].x = addsubq(val1, val2, lowMe, WG / 2);
     }
     LDSbar(numWG);
     for (u32 i = 0; i < RADIX; ++i) { lds[base + i * f] = u[i].y; }
@@ -1938,8 +1900,7 @@ void OVERLOAD shufl_and_fft2(local F2_GF31 *lds2, F2_GF31 *u, u32 f, u32 numWG, 
     for (u32 i = 0; i < RADIX; ++i) {
       F_Z31 val1 = lds[         i * (WG / 2) + lowMe % (WG / 2)];
       F_Z31 val2 = lds[4 * WG + i * (WG / 2) + lowMe % (WG / 2)];
-      if (lowMe < WG / 2) u[i].y = addq(val1, val2);
-      else u[i].y = subq(val1, val2);
+      u[i].y = addsubq(val1, val2, lowMe, WG / 2);
     }
     LDStx_end(lds2, numWG);
     return;

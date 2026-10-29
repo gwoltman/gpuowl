@@ -416,6 +416,20 @@ u128 OVERLOAD mad64(u64 a, u64 b, u128 c) {
 #define X2t4ad(a, b, d)       X2t4ad_internal(&(a), &(b), d)          // b = mul_t4(b), b = d * b, X2(a, b)
 #define X2ad_mul_t4(a, b, d)  X2ad_mul_t4_internal(&(a), &(b), d)     // b = d * b, X2(a, b), b = mul_t4(b)
 
+// shufl_and_fft2's radix-2 step: lanes lowMe < halfWG add, the others subtract.  halfWG (WG / 2) is a multiple of the wavefront size
+// whenever shufl_and_fft2 is used (1K and 2K with RADIX 8), so the choice is the same for every lane of a wave.  On AMD, reading
+// lowMe from the first lane tells the compiler so: the floating point types then do fma(b, +-1, a) with the sign in a scalar
+// register, which is exact and so bit-identical to the add or sub.  Compared with the plain if/else, that removes an exec-mask
+// branch per element (RDNA) or computing both results plus v_cndmask (GCN).  The NTT types keep the plain if/else.
+bool lowHalf(u32 lowMe, u32 halfWG) {
+#if AMDGPU                       // AMD's OpenCL compilers are clang, which has __has_builtin
+#if __has_builtin(__builtin_amdgcn_readfirstlane)
+  if (halfWG % WAVEFRONT == 0) { return (u32) __builtin_amdgcn_readfirstlane((int) lowMe) < halfWG; }
+#endif
+#endif
+  return lowMe < halfWG;
+}
+
 #if FFT_FP64
 
 T OVERLOAD add(T a, T b) { return a + b; }
@@ -559,6 +573,14 @@ T OVERLOAD addq(T a, T b) { return add(a, b); }
 T OVERLOAD subq(T a, T b) { return sub(a, b); }
 T2 OVERLOAD addq(T2 a, T2 b) { return add(a, b); }
 T2 OVERLOAD subq(T2 a, T2 b) { return sub(a, b); }
+T OVERLOAD addsubq(T a, T b, u32 lowMe, u32 halfWG) {
+#if AMDGPU
+  return fma(b, lowHalf(lowMe, halfWG) ? 1.0 : -1.0, a);
+#else
+  if (lowMe < halfWG) return addq(a, b); else return subq(a, b);
+#endif
+}
+T2 OVERLOAD addsubq(T2 a, T2 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
 
 #endif
 
@@ -708,6 +730,14 @@ F OVERLOAD addq(F a, F b) { return add(a, b); }
 F OVERLOAD subq(F a, F b) { return sub(a, b); }
 F2 OVERLOAD addq(F2 a, F2 b) { return add(a, b); }
 F2 OVERLOAD subq(F2 a, F2 b) { return sub(a, b); }
+F OVERLOAD addsubq(F a, F b, u32 lowMe, u32 halfWG) {
+#if AMDGPU
+  return fma(b, lowHalf(lowMe, halfWG) ? 1.0f : -1.0f, a);
+#else
+  if (lowMe < halfWG) return addq(a, b); else return subq(a, b);
+#endif
+}
+F2 OVERLOAD addsubq(F2 a, F2 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
 
 #endif
 
@@ -971,8 +1001,10 @@ GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
 
 Z31 OVERLOAD addq(Z31 a, Z31 b) { return add(a, b); }
 Z31 OVERLOAD subq(Z31 a, Z31 b) { return sub(a, b); }
+Z31 OVERLOAD addsubq(Z31 a, Z31 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
 GF31 OVERLOAD addq(GF31 a, GF31 b) { return add(a, b); }
 GF31 OVERLOAD subq(GF31 a, GF31 b) { return sub(a, b); }
+GF31 OVERLOAD addsubq(GF31 a, GF31 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
 
 // Quick (unreduced) GF31 arithmetic for the radix-PFA DFTs (fftN.cl).  A Z31q holds a sum of products below 0xFFFFFFFF7FFFFFFF, modM31(u64)'s
 // limit, reduced once by modM31.  Structs, so these overloads cannot collide with Z61's / GF61's u64 / ulong2 ones.
@@ -1390,8 +1422,10 @@ GF61 OVERLOAD foo(GF61 a) { return foo2(a, a); }
 
 Z61 OVERLOAD addq(Z61 a, Z61 b) { return a + b; }
 Z61 OVERLOAD subq(Z61 a, Z61 b) { return a - b; }
+Z61 OVERLOAD addsubq(Z61 a, Z61 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
 GF61 OVERLOAD addq(GF61 a, GF61 b) { return a + b; }
 GF61 OVERLOAD subq(GF61 a, GF61 b) { return a - b; }
+GF61 OVERLOAD addsubq(GF61 a, GF61 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
 GF61 OVERLOAD addiq(GF61 a, GF61 b) { return U2(a.x - b.y, a.y + b.x); }
 GF61 OVERLOAD subiq(GF61 a, GF61 b) { return U2(a.x + b.y, a.y - b.x); }
 
