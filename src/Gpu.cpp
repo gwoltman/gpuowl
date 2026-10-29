@@ -979,7 +979,15 @@ string Gpu::amdRegisterOption([[maybe_unused]] enum WHICH_KERNEL which_kernel, i
                          which_kernel == MIDOUT || which_kernel == MIDOUT31 || which_kernel == MIDOUT61;
   string const name = getDeviceName(id);
   bool const vega = name.rfind("gfx90", 0) == 0 && name.size() > 5 && string("02469c").find(name[5]) != string::npos;
-  return (in_place && is_middle && vega) ? string("-DAMD_WAVES_PER_EU=2 ") : string("");
+  if (in_place && is_middle && vega) return string("-DAMD_WAVES_PER_EU=2 ");
+  // RDNA3 with 1536 VGPRs per SIMD (gfx1100, gfx1101): left alone, the GF61 middle kernels at MIDDLE 16 can take 197-256 VGPRs (5-7 waves
+  // per SIMD, and 92 bytes of scratch in-place) for no fewer instructions.  Asking for 8 waves gives 91-126 VGPRs, no scratch, and about
+  // 0.3 % more VALU work; on an RX 7900 XTX 1:, 2: and 3:512:16:512 got 1.4-2.7 % faster (4-7 % with INPLACE=2).  Where these kernels
+  // already fit 8 waves the request changes nothing (more than 8 waves measured no faster there).
+  bool const rdna3_big_vgpr_file = name.rfind("gfx1100", 0) == 0 || name.rfind("gfx1101", 0) == 0;
+  bool const gf61_middle = which_kernel == MIDIN61 || which_kernel == MIDOUT61;
+  if (rdna3_big_vgpr_file && gf61_middle && fft.shape.middle >= 16) return string("-DAMD_WAVES_PER_EU=8 ");
+  return string("");
 }
 
 // Kernels are compiled one at a time, but OpenCL source files contain multiple kernels.  This routine set the #defines necessary so that only one kernel is compiled.
