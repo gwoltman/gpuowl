@@ -7,6 +7,7 @@
 #include "GpuCommon.h"
 #include "Primes.h"
 #include "log.h"
+#include "timeutil.h"
 #include "File.h"
 #include "TuneEntry.h"
 #include "Signal.h"
@@ -431,6 +432,7 @@ void Tune::tune() {
   u64 max_exponent = 350000000;
   if (!args->fftSpec.empty()) { min_exponent = 0; max_exponent = 1000000000000ull; }
   bool range_given = false;                     // minexp= or maxexp= was given
+  u32 warmup_secs = 300;                        // Seconds the GPU runs before the first timing (warmup=)
 
   // Parse input args
   for (const string& s : split(args->tune, ',')) {
@@ -451,6 +453,7 @@ void Tune::tune() {
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
       if (keyVal.front() == "quick") quick = stoi(keyVal.back());
+      if (keyVal.front() == "warmup") warmup_secs = stoi(keyVal.back());
       // Args checked these up front (checkTuneOptions)
       if (keyVal.front() == "minexp") { min_exponent = Args::parseExponent(keyVal.back()).value(); range_given = true; }
       if (keyVal.front() == "maxexp") { max_exponent = Args::parseExponent(keyVal.back()).value(); range_given = true; }
@@ -471,6 +474,17 @@ void Tune::tune() {
   }
   quick = std::max(quick, 1);
   quick = std::min(quick, 10);
+
+  // A GPU slows down for minutes as it heats up (clock boost, then the fan and the power limit catch up), and every option is timed
+  // once, one after the other:  timed cold, the first options look faster than the later ones.  So run the GPU until it is hot.
+  if (warmup_secs > 0) {
+    bool const useSpec = !shapes.empty() && (hasFP64(shared.context->deviceId()) || !FFTConfig{shapes[0], 202, CARRY_AUTO}.FFT_FP64);
+    FFTConfig const fft{useSpec ? shapes[0] : FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO};
+    u64 const exponent = primes.prevPrime(fft.maxExp());
+    log("Warming up the GPU for %u seconds before timing (-tune warmup=<secs> to change, warmup=0 to skip)\n", warmup_secs);
+    Timer timer;
+    while (timer.at() < warmup_secs) { timeConfig(exponent, shared, fft, {}, quick); }
+  }
 
   // Only (re)tune the register limits of the existing tune.txt entries -- those of the -fft shapes, if given, and those used for the
   // exponents between minexp and maxexp, if either is given
