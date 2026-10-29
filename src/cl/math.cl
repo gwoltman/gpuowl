@@ -1397,7 +1397,7 @@ GF61 OVERLOAD subiq(GF61 a, GF61 b) { return U2(a.x + b.y, a.y - b.x); }
 
 void OVERLOAD X2q(GF61 *a, GF61 *b) { GF61 t = *a; *a = t + *b; *b = t - *b; }
 // X2q, then modM61q of both outputs with the same m61_count:  the count is added to a once, before the sum and the difference
-void OVERLOAD X2q_modM61q(GF61 *a, GF61 *b, const u32 m61_count) { GF61 t = *a + m61_count * M61; *a = modM61(t + *b); *b = modM61(t - *b); }
+void OVERLOAD X2q_modM61q(GF61 *a, GF61 *b, const u32 m61_count) { Z61 const k = m61_count * M61; GF61 t = U2(a->x + k, a->y + k); *a = modM61(t + *b); *b = modM61(t - *b); }
 void OVERLOAD X2qp(GF61 *a, GF61 *b) { GF61 t = *a; *a = t + *b; *b = t + neg(*b, 2); }   // X2q with the difference + 2 M61, positive for future multiplies
 void OVERLOAD X2qt4(GF61 *a, GF61 *b) { Z61 by = b->y; b->y = a->y - b->x; a->y = a->y + b->x; b->x = a->x + by; a->x = a->x - by; }
 void OVERLOAD X2qconjb(GF61 *a, GF61 *b) { GF61 t = *a; a->x += b->x; a->y -= b->y; b->x = t.x - b->x; b->y = t.y + b->y; }
