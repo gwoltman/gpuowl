@@ -180,6 +180,16 @@ jobs:
         cd build-debug
         rm -f -- *.o
         ./prpll -h
+    - name: Compile the kernels with NVRTC
+      # The CUDA build compiles src/cl/*.cl with NVRTC only at run time, on the user's GPU, so the build above never
+      # sees them: a kernel that OpenCL accepts and NVRTC rejects (a vector + scalar, say) would pass every job here.
+      # tools/nvrtc-check runs the CUDA binary built above against a fake CUDA driver that has no GPU behind it.  This
+      # toolkit's NVRTC compiles the kernels of a set of FFTs that covers every FFT type, width, middle and height, for
+      # a recent and for the oldest architecture it knows.  Nothing is run on a GPU.  NVRTC does not depend on the
+      # host compiler, so one entry per toolkit (per OS image) is enough.
+      if: matrix.cxx == 'g++'
+      timeout-minutes: 30
+      run: python3 tools/nvrtc-check/nvrtc-check.py build-debug/prpll
     - uses: actions/upload-artifact@v7
       if: always()
       with:
