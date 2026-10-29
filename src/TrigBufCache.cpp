@@ -911,6 +911,16 @@ ulong2 root1GF61(u32 N, u32 k) {
   return root1GF61(root1N, k);
 }
 
+// The scaled terms of a GF61 twiddle b that the GF61 trig tables store for cmulScaled (math.cl):  4 times cmul's Karatsuba terms reduced,
+// (4 ((b.y - b.x) mod M61), 4 ((-b.x - b.y) mod M61)), and (4 b.x, 0).  All below 2^63.
+static u64 reduceM61(u64 a) { u64 const M61 = (u64(1) << 61) - 1; return a >= M61 ? a - M61 : a; }
+static ulong2 scaledKaratsubaGF61(ulong2 b) {
+  u64 const M61 = (u64(1) << 61) - 1;
+  u64 const bx = reduceM61(b.first), by = reduceM61(b.second);
+  return ulong2{4 * reduceM61(by + M61 - bx), 4 * reduceM61(2 * M61 - reduceM61(bx + by))};
+}
+static ulong2 scaledXGF61(ulong2 b) { return ulong2{4 * reduceM61(b.first), 0}; }
+
 static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix) {
   u32 const WG = size / radix;
   vector<ulong2> tab;
@@ -949,13 +959,11 @@ static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix) {
     }
   }
 
-  // Second half:  for each twiddle b of the standard lines, cmul's Karatsuba terms (b.y + 2 M61 - b.x, 3 M61 - b.x - b.y), read by tabMul's
-  // cmulPre (unreduced, exactly as cmul computes them)
-  tab.resize(2 * size);
-  if (!(size == 256 && radix == 8)) {
-    u64 const M61 = (u64(1) << 61) - 1;
-    for (u32 k = 0; k < (radix - 1) * WG; ++k) { tab[size + k] = ulong2{tab[k].second + 2 * M61 - tab[k].first, 3 * M61 - tab[k].first - tab[k].second}; }
-  }
+  // Second and third part (size entries each):  for each twiddle b above, its scaled Karatsuba terms and its scaled b.x, read on AMD by
+  // cmulScaled (tabMul, tabMul16, tabMul8_4a/b)
+  u32 const n = tab.size();
+  tab.resize(3 * size);
+  for (u32 k = 0; k < n; ++k) { tab[size + k] = scaledKaratsubaGF61(tab[k]); tab[2 * size + k] = scaledXGF61(tab[k]); }
   return tab;
 }
 
@@ -1068,6 +1076,11 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF61(root1mw, k)); }
     GF61 const root1wmh = GF61::root_one(width * middle * smallH);
     for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF61(root1wmh, k)); }
+    // Then, below MIDDLE 16, the scaled Karatsuba terms and the scaled b.x of the middleMul and middleMul2 twiddles (the first
+    // smallH * (middle - 1) + width entries), read on AMD by cmulScaled
+    u32 const n = middle < 16 ? smallH * (middle - 1) + width : 0;
+    for (u32 k = 0; k < n; ++k) { tab.push_back(scaledKaratsubaGF61(tab[k])); }
+    for (u32 k = 0; k < n; ++k) { tab.push_back(scaledXGF61(tab[k])); }
   }
   return tab;
 }

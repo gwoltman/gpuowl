@@ -1289,6 +1289,19 @@ GF61 OVERLOAD cmulPre(GF61 a, Z61 bx, GF61 pre) {
   return U2(modM61(k1k3), modM61(k1k2));
 }
 GF61 OVERLOAD cmul(GF61 a, GF61 b) { return cmulPre(a, b.x, U2(b.y + neg(b.x, 2), neg(b.y + b.x, 3))); }
+// cmul by a twiddle b (0 <= b.x, b.y < M61) given B4.x = 4 b.x and K4 = 4 times b's two Karatsuba terms reduced, (4 ((b.y - b.x) mod M61),
+// 4 ((-b.x - b.y) mod M61)), which the GF61 twiddle tables store (see scaledKaratsubaGF61 in TrigBufCache.cpp).  With a doubled, each sum of products
+// is 8 times the true value, so its 2^61 split falls on the 64-bit word boundary:  value = hi64 * 2^61 + lo64 / 8 == hi64 + (lo64 >> 3), which costs
+// less than the shifts, masks and adds of a weakModM61.  Bounds for a.x, a.y <= M61+7 (any modM61 output):  2 a.x + 4 K < 2^64, so mul64s is exact
+// for both K products; 2 (a.x + a.y) can pass 2^63, but its high word is then 2^31 with a low word <= 24, so mul64s's middle sum still fits (the high
+// word of 4 b.x is below 2^31); each sum is below 8 * (3 M61 + 42) * M61 < 2^127; the fold is below 2^63 + 2^61, and modM61 of it is 0..M61+7, as
+// cmul's result.
+Z61 OVERLOAD fold8(u128 p) { return u128_hi64(p) + (u128_lo64(p) >> 3); }
+GF61 OVERLOAD cmulScaled(GF61 a, GF61 B4, GF61 K4) {
+  Z61 x2 = a.x + a.x, y2 = a.y + a.y;
+  u128 k1 = mul64s(x2 + y2, B4.x);
+  return U2(modM61(fold8(add(mul64s(y2, K4.y), k1))), modM61(fold8(add(mul64s(x2, K4.x), k1))));
+}
 #else
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {
   u128 ayby = mul64(a.y, neg(b.y, 2));                        // max value is 2*M61^2+epsilon

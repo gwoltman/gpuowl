@@ -2236,9 +2236,8 @@ void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
   if (!TABMUL_CHAIN61) {
     for (u32 i = 1; i < RADIX; ++i) {
 #if AMDGPU
-      // The second half of the table holds each twiddle's Karatsuba terms (genSmallTrigGF61):  four fewer 64-bit adds/subs per cmul
-      GF61 w = TFLOAD(&trig[(i-1)*WG + p]);
-      u[i] = cmulPre(u[i], w.x, TFLOAD(&trig[WG*RADIX + (i-1)*WG + p]));
+      // The table's second and third parts hold each twiddle's scaled Karatsuba terms and scaled b.x (genSmallTrigGF61), see cmulScaled
+      u[i] = cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (i-1)*WG + p]), TFLOAD(&trig[WG*RADIX + (i-1)*WG + p]));
 #else
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
 #endif
@@ -2257,7 +2256,11 @@ void OVERLOAD tabMul16(TrigGF61 trig, GF61 *u, u32 me) {
   u32 h = me / (WG / 2);
   for (u32 i = 0; i < 8; ++i) {
     if (i == 0 && h == 0) continue;
+#if AMDGPU
+    u[i] = cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (2 * i + h - 1) * 16 + q]), TFLOAD(&trig[WG*RADIX + (2 * i + h - 1) * 16 + q]));
+#else
     u[i] = cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
+#endif
   }
 }
 
@@ -2289,7 +2292,11 @@ void OVERLOAD tabMul8_4a(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
     if (!TABMUL_CHAIN61) {
       for (u32 i = 2; i < RADIX; ++i) {
+#if AMDGPU
+        u[i] = cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (i-2)*WG + p]), TFLOAD(&trig[WG*RADIX + (i-2)*WG + p]));
+#else
         u[i] = cmul(u[i], TFLOAD(&trig[(i-2)*WG + p]));
+#endif
       }
     }
   }
@@ -2354,7 +2361,11 @@ void OVERLOAD tabMul8_4b(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
     trig += 6 * WG;                  // Skip over the trig values used in tabmul8_4a
 
     for (u32 i = 1; i < RADIX; ++i) {
+#if AMDGPU
+      u[i] = cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (i-1)*(WG/4) + p]), TFLOAD(&trig[WG*RADIX + (i-1)*(WG/4) + p]));
+#else
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*(WG/4) + p]));
+#endif
     }
   }
 }
