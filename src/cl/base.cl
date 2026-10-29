@@ -1165,6 +1165,41 @@ void dependentLaunch() {
 void dependentLaunchWait() {
 #if CUDA_BACKEND && HAS_PTX >= 900 && PDL
   __asm volatile("griddepcontrol.wait;");                 // same as cudaGridDependencySynchronize();
+#if PDL_EARLY
+  // Data reads still follow the full predecessor wait. Only the notification
+  // allowing the next kernel's independent setup is moved earlier.
+  __asm volatile("griddepcontrol.launch_dependents;");
+#endif
 #endif
 }
 
+
+#ifndef INPLACE_TILE
+#define INPLACE_TILE 16
+#endif
+#if INPLACE_TILE != 8 && INPLACE_TILE != 16
+#error INPLACE_TILE must be 8 or 16
+#endif
+#if INPLACE_TILE != 16 && L2_STRIPING
+#error Smaller in-place tiles do not support host L2 striping
+#endif
+
+#ifndef INPLACE_TILE31
+#define INPLACE_TILE31 INPLACE_TILE
+#endif
+#if INPLACE_TILE31 != 8 && INPLACE_TILE31 != 16
+#error Invalid field tile size
+#endif
+#if INPLACE_TILE31 != 16 && L2_STRIPING
+#error Smaller field tiles do not support L2 striping
+#endif
+
+#ifndef INPLACE_TILE61
+#define INPLACE_TILE61 INPLACE_TILE
+#endif
+#if INPLACE_TILE61 != 8 && INPLACE_TILE61 != 16
+#error Invalid field tile size
+#endif
+#if INPLACE_TILE61 != 16 && L2_STRIPING
+#error Smaller field tiles do not support L2 striping
+#endif

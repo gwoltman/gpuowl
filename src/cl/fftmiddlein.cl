@@ -1,3 +1,9 @@
+#ifndef NTT_TRANSPOSE31
+#define NTT_TRANSPOSE31 0
+#endif
+#ifndef NTT_TRANSPOSE61
+#define NTT_TRANSPOSE61 0
+#endif
 // Copyright (C) Mihai Preda and George Woltman
 
 #include "base.cl"
@@ -278,17 +284,17 @@ KERNEL_CAP(IN_WG) fftMiddleInGF61(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if L2_STRIPING
 void map_striping_group_id(u32 base_lo, u32 g, u32 *startx, u32 *starty) {
   // Old, simple L2 striping code
-  // u32 N = SMALL_HEIGHT / 16;
-  // u32 starty = g % N * 16;
-  // u32 startx = base + g / N * 16;
+  // u32 N = SMALL_HEIGHT / INPLACE_TILE;
+  // u32 starty = g % N * INPLACE_TILE;
+  // u32 startx = base + g / N * INPLACE_TILE;
 
   // If MIDDLE is odd, the first fftMiddleIn must process the special N/2 tailSquare line from the WIDTH/2 stripe.
   // If MULTI_Q, the first fftMiddleIn in the second queue must also process the 3*WIDTH/4 stripe.
-  u32 oneStripeKernelsToExecute = SMALL_HEIGHT / 16;
+  u32 oneStripeKernelsToExecute = SMALL_HEIGHT / INPLACE_TILE;
   if ((base_lo == 0 && (MIDDLE & 1)) || (MULTI_Q && base_lo == WIDTH / 4)) {
     if (g < oneStripeKernelsToExecute) {
       *startx = base_lo + WIDTH / 2;
-      *starty = g * 16;
+      *starty = g * INPLACE_TILE;
       return;
     }
     g -= oneStripeKernelsToExecute;
@@ -298,23 +304,23 @@ void map_striping_group_id(u32 base_lo, u32 g, u32 *startx, u32 *starty) {
   u32 stripe_group_size = L2_STRIPING;
   u32 kernelsToExecute = stripe_group_size * oneStripeKernelsToExecute;
   if (g < kernelsToExecute) {
-    *startx = base_lo + g / oneStripeKernelsToExecute * 16;
-    *starty = g % oneStripeKernelsToExecute * 16;
+    *startx = base_lo + g / oneStripeKernelsToExecute * INPLACE_TILE;
+    *starty = g % oneStripeKernelsToExecute * INPLACE_TILE;
     return;
   }
   g -= kernelsToExecute;
 
   // Process stripe group base_hi.  The last group must take into account that the first stripe may have already been processed.
-  u32 base_hi = WIDTH - stripe_group_size * 16 - base_lo;
-  if ((base_hi == WIDTH / 2 && (MIDDLE & 1)) || (MULTI_Q && base_hi == 3 * WIDTH / 4)) base_hi += 16;
-  *startx = base_hi + g / oneStripeKernelsToExecute * 16;
-  *starty = g % oneStripeKernelsToExecute * 16;
+  u32 base_hi = WIDTH - stripe_group_size * INPLACE_TILE - base_lo;
+  if ((base_hi == WIDTH / 2 && (MIDDLE & 1)) || (MULTI_Q && base_hi == 3 * WIDTH / 4)) base_hi += INPLACE_TILE;
+  *startx = base_hi + g / oneStripeKernelsToExecute * INPLACE_TILE;
+  *starty = g % oneStripeKernelsToExecute * INPLACE_TILE;
 }
 #endif
 
 #if FFT_FP64
 
-KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE*INPLACE_TILE)) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   T2 u[MIDDLE];
 
@@ -322,22 +328,22 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #if L2_STRIPING
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16
+  u32 zerohack = (MIDDLE >= INPLACE_TILE) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=INPLACE_TILE
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE;
+  u32 starty = g % N * INPLACE_TILE;
+  u32 startx = g / N * INPLACE_TILE;
   u32 zerohack = g / 131072;                       // A super tiny benefit (much smaller than margin of error) on TitanV
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16
+  u32 N = WIDTH / INPLACE_TILE;
+  u32 startx = g % N * INPLACE_TILE;
+  u32 starty = g / N * INPLACE_TILE;
+  u32 zerohack = (MIDDLE >= INPLACE_TILE) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=INPLACE_TILE
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE;
+  u32 y = starty + me / INPLACE_TILE;
 
 #if FFT_TYPE == FFT64
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP64 data
@@ -358,7 +364,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareFP64 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local T2 lds[256];
+  local T2 lds[(INPLACE_TILE*INPLACE_TILE)];
   middleShuffle(lds, u);
 
   writeMiddleInLine(in + zerohack, u, y, x);
@@ -373,7 +379,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if FFT_FP32
 
-KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE*INPLACE_TILE)) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   F2 u[MIDDLE];
 
@@ -387,20 +393,20 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE;
+  u32 starty = g % N * INPLACE_TILE;
+  u32 startx = g / N * INPLACE_TILE;
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16 (for FP64, FP32 untimed)
+  u32 N = WIDTH / INPLACE_TILE;
+  u32 startx = g % N * INPLACE_TILE;
+  u32 starty = g / N * INPLACE_TILE;
+  u32 zerohack = (MIDDLE >= INPLACE_TILE) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=INPLACE_TILE (for FP64, FP32 untimed)
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE;
+  u32 y = starty + me / INPLACE_TILE;
 
 #if FFT_TYPE == FFT32
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP32 data
@@ -421,7 +427,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareFP32 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local F2 lds[256];
+  local F2 lds[(INPLACE_TILE*INPLACE_TILE)];
   middleShuffle(lds, u);
 
   writeMiddleInLine(inF2 + zerohack, u, y, x);
@@ -436,7 +442,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF31
 
-KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE31*INPLACE_TILE31)) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF31 u[MIDDLE];
 
@@ -450,20 +456,20 @@ KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE31;
+  u32 starty = g % N * INPLACE_TILE31;
+  u32 startx = g / N * INPLACE_TILE31;
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16 (for FP64, GF31 untimed)
+  u32 N = WIDTH / INPLACE_TILE31;
+  u32 startx = g % N * INPLACE_TILE31;
+  u32 starty = g / N * INPLACE_TILE31;
+  u32 zerohack = (MIDDLE >= INPLACE_TILE31) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=INPLACE_TILE31 (for FP64, GF31 untimed)
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE31;
+  u32 y = starty + me / INPLACE_TILE31;
 
 #if FFT_TYPE == FFT31
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
@@ -484,8 +490,18 @@ KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareGF31 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF31 lds[256];
+#if PFA == 7 && MIDDLE == 7 && NTT_TRANSPOSE31
+#if NTT_TRANSPOSE31 == 1
+  local GF31 lds[(INPLACE_TILE31*INPLACE_TILE31)*MIDDLE];
+  middleShuffleTile31(lds,u,false,y);
+#else
+  local Z31 lds[(INPLACE_TILE31*INPLACE_TILE31)*MIDDLE];
+  middleShuffle(lds,u,(INPLACE_TILE31*INPLACE_TILE31),INPLACE_TILE31,false,y);
+#endif
+#else
+  local GF31 lds[(INPLACE_TILE31*INPLACE_TILE31)];
   middleShuffle(lds, u);
+#endif
 
   writeMiddleInLine(in31 + zerohack, u, y, x);
 }
@@ -499,7 +515,7 @@ KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF61
 
-KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE61*INPLACE_TILE61)) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF61 u[MIDDLE];
 
@@ -513,20 +529,20 @@ KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE61;
+  u32 starty = g % N * INPLACE_TILE61;
+  u32 startx = g / N * INPLACE_TILE61;
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16 (for FP64, GF61 untimed)
+  u32 N = WIDTH / INPLACE_TILE61;
+  u32 startx = g % N * INPLACE_TILE61;
+  u32 starty = g / N * INPLACE_TILE61;
+  u32 zerohack = (MIDDLE >= INPLACE_TILE61) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=INPLACE_TILE61 (for FP64, GF61 untimed)
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE61;
+  u32 y = starty + me / INPLACE_TILE61;
 
 #if FFT_TYPE == FFT61
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
@@ -547,8 +563,18 @@ KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareGF61 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF61 lds[256];
+#if PFA == 7 && MIDDLE == 7 && NTT_TRANSPOSE61
+#if NTT_TRANSPOSE61 == 1
+  local GF61 lds[(INPLACE_TILE61*INPLACE_TILE61)*MIDDLE];
+  middleShuffleTile61(lds,u,false,y);
+#else
+  local Z61 lds[(INPLACE_TILE61*INPLACE_TILE61)*MIDDLE];
+  middleShuffle(lds,u,(INPLACE_TILE61*INPLACE_TILE61),INPLACE_TILE61,false,y);
+#endif
+#else
+  local GF61 lds[(INPLACE_TILE61*INPLACE_TILE61)];
   middleShuffle(lds, u);
+#endif
 
   writeMiddleInLine(in61 + zerohack, u, y, x);
 }

@@ -143,6 +143,13 @@ void checkGpuCanRun(u64 exponent, GpuCommon shared, FFTConfig fft, bool candidat
 // fftUses are the FFT's tune.txt settings (see Gpu::make).
 double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& config, int quick = 7, u32* usedWmul = nullptr,
                   const vector<KeyVal>& fftUses = {}) {
+  int const requestedExponent = shared.args->value("TUNE_EXP", 0);
+  if (requestedExponent > 0) {
+    if ((u64)requestedExponent > fft.maxExp()) return numeric_limits<double>::infinity();
+    exponent = requestedExponent;
+    static bool logged = false;
+    if (!logged) { log("TUNE_EXP: measuring at exponent %llu\n", (unsigned long long)exponent); logged = true; }
+  }
   if (Signal::stopRequested()) { throw "stop requested"; }
   try {
     auto gpu = Gpu::make(exponent, shared, fft, config, false, fftUses);
@@ -1835,7 +1842,9 @@ string regValueName(int v, bool amd) {
 
 TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm, bool tailOnly, const map<string, int>* fwdOcc, int fwdDir) {
   Args* args = shared.args;
-  u64 const exponent = primes.prevPrime(e.fft.maxExp());
+  int const requestedExponent = args->value("TUNE_EXP", 0);
+  if (requestedExponent > 0 && (u64)requestedExponent > e.fft.maxExp()) return e;
+  u64 const exponent = requestedExponent > 0 ? (u64)requestedExponent : primes.prevPrime(e.fft.maxExp());
   string const spec = e.fft.spec();
 
 #ifdef CUDA_BACKEND

@@ -89,9 +89,32 @@ float invWeightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return float(expm1(M_LN2 * - (double)(extra(N, E, kAt(H, line, col) + rep)) / N));
 }
 
-Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
+Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu, bool nttTable) {
   u32 const N = 2u * W * H;
   u32 const groupWidth = W / nW;
+  if (nttTable && fft.shape.fft_type == FFT3161) {
+    Weights result{};
+    result.weightsIF.resize(N / 4); // two packed 32-bit entries per double-sized slot
+    u32 const R=fft.shape.isPfa()?fft.shape.pfaRadix():1;
+    u32 const BH=H/R, L=W*BH, rem=u32(E%N);
+    auto inverse=[](u32 a,u32 q) { for(u32 x=1;x<q;++x)if(u64(a)*x%q==1)return x;throw "NTT weight inverse missing"; };
+    u32 const linv=R==1?0:inverse(L%R,R), r31=inverse(N%31,31), r61=inverse(N%61,61);
+    auto ceilPart=[&](u32 word) { u64 v=u64(word)*rem;return v/N+(v%N!=0); };
+    auto rotation=[&](u32 word,u32 q,u32 inv) { return u32((ceilPart(word)%q+q-u64(word%q)*(rem%q)*inv%q)%q); };
+    for(u32 line=0;line<H;++line)for(u32 x=0;x<W;++x) {
+      u32 const a=x*BH+line%BH;
+      u32 const pair=R==1?x*H+line:a+L*((line%R+R-a%R)*linv%R);
+      u32 const word=2*pair;
+      u32 const packed=rotation(word,31,r31)|(rotation(word+1,31,r31)<<5)|
+                       (rotation(word,61,r61)<<10)|(rotation(word+1,61,r61)<<16)|
+                       (u32(ceilPart(word+1)>ceilPart(word))<<22)|
+                       (u32(ceilPart(word+2)>ceilPart(word+1))<<23);
+      // Physical line/column order gives adjacent GPU lanes adjacent 32-bit loads.
+      memcpy(reinterpret_cast<unsigned char*>(result.weightsIF.data())+4*(line*W+x),&packed,4);
+    }
+    return result;
+  }
+
 
   vector<double> weightsConstIF;
   vector<double> weightsIF;
@@ -310,7 +333,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                             };
   // These keys may be undocumented in help because they are either deprecated, experimental, or developer-only.
   initializer_list<string> const hiddenKeys = {
-                              "BIGLIT",                 // Deprecated
+                              "PDL_EARLY","GRAPH_TAIL","GRAPH_BATCH","NTT_WEIGHT_TABLE","NTT_TRANSPOSE31","NTT_TRANSPOSE61","INPLACE_TILE","INPLACE_TILE31","INPLACE_TILE61","TUNE_EXP","BIGLIT",                 // Deprecated
                               "ENABLE_SUBBARRIER",      // Experimental, nVidia: LDSbar syncs only its sub-workgroup, 1 = each, 2 = four in pairs (see base.cl)
                               "NONTEMPORAL",            // Deprecated
 			      "HOIST_W","HOIST_H",
@@ -1156,7 +1179,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   bufTrigM{shared.bufCache->middleTrig(&args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
   bufTrigW{shared.bufCache->smallTrig(&args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
 
-  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(shared.context->deviceId()))},
+  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(shared.context->deviceId()), args.value("NTT_WEIGHT_TABLE",0)!=0)},
   bufConstWeights{shared.context, std::move(weights.weightsConstIF)},
   bufWeights{shared.context,      std::move(weights.weightsIF)},
 
@@ -1275,6 +1298,10 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     }
     for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE}) { k->setFixedArgs(6, bufROE); }
     for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(6, bufStatsCarry); }
+  }
+
+  if (fft.shape.fft_type == FFT3161 && args.value("NTT_WEIGHT_TABLE",0)) {
+    for (Kernel* k : {&kCarryFused, &kCarryFusedROE, &kCarryFusedMul, &kCarryFusedMulROE, &kCarryFusedLL}) k->setFixedArgs(7, bufWeights);
   }
 
   carryB.setFixedArgs(1, bufCarry);
@@ -3045,6 +3072,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   assert(checkStep % blockSize == 0);
 
   const u64 startK = k;
+  u32 const graphBatch = std::clamp(args.value("GRAPH_BATCH", 1), 1, 256);
+  bool const graphTail = args.value("GRAPH_TAIL", 0);
   IterationTimer iterationTimer{k};
 
   wantROE = 0; // skip the initial iterations
@@ -3053,6 +3082,30 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     assert(k < kEndEnd);
 
     if (!wantROE && k - startK > 30) { wantROE = args.logROE ? ROE_SIZE : 2'000; }
+
+    // Batch only unsampled, already-captured squarings on bufData. Stop strictly
+    // before every block/check/log, proof residue, final residue and requested
+    // iteration boundary. All boundary operations retain their original path.
+    u32 repeat = graphBatch;
+    if (graphTail && repeat > 1) {
+      u64 boundary = std::min({roundUp(k + 1, blockSize), persistK, kEnd});
+      if (args.iters) boundary = std::min(boundary, startK + args.iters);
+      // A geometric family bounds the graph cache while batching the remainder.
+      // Leave the boundary itself to the original single-iteration path.
+      if (boundary <= k + 1) repeat = 0;
+      else while (repeat > boundary - k - 1) repeat /= 2;
+    }
+    if (repeat > 1 && use_graphs && !useLongCarry && !args.profile &&
+        leadIn == LEAD_WIDTH && !skipNextCheckUpdate && wantROE && roePos >= wantROE &&
+        !(statsBits & 1) && graph_square[1].isRecorded() && !Signal::stopRequested() &&
+        k % blockSize && k + repeat < roundUp(k + 1, blockSize) &&
+        k + repeat < persistK && k + repeat < kEnd &&
+        (!args.iters || k + repeat - startK < args.iters)) {
+      graph_square[1].launchRepeated(&queue, repeat);
+      queue.incSquareCount(repeat);
+      k += repeat;
+      continue;
+    }
 
     if (skipNextCheckUpdate) {
       skipNextCheckUpdate = false;

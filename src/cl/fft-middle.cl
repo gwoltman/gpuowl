@@ -384,17 +384,17 @@ void OVERLOAD middleShuffleWrite(global T2 *out, T2 *u, u32 workgroupSize, u32 b
 // Do an in-place 16x16 transpose during fftMiddleIn/Out
 void OVERLOAD middleShuffle(local T2 *lds, T2 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / INPLACE_TILE;
+  u32 x = me % INPLACE_TILE;
 
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * INPLACE_TILE + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * INPLACE_TILE + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * INPLACE_TILE + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * INPLACE_TILE + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * INPLACE_TILE + y ^ x];
   }
 }
 
@@ -807,16 +807,16 @@ void OVERLOAD middleShuffleWrite(global F2 *out, F2 *u, u32 workgroupSize, u32 b
 // Do an in-place 16x16 transpose during fftMiddleIn/Out
 void OVERLOAD middleShuffle(local F2 *lds, F2 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / INPLACE_TILE;
+  u32 x = me % INPLACE_TILE;
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * INPLACE_TILE + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * INPLACE_TILE + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * INPLACE_TILE + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * INPLACE_TILE + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * INPLACE_TILE + y ^ x];
   }
 }
 
@@ -1167,18 +1167,31 @@ void OVERLOAD middleShuffleWrite(global GF31 *out, GF31 *u, u32 workgroupSize, u
 }
 
 // Do an in-place 16x16 transpose during fftMiddleIn/Out
+
+// All seven rows are written before the barrier, so a row permutation
+// can be encoded in LDS addresses instead of a register select network.
+void middleShuffleTile31(local GF31 *lds, GF31 *u, bool rotate, u32 heightPos) {
+  u32 p1,p2; middleShuffleIdx((INPLACE_TILE31*INPLACE_TILE31),INPLACE_TILE31,&p1,&p2);
+  for (u32 i=0;i<MIDDLE;++i) {
+    u32 row=rotate ? MIDDLE_IN_INDEX(i,heightPos) : i;
+    lds[row*(INPLACE_TILE31*INPLACE_TILE31)+p1]=u[i];
+  }
+  bar();
+  for (u32 i=0;i<MIDDLE;++i) u[i]=lds[i*(INPLACE_TILE31*INPLACE_TILE31)+p2];
+}
+
 void OVERLOAD middleShuffle(local GF31 *lds, GF31 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / INPLACE_TILE31;
+  u32 x = me % INPLACE_TILE31;
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * INPLACE_TILE31 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * INPLACE_TILE31 + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * INPLACE_TILE31 + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * INPLACE_TILE31 + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * INPLACE_TILE31 + y ^ x];
   }
 }
 
@@ -1436,18 +1449,31 @@ void OVERLOAD middleShuffleWrite(global GF61 *out, GF61 *u, u32 workgroupSize, u
 }
 
 // Do an in-place 16x16 transpose during fftMiddleIn/Out
+
+// All seven rows are written before the barrier, so a row permutation
+// can be encoded in LDS addresses instead of a register select network.
+void middleShuffleTile61(local GF61 *lds, GF61 *u, bool rotate, u32 heightPos) {
+  u32 p1,p2; middleShuffleIdx((INPLACE_TILE61*INPLACE_TILE61),INPLACE_TILE61,&p1,&p2);
+  for (u32 i=0;i<MIDDLE;++i) {
+    u32 row=rotate ? MIDDLE_IN_INDEX(i,heightPos) : i;
+    lds[row*(INPLACE_TILE61*INPLACE_TILE61)+p1]=u[i];
+  }
+  bar();
+  for (u32 i=0;i<MIDDLE;++i) u[i]=lds[i*(INPLACE_TILE61*INPLACE_TILE61)+p2];
+}
+
 void OVERLOAD middleShuffle(local GF61 *lds, GF61 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / INPLACE_TILE61;
+  u32 x = me % INPLACE_TILE61;
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * INPLACE_TILE61 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * INPLACE_TILE61 + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * INPLACE_TILE61 + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * INPLACE_TILE61 + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * INPLACE_TILE61 + y ^ x];
   }
 }
 
