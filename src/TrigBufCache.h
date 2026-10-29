@@ -82,7 +82,7 @@ u64 pfaRootOfUnity(u32 q, u32 R);
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of ulong2 values)
 #define SMALLTRIG_GF61_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) * 3 : SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH)) // See genSmallTrigGF61
 #define SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH)      ((H) * 3 + ((W) * (M) / 2 + ((M) / (((M) & (~(M) + 1)) + ((M) == 0)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF61
-#define MIDDLETRIG_GF61_SIZE(W,M,H)             ((M) & ((M) - 1) || (M) >= 16 ? (H) * ((M) - 1) + (W) + (H) : 3 * ((H) * ((M) - 1) + (W)) + (H))  // See genMiddleTrigGF61
+#define MIDDLETRIG_GF61_SIZE(W,M,H)             ((M) & ((M) - 1) ? (H) * ((M) - 1) + (W) + (H) : 3 * ((H) * ((M) - 1) + (W)) + (H))  // See genMiddleTrigGF61
 
 // Convert above sizes to distances (in units of double2)
 #define SMALLTRIG_FP64_DIST(W,M,H,nH)           SMALLTRIG_FP64_SIZE(W,M,H,nH)

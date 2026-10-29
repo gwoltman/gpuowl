@@ -1076,9 +1076,9 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF61(root1mw, k)); }
     GF61 const root1wmh = GF61::root_one(width * middle * smallH);
     for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF61(root1wmh, k)); }
-    // Then, below MIDDLE 16, the scaled Karatsuba terms and the scaled b.x of the middleMul and middleMul2 twiddles (the first
-    // smallH * (middle - 1) + width entries), read on AMD by cmulScaled
-    u32 const n = middle < 16 ? smallH * (middle - 1) + width : 0;
+    // Then the scaled Karatsuba terms and the scaled b.x of the middleMul and middleMul2 twiddles (the first smallH * (middle - 1) + width
+    // entries), read on AMD by cmulScaled (not at MIDDLE >= 16 with INPLACE=0, see MIDDLE_SCALED61)
+    u32 const n = smallH * (middle - 1) + width;
     for (u32 k = 0; k < n; ++k) { tab.push_back(scaledKaratsubaGF61(tab[k])); }
     for (u32 k = 0; k < n; ++k) { tab.push_back(scaledXGF61(tab[k])); }
   }

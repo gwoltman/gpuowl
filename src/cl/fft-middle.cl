@@ -1215,8 +1215,8 @@ void OVERLOAD fft_MIDDLE(GF61 *u) {
 // trig[MIDDLE_TRIG61_SCALED + k]
 #define MIDDLE_TRIG61_SCALED (SMALL_HEIGHT * MIDDLE + WIDTH)
 #define MIDDLE_TRIG61_B4 (MIDDLE_TRIG61_SCALED + SMALL_HEIGHT * (MIDDLE - 1) + WIDTH)
-// Not at MIDDLE >= 16:  there the larger table costs more than the shorter cmuls save (RX 7900 XTX)
-#define MIDDLE_SCALED61 (AMDGPU && !(MIDDLE_KERNEL && MIDDLE >= 16))
+// Not at MIDDLE >= 16 with INPLACE=0:  there the larger table costs more than the shorter cmuls save (RX 7900 XTX); in place it pays
+#define MIDDLE_SCALED61 (AMDGPU && !(MIDDLE_KERNEL && MIDDLE >= 16 && INPLACE == 0))
 
 void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
   assert(s < SMALL_HEIGHT);
