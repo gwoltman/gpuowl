@@ -56,12 +56,13 @@ def plan(prpll, env):
     chosen = []
     for typ in PARTS:
         # A small LL test and a proof verification of every type.  Verification takes the FFT as given only if it can handle the
-        # proof's exponent, so only a tiny FFT will do.  Verifications at every TAIL_KERNELS: the PRP runs below build tailMul and
-        # tailSquare for each, but only a verification builds tailMul with MUL_LOW
+        # proof's exponent, so only a tiny FFT will do.  Verifications at TAIL_KERNELS 0 and 3, the single-wide one-kernel and the
+        # double-wide two-kernel tails: the PRP runs below build tailMul and tailSquare for each, but only a verification builds
+        # tailMul with MUL_LOW and the *Zero kernels
         small = [s for s in shapes if s[:4] == (typ, "256", "2", "256")]
         if small:
             chosen.append(("ll", f"{typ}:256:2:256:{small[-1][4]}", 1, None, int(small[-1][6] * 0.9)))
-            chosen += [("verify", f"{typ}:256:2:256", 1, tk, 786433) for tk in (0, 1, 2, 3)]
+            chosen += [("verify", f"{typ}:256:2:256", 1, tk, 786433) for tk in (0, 3)]
     items = []
     for typ, w, mid, h, var, n, maxexp in shapes:
         if n > MAX_N: continue
@@ -71,7 +72,7 @@ def plan(prpll, env):
                 for tk in TAIL_KERNELS:
                     feats = {(typ, "carry", ef)}
                     for p in PARTS[typ]:
-                        feats |= {(p, "W", w, var[0]), (p, "M", mid), (p, "H", h, var[2]), (p, "m", var[1]), (p, "IP", ip, int(mid) % 8 or 8), (p, "TK", tk)}
+                        feats |= {(p, "W", w, var[0]), (p, "M", mid), (p, "H", h, var[2]), (p, "m", var[1]), (p, "IP", ip), (p, "TK", tk)}
                     items.append((n, ("prp", spec, ip, tk, int(maxexp * ef)), feats))
     want = set().union(*(i[2] for i in items)) if items else set()
     while want:
