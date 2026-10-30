@@ -1,5 +1,11 @@
 // Copyright (C) Mihai Preda
 
+// Wave64 GPUs (gfx9): unroll the GF31 twiddle loops of fft_WIDTH too (see tabMul).  On gfx906 that is 3-4 % fewer VALU cycles in the
+// FFT3161 / FFT323161 carryFused, at the same or better occupancy.  RDNA keeps them rolled: there the unrolled carryFused was slower.
+#if defined(WAVEFRONT) && WAVEFRONT == 64
+#define TABMUL_UNROLL31 1
+#endif
+
 #include "base.cl"
 #include "fftwidth.cl"
 #include "carryutil.cl"
