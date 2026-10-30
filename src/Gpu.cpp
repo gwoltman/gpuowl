@@ -27,6 +27,7 @@
 
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <bit>
 #include <ranges>
 #include <utility>
 
@@ -94,23 +95,31 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu, b
   u32 const groupWidth = W / nW;
   if (nttTable && fft.shape.fft_type == FFT3161) {
     Weights result{};
-    result.weightsIF.resize(N / 4); // two packed 32-bit entries per double-sized slot
+    // Two u32 halves of N/2 entries each, one entry per pair of digits.  The first half is read before the carry
+    // wait, the second after it.  With one shared entry the compiler keeps the first loop's decoded shifts live
+    // across the wait to reuse them (on ROCm carryFused went from 84 to 172 VGPRs on gfx906); two halves give it
+    // nothing to reuse, and each half is stored ready to use, so neither loop adjusts a shift.
+    result.weightsIF.resize(N / 2); // N u32 entries in double-sized slots
     u32 const R=fft.shape.isPfa()?fft.shape.pfaRadix():1;
     u32 const BH=H/R, L=W*BH, rem=u32(E%N);
     auto inverse=[](u32 a,u32 q) { for(u32 x=1;x<q;++x)if(u64(a)*x%q==1)return x;throw "NTT weight inverse missing"; };
     u32 const linv=R==1?0:inverse(L%R,R), r31=inverse(N%31,31), r61=inverse(N%61,61);
+    u32 const e=std::countr_zero(N/R)+1;  // carryFused's log2_NWORDS + 1
     auto ceilPart=[&](u32 word) { u64 v=u64(word)*rem;return v/N+(v%N!=0); };
     auto rotation=[&](u32 word,u32 q,u32 inv) { return u32((ceilPart(word)%q+q-u64(word%q)*(rem%q)*inv%q)%q); };
+    auto adjust=[](u32 v,u32 q) { return v>q?v-q:v; };  // adjust_m31/m61_weight_shift
+    u32* table=reinterpret_cast<u32*>(result.weightsIF.data());
     for(u32 line=0;line<H;++line)for(u32 x=0;x<W;++x) {
       u32 const a=x*BH+line%BH;
       u32 const pair=R==1?x*H+line:a+L*((line%R+R-a%R)*linv%R);
       u32 const word=2*pair;
-      u32 const packed=rotation(word,31,r31)|(rotation(word+1,31,r31)<<5)|
-                       (rotation(word,61,r61)<<10)|(rotation(word+1,61,r61)<<16)|
-                       (u32(ceilPart(word+1)>ceilPart(word))<<22)|
-                       (u32(ceilPart(word+2)>ceilPart(word+1))<<23);
+      u32 const k0=rotation(word,31,r31), k1=rotation(word+1,31,r31), m0=rotation(word,61,r61), m1=rotation(word+1,61,r61);
+      u32 const b0=ceilPart(word+1)>ceilPart(word), b1=ceilPart(word+2)>ceilPart(word+1);
       // Physical line/column order gives adjacent GPU lanes adjacent 32-bit loads.
-      memcpy(reinterpret_cast<unsigned char*>(result.weightsIF.data())+4*(line*W+x),&packed,4);
+      // First half: the inverse weight shifts with log2_NWORDS + 1 added and adjusted, and both big-word flags.
+      table[line*W+x]=adjust(k0+e,31)|(adjust(k1+e,31)<<5)|(adjust(m0+e,61)<<10)|(adjust(m1+e,61)<<16)|(b0<<22)|(b1<<23);
+      // Second half: the weight shifts as right shifts, shl(x, k) == shr(x, q - k), and the first word's big-word flag.
+      table[N/2+line*W+x]=(31-k0)|((31-k1)<<5)|((61-m0)<<10)|((61-m1)<<16)|(b0<<22);
     }
     return result;
   }
