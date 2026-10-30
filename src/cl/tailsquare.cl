@@ -779,7 +779,7 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
-  u32 height_trigs = SMALL_HEIGHT*1;
+  u32 height_trigs = SMALL_HEIGHT*2;
 #if TAIL_TRIGS31 >= 1
   GF31 trig = TFLOAD(&smallTrig31[height_trigs + me]);
 #if SINGLE_WIDE
@@ -840,7 +840,7 @@ KERNEL_CAP(G_H) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #if TAIL_TRIGS31 >= 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
-  u32 height_trigs = SMALL_HEIGHT*1;
+  u32 height_trigs = SMALL_HEIGHT*2;
   // Read a hopefully cached line of data and one non-cached GF31 per line
   GF31 trig = TFLOAD(&smallTrig31[height_trigs + me]);                    // Trig values for line zero, should be cached
   GF31 mult = TSLOAD(&smallTrig31[height_trigs + G_H + TAIL_TRIG_LINE(line1)]);           // Line multiplier
@@ -850,7 +850,7 @@ KERNEL_CAP(G_H) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #else
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
-  u32 height_trigs = SMALL_HEIGHT*1;
+  u32 height_trigs = SMALL_HEIGHT*2;
   // Read pre-computed trig values
   GF31 trig = TOLOAD(&smallTrig31[height_trigs + TAIL_TRIG_LINE(line1)*G_H + me]);
 #endif
@@ -928,7 +928,7 @@ KERNEL_CAP(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTri
 #if TAIL_TRIGS31 >= 1
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
-  u32 height_trigs = SMALL_HEIGHT*1;
+  u32 height_trigs = SMALL_HEIGHT*2;
   // Read a hopefully cached line of data and one non-cached GF31 per line
   GF31 trig = TFLOAD(&smallTrig31[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
   GF31 mult = TSLOAD(&smallTrig31[height_trigs + G_H + TAIL_TRIG_LINE(line_u)*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
@@ -938,7 +938,7 @@ KERNEL_CAP(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTri
 #else
   // Calculate number of trig values used by fft_HEIGHT (see genSmallTrigCombo in trigBufCache.cpp)
   // The trig values used here are pre-computed and stored after the fft_HEIGHT trig values.
-  u32 height_trigs = SMALL_HEIGHT*1;
+  u32 height_trigs = SMALL_HEIGHT*2;
   // Read pre-computed trig values
   GF31 trig = TOLOAD(&smallTrig31[height_trigs + TAIL_TRIG_LINE(line_u)*G_H*2 + me]);
 #endif

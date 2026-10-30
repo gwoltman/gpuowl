@@ -676,6 +676,9 @@ uint2 root1GF31(u32 N, u32 k) {
   return root1GF31(root1N, k);
 }
 
+// A GF31 twiddle b (reduced) times 2, as the GF31 trig tables store it for cmulScaled (math.cl)
+static uint2 scaledGF31(uint2 b) { return uint2{2 * b.first, 2 * b.second}; }
+
 static vector<uint2> genSmallTrigGF31(u32 size, u32 radix) {
   u32 const WG = size / radix;
   vector<uint2> tab;
@@ -714,7 +717,10 @@ static vector<uint2> genSmallTrigGF31(u32 size, u32 radix) {
     }
   }
 
-  tab.resize(size);
+  // Second half:  each twiddle above times 2 (see cmulScaled in math.cl), read on AMD by tabMul, tabMul16 and tabMul8_4a/b
+  u32 const n = tab.size();
+  tab.resize(2 * size);
+  for (u32 k = 0; k < n; ++k) { tab[size + k] = scaledGF31(tab[k]); }
   return tab;
 }
 
@@ -810,6 +816,9 @@ static vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width) {
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF31(root1mw, k)); }
     GF31 const root1wmh = GF31::root_one(width * middle * smallH);
     for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF31(root1wmh, k)); }
+    // Then the middleMul and middleMul2 twiddles (the first smallH * (middle - 1) + width entries) times 2, read on AMD by cmulScaled
+    u32 const n = smallH * (middle - 1) + width;
+    for (u32 k = 0; k < n; ++k) { tab.push_back(scaledGF31(tab[k])); }
   }
   return tab;
 }

@@ -972,6 +972,9 @@ void OVERLOAD fft_MIDDLE(GF31 *u) {
 #endif
 }
 
+// Where genMiddleTrigGF31 stores the middleMul and middleMul2 twiddles times 2 (not PFA):  the entry of trig[k] is at trig[MIDDLE_TRIG31_SCALED + k]
+#define MIDDLE_TRIG31_SCALED (SMALL_HEIGHT * MIDDLE + WIDTH)
+
 void OVERLOAD middleMul(GF31 *u, u32 s, TrigGF31 trig) {
   assert(s < SMALL_HEIGHT);
   if (MIDDLE == 1) return;
@@ -979,7 +982,11 @@ void OVERLOAD middleMul(GF31 *u, u32 s, TrigGF31 trig) {
 #if !MIDDLE_CHAIN31           // Read all trig values from memory
 
   for (u32 k = 1; k < MIDDLE; ++k) {
+#if AMDGPU
+    u[k] = cmulScaled(u[k], TFLOAD(&trig[MIDDLE_TRIG31_SCALED + s]));
+#else
     WADD(k, TFLOAD(&trig[s]));
+#endif
     s += SMALL_HEIGHT;
   }
 
@@ -1129,13 +1136,24 @@ void OVERLOAD middleMul2(GF31 *u, u32 x, u32 y, TrigGF31 trig) {
   // The first trig table can be shared with MiddleMul trig table if WIDTH = HEIGHT.
   if (WIDTH == SMALL_HEIGHT) trig1 = trig;
 
+#if AMDGPU
+  // The chain's table twiddles times 2 (see genMiddleTrigGF31 and cmulScaled)
+  GF31 w2 = TFLOAD(&trig1[MIDDLE_TRIG31_SCALED + x]);         // x / (MIDDLE * WIDTH)
+  u32 desired_root = x * y;
+  GF31 base = cmulScaled(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[MIDDLE_TRIG31_SCALED + desired_root / SMALL_HEIGHT]));
+#else
   GF31 w = TFLOAD(&trig1[x]);         // x / (MIDDLE * WIDTH)
   u32 desired_root = x * y;
   GF31 base = cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
+#endif
 
   WADD(0, base);
   for (u32 k = 1; k < MIDDLE; ++k) {
+#if AMDGPU
+    base = cmulScaled(base, w2);
+#else
     base = cmul(base, w);
+#endif
     WADD(k, base);
   }
 }

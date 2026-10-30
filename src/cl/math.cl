@@ -903,6 +903,17 @@ GF31 OVERLOAD cmul(GF31 a, GF31 b) {
 }
 #endif
 
+// cmul by a twiddle b (0 <= b.x, b.y < M31) given b2 = 2 b, which the GF31 twiddle tables store (see scaledGF31 in TrigBufCache.cpp).  Each sum of
+// products r is then 2 times the true value T:  T = hi32(r) * 2^31 + lo32(r) / 2 == hi32(r) + (lo32(r) >> 1), with no shift across the 32-bit word
+// boundary.  Bounds for a.x, a.y <= M31:  r <= M31 * (2 M31 - 2) + M31 * 2 M31 < 4 M31^2, so hi32(r) <= 0xFFFFFFFC; modM31 of it is at most M31, plus
+// lo32(r) >> 1 at most 2 M31 = 0xFFFFFFFE, and modM31 of that is 0..M31.
+Z31 OVERLOAD fold2(u64 r) { return modM31(modM31(hi32(r)) + (lo32(r) >> 1)); }
+GF31 OVERLOAD cmulScaled(GF31 a, GF31 b2) {
+  u64 r = mad32(a.x, b2.x, (u64) a.y * (2 * M31 - b2.y));
+  u64 i = mad32(a.x, b2.y, (u64) a.y * b2.x);
+  return U2(fold2(r), fold2(i));
+}
+
 // Complex mul where 2nd argument is a constant.  Allows cheaper modM31 in some cases.
 GF31 OVERLOAD cmul_const(GF31 a, GF31 b) {
 #if 0
