@@ -1,5 +1,8 @@
 // Copyright (C) Mihai Preda and George Woltman
 
+// Unroll the GF31 twiddle loops of fft_HEIGHT (see tabMul).  Not elsewhere: carryFused and tailMul get slower or spill.
+#define TABMUL_UNROLL31 1
+
 #include "base.cl"
 #include "fftheight.cl"
 
