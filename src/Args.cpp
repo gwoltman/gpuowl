@@ -383,6 +383,7 @@ named "config.txt" in the prpll run directory.
                                         limits tuned, and is added if it then earns the entry.  config.txt settings are not tuned.
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
 -device <N>        : select the GPU at position N in the list of devices
+-device <P>:<D>    : select GPU D of OpenCL platform P (GPUs counted per platform)
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
 -pci    <BDF>      : select the GPU with the given PCI BDF, e.g. "0c:00.0"
 
@@ -392,13 +393,14 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
 
   vector<cl_device_id> deviceIds = getAllDeviceIDs();
   if (!deviceIds.empty()) {
-    printf(" N  : PCI BDF |   UID            |   Driver                 |    Device\n");
+    printf(" N  :  P:D  : PCI BDF |   UID            |   Driver                 |    Device\n");
   }
   for (unsigned i = 0; i < deviceIds.size(); ++i) {
     cl_device_id id = deviceIds[i];
     string const bdf = getBdfFromDevice(id);
-    printf("%2u  : %7s | %16s | %-24s | %s | %s\n",
+    printf("%2u  : %5s : %7s | %16s | %-24s | %s | %s\n",
            i,
+           getPlatformDeviceFromPos(i).c_str(),
            bdf.c_str(),
            getUidFromBdf(bdf).c_str(),
            getDriverVersion(id).c_str(),
@@ -622,7 +624,25 @@ void Args::parse(const string& line) {
       }
     }
     else if (key == "-user") { user = s; }
-    else if (key == "-device" || key == "-d") { device = stoi(s); }
+    else if (key == "-device" || key == "-d") {
+      // "-d N": position N in the list of all devices (unchanged).
+      // "-d P:D": GPU D of OpenCL platform P, the numbering used by BOINC's boinc_get_opencl_ids().
+      if (auto const colon = s.find(':'); colon != string::npos) {
+        int platform = -1, dev = -1;
+        const char* const b = s.c_str();
+        const char* const e = b + s.size();
+        auto const r1 = from_chars(b, b + colon, platform);
+        auto const r2 = from_chars(b + colon + 1, e, dev);
+        if (r1.ec != errc{} || r1.ptr != b + colon || r2.ec != errc{} || r2.ptr != e) {
+          log("-device expects <N> or <platform>:<device>, got '%s'\n", s.c_str());
+          throw "-device syntax";
+        }
+        device = getPosFromPlatformDevice(platform, dev);
+        if (device < 0) { throw "-device: no such platform:device"; }
+      } else {
+        device = stoi(s);
+      }
+    }
     else if (key == "-uid") { device = getPosFromUid(s); }
     else if (key == "-pci") { device = getPosFromBdf(s); }
     else if (key == "-dir") { dir = s; }
