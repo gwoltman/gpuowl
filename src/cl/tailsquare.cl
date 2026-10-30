@@ -45,7 +45,24 @@ u32 get_line_number(u32 base) {
 #endif
 }
 
+// TAIL_RELABEL=1 (single-wide tailSquare, FFT_VARIANT_H 1 or 2): the partner line v is read, transformed and written with each lane
+// acting as lane G_H - 1 - me.  Thread me then holds in v[NH - 1 - i] the element that reverseLine would leave in its v[i], so the two
+// reverseLine calls around pairSq become register renames and the tail does no LDS exchange for them.  Variant 0 is excluded: its
+// broadcasts read the hardware lanes.
+#if !defined(TAIL_RELABEL)
+#define TAIL_RELABEL 0
+#endif
+#if FFT_VARIANT_H == 0
+#undef TAIL_RELABEL
+#define TAIL_RELABEL 0
+#endif
+
 #if FFT_FP64
+
+// Swap u[i] and u[NH - 1 - i]: no instructions, only a renaming of registers
+void OVERLOAD revRegs(T2 *u) {
+  for (u32 i = 0; i < NH / 2; ++i) { T2 t = u[i]; u[i] = u[NH - 1 - i]; u[NH - 1 - i] = t; }
+}
 
 // Handle the final squaring step on a pair of complex numbers.  Swap real and imaginary results for the inverse FFT.
 // We used to conjugate the results, but swapping real and imaginary can save some negations in carry propagation.
@@ -184,11 +201,12 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   u32 memline2 = transPos(line2, MIDDLE, WIDTH);
 
   u32 me = get_local_id(0);
+  u32 vMe = TAIL_RELABEL ? G_H - 1 - me : me;     // The lane this thread acts as for line v (see TAIL_RELABEL)
 
   dependentLaunchWait();   // Previous kernel was fftMiddleInFP64 that launched dependents before writing FP64 data
 
   readTailFusedLine(in, u, line1, me);
-  readTailFusedLine(in, v, line2, me);
+  readTailFusedLine(in, v, line2, vMe);
 
 #if FFT_VARIANT_H != 0
   T2 w;
@@ -200,7 +218,8 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   u32 zerohack = ZEROHACK_H * (u32) get_group_id(0) / 131072;
   fft_HEIGHT1(lds + zerohack, u, smallTrig + zerohack, w, 1, me);
-  fft_HEIGHT1(lds + zerohack, v, smallTrig + zerohack, w, 1, me);
+  fft_HEIGHT1(lds + zerohack, v, smallTrig + zerohack, w, 1, vMe);
+  if (TAIL_RELABEL) revRegs(v);                   // v is now reversed, as reverseLine(lds, v) would leave it
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
 #if PFA
@@ -236,9 +255,11 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
     // Line H/2 also pairs with itself (but without offset).
     T2 trig2 = cmulFancy(trig, TAILT);
+    if (TAIL_RELABEL) reverseLine(lds, v);        // Back to the natural order for this one workgroup
     reverse(lds, v + NH/2, false);
     pairSq(NH/2, v,   v + NH/2, trig2, false, false);
     reverse(lds, v + NH/2, false);
+    if (TAIL_RELABEL) reverseLine(lds, v);
   }
   else {
 #else
@@ -246,22 +267,25 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #endif
 #if PFA
     bool bump = line1 % PFA_TW == 0;       // The kx = 0 lines of rows k3 and PFA - k3 pair offset by one
-    reverseLineMaybeBump(lds, v, bump);
+    if (TAIL_RELABEL && bump) reverseLine(lds, v);              // Back to the natural order, then reversed offset by one
+    if (!TAIL_RELABEL || bump) reverseLineMaybeBump(lds, v, bump);
     pairSq(NH, u, v, trig, false, false);
-    reverseLineMaybeBump(lds, v, bump);
+    if (!TAIL_RELABEL || bump) reverseLineMaybeBump(lds, v, bump);
+    if (TAIL_RELABEL && bump) reverseLine(lds, v);
 #else
-    reverseLine(lds, v);
+    if (!TAIL_RELABEL) reverseLine(lds, v);
     pairSq(NH, u, v, trig, false, false);
-    reverseLine(lds, v);
+    if (!TAIL_RELABEL) reverseLine(lds, v);
 #endif
   }
 
   dependentLaunch();       // Next kernel will be fftMiddleOutFP64 which must dependentLaunchWait before reading data
 
-  fft_HEIGHT2(lds, v, smallTrig, w, 1, me);
+  if (TAIL_RELABEL) revRegs(v);
+  fft_HEIGHT2(lds, v, smallTrig, w, 1, vMe);
   fft_HEIGHT2(lds, u, smallTrig, w, 1, me);
 
-  writeTailFusedLine(v, out, memline2, me);
+  writeTailFusedLine(v, out, memline2, vMe);
   writeTailFusedLine(u, out, memline1, me);
 }
 

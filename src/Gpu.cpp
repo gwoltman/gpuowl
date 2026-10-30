@@ -314,6 +314,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "ENABLE_SUBBARRIER",      // Experimental, nVidia: LDSbar syncs only its sub-workgroup, 1 = each, 2 = four in pairs (see base.cl)
                               "NONTEMPORAL",            // Deprecated
 			      "HOIST_W","HOIST_H",
+                              "TAIL_RELABEL",           // Experimental, single-wide FP64 tailSquare: the partner line's lanes relabeled instead of reverseLine (see tailsquare.cl)
 			      "LDSPAD_W","LDSPAD_H",
 			      "LDSSWIZ_W","LDSSWIZ_H",
 			      "L2_STRIPING",
