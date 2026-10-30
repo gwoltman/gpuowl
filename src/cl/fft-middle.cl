@@ -1211,6 +1211,13 @@ void OVERLOAD fft_MIDDLE(GF61 *u) {
 #endif
 }
 
+// Where genMiddleTrigGF61 stores the scaled Karatsuba terms of the middleMul and middleMul2 twiddles (not PFA):  the entry of trig[k] is at
+// trig[MIDDLE_TRIG61_SCALED + k]
+#define MIDDLE_TRIG61_SCALED (SMALL_HEIGHT * MIDDLE + WIDTH)
+#define MIDDLE_TRIG61_B4 (MIDDLE_TRIG61_SCALED + SMALL_HEIGHT * (MIDDLE - 1) + WIDTH)
+// Not at MIDDLE >= 16 with INPLACE=0:  there the larger table costs more than the shorter cmuls save (RX 7900 XTX); in place it pays
+#define MIDDLE_SCALED61 (AMDGPU && !(MIDDLE_KERNEL && MIDDLE >= 16 && INPLACE == 0))
+
 void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
   assert(s < SMALL_HEIGHT);
   if (MIDDLE == 1) return;
@@ -1220,7 +1227,11 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
   // Left to itself ROCm keeps this loop and the one in middleMul2 rolled at MIDDLE=16, which puts u[] in scratch
   #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
+#if MIDDLE_SCALED61
+    u[k] = cmulScaled(u[k], TFLOAD(&trig[MIDDLE_TRIG61_B4 + s]), TFLOAD(&trig[MIDDLE_TRIG61_SCALED + s]));
+#else
     WADD(k, TFLOAD(&trig[s]));
+#endif
     s += SMALL_HEIGHT;
   }
 
@@ -1376,12 +1387,23 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
 
   GF61 w = TFLOAD(&trig1[x]);                      // x / (MIDDLE * WIDTH)
   u32 desired_root = x * y;
+#if MIDDLE_SCALED61
+  // The chain's table twiddles by their scaled Karatsuba terms (see genMiddleTrigGF61 and cmulScaled)
+  GF61 wK4 = TFLOAD(&trig1[MIDDLE_TRIG61_SCALED + x]), wB4 = TFLOAD(&trig1[MIDDLE_TRIG61_B4 + x]);
+  GF61 base = cmulScaled(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[MIDDLE_TRIG61_B4 + desired_root / SMALL_HEIGHT]),
+                         TFLOAD(&trig1[MIDDLE_TRIG61_SCALED + desired_root / SMALL_HEIGHT]));
+#else
   GF61 base = cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
+#endif
 
   WADD(0, base);
   #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
+#if MIDDLE_SCALED61
+    base = cmulScaled(base, wB4, wK4);
+#else
     base = cmul(base, w);
+#endif
     WADD(k, base);
   }
 }

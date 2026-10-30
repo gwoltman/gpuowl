@@ -340,6 +340,21 @@ u128 OVERLOAD mul64(u64 a, u64 b) {
 #endif
 }
 
+// mul64 when a + b < 2^64 (as integers).  The middle sum ah * bl + al * bh + hi32(al * bl) is then below a + b, so it fits in 64 bits and
+// is built in one 64-bit accumulator through v_mad_u64_u32's addend.  ROCm emits 4 mads, 1 move and one 64-bit add (it adds hi32(al * bl)
+// last) instead of 4 mads, 3 moves and a 64-bit add.
+u128 OVERLOAD mul64s(u64 a, u64 b) {
+#if HAS_PTX
+  return mul64(a, b);
+#else
+  u32 al = (u32) a, ah = (u32) (a >> 32), bl = (u32) b, bh = (u32) (b >> 32);
+  u64 ll = (u64) al * bl;
+  u64 mid = (u64) ah * bl + ((u64) al * bh + (ll >> 32));
+  u64 hh = (u64) ah * bh + (mid >> 32);
+  return make_u128(hh, (mid << 32) | (u32) ll);
+#endif
+}
+
 u128 OVERLOAD mad64(u64 a, u64 b, u64 c) {
 #if ENABLE_MAD64 && HAS_PTX >= 200        // mad instruction requires sm_20 support or higher    // Slower on TitanV and mobile 4070, don't understand why
   u64 reslo, reshi;
@@ -396,6 +411,22 @@ u128 OVERLOAD mad64(u64 a, u64 b, u128 c) {
   return make_u128((u64)as_ulong(rhi2), (u64)as_ulong(rlo2));
 #else
   return add(mul64(a, b), c);
+#endif
+}
+
+// mad64 when a + b < 2^64, see mul64s
+u128 OVERLOAD mad64s(u64 a, u64 b, u64 c) {
+#if HAS_PTX
+  return mad64(a, b, c);
+#else
+  return add(mul64s(a, b), make_u128(0, c));
+#endif
+}
+u128 OVERLOAD mad64s(u64 a, u64 b, u128 c) {
+#if HAS_PTX
+  return mad64(a, b, c);
+#else
+  return add(mul64s(a, b), c);
 #endif
 }
 
@@ -1171,7 +1202,7 @@ u64 OVERLOAD weakModM61(u128 a, u32 num_bits) {
 // If n <= 6 result will be at most (n+1)*M61+epsilon.
 // If n > 6 result will be at most 2*M61+epsilon.
 Z61 OVERLOAD weakMul(Z61 a, Z61 b, const u32 a_m61_count, const u32 b_m61_count) {
-  u128 ab = mul64(a, b);                                // Max value is (a_m61_count - 1) * (b_m61_count - 1) * M61^2 + epsilon
+  u128 ab = (a_m61_count + b_m61_count <= 9) ? mul64s(a, b) : mul64(a, b);                               // Max value is (a_m61_count - 1) * (b_m61_count - 1) * M61^2 + epsilon
   if ((a_m61_count - 1) * (b_m61_count - 1) <= 6) {
     return weakModM61(ab, 125);                         // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 1) * M61 + epsilon
   } else {
@@ -1179,7 +1210,7 @@ Z61 OVERLOAD weakMul(Z61 a, Z61 b, const u32 a_m61_count, const u32 b_m61_count)
   }
 }
 Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u64 c, const u32 a_m61_count, const u32 b_m61_count) {
-  u128 ab = mad64(a, b, c);                             // Max value is (a_m61_count - 1) * (b_m61_count - 1) * M61^2 + epsilon
+  u128 ab = (a_m61_count + b_m61_count <= 9) ? mad64s(a, b, c) : mad64(a, b, c);  // Max value is (a_m61_count - 1) * (b_m61_count - 1) * M61^2 + epsilon
   if ((a_m61_count - 1) * (b_m61_count - 1) <= 6) {
     return weakModM61(ab, 125);                         // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 1) * M61 + epsilon
   } else {
@@ -1187,7 +1218,7 @@ Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u64 c, const u32 a_m61_count, const u32 b_
   }
 }
 Z61 OVERLOAD weakMulAdd(Z61 a, Z61 b, u128 c, const u32 a_m61_count, const u32 b_m61_count) {  // Max c value assumed to be 2*M61^2+epsilon
-  u128 ab = mad64(a, b, c);                             // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 2) * M61^2 + epsilon
+  u128 ab = (a_m61_count + b_m61_count <= 9) ? mad64s(a, b, c) : mad64(a, b, c);  // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 2) * M61^2 + epsilon
   if ((a_m61_count - 1) * (b_m61_count - 1) + 2 <= 6) {
     return weakModM61(ab, 125);                         // Max value is ((a_m61_count - 1) * (b_m61_count - 1) + 3) * M61 + epsilon
   } else {
@@ -1250,11 +1281,26 @@ GF61 OVERLOAD csqa(GF61 a, GF61 c) { return csqa(a, c, 2); }
 
 // Complex mul
 #if 1
-GF61 OVERLOAD cmul(GF61 a, GF61 b) {
-  u128 k1 = mul64(b.x, a.x + a.y);                            // max value is 2*M61^2+epsilon
-  Z61 k1k2 = weakMulAdd(a.x, b.y + neg(b.x, 2), k1, 2, 4);    // max value is 6*M61+epsilon
-  Z61 k1k3 = weakMulAdd(a.y, neg(b.y + b.x, 3), k1, 2, 4);    // max value is 6*M61+epsilon
+// cmul given b.x and b's two Karatsuba terms pre = (b.y + neg(b.x, 2), neg(b.y + b.x, 3)), which the GF61 twiddle tables store (see tabMul)
+GF61 OVERLOAD cmulPre(GF61 a, Z61 bx, GF61 pre) {
+  u128 k1 = mul64s(bx, a.x + a.y);                            // max value is 2*M61^2+epsilon
+  Z61 k1k2 = weakMulAdd(a.x, pre.x, k1, 2, 4);                // max value is 6*M61+epsilon
+  Z61 k1k3 = weakMulAdd(a.y, pre.y, k1, 2, 4);                // max value is 6*M61+epsilon
   return U2(modM61(k1k3), modM61(k1k2));
+}
+GF61 OVERLOAD cmul(GF61 a, GF61 b) { return cmulPre(a, b.x, U2(b.y + neg(b.x, 2), neg(b.y + b.x, 3))); }
+// cmul by a twiddle b (0 <= b.x, b.y < M61) given B4.x = 4 b.x and K4 = 4 times b's two Karatsuba terms reduced, (4 ((b.y - b.x) mod M61),
+// 4 ((-b.x - b.y) mod M61)), which the GF61 twiddle tables store (see scaledKaratsubaGF61 in TrigBufCache.cpp).  With a doubled, each sum of products
+// is 8 times the true value, so its 2^61 split falls on the 64-bit word boundary:  value = hi64 * 2^61 + lo64 / 8 == hi64 + (lo64 >> 3), which costs
+// less than the shifts, masks and adds of a weakModM61.  Bounds for a.x, a.y <= M61+7 (any modM61 output):  2 a.x + 4 K < 2^64, so mul64s is exact
+// for both K products; 2 (a.x + a.y) can pass 2^63, but its high word is then 2^31 with a low word <= 24, so mul64s's middle sum still fits (the high
+// word of 4 b.x is below 2^31); each sum is below 8 * (3 M61 + 42) * M61 < 2^127; the fold is below 2^63 + 2^61, and modM61 of it is 0..M61+7, as
+// cmul's result.
+Z61 OVERLOAD fold8(u128 p) { return u128_hi64(p) + (u128_lo64(p) >> 3); }
+GF61 OVERLOAD cmulScaled(GF61 a, GF61 B4, GF61 K4) {
+  Z61 x2 = a.x + a.x, y2 = a.y + a.y;
+  u128 k1 = mul64s(x2 + y2, B4.x);
+  return U2(modM61(fold8(add(mul64s(y2, K4.y), k1))), modM61(fold8(add(mul64s(x2, K4.x), k1))));
 }
 #else
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {
@@ -1353,8 +1399,8 @@ GF61 OVERLOAD mul_9t16(GF61 a) { return cmul(a, U2(M61 - 22027337052962166ULL, M
 #define T16C1  22027337052962166ULL
 #define T16S1  1693317751237720973ULL
 GF61 OVERLOAD mul_t16q(GF61 a) {         // k1 = C1 * (ax + ay):  re = k1 + ay * (M61 - S1 - C1) is 0..1.28+,  im = k1 + ax * (S1 - C1) is 0..1.74+
-  u128 k1 = mul64(T16C1, a.x + a.y);
-  return U2(weakModM61(mad64(a.y, M61 - T16S1 - T16C1, k1), 125), weakModM61(mad64(a.x, T16S1 - T16C1, k1), 125));
+  u128 k1 = mul64s(T16C1, a.x + a.y);                  // mul64s/mad64s:  a.x + a.y and the constants are far below 2^64
+  return U2(weakModM61(mad64s(a.y, M61 - T16S1 - T16C1, k1), 125), weakModM61(mad64s(a.x, T16S1 - T16C1, k1), 125));
 }
 
 // Return a+b and a-b
