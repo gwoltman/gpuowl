@@ -54,3 +54,12 @@ std::string getBdfFromPos(int pos);
 int getPosFromUid(const std::string& uid);
 
 std::string getUidFromPos(int pos);
+
+// Get the position in the OpenCL enumeration from a (platform, device) pair: platform is the index in
+// clGetPlatformIDs(), device is the index among that platform's GPU devices (clGetDeviceIDs with
+// CL_DEVICE_TYPE_GPU), which is how boinc_get_opencl_ids() and the BOINC client number OpenCL GPUs.
+// Returns -1 if there is no such device.
+int getPosFromPlatformDevice(int platform, int device);
+
+// The inverse: "<platform>:<device>" for a position in the OpenCL enumeration, or "" if the device is not a GPU.
+std::string getPlatformDeviceFromPos(int pos);
