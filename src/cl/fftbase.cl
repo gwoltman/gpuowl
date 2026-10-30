@@ -2235,7 +2235,13 @@ void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
   if (!TABMUL_CHAIN61) {
     for (u32 i = 1; i < RADIX; ++i) {
+#if AMDGPU
+      // The second half of the table holds each twiddle's Karatsuba terms (genSmallTrigGF61):  four fewer 64-bit adds/subs per cmul
+      GF61 w = TFLOAD(&trig[(i-1)*WG + p]);
+      u[i] = cmulPre(u[i], w.x, TFLOAD(&trig[WG*RADIX + (i-1)*WG + p]));
+#else
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
+#endif
     }
     return;
   }
