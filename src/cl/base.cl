@@ -1164,7 +1164,9 @@ void dependentLaunch() {
 
 void dependentLaunchWait() {
 #if CUDA_BACKEND && HAS_PTX >= 900 && PDL
-  __asm volatile("griddepcontrol.wait;");                 // same as cudaGridDependencySynchronize();
+  // The "memory" clobber keeps the compiler from moving loads of the previous kernel's output above the wait (volatile alone only
+  // keeps the asm itself in place).  CUDA's own cudaGridDependencySynchronize() is this asm with the same clobber.
+  __asm volatile("griddepcontrol.wait;" ::: "memory");     // same as cudaGridDependencySynchronize();
 #endif
 }
 
