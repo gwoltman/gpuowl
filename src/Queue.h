@@ -46,7 +46,7 @@ public:
   template<typename T>
   void fillBuf(cl_mem buf, T pattern, size_t size, TimeInfo* tInfo) { fillBufTE(buf, sizeof(T), &pattern, size, tInfo); }
 
-  void run(cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY, TimeInfo* tInfo);
+  void run(cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY, TimeInfo* tInfo, size_t offsetX = 0);
   void readSync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo);
   void readAsync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo);
   void copyBuf(cl_mem src, cl_mem dst, size_t size, TimeInfo* tInfo);

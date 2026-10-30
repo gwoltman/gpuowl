@@ -275,7 +275,7 @@ CARRY_SIZE = 100000
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 nH, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
-                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q) {
+                 u32 &multi_q, u32 &l2_striping, u32 (&tail_split)[4], u32 &carry_split, bool &graphs, bool &zero_q) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -317,6 +317,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 			      "LDSPAD_W","LDSPAD_H",
 			      "LDSSWIZ_W","LDSSWIZ_H",
 			      "L2_STRIPING",
+                              "TAIL_SPLIT",             // Launch each tail kernel as this many dispatches (see Gpu::replay_one)
+                              "CARRY_SPLIT",            // Launch carryFused as this many dispatches (see Gpu::runCarryFused)
 			      "MIDDLE_CHAIN31",
                               "MIDDLE_CHAIN61",
                               "CS_FENCE",               // Device-scope fences in carryFused's hand-offs (see carryfused.cl).  Required for Intel Arc GPUs.
@@ -530,10 +532,42 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     }
   }
 
+  // TAIL_SPLIT and CARRY_SPLIT: launch each tail kernel and carryFused in this many parts.  With ROCm 7.2.4 on an RX 7900 XTX
+  // (gfx1100, which schedules its queues with MES) a dispatch that runs longer than about 1 ms is followed by ~250 us of idle GPU;
+  // a split costs a few tens of us (an extra launch and a partly filled last wave).  Unless set, gfx11 and gfx12 split the kernels
+  // whose run time on the XTX is above 1 ms into parts of at most 750 us.  carryFused's workgroups hand their carries on in
+  // workgroup order, which the parts keep; they are numbered from a global work offset, which the CUDA build does not have.
+  // L2_STRIPING already launches the tail in parts.
+  {
+    string const gfx = isAmdGpu(id) ? getDeviceName(id) : "";
+    bool const autoSplit = gfx.starts_with("gfx11") || gfx.starts_with("gfx12");
+    auto const parts = [](double us) { return us > 1000 ? u32(std::ceil(us / 750)) : 1u; };
+    // RX 7900 XTX microseconds per million words of FFT size: the tail kernel of each number type, carryFused per number type
+    double const mwords = fft.shape.size() / double(1 << 20);
+    double const tailUs[4] = {0, (fft.FFT_FP64 ? 63 : 11) * mwords, 18 * mwords, 41 * mwords};
+    double const carryUs = (fft.FFT_FP64 * 67 + fft.FFT_FP32 * 17 + fft.NTT_GF31 * 18 + fft.NTT_GF61 * 36) * mwords;
+    u32 const tailKey = configValue("TAIL_SPLIT", 0), carryKey = configValue("CARRY_SPLIT", 0);
+    for (int g = 1; g <= 3; ++g) { tail_split[g] = l2_striping ? 1 : tailKey ? tailKey : autoSplit ? parts(tailUs[g]) : 1; }
+    carry_split = carryKey ? carryKey : autoSplit ? parts(carryUs) : 1;
+#if CUDA_BACKEND
+    if (carry_split > 1) { log("CARRY_SPLIT is not supported in the CUDA build.  Changing to CARRY_SPLIT=1.\n"); carry_split = 1; }
+#endif
+    // carryfused.cl numbers the workgroups of a part from the global offset only when CARRY_SPLIT > 1
+    config.erase("CARRY_SPLIT");
+    if (carry_split > 1) { config["CARRY_SPLIT"] = to_string(carry_split); }
+    if (!(fft.FFT_FP64 || fft.FFT_FP32)) { tail_split[1] = 1; }
+    if (!fft.NTT_GF31) { tail_split[2] = 1; }
+    if (!fft.NTT_GF61) { tail_split[3] = 1; }
+    if (doLog && (carry_split > 1 || tail_split[1] > 1 || tail_split[2] > 1 || tail_split[3] > 1)) {
+      log("Launching carryFused in %u parts, the tail kernels in %u (FP) / %u (GF31) / %u (GF61) parts (CARRY_SPLIT, TAIL_SPLIT)\n",
+          carry_split, tail_split[1], tail_split[2], tail_split[3]);
+    }
+  }
+
   // The register limits are applied per kernel (numRegisters), not as defines: as defines they would change every kernel's
   // compile options, and so its kernel cache entry, whenever one kernel's limit changed.
   // Nor can the radix keys be defines (a macro name cannot start with a digit); the .cl code sees NW and NH.
-  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || kv.first == "SMEM_SPILL"; });
+  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || kv.first == "SMEM_SPILL" || kv.first == "TAIL_SPLIT"; });
   string defines = toDefine(config);
   if (doLog) { log("config: %s\n", defines.c_str()); }
 
@@ -1034,7 +1068,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   queue{*shared.context, args.profile, false, args.value("SLEEP_WAIT", -1)},
       
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
-                               multi_q, l2_striping, graphs, zero_q)},
+                               multi_q, l2_striping, tail_split, carry_split, graphs, zero_q)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
@@ -1745,6 +1779,22 @@ Queue* Gpu::zeroQueueFor(const Queue* q) {
 void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Queue *q, int base, int kernelsToExecuteX, int kernelsToExecuteY) {
   Queue* const tailQ = q ? q : &queue;
 
+  // Launch a tail kernel, in tail_split parts of consecutive workgroups (TAIL_SPLIT) unless L2 striping has already sized it.
+  // launch(b) runs the kernel with base b, the first workgroup of the part.
+  auto tailLaunch = [&](Kernel& k, Queue* tq, auto launch) {
+    k.setQueue(tq);
+    u32 const split = tail_split[cache_group];
+    if (split <= 1) { k.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); launch(base); return; }
+    u32 const groups = k.defaultGroups();
+    for (u32 i = 0, first = 0; i < split; ++i) {
+      u32 const end = u32(u64(groups) * (i + 1) / split);
+      if (end == first) { continue; }
+      k.setKernelsToExecute(end - first);
+      launch(first);
+      first = end;
+    }
+  };
+
   // The tail kernels: with two tail kernels (TAIL_KERNELS 1 or 3) the tail*Zero kernel does the self-paired lines.  With 11 or 13 it runs
   // in its own queue, forked from the tail queue and joined back before the next kernel there, and the tail kernel, which has more work,
   // is queued first.  Measured 2-7% faster for NTTs on a TITAN V but 3% slower for FP64, and 60-70% slower on a Radeon VII (ROCm).
@@ -1786,9 +1836,9 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     Buffer<double> const *in = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
     tailWithZero([&](Queue* tq) {
-      if (cache_group == 1) { ktailSquare.setQueue(tq); ktailSquare.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquare(*out, *in, base); }
-      if (cache_group == 2) { ktailSquareGF31.setQueue(tq); ktailSquareGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF31(*out, *in, base); }
-      if (cache_group == 3) { ktailSquareGF61.setQueue(tq); ktailSquareGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailSquareGF61(*out, *in, base); }
+      if (cache_group == 1) { tailLaunch(ktailSquare, tq, [&](u32 b) { ktailSquare(*out, *in, b); }); }
+      if (cache_group == 2) { tailLaunch(ktailSquareGF31, tq, [&](u32 b) { ktailSquareGF31(*out, *in, b); }); }
+      if (cache_group == 3) { tailLaunch(ktailSquareGF61, tq, [&](u32 b) { ktailSquareGF61(*out, *in, b); }); }
     }, [&](Queue* zq) {
       if (cache_group == 1) { ktailSquareZero.setQueue(zq); ktailSquareZero(*out, *in); }
       if (cache_group == 2) { ktailSquareZeroGF31.setQueue(zq); ktailSquareZeroGF31(*out, *in); }
@@ -1803,9 +1853,9 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     Buffer<double> const *in1 = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
     tailWithZero([&](Queue* tq) {
-      if (cache_group == 1) { ktailMul.setQueue(tq); ktailMul.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMul(*out, *in1, *in2, base); }
-      if (cache_group == 2) { ktailMulGF31.setQueue(tq); ktailMulGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF31(*out, *in1, *in2, base); }
-      if (cache_group == 3) { ktailMulGF61.setQueue(tq); ktailMulGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulGF61(*out, *in1, *in2, base); }
+      if (cache_group == 1) { tailLaunch(ktailMul, tq, [&](u32 b) { ktailMul(*out, *in1, *in2, b); }); }
+      if (cache_group == 2) { tailLaunch(ktailMulGF31, tq, [&](u32 b) { ktailMulGF31(*out, *in1, *in2, b); }); }
+      if (cache_group == 3) { tailLaunch(ktailMulGF61, tq, [&](u32 b) { ktailMulGF61(*out, *in1, *in2, b); }); }
     }, [&](Queue* zq) {
       if (cache_group == 1) { ktailMulZero.setQueue(zq); ktailMulZero(*out, *in1, *in2); }
       if (cache_group == 2) { ktailMulZeroGF31.setQueue(zq); ktailMulZeroGF31(*out, *in1, *in2); }
@@ -1820,9 +1870,9 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     Buffer<double> const *in1 = buf;
     Buffer<double> const *out = in_place ? buf : &buf3;
     tailWithZero([&](Queue* tq) {
-      if (cache_group == 1) { ktailMulLow.setQueue(tq); ktailMulLow.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLow(*out, *in1, *in2, base); }
-      if (cache_group == 2) { ktailMulLowGF31.setQueue(tq); ktailMulLowGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF31(*out, *in1, *in2, base); }
-      if (cache_group == 3) { ktailMulLowGF61.setQueue(tq); ktailMulLowGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulLowGF61(*out, *in1, *in2, base); }
+      if (cache_group == 1) { tailLaunch(ktailMulLow, tq, [&](u32 b) { ktailMulLow(*out, *in1, *in2, b); }); }
+      if (cache_group == 2) { tailLaunch(ktailMulLowGF31, tq, [&](u32 b) { ktailMulLowGF31(*out, *in1, *in2, b); }); }
+      if (cache_group == 3) { tailLaunch(ktailMulLowGF61, tq, [&](u32 b) { ktailMulLowGF61(*out, *in1, *in2, b); }); }
     }, [&](Queue* zq) {
       if (cache_group == 1) { ktailMulLowZero.setQueue(zq); ktailMulLowZero(*out, *in1, *in2); }
       if (cache_group == 2) { ktailMulLowZeroGF31.setQueue(zq); ktailMulLowZeroGF31(*out, *in1, *in2); }
@@ -1936,6 +1986,23 @@ void Gpu::carryLL(Buffer<Word>& out, Buffer<double>& in) {
   kCarryLL(out, in, updateCarryPos(1 << 2));
 }
 
+// Launch a carryFused kernel, in carry_split parts of consecutive workgroups (CARRY_SPLIT).  The parts are queued in order, so every
+// workgroup still finds the carries of the one before it ready, and the last one finds group 0 done with the lines it rewrites.
+template<typename... A> void Gpu::runCarryFused(Kernel& k, const A&... args) {
+  if (carry_split <= 1) { k(args...); return; }
+  u32 const groups = k.defaultGroups();
+  for (u32 i = 0, first = 0; i < carry_split; ++i) {
+    u32 const end = u32(u64(groups) * (i + 1) / carry_split);
+    if (end == first) { continue; }
+    k.setGroupOffset(first);
+    k.setKernelsToExecute(end - first);
+    k(args...);
+    first = end;
+  }
+  k.setGroupOffset(0);
+  k.setKernelsToExecute(groups);
+}
+
 void Gpu::carryFused(Buffer<double>& buf) {
   // This kernel always ends the "bottom half".  Replay the recorded kernel calls.
   endBottomHalf();
@@ -1943,8 +2010,8 @@ void Gpu::carryFused(Buffer<double>& buf) {
   Buffer<double> const *in = &buf;
   Buffer<double> const *out = in_place ? &buf : &buf3;
   assert(roePos <= ROE_SIZE);
-  roePos < wantROE ? kCarryFusedROE(*out, *in, roePos++)
-                   : kCarryFused(*out, *in, updateCarryPos(1 << 0));
+  roePos < wantROE ? runCarryFused(kCarryFusedROE, *out, *in, roePos++)
+                   : runCarryFused(kCarryFused, *out, *in, updateCarryPos(1 << 0));
 }
 
 void Gpu::carryFusedMul(Buffer<double>& buf) {
@@ -1954,8 +2021,8 @@ void Gpu::carryFusedMul(Buffer<double>& buf) {
   Buffer<double> const *in = &buf;
   Buffer<double> const *out = in_place ? &buf : &buf3;
   assert(roePos <= ROE_SIZE);
-  roePos < wantROE ? kCarryFusedMulROE(*out, *in, roePos++)
-                   : kCarryFusedMul(*out, *in, updateCarryPos(1 << 1));
+  roePos < wantROE ? runCarryFused(kCarryFusedMulROE, *out, *in, roePos++)
+                   : runCarryFused(kCarryFusedMul, *out, *in, updateCarryPos(1 << 1));
 }
 
 void Gpu::carryFusedLL(Buffer<double>& buf) {
@@ -1964,7 +2031,7 @@ void Gpu::carryFusedLL(Buffer<double>& buf) {
   // Like fftP, if not in place write the output to the scratch buffer
   Buffer<double> const *in = &buf;
   Buffer<double> const *out = in_place ? &buf : &buf3;
-  kCarryFusedLL(*out, *in, updateCarryPos(1 << 0));
+  runCarryFused(kCarryFusedLL, *out, *in, updateCarryPos(1 << 0));
 }
 
 
