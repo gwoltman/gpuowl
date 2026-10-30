@@ -1,6 +1,3 @@
-# Isolated CUDA 13.2.1 libraries, verified from NVIDIA's manifest.
-NVRTC_ROOT ?= $(abspath ../runtimes/cuda_nvrtc-linux-x86_64-13.2.78-archive)
-PTXC_ROOT ?= $(abspath ../runtimes/libnvptxcompiler-linux-x86_64-13.2.78-archive)
 # Use "make CUDA=1" for a CUDA build, use "make DEBUG=1" for a debug build
 
 # The build artifacts are put in the "build-release" subfolder (or "build-debug" for a debug build).
@@ -9,8 +6,16 @@ PTXC_ROOT ?= $(abspath ../runtimes/libnvptxcompiler-linux-x86_64-13.2.78-archive
 
 DEBUG = 0
 CUDA = 0
-STATIC_RUNTIME = 1
-STATIC_CUDA = 1
+STATIC_RUNTIME = 0
+STATIC_CUDA = 0
+
+# CUDA builds find NVRTC and the PTX compiler in /usr/local/cuda.  To use NVIDIA's separate redistributable archives instead
+# (each has include/ and lib/), name them, e.g.
+# make CUDA=1 NVRTC_ROOT=/path/to/cuda_nvrtc-linux-x86_64-13.2.78-archive PTXC_ROOT=/path/to/libnvptxcompiler-linux-x86_64-13.2.78-archive
+NVRTC_ROOT ?=
+PTXC_ROOT ?=
+CUDA_ROOT_INCS = $(foreach r,$(NVRTC_ROOT) $(PTXC_ROOT),-I$(r)/include)
+CUDA_ROOT_LIBS = $(foreach r,$(NVRTC_ROOT) $(PTXC_ROOT),-L$(r)/lib)
 
 # Uncomment below as desired to set a particular compiler or force a debug build:
 # CXX = g++-12
@@ -25,12 +30,12 @@ CXX ?= g++
 ifeq ($(CUDA), 1)
  BIN=build-cuda
  CUDASRCS1 = clwrap_cuda.cpp cudawrap.cpp
- CUDAFLAGS = -DCUDA_BACKEND -Isrc/cuda -I$(NVRTC_ROOT)/include -I$(PTXC_ROOT)/include -I/usr/local/cuda/include
+ CUDAFLAGS = -DCUDA_BACKEND -Isrc/cuda $(CUDA_ROOT_INCS) -I/usr/local/cuda/include
  CUDAOBJS = $(CUDASRCS1:%.cpp=$(BIN)/%.o)
  ifeq ($(STATIC_CUDA), 1)
-  OPENCL_LIBS = -L$(NVRTC_ROOT)/lib -L$(PTXC_ROOT)/lib -Wl,--start-group -lnvrtc_static -lnvrtc-builtins_static -lnvptxcompiler_static -Wl,--end-group -lcuda -lpthread -ldl
+  OPENCL_LIBS = $(CUDA_ROOT_LIBS) -L/usr/local/cuda/lib64 -Wl,--start-group -lnvrtc_static -lnvrtc-builtins_static -lnvptxcompiler_static -Wl,--end-group -lcuda -lpthread -ldl
  else
-  OPENCL_LIBS = -L$(NVRTC_ROOT)/lib -L$(PTXC_ROOT)/lib -Wl,-rpath,$(NVRTC_ROOT)/lib -lnvrtc -lnvptxcompiler_static -lcuda -lpthread -ldl
+  OPENCL_LIBS = $(CUDA_ROOT_LIBS) -L/usr/local/cuda/lib64 -Wl,-rpath,'$$ORIGIN' -lnvrtc -lnvptxcompiler_static -lcuda -lpthread -ldl
  endif
 else
  BIN=build-release
