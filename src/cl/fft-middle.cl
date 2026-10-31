@@ -44,6 +44,17 @@
 #define MM2_CHAIN 2
 #endif
 
+// Middle variant 2 reads the FP64 twiddles from tables (no FP32 version: there it is variant 1)
+#if !defined(MM_CHAIN) && !defined(MM2_CHAIN) && FFT_VARIANT_M == 2
+#if FFT_FP64
+#define MM_CHAIN 2
+#define MM2_CHAIN 3
+#else
+#define MM_CHAIN 1
+#define MM2_CHAIN 2
+#endif
+#endif
+
 // Apply the twiddles needed after fft_MIDDLE and before fft_HEIGHT in forward FFT.
 // Also used after fft_HEIGHT and before fft_MIDDLE in inverse FFT.
 
@@ -134,6 +145,12 @@ void OVERLOAD middleMul(T2 *u, u32 s, Trig trig) {
   if (WIDTH == SMALL_HEIGHT) trig += SMALL_HEIGHT;     // In this case we can share the MiddleMul2 trig table.  Skip over the MiddleMul trig table.
   T2 w = TFLOAD(&trig[s]);           // s / BIG_HEIGHT
 
+#if MM_CHAIN == 2
+  // Every twiddle is one correctly rounded table value:  w^k for 1 < k < MIDDLE is at tab[(k - 2) * SMALL_HEIGHT + s], see genMiddleTrigFP64
+  Trig tab = trig + (WIDTH == SMALL_HEIGHT ? SMALL_HEIGHT : 2 * SMALL_HEIGHT) + WIDTH;
+  if (MIDDLE < SHARP_MIDDLE) { WADD(1, w); } else { WADDF(1, w); }
+  for (u32 k = 2; k < MIDDLE; ++k) { WADD(k, TFLOAD(&tab[(k - 2) * SMALL_HEIGHT + s])); }
+#else
   if (MIDDLE < SHARP_MIDDLE) {
     WADD(1, w);
 #if MM_CHAIN == 0
@@ -209,9 +226,10 @@ void OVERLOAD middleMul(T2 *u, u32 s, Trig trig) {
       WADDF(3, csqTrigFancy(w));
     }
 #else
-#error MM_CHAIN must be 0 or 1.
+#error MM_CHAIN must be 0, 1 or 2.
 #endif
   }
+#endif
 }
 
 void OVERLOAD middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
@@ -226,6 +244,15 @@ void OVERLOAD middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
   trig += SMALL_HEIGHT;          // Skip over the MiddleMul trig table
   T2 w = TFLOAD(&trig[x]);       // x / (MIDDLE * WIDTH)
 
+#if MM2_CHAIN == 3
+  // One slowTrig for x * y / ND, times correctly rounded table values for the x * SMALL_HEIGHT * k / ND part:  w^k for 1 < k < MIDDLE
+  // is at tab[(k - 2) * WIDTH + x], see genMiddleTrigFP64
+  Trig tab = trig + WIDTH + (MIDDLE - 1) * SMALL_HEIGHT;
+  T2 base = slowTrig_N(x * y, ND / MIDDLE) * factor;
+  WADD(0, base);
+  WADD(1, MIDDLE < SHARP_MIDDLE ? cmul(base, w) : cmulFancy(base, w));
+  for (u32 k = 2; k < MIDDLE; ++k) { WADD(k, cmul(base, TFLOAD(&tab[(k - 2) * WIDTH + x]))); }
+#else
   if (MIDDLE < SHARP_MIDDLE) {
     T2 base = slowTrig_N(x * y + x * SMALL_HEIGHT, ND / MIDDLE * 2) * factor;
     for (u32 k = 0; k < MIDDLE; ++k) { WADD(k, base); }
@@ -327,9 +354,10 @@ void OVERLOAD middleMul2(T2 *u, u32 x, u32 y, double factor, Trig trig) {
       }
     }
 #else
-#error MM2_CHAIN must be 0, 1 or 2.
+#error MM2_CHAIN must be 0, 1, 2 or 3.
 #endif
   }
+#endif
 }
 
 // Do a partial transpose during fftMiddleIn/Out

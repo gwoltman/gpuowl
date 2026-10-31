@@ -84,6 +84,13 @@ double2 root1(u32 N, u32 k) {
  
 }
 
+// The same as root1, with cos and sin each rounded to nearest
+static double2 root1Nearest(u32 N, u32 k) {
+  assert(k < N);
+  long double const angle = M_PIl * k / (N / 2);
+  return {double(cosl(angle)), double(sinl(angle))};
+}
+
 // Epsilon value, 2^-250, should have an exact representation as a double.  Used to avoid divide-by-zero in root1over.
 const double epsilon = 5.5271478752604445602472651921923E-76;  // Protect against divide by zero
 
@@ -304,6 +311,15 @@ static vector<double2> genMiddleTrigFP64(u32 smallH, u32 middle, u32 width) {
       for (u32 k = 0; k < smallH; ++k) { tab.push_back(root1Fancy(smallH * middle, k)); }
       for (u32 k = 0; k < width; ++k)  { tab.push_back(root1Fancy(middle * width, k)); }
       for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1(width * middle * smallH, k)); }
+    }
+    // For middle variant 2 (MM_CHAIN 2 / MM2_CHAIN 3 in fft-middle.cl) the powers 2..middle-1 of the first two tables' roots.  Built
+    // for every variant:  the middle trig cache does not key on the variant.  Rounded to nearest:  root1's choice for c^2 + s^2 == 1
+    // made this variant measurably less accurate than middle variant 1 (ROEavg 0.260 vs 0.251 at 512:15:512), nearest matches it.
+    for (u32 k = 2; k < middle; ++k) {
+      for (u32 s = 0; s < smallH; ++s) { tab.push_back(root1Nearest(smallH * middle, k * s)); }
+    }
+    for (u32 k = 2; k < middle; ++k) {
+      for (u32 x = 0; x < width; ++x) { tab.push_back(root1Nearest(middle * width, k * x)); }
     }
   }
   return tab;

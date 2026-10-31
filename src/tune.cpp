@@ -297,7 +297,7 @@ void Tune::carryTune() {
   fo.printf("\n// %s\n\n", shortTimeStr().c_str());
   u32 prevSize = 0;
   for (FFTShape const shape : FFTShape::multiSpec(shared.args->fftSpec)) {
-    FFTConfig const fft{shape, LAST_VARIANT, CARRY_AUTO};
+    FFTConfig const fft{shape, DEFAULT_VARIANT, CARRY_AUTO};
     if (prevSize == fft.size()) { continue; }
     prevSize = fft.size();
 
@@ -1389,9 +1389,9 @@ skip_some_WH_variants = 2;   // should default be 1??
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant (variant)) {
 
       // Only FP64 code supports variants.  Middle variant 1 (more accurate, slower) is timed after this sweep, only for the variants
-      // that earned an entry.
+      // that earned an entry.  Middle variant 2 (as accurate as 1, fewer FP64 ops, more table reads) only by -tune variants.
       if (variant != 202 && !FFTConfig{shape, variant, CARRY_AUTO}.FFT_FP64) continue;
-      if (variant_M(variant) == 1) continue;
+      if (variant_M(variant) == 1 || variant_M(variant) == 2) continue;
 
       // Only AMD GPUs profitably support variant zero (BCAST) and only if width <= 1024.  CLANG doesn't support builtins.  Have NO_ASM bypass variant zero.
       // nVidia now supports variant zero, but is slower on TitanV
@@ -1490,8 +1490,8 @@ skip_some_WH_variants = 2;   // should default be 1??
       for (auto carry : carryToTest) {
         FFTConfig const fft{shape, variant, carry};
 
-        // Skip middle = 1, CARRY_32 if maximum exponent would be the same as middle = 0, CARRY_32
-        if (variant_M(variant) > 0 && carry == CARRY_32 && fft.maxExp() <= FFTConfig{shape, variant - 10, CARRY_32}.maxExp()) continue;
+        // Skip middle = 1, CARRY_32 if maximum exponent would be the same as middle = 0, CARRY_32.  Middle 2 is not about accuracy.
+        if (variant_M(variant) == 1 && carry == CARRY_32 && fft.maxExp() <= FFTConfig{shape, variant - 10, CARRY_32}.maxExp()) continue;
 
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
         TuneEntry entry{cost, fft, {}};
@@ -1585,6 +1585,7 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant(variant)) {
       if (variant_W(variant) == 0 && (!variant0 || !shape.hasVariant0W(shared.args->radix8At256(shape.spec(), false)))) { continue; }
       if (variant_H(variant) == 0 && (!variant0 || !shape.hasVariant0H(shared.args->radix8At256(shape.spec(), true)))) { continue; }
+      if (variant_M(variant) == 2 && !shape.hasVariant2M()) { continue; }
       vector carries{CARRY_AUTO};
       if (shape.fft_type == FFT64) {
         carries = {CARRY_32};
@@ -1595,8 +1596,8 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
         if (specs.contains(fft.spec())) { continue; }
         // Unlike -tune, nothing above maxExp: tune.txt already has the entry that handles maxExp
         if (fft.maxExp() < minExp || fft.maxExp() > maxExp) { continue; }
-        // Skip middle = 1, CARRY_32 if maximum exponent would be the same as middle = 0, CARRY_32
-        if (variant_M(variant) > 0 && carry == CARRY_32 && fft.maxExp() <= FFTConfig{shape, variant - 10, CARRY_32}.maxExp()) { continue; }
+        // Skip middle = 1, CARRY_32 if maximum exponent would be the same as middle = 0, CARRY_32.  Middle 2 is not about accuracy.
+        if (variant_M(variant) == 1 && carry == CARRY_32 && fft.maxExp() <= FFTConfig{shape, variant - 10, CARRY_32}.maxExp()) { continue; }
         candidates[i].push_back(fft);
       }
     }
