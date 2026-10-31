@@ -3074,13 +3074,13 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     leadIn = leadOut;
 
     if (k == persistK) {
-      vector<Word> const rawData = readChecked(bufData);
+      vector<Word> rawData = readChecked(bufData);
       if (rawData.empty()) {
         log("Data error ZERO\n");
         ++nErrors;
         goto reload;
       }
-      (*background)([=, this] {
+      (*background)([=, this, rawData = std::move(rawData)] {
         try {
           ProofSet::save(E, power, k, compactBits(rawData, E));
         } catch (const FileError&) {
@@ -3120,7 +3120,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     if (proofSaveFailed) { throw "proof residue write failed"; }
 
     if (!doCheck) {
-      (*background)([=, this] {
+      (*background)([=, this, rawCheck = std::move(rawCheck)] {
         if (proofSaveFailed) { return; }
         getSaver()->saveUnverified({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors,
                                     .elapsed=elapsedBefore + elapsedTimer.at()});

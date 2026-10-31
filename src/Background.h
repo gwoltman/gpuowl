@@ -12,6 +12,7 @@
 #include <mutex>
 #include <thread>
 #include <deque>
+#include <utility>
 
 class Background {
   unsigned maxSize;
@@ -33,7 +34,7 @@ class Background {
           }             cond.wait(lock);
          
         }
-        task = tasks.front();
+        task = std::move(tasks.front());
       }
 
       try {
@@ -73,12 +74,12 @@ public:
     while (!tasks.empty()) { cond.wait(lock); }
   }
 
-  template<typename T> void operator()(const T& task) {
+  template<typename T> void operator()(T&& task) {
     std::unique_lock lock(mut);
     while (tasks.size() >= maxSize) {
       cond.wait(lock);
     }
-    tasks.push_back(task);
+    tasks.push_back(std::forward<T>(task));
     cond.notify_all();
   }
 };
