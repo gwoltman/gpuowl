@@ -2136,7 +2136,11 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig, P(uint) bufROE) {
+KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig, P(uint) bufROE
+#if NTT_WEIGHT_TABLE
+    , CP(u32) nttWeights
+#endif
+    ) {
   local GF61 lds61[LDS_BYTES(WMUL) / sizeof(GF61)];
   local GF31 *lds31 = (local GF31 *) lds61;
   LDSinit(lds61, WMUL);
@@ -2229,6 +2233,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
+#if NTT_WEIGHT_TABLE
+    u32 packed=nttWeights[line*WIDTH+lowMe+i*G_W];        // First half: log2_NWORDS + 1 already added (see genWeights)
+    u32 m31_weight_shift0=packed&31, m31_weight_shift1=(packed>>5)&31;
+    u32 m61_weight_shift0=(packed>>10)&63, m61_weight_shift1=(packed>>16)&63;
+    bool biglit0=(packed>>22)&1, biglit1=(packed>>23)&1;
+#else
 #if PFA
     m31_combo_counter = pfaComboI(lowMe, i, line, 31, m31_bigword_weight_shift_minus1, log2_NWORDS + 1);
     m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, log2_NWORDS + 1);
@@ -2247,6 +2257,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     bool biglit1 = frac_bits >= -FRAC_BPW_HI;   // Same as frac_bits + FRAC_BPW_HI <= FRAC_BPW_HI;
 
+#endif
     // Apply the inverse weights, optionally compute roundoff error, and convert to integer.  Also apply MUL3 here.
     // Then propagate carries through two words (the first carry does not have to be accurately calculated because it will
     // be accurately calculated by carryFinal later on).  The second carry must be accurate for output to the carry shuttle.
@@ -2381,6 +2392,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
+#if NTT_WEIGHT_TABLE
+    u32 packed=nttWeights[BIG_HEIGHT*WIDTH+line*WIDTH+lowMe+i*G_W];   // Second half: right shifts (see genWeights)
+    u32 m31_shr0=packed&31, m31_shr1=(packed>>5)&31;
+    u32 m61_shr0=(packed>>10)&63, m61_shr1=(packed>>16)&63;
+    bool biglit0=(packed>>22)&1;
+#else
 #if PFA
     m31_combo_counter = pfaComboI(lowMe, i, line, 31, m31_bigword_weight_shift_minus1, 0);
     m61_combo_counter = pfaComboI(lowMe, i, line, 61, m61_bigword_weight_shift_minus1, 0);
@@ -2396,9 +2413,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
     u32 m61_weight_shift1 = m61_weight_shift;
     // Generate big-word/little-word flag, propagate final carry
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
+#endif
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
+#if NTT_WEIGHT_TABLE
+    u31[i] = U2(shr(make_Z31(wu[i].x), m31_shr0), shr(make_Z31(wu[i].y), m31_shr1));
+    u61[i] = U2(shr(make_Z61(wu[i].x), m61_shr0), shr(make_Z61(wu[i].y), m61_shr1));
+#else
     u31[i] = U2(shl(make_Z31(wu[i].x), m31_weight_shift0), shl(make_Z31(wu[i].y), m31_weight_shift1));
     u61[i] = U2(shl(make_Z61(wu[i].x), m61_weight_shift0), shl(make_Z61(wu[i].y), m61_weight_shift1));
+#endif
 
     // Generate weight shifts and frac_bits for next pair
     m31_combo_counter += m31_combo_bigstep;

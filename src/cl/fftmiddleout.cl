@@ -1,3 +1,9 @@
+#ifndef NTT_TRANSPOSE31
+#define NTT_TRANSPOSE31 0
+#endif
+#ifndef NTT_TRANSPOSE61
+#define NTT_TRANSPOSE61 0
+#endif
 // Copyright (C) Mihai Preda and George Woltman
 
 #include "base.cl"
@@ -299,33 +305,33 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF61(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 #if L2_STRIPING
 void map_striping_group_id(u32 base_lo, u32 g, u32 *startx, u32 *starty) {
   // Old, simple L2 striping code
-  // u32 N = SMALL_HEIGHT / 16;
-  // u32 startx = g % N * 16;
-  // u32 starty = base + g / N * 16;
+  // u32 N = SMALL_HEIGHT / INPLACE_TILE;
+  // u32 startx = g % N * INPLACE_TILE;
+  // u32 starty = base + g / N * INPLACE_TILE;
 
   // Process stripe group from base_lo.
-  u32 oneStripeKernelsToExecute = SMALL_HEIGHT / 16;
+  u32 oneStripeKernelsToExecute = SMALL_HEIGHT / INPLACE_TILE;
   u32 stripe_group_size = L2_STRIPING;
   u32 kernelsToExecute = stripe_group_size * oneStripeKernelsToExecute;
   if (g < kernelsToExecute) {
-    *startx = g % oneStripeKernelsToExecute * 16;
-    *starty = base_lo + g / oneStripeKernelsToExecute * 16;
+    *startx = g % oneStripeKernelsToExecute * INPLACE_TILE;
+    *starty = base_lo + g / oneStripeKernelsToExecute * INPLACE_TILE;
     return;
   }
   g -= kernelsToExecute;
 
   // Process stripe group from base_hi.  The first stripe in the base_hi stripe group is not ready for output (except in the last group).
   // The last group processes the stripe that was skipped in the first base_hi group.
-  u32 base_hi = WIDTH - stripe_group_size * 16 - base_lo;
-  u32 base = (base_hi == WIDTH / 2 || (MULTI_Q && base_hi == 3 * WIDTH / 4)) ? base_hi : base_hi + 16;  // Skip first stripe in base_hi (usually)
-  *startx = g % oneStripeKernelsToExecute * 16;
-  *starty = base + g / oneStripeKernelsToExecute * 16;
+  u32 base_hi = WIDTH - stripe_group_size * INPLACE_TILE - base_lo;
+  u32 base = (base_hi == WIDTH / 2 || (MULTI_Q && base_hi == 3 * WIDTH / 4)) ? base_hi : base_hi + INPLACE_TILE;  // Skip first stripe in base_hi (usually)
+  *startx = g % oneStripeKernelsToExecute * INPLACE_TILE;
+  *starty = base + g / oneStripeKernelsToExecute * INPLACE_TILE;
 }
 #endif
 
 #if FFT_FP64
 
-KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE*INPLACE_TILE)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   T2 u[MIDDLE];
 
@@ -334,18 +340,18 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE;
+  u32 startx = g % N * INPLACE_TILE;
+  u32 starty = g / N * INPLACE_TILE;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / INPLACE_TILE;
+  u32 starty = g % N * INPLACE_TILE;
+  u32 startx = g / N * INPLACE_TILE;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE;
+  u32 y = starty + me / INPLACE_TILE;
 
   dependentLaunchWait();   // Previous kernel was tailSquareFP64 that launched dependents before writing FP64 data
 
@@ -372,7 +378,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local T2 lds[256];
+  local T2 lds[(INPLACE_TILE*INPLACE_TILE)];
   middleShuffle(lds, u);
 
   writeMiddleOutLine(out, u, y, x);
@@ -387,7 +393,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if FFT_FP32
 
-KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE*INPLACE_TILE)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   F2 u[MIDDLE];
 
@@ -400,18 +406,18 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE;
+  u32 startx = g % N * INPLACE_TILE;
+  u32 starty = g / N * INPLACE_TILE;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / INPLACE_TILE;
+  u32 starty = g % N * INPLACE_TILE;
+  u32 startx = g / N * INPLACE_TILE;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE;
+  u32 y = starty + me / INPLACE_TILE;
 
   dependentLaunchWait();   // Previous kernel was tailSquareFP32 that launched dependents before writing FP64 data
 
@@ -435,7 +441,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local F2 lds[256];
+  local F2 lds[(INPLACE_TILE*INPLACE_TILE)];
   middleShuffle(lds, u);
 
   writeMiddleOutLine(outF2, u, y, x);
@@ -450,7 +456,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF31
 
-KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE31*INPLACE_TILE31)) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF31 u[MIDDLE];
 
@@ -463,18 +469,18 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE31;
+  u32 startx = g % N * INPLACE_TILE31;
+  u32 starty = g / N * INPLACE_TILE31;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / INPLACE_TILE31;
+  u32 starty = g % N * INPLACE_TILE31;
+  u32 startx = g / N * INPLACE_TILE31;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE31;
+  u32 y = starty + me / INPLACE_TILE31;
 
   dependentLaunchWait();   // Previous kernel was tailSquareGF31 that launched dependents before writing GF31 data
 
@@ -487,7 +493,7 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #endif
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig31, true);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig31, !(PFA == 7 && MIDDLE == 7 && NTT_TRANSPOSE31));       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, trig31);
 #endif
@@ -495,8 +501,18 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF31 lds[256];
+#if PFA == 7 && MIDDLE == 7 && NTT_TRANSPOSE31
+#if NTT_TRANSPOSE31 == 1
+  local GF31 lds[(INPLACE_TILE31*INPLACE_TILE31)*MIDDLE];
+  middleShuffleTile31(lds,u,true,x);
+#else
+  local Z31 lds[(INPLACE_TILE31*INPLACE_TILE31)*MIDDLE];
+  middleShuffle(lds,u,(INPLACE_TILE31*INPLACE_TILE31),INPLACE_TILE31,true,x);
+#endif
+#else
+  local GF31 lds[(INPLACE_TILE31*INPLACE_TILE31)];
   middleShuffle(lds, u);
+#endif
 
   writeMiddleOutLine(out31, u, y, x);
 }
@@ -510,7 +526,7 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF61
 
-KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((INPLACE_TILE61*INPLACE_TILE61)) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF61 u[MIDDLE];
 
@@ -523,18 +539,18 @@ KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / INPLACE_TILE61;
+  u32 startx = g % N * INPLACE_TILE61;
+  u32 starty = g / N * INPLACE_TILE61;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / INPLACE_TILE61;
+  u32 starty = g % N * INPLACE_TILE61;
+  u32 startx = g / N * INPLACE_TILE61;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % INPLACE_TILE61;
+  u32 y = starty + me / INPLACE_TILE61;
 
   dependentLaunchWait();   // Previous kernel was tailSquareGF61 that launched dependents before writing GF61 data
 
@@ -547,7 +563,7 @@ KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #endif
 
 #if PFA
-  pfaMiddleOut(u, y, x, trig61, true);       // y is the width position, x the height position
+  pfaMiddleOut(u, y, x, trig61, !(PFA == 7 && MIDDLE == 7 && NTT_TRANSPOSE61));       // y is the width position, x the height position
 #else
   middleMul2(u, y, x, trig61);
 #endif
@@ -555,8 +571,18 @@ KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryfused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF61 lds[256];
+#if PFA == 7 && MIDDLE == 7 && NTT_TRANSPOSE61
+#if NTT_TRANSPOSE61 == 1
+  local GF61 lds[(INPLACE_TILE61*INPLACE_TILE61)*MIDDLE];
+  middleShuffleTile61(lds,u,true,x);
+#else
+  local Z61 lds[(INPLACE_TILE61*INPLACE_TILE61)*MIDDLE];
+  middleShuffle(lds,u,(INPLACE_TILE61*INPLACE_TILE61),INPLACE_TILE61,true,x);
+#endif
+#else
+  local GF61 lds[(INPLACE_TILE61*INPLACE_TILE61)];
   middleShuffle(lds, u);
+#endif
 
   writeMiddleOutLine(out61, u, y, x);
 }

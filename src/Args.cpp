@@ -128,7 +128,7 @@ std::optional<u64> Args::parseExponent(const string& s) {
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
   for (const string& s : split(options, ',')) {
-    if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "fp32" || s == "inplace"
+    if (s.empty() || s == "noconfig" || s == "execution" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "fp32" || s == "inplace"
         || s == "1k256" || s == "m61" || s == "pfa") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
@@ -171,7 +171,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, execution, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -346,6 +346,9 @@ named "config.txt" in the prpll run directory.
                      An -fft <spec> can be given on the command line to limit which FFTs are timed.
                      Options are not required.  If present, the options are a comma separated list from below.
                          noconfig     - Skip timings to find best config.txt settings.
+                         execution    - (CUDA) Only retune graph batching, L2 persistence, PDL and NTT precomputation/layout.
+                                        Ordinary -tune includes this pass automatically. Saves checked settings in config.txt.
+                                        Uses the first -fft shape, or 1:512:7:512 if none is given; leaves tune.txt alone.
                          inplace      - Skip timings for not-in-place FFTs and NTTs.  All nVidia GPUs seem to prefer in-place FFTs and NTTs.
                          fp64         - Tune for settings that affect FP64 FFTs.  Time FP64 FFTs for tune.txt.
                          ntt          - Tune for settings that affect integer NTTs.  Time integer NTTs for tune.txt.

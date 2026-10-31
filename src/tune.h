@@ -42,6 +42,9 @@ private:
   int tkOption = 0;
 
   float maxBpw(FFTConfig fft);
+#ifdef CUDA_BACKEND
+  TuneConfig tuneExecution(FFTConfig fft, int quick, const vector<KeyVal>& fftUses = {});
+#endif
   float zForBpw(float bpw, FFTConfig fft, u32);
 
   // Whether this device's register usage can be tuned: CUDA, and AMD where the runtime reports the kernels' VGPRs

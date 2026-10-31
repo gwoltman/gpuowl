@@ -3,6 +3,7 @@
 // mapping all cl* calls to cu* equivalents via the CUDA Driver API.
 
 #include "tinycuda.h"
+#include <nvPTXCompiler.h>
 #include "cudawrap.h"  // For NvrtcProgram::preprocessOpenCL and compile
 #include "../log.h"
 #include "../clwrap.h"  // For the CUDA-only helper declarations (cudaKernelResources etc.)
@@ -1411,6 +1412,39 @@ CudaSmLimits cudaSmLimits() {
 // Done after compiling and after the kernel cache, so that a kernel compiles (and is cached) once whatever its register limit.
 // smemSpill adds .pragma "enable_smem_spilling" (ptxas from CUDA 13.0, sm_75 and up): the registers the limit makes ptxas spill go
 // to the block's shared memory, as far as there is room, instead of local memory.  If the JIT rejects it, the kernel is loaded without.
+
+// Compile modified register directives with the same toolkit as NVRTC.
+// A separate compiler can accept PTX newer than the installed driver's JIT.
+static bool compileLimitedPtx(const string& ptx, string& cubin) {
+  CUdevice dev;
+  int major = 0, minor = 0;
+  if (cuCtxGetDevice(&dev) != CUDA_SUCCESS ||
+      cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev) != CUDA_SUCCESS ||
+      cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev) != CUDA_SUCCESS) return false;
+  nvPTXCompilerHandle compiler = nullptr;
+  nvPTXCompileResult rc = nvPTXCompilerCreate(&compiler, ptx.size(), ptx.data());
+  if (rc != NVPTXCOMPILE_SUCCESS) return false;
+  string arch = "--gpu-name=sm_" + to_string(major * 10 + minor);
+  const char* opts[] = {arch.c_str(), "--opt-level=3"};
+  rc = nvPTXCompilerCompile(compiler, 2, opts);
+  size_t size = 0;
+  if (rc == NVPTXCOMPILE_SUCCESS) rc = nvPTXCompilerGetCompiledProgramSize(compiler, &size);
+  if (rc == NVPTXCOMPILE_SUCCESS) {
+    cubin.resize(size);
+    rc = nvPTXCompilerGetCompiledProgram(compiler, cubin.data());
+  }
+  if (rc != NVPTXCOMPILE_SUCCESS) {
+    cubin.clear();
+    if (nvPTXCompilerGetErrorLogSize(compiler, &size) == NVPTXCOMPILE_SUCCESS && size) {
+      string errors(size, '\0');
+      if (nvPTXCompilerGetErrorLog(compiler, errors.data()) == NVPTXCOMPILE_SUCCESS)
+        fprintf(stderr, "PTX compiler for register limit: %s\n", errors.c_str());
+    }
+  }
+  nvPTXCompilerDestroy(&compiler);
+  return rc == NVPTXCOMPILE_SUCCESS;
+}
+
 bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs, int minBlocks, bool smemSpill) {
   if (!prog || !prog->moduleLoaded || (maxRegs <= 0 && minBlocks <= 0)) { return false; }
   ensureContextCurrent();
@@ -1433,11 +1467,13 @@ bool cudaSetKernelRegLimit(cl_program prog, const char* kernelName, int maxRegs,
   char jitErrorLog[8192] = {};
   CUjit_option jitOpts[] = { CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES, CU_JIT_ERROR_LOG_BUFFER };
   void* jitOptVals[] = { (void*)(size_t)sizeof(jitErrorLog), (void*)jitErrorLog };
+  compileLimitedPtx(ptx, prog->cubin);
   CUresult r = loadModule(prog, 2, jitOpts, jitOptVals);
   if (r != CUDA_SUCCESS && smemSpill) {
     fprintf(stderr, "%s: the JIT rejected enable_smem_spilling, loading it without (%s)\n", kernelName, jitErrorLog);
     ptx.erase(ptx.find(pragma, entry + directive.size()), pragma.size());
     jitErrorLog[0] = 0;
+    compileLimitedPtx(ptx, prog->cubin);
     r = loadModule(prog, 2, jitOpts, jitOptVals);
   }
   if (r != CUDA_SUCCESS) {
@@ -1488,7 +1524,10 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 
   // Query the device's max access policy window size
   int maxWindowSize = 0;
-  cuDeviceGetAttribute(&maxWindowSize, CU_DEVICE_ATTRIBUTE_MAX_ACCESS_POLICY_WINDOW_SIZE, 0);
+  CUdevice device;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) return;
+  cuDeviceGetAttribute(&maxWindowSize, CU_DEVICE_ATTRIBUTE_MAX_ACCESS_POLICY_WINDOW_SIZE, device);
+  if (maxWindowSize <= 0) return;
   if (maxWindowSize > 0 && std::cmp_greater(spanBytes, maxWindowSize)) {
     fprintf(stderr, "L2 persist: span %zuMB exceeds max window %dMB, clamping\n",
             spanBytes / (1024*1024), maxWindowSize / (1024*1024));
@@ -1531,7 +1570,9 @@ void cudaSetL2PersistLimit(int pct) {
   ensureContextCurrent();
 
   int maxPersist = 0;
-  cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, 0);
+  CUdevice device;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) return;
+  cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, device);
   if (maxPersist <= 0) return;
 
   pct = std::clamp(pct, 0, 100);
@@ -1545,8 +1586,21 @@ void cudaSetL2PersistLimit(int pct) {
             target / (1024*1024), maxPersist / (1024*1024), pct);
   }
 }
+void cudaResetL2ForTune() {
+  ensureContextCurrent();
+  cudaSetL2PersistLimit(0);
+  // Unsupported devices have no persisting cache to reset.
+  CUdevice device;
+  int maxPersist = 0;
+  if (cuCtxGetDevice(&device) == CUDA_SUCCESS &&
+      cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, device) == CUDA_SUCCESS && maxPersist > 0) {
+    CUresult const r = cuCtxResetPersistingL2Cache();
+    if (r != CUDA_SUCCESS) throw std::string("Cannot reset persisting L2 cache for tuning");
+  }
+}
 #else
 void cudaSetL2PersistLimit(int) {}
+void cudaResetL2ForTune() {}
 #endif
 
 
@@ -1586,6 +1640,34 @@ int clGraphLaunch(cl_graph graph) {
   ensureContextCurrent();
   CUresult r = cuGraphLaunch(graph->graphExec, graph->queue->stream);
   return clResult("clGraphLaunch", r);
+}
+
+int clGraphRepeat(cl_graph original, unsigned count, cl_graph* result) {
+  ensureContextCurrent();
+  *result = nullptr;
+  if (!original || count < 2 || count > 256) return CL_INVALID_VALUE;
+  auto* g = new _cl_graph;
+  g->queue = original->queue;
+  CUresult r = cuGraphCreate(&g->graph, 0);
+  CUgraphNode previous = nullptr;
+  for (unsigned i = 0; i < count && r == CUDA_SUCCESS; ++i) {
+    CUgraphNode current = nullptr;
+    // A dependency on the preceding child orders every squaring's complete
+    // graph, including the join from the auxiliary NTT stream.
+    r = cuGraphAddChildGraphNode(&current, g->graph, i ? &previous : nullptr, i ? 1 : 0, original->graph);
+    previous = current;
+  }
+#if CUDA_VERSION >= 12000
+  if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, 0);
+#elif CUDA_VERSION >= 11040
+  if (r == CUDA_SUCCESS) r = cuGraphInstantiateWithFlags(&g->graphExec, g->graph, 0);
+#else
+  if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, nullptr, nullptr, 0);
+#endif
+  if (r != CUDA_SUCCESS) { delete g; return clResult("clGraphRepeat", r); }
+  *result = g;
+  log("CUDA graph batch: %u serial squarings\n", count);
+  return CL_SUCCESS;
 }
 
 int clReleaseGraph(cl_graph graph) {

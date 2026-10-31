@@ -1,3 +1,4 @@
+// The memory-layout examples below describe the default 16x16 tiles. INPLACE_TILE31 and INPLACE_TILE61 vary tile dimensions, not element sizes.
 // Copyright (C) Mihai Preda and George Woltman
 
 #if !IN_WG
@@ -693,8 +694,8 @@ void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 //#define SIZEM   (MIDDLE * SIZEB + (1 - (MIDDLE & 1)) * 16)     // Pad 256 bytes if MIDDLE is even
 // Place middle rows after all width rows
 #define SIZEBLK   (SMALL_HEIGHT + 0)                           // No pad needed when swizzling
-#define SIZEW   (16 * SIZEBLK + 16)                            // Pad 256 bytes
-#define SIZEM   (WIDTH / 16 * SIZEW + 16)                      // Pad 256 bytes
+#define SIZEW   (INPLACE_TILE61 * SIZEBLK + INPLACE_TILE61)                            // Pad 256 bytes
+#define SIZEM   (WIDTH / INPLACE_TILE61 * SIZEW + INPLACE_TILE61)                      // Pad 256 bytes
 #define SWIZ(a,m) ((m) ^ (a))                                  // Swizzle 16 rows (remove "^ (a)" to turn swizzling off)
 #else                                                          // AMD friendly padding
 // Place middle rows after first 16 rows
@@ -703,8 +704,8 @@ void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 //#define SIZEW   (MIDDLE * SIZEM + (1 - (MIDDLE & 1)) * 16)     // Pad 256 bytes if MIDDLE is even
 // Place middle rows after all width rows
 #define SIZEBLK (SMALL_HEIGHT + 0)                             // No pad needed when swizzling
-#define SIZEW   (16 * SIZEBLK + 16)                            // Pad 256 bytes
-#define SIZEM   (WIDTH / 16 * SIZEW + 0)                       // Pad 0 bytes
+#define SIZEW   (INPLACE_TILE61 * SIZEBLK + INPLACE_TILE61)                            // Pad 256 bytes
+#define SIZEM   (WIDTH / INPLACE_TILE61 * SIZEW + 0)                       // Pad 0 bytes
 #define SWIZ(a,m) ((m) ^ (a))                                  // Swizzle 16 rows (remove "^ (a)" to turn swizzling off)
 #endif
 
@@ -716,16 +717,16 @@ void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 void OVERLOAD readCarryFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
-  in += (me / 16 * SIZEW) + (middle * SIZEM) + (line % 16 * SIZEBLK) + SWIZ(line % 16, line / 16) * 16 + (me % 16);
-  for (u32 i = 0; i < NW; ++i) { u[i] = FFTLOAD(&in[i * G_W / 16 * SIZEW]); }
+  in += (me / INPLACE_TILE61 * SIZEW) + (middle * SIZEM) + (line % INPLACE_TILE61 * SIZEBLK) + SWIZ(line % INPLACE_TILE61, line / INPLACE_TILE61) * INPLACE_TILE61 + (me % INPLACE_TILE61);
+  for (u32 i = 0; i < NW; ++i) { u[i] = FFTLOAD(&in[i * G_W / INPLACE_TILE61 * SIZEW]); }
 }
 
 // Write a line from carryFused.  This data will be read by fftMiddleIn.
 void OVERLOAD writeCarryFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) {  // me is multiples of BIG_HEIGHT
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
-  out += (me / 16 * SIZEW) + (middle * SIZEM) + (line % 16 * SIZEBLK) + SWIZ(line % 16, line / 16) * 16 + (me % 16);
-  for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / 16 * SIZEW], u[i]); }
+  out += (me / INPLACE_TILE61 * SIZEW) + (middle * SIZEM) + (line % INPLACE_TILE61 * SIZEBLK) + SWIZ(line % INPLACE_TILE61, line / INPLACE_TILE61) * INPLACE_TILE61 + (me % INPLACE_TILE61);
+  for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / INPLACE_TILE61 * SIZEW], u[i]); }
 }
 
 //****************************************************************************************
@@ -737,14 +738,14 @@ void OVERLOAD writeCarryFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) 
 //      y         ranges 0...SMALL_HEIGHT-1 (multiples of one)
 
 void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
-  in += (x / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, y / 16) * 16) + (x % 16);
+  in += (x / INPLACE_TILE61 * SIZEW) + (y % INPLACE_TILE61 * SIZEBLK) + (SWIZ(y % INPLACE_TILE61, y / INPLACE_TILE61) * INPLACE_TILE61) + (x % INPLACE_TILE61);
   for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM]); }
 }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.
 void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 {
-  out += (x / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, y / 16) * 16) + (x % 16);
+  out += (x / INPLACE_TILE61 * SIZEW) + (y % INPLACE_TILE61 * SIZEBLK) + (SWIZ(y % INPLACE_TILE61, y / INPLACE_TILE61) * INPLACE_TILE61) + (x % INPLACE_TILE61);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM], u[i]); }
 }
 
@@ -760,15 +761,15 @@ void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 void OVERLOAD readTailFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
-  in += (width / 16 * SIZEW) + (middle * SIZEM) + (width % 16 * SIZEBLK) + (me % 16);
-  for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[SWIZ(width % 16, (i * SMALL_HEIGHT / NH + me) / 16) * 16]); }
+  in += (width / INPLACE_TILE61 * SIZEW) + (middle * SIZEM) + (width % INPLACE_TILE61 * SIZEBLK) + (me % INPLACE_TILE61);
+  for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[SWIZ(width % INPLACE_TILE61, (i * SMALL_HEIGHT / NH + me) / INPLACE_TILE61) * INPLACE_TILE61]); }
 }
 
 void OVERLOAD writeTailFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) {
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
-  out += (width / 16 * SIZEW) + (middle * SIZEM) + (width % 16 * SIZEBLK) + (me % 16);
-  for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[SWIZ(width % 16, (i * SMALL_HEIGHT / NH + me) / 16) * 16], u[i]); }
+  out += (width / INPLACE_TILE61 * SIZEW) + (middle * SIZEM) + (width % INPLACE_TILE61 * SIZEBLK) + (me % INPLACE_TILE61);
+  for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[SWIZ(width % INPLACE_TILE61, (i * SMALL_HEIGHT / NH + me) / INPLACE_TILE61) * INPLACE_TILE61], u[i]); }
 }
 
 //****************************************************************************************
@@ -780,14 +781,14 @@ void OVERLOAD writeTailFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) {
 //      y         ranges 0...WIDTH-1 (multiples of BIG_HEIGHT)
 
 void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
-  in += (y / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, x / 16) * 16) + (x % 16);
+  in += (y / INPLACE_TILE61 * SIZEW) + (y % INPLACE_TILE61 * SIZEBLK) + (SWIZ(y % INPLACE_TILE61, x / INPLACE_TILE61) * INPLACE_TILE61) + (x % INPLACE_TILE61);
   for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SIZEM]); }
 }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
 void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 {
-  out += (y / 16 * SIZEW) + (y % 16 * SIZEBLK) + (SWIZ(y % 16, x / 16) * 16) + (x % 16);
+  out += (y / INPLACE_TILE61 * SIZEW) + (y % INPLACE_TILE61 * SIZEBLK) + (SWIZ(y % INPLACE_TILE61, x / INPLACE_TILE61) * INPLACE_TILE61) + (x % INPLACE_TILE61);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM], u[i]); }
 }
 
@@ -812,8 +813,8 @@ void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 //#define SIZEM32   (MIDDLE * SIZEB + (1 - (MIDDLE & 1)) * 16)   // Pad 128 bytes if MIDDLE is even
 // Place middle rows after all width rows
 #define SIZEBLK32   (SMALL_HEIGHT + 0)                         // No pad needed when swizzling
-#define SIZEW32   (16 * SIZEBLK32 + 16)                        // Pad 128 bytes
-#define SIZEM32   (WIDTH / 16 * SIZEW32 + 16)                  // Pad 128 bytes
+#define SIZEW32   (INPLACE_TILE31 * SIZEBLK32 + INPLACE_TILE31)                        // Pad 128 bytes
+#define SIZEM32   (WIDTH / INPLACE_TILE31 * SIZEW32 + INPLACE_TILE31)                  // Pad 128 bytes
 #define SWIZ32(a,m) ((m) ^ (a))                                // Swizzle 16 rows (remove "^ (a)" to turn swizzling off)
 #else                                                          // AMD friendly padding
 // Place middle rows after first 16 rows
@@ -822,8 +823,8 @@ void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 //#define SIZEW32   (MIDDLE * SIZEM + (1 - (MIDDLE & 1)) * 16)   // Pad 128 bytes if MIDDLE is even
 // Place middle rows after all width rows
 #define SIZEBLK32 (SMALL_HEIGHT + 0)                           // No pad needed when swizzling
-#define SIZEW32   (16 * SIZEBLK32 + 16)                        // Pad 128 bytes
-#define SIZEM32   (WIDTH / 16 * SIZEW32 + 0)                   // Pad 0 bytes
+#define SIZEW32   (INPLACE_TILE31 * SIZEBLK32 + INPLACE_TILE31)                        // Pad 128 bytes
+#define SIZEM32   (WIDTH / INPLACE_TILE31 * SIZEW32 + 0)                   // Pad 0 bytes
 #define SWIZ32(a,m) ((m) ^ (a))                                // Swizzle 16 rows (remove "^ (a)" to turn swizzling off)
 #endif
 
@@ -835,16 +836,16 @@ void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
-  in += (me / 16 * SIZEW32) + (middle * SIZEM32) + (line % 16 * SIZEBLK32) + SWIZ32(line % 16, line / 16) * 16 + (me % 16);
-  for (u32 i = 0; i < NW; ++i) { u[i] = FFTLOAD(&in[i * G_W / 16 * SIZEW32]); }
+  in += (me / INPLACE_TILE31 * SIZEW32) + (middle * SIZEM32) + (line % INPLACE_TILE31 * SIZEBLK32) + SWIZ32(line % INPLACE_TILE31, line / INPLACE_TILE31) * INPLACE_TILE31 + (me % INPLACE_TILE31);
+  for (u32 i = 0; i < NW; ++i) { u[i] = FFTLOAD(&in[i * G_W / INPLACE_TILE31 * SIZEW32]); }
 }
 
 // Write a line from carryFused.  This data will be read by fftMiddleIn.
 void OVERLOAD writeCarryFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {   // me is multiples of BIG_HEIGHT
   u32 middle = line / SMALL_HEIGHT;     // Multiples of SMALL_HEIGHT
   line = line % SMALL_HEIGHT;           // Multiples of one
-  out += (me / 16 * SIZEW32) + (middle * SIZEM32) + (line % 16 * SIZEBLK32) + SWIZ32(line % 16, line / 16) * 16 + (me % 16);
-  for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / 16 * SIZEW32], u[i]); }
+  out += (me / INPLACE_TILE31 * SIZEW32) + (middle * SIZEM32) + (line % INPLACE_TILE31 * SIZEBLK32) + SWIZ32(line % INPLACE_TILE31, line / INPLACE_TILE31) * INPLACE_TILE31 + (me % INPLACE_TILE31);
+  for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / INPLACE_TILE31 * SIZEW32], u[i]); }
 }
 
 //****************************************************************************************
@@ -856,14 +857,14 @@ void OVERLOAD writeCarryFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) 
 //      y         ranges 0...SMALL_HEIGHT-1 (multiples of one)
 
 void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
-  in += (x / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, y / 16) * 16) + (x % 16);
+  in += (x / INPLACE_TILE31 * SIZEW32) + (y % INPLACE_TILE31 * SIZEBLK32) + (SWIZ32(y % INPLACE_TILE31, y / INPLACE_TILE31) * INPLACE_TILE31) + (x % INPLACE_TILE31);
   for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM32]); }
 }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.
 void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 {
-  out += (x / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, y / 16) * 16) + (x % 16);
+  out += (x / INPLACE_TILE31 * SIZEW32) + (y % INPLACE_TILE31 * SIZEBLK32) + (SWIZ32(y % INPLACE_TILE31, y / INPLACE_TILE31) * INPLACE_TILE31) + (x % INPLACE_TILE31);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM32], u[i]); }
 }
 
@@ -879,15 +880,15 @@ void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 void OVERLOAD readTailFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
-  in += (width / 16 * SIZEW32) + (middle * SIZEM32) + (width % 16 * SIZEBLK32) + (me % 16);
-  for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[SWIZ32(width % 16, (i * SMALL_HEIGHT / NH + me) / 16) * 16]); }
+  in += (width / INPLACE_TILE31 * SIZEW32) + (middle * SIZEM32) + (width % INPLACE_TILE31 * SIZEBLK32) + (me % INPLACE_TILE31);
+  for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[SWIZ32(width % INPLACE_TILE31, (i * SMALL_HEIGHT / NH + me) / INPLACE_TILE31) * INPLACE_TILE31]); }
 }
 
 void OVERLOAD writeTailFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
-  out += (width / 16 * SIZEW32) + (middle * SIZEM32) + (width % 16 * SIZEBLK32) + (me % 16);
-  for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[SWIZ32(width % 16, (i * SMALL_HEIGHT / NH + me) / 16) * 16], u[i]); }
+  out += (width / INPLACE_TILE31 * SIZEW32) + (middle * SIZEM32) + (width % INPLACE_TILE31 * SIZEBLK32) + (me % INPLACE_TILE31);
+  for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[SWIZ32(width % INPLACE_TILE31, (i * SMALL_HEIGHT / NH + me) / INPLACE_TILE31) * INPLACE_TILE31], u[i]); }
 }
 
 //****************************************************************************************
@@ -899,14 +900,14 @@ void OVERLOAD writeTailFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {
 //      y         ranges 0...WIDTH-1 (multiples of BIG_HEIGHT)
 
 void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
-  in += (y / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, x / 16) * 16) + (x % 16);
+  in += (y / INPLACE_TILE31 * SIZEW32) + (y % INPLACE_TILE31 * SIZEBLK32) + (SWIZ32(y % INPLACE_TILE31, x / INPLACE_TILE31) * INPLACE_TILE31) + (x % INPLACE_TILE31);
   for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SIZEM32]); }
 }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
 void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 {
-  out += (y / 16 * SIZEW32) + (y % 16 * SIZEBLK32) + (SWIZ32(y % 16, x / 16) * 16) + (x % 16);
+  out += (y / INPLACE_TILE31 * SIZEW32) + (y % INPLACE_TILE31 * SIZEBLK32) + (SWIZ32(y % INPLACE_TILE31, x / INPLACE_TILE31) * INPLACE_TILE31) + (x % INPLACE_TILE31);
   for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM32], u[i]); }
 }
 
