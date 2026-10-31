@@ -107,11 +107,13 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define OLD_FENCE 1
 #endif
 
-// The default is the in-place FFT data layout for nVidia GPUs, not in-place otherwise.
-// This must match the in_place default in clDefines() in Gpu.cpp.
+// The default is the in-place FFT data layout for nVidia GPUs and for wave32 AMD GPUs (RDNA, its AMD friendly layout 2),
+// not in-place otherwise.  This must match the in_place default in clDefines() in Gpu.cpp.  (WAVEFRONT is from the host.)
 #if !defined(INPLACE)
 #if NVIDIAGPU
 #define INPLACE 1
+#elif AMDGPU && WAVEFRONT == 32
+#define INPLACE 2
 #else
 #define INPLACE 0
 #endif

@@ -603,7 +603,9 @@ void Tune::tune() {
 //GW: if fft spec on the command line specifies a variant then we should use that variant (I get some interesting results with 000 vs 101 vs 201 vs 202 likely due to rocm optimizer)
 
     // IN_WG/SIZEX, OUT_WG/SIZEX, PAD, MIDDLE_IN/OUT_LDS_TRANSPOSE apply only if INPLACE=0
-    u32 const current_inplace = args->value("INPLACE", 0);
+    // The default INPLACE, as in clDefines (Gpu.cpp): 1 on nVidia, 2 on wave32 AMD, 0 otherwise
+    u32 const default_inplace = NVIDIAGPU ? 1 : AMDGPU && getAmdWavefrontWidth(shared.context->deviceId()) == 32 ? 2 : 0;
+    u32 const current_inplace = args->value("INPLACE", default_inplace);
     args->flags["INPLACE"] = to_string(0);
 
     // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings
@@ -734,7 +736,7 @@ void Tune::tune() {
         if (inplace == current_inplace) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_inplace = inplace; }
       }
-      log("Best INPLACE is %u.  Default INPLACE is 0.  Best INPLACE setting may be different for other FFT lengths.\n", best_inplace);
+      log("Best INPLACE is %u.  Default INPLACE is %u.  Best INPLACE setting may be different for other FFT lengths.\n", best_inplace, default_inplace);
       configsUpdate(current_cost, best_cost, 0.002, "INPLACE", best_inplace, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["INPLACE"] = to_string(best_inplace);
     }

@@ -328,6 +328,7 @@ named "config.txt" in the prpll run directory.
                      0 = read trig values from memory
   -use INPLACE=n   : Perform tranforms in-place.  Great if the reduced memory usage fits in the GPU's L2 cache.
                      0 = not in-place, 1 = nVidia friendly access pattern, 2 = AMD friendly access pattern.
+                     Default 1 on nVidia, 2 on wave32 AMD (RDNA), 0 otherwise.
   -use PAD=<val>   : insert pad bytes to possibly improve memory access patterns.  Val is number bytes to pad.
   -use MIDDLE_IN_LDS_TRANSPOSE=0|1  : Transpose values in local memory before writing to global memory
   -use MIDDLE_OUT_LDS_TRANSPOSE=0|1 : Transpose values in local memory before writing to global memory

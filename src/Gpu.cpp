@@ -293,7 +293,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // Default value for -use options that must also be parsed in C++ code
   tail_single_wide = false, tail_single_kernel = true;         // Default tailSquare is double-wide in one kernel
   zero_q = false;
-  in_place = isNvidiaGpu(id) ? 1 : 0;                   // Default is in-place for nVidia, not in-place for others (must match base.cl)
+  // Default is in-place: 1 (nVidia friendly layout) for nVidia, 2 (AMD friendly layout) for wave32 AMD (RDNA); not in-place for the others,
+  // including wave64 AMD (Radeon VII, where George found nothing as good as INPLACE=0).  Must match base.cl and -tune's default.
+  in_place = isNvidiaGpu(id) ? 1 : isAmdGpu(id) && getAmdWavefrontWidth(id) == 32 ? 2 : 0;
   wmul = 2;                                             // Default is carryFused processes two lines at a time
   pad_size = isAmdGpu(id) ? 256 : 0;                    // Default is 256 bytes for AMD, 0 for others
 
