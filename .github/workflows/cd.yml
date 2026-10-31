@@ -45,6 +45,10 @@ jobs:
         g++ --version
         ldd --version
 
+        # The checkout marks the repository safe for the host's git only; without this, git in the container refuses it
+        # ("dubious ownership": owned by another user), git describe fails and the version is "unknown"
+        git config --global --add safe.directory /workspace
+
         make STATIC_RUNTIME=1 -j "$(nproc)"
         cd build-release
         rm -f -- *.o
@@ -98,6 +102,10 @@ jobs:
 
         g++ --version
         ldd --version
+
+        # The checkout marks the repository safe for the host's git only; without this, git in the container refuses it
+        # ("dubious ownership": owned by another user), git describe fails and the version is "unknown"
+        git config --global --add safe.directory /workspace
 
         make CUDA=1 STATIC_RUNTIME=1 STATIC_CUDA=${{ matrix.cuda != '10.2' && '1' || '0' }} -j "$(nproc)"
         cd build-cuda

@@ -1172,6 +1172,9 @@ void dependentLaunchWait() {
   // allowing the next kernel's independent setup is moved earlier.
   __asm volatile("griddepcontrol.launch_dependents;");
 #endif
+  // The "memory" clobber keeps the compiler from moving loads of the previous kernel's output above the wait (volatile alone only
+  // keeps the asm itself in place).  CUDA's own cudaGridDependencySynchronize() is this asm with the same clobber.
+  __asm volatile("griddepcontrol.wait;" ::: "memory");     // same as cudaGridDependencySynchronize();
 #endif
 }
 
