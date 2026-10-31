@@ -99,7 +99,7 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
   // PFA hybrids (see pfaWeights in weight.cl): the weights of word 2 * x * BH for x < W (scaled as the per-thread weights below),
   // then those of word 2 * (b + L * r) minus one at W + b + BH * r, for the R rows of L = W * BH pairs.  The weight functions take
   // the word number k as "line" k / 2 of column 0.
-  bool const pfa = fft.shape.isPfa();
+  bool const pfa = fft.isPfa();
   u32 const pfaR = fft.shape.pfaRadix(), pfaBH = H / pfaR, pfaL = W * pfaBH;
   auto pfaK = [&](u32 i) { return i < W ? i * pfaBH : i - W - (i - W) / pfaBH * pfaBH + (i - W) / pfaBH * pfaL; };  // word k / 2 of entry i
 
@@ -489,7 +489,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 #endif
 
   // L2_STRIPING's stripe order and special lines assume the stock tail pairing (line with H - line), not PFA's
-  if (fft.shape.isPfa() && configValue("L2_STRIPING", 0)) {
+  if (fft.isPfa() && configValue("L2_STRIPING", 0)) {
     log("L2_STRIPING does not support a non-power-of-two MIDDLE.  Changing to L2_STRIPING=0.\n");
     config["L2_STRIPING"] = to_string(0);
   }
@@ -621,7 +621,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   if (fft.NTT_GF61) {
     defines += toDefine("TAILTGF61", root1GF61(fft.shape.height * 2, 1));
   }
-  if (fft.shape.isPfa()) {
+  if (fft.isPfa()) {
     // MIDDLE = R * 2^k as a Good-Thomas transform (see base.cl).  The root of unity of the radix-R comes from pfaRootOfUnity,
     // as the tail trig tables do (TrigBufCache.cpp).
     u32 const R = fft.shape.pfaRadix();
@@ -848,6 +848,12 @@ unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const ve
     log("%s: this OpenCL compiler lacks what FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
     fftConfig = fallback;
   }
+  // Middle variant 3 (PFA) is only for FFT64 with a MIDDLE of 3, 5, 7, 9, 11 or 15 times 1, 2 or 4.  Elsewhere it is middle variant 1.
+  if (variant_M(fftConfig.variant) == 3 && !fftConfig.shape.hasVariant3M()) {
+    FFTConfig const fallback{fftConfig.shape, fftConfig.variant - 20, fftConfig.carry};
+    log("%s: there is no middle variant 3 for this FFT, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
+    fftConfig = fallback;
+  }
   // No variant 0 for radix 8 at 256: an explicit one (with -use 256RADIX8_W on the command line, say) becomes variant 1
   if (fftConfig.FFT_FP64) {
     Args const args = gpuArgs(*shared.args, fftConfig.spec(), fftUses, extraConf, false);
@@ -1040,10 +1046,10 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 
   K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDIN)),
 // With PFA every row frequency has its own pair of self-paired tail lines, see tailSquareZero
-#define PFA_ROWS (fft.shape.isPfa() ? fft.shape.pfaRadix() : 1u)
+#define PFA_ROWS (fft.isPfa() ? fft.shape.pfaRadix() : 1u)
 // The FP side of a PFA hybrid pairs the tail rows k3 and R - k3 (see base.cl): tailSquareZero does 2 + (R - 1) / 2 workgroups, the
 // two-kernel tailSquare PFA_FP_TAIL_PAIRS pairs of lines
-#define PFA_FP (fft.shape.isPfa() && (fft.FFT_FP64 || fft.FFT_FP32))
+#define PFA_FP (fft.isPfa() && (fft.FFT_FP64 || fft.FFT_FP32))
 #define PFA_FP2 (PFA_FP && !tail_single_kernel)      // The two-kernel FP tail; with one kernel the stock H/2 pairs apply
 #define PFA_FP_TW (WIDTH * (fft.shape.middle / fft.shape.pfaRadix()))
 #define PFA_FP_ZERO_THREADS (SMALL_H / nH * (2 + (fft.shape.pfaRadix() - 1) / 2))
@@ -2237,7 +2243,7 @@ static vector<u32> pfaPairMap(const FFTShape& shape) {
 vector<Word> Gpu::readOut(Buffer<Word> &buf) {
   transpOut(bufAux, buf);
   vector<Word> words = readWords(bufAux);
-  if (fft.shape.isPfa()) {
+  if (fft.isPfa()) {
     vector<u32> const map = pfaPairMap(fft.shape);
     vector<Word> logical(words.size());
     for (u32 i = 0; i < map.size(); ++i) { logical[2 * map[i]] = words[2 * i]; logical[2 * map[i] + 1] = words[2 * i + 1]; }
@@ -2249,7 +2255,7 @@ vector<Word> Gpu::readOut(Buffer<Word> &buf) {
 void Gpu::writeIn(Buffer<Word>& buf, const vector<u32>& words) { writeIn(buf, expandBits(words, N, E)); }
 
 void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
-  if (fft.shape.isPfa()) {
+  if (fft.isPfa()) {
     vector<u32> const map = pfaPairMap(fft.shape);
     vector<Word> stock(words.size());
     for (u32 i = 0; i < map.size(); ++i) { stock[2 * i] = words[2 * map[i]]; stock[2 * i + 1] = words[2 * map[i] + 1]; }

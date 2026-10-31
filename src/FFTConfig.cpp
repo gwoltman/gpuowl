@@ -300,9 +300,9 @@ FFTConfig::FFTConfig(const string& spec) {
       log("No FFT of type %d with size '%s'\n", int(fft_type), v[0].c_str());
       throw "Invalid FFT spec";
     }
-    *this = {shapes.front(), LAST_VARIANT, CARRY_AUTO};
+    *this = {shapes.front(), DEFAULT_VARIANT, CARRY_AUTO};
   } else if (v.size() == 3) {
-    *this = {FFTShape{fft_type, v[0], v[1], v[2]}, LAST_VARIANT, CARRY_AUTO};
+    *this = {FFTShape{fft_type, v[0], v[1], v[2]}, DEFAULT_VARIANT, CARRY_AUTO};
   } else if (v.size() == 4) {
     *this = {FFTShape{fft_type, v[0], v[1], v[2]}, parseInt(v[3]), CARRY_AUTO};
   } else if (v.size() == 5) {
@@ -347,14 +347,16 @@ float FFTConfig::maxBpw() const {
   float b;
   // Look up the pre-computed maximum bpw.  The lookup table contains data for variants 000, 101, 202, 010, 111, 212.
   // For 4K width, the lookup table contains data for variants 100, 101, 202, 110, 111, 212 since BCAST only works for width <= 1024.
+  // Middle variant 2 has no entries of its own:  it gets middle variant 1's.
+  u32 const m = variant_M(variant) == 3 ? 0 : std::min(variant_M(variant), 1u);
   if (variant_W(variant) == variant_H(variant) ||
       (shape.width > 1024 && variant_W(variant) == 1 && variant_H(variant) == 0)) {
-    b = shape.bpw[variant_M(variant) * 3 + variant_H(variant)];
+    b = shape.bpw[m * 3 + variant_H(variant)];
   }
   // Interpolate for the maximum bpw.  This might could be improved upon.  However, I doubt people will use these variants often.
   else {
-    float const b1 = shape.bpw[variant_M(variant) * 3 + variant_W(variant)];
-    float const b2 = shape.bpw[variant_M(variant) * 3 + variant_H(variant)];
+    float const b1 = shape.bpw[m * 3 + variant_W(variant)];
+    float const b2 = shape.bpw[m * 3 + variant_H(variant)];
     b = (b1 + b2) / 2.0f;
   }
   // Only some FFTs support both 32 and 64 bit carries.
@@ -375,7 +377,7 @@ static vector<FFTConfig> specFfts(const string& spec) {
     if (s.find('-') == string::npos) { ret.emplace_back(s); continue; }
     auto shapes = FFTShape::multiSpec(s);
     if (split(s, ':').size() == 1) { std::erase_if(shapes, [](const FFTShape& sh) { return sh.fft_type != FFT64; }); }
-    for (const FFTShape& shape : shapes) { ret.emplace_back(shape, LAST_VARIANT, CARRY_AUTO); }
+    for (const FFTShape& shape : shapes) { ret.emplace_back(shape, DEFAULT_VARIANT, CARRY_AUTO); }
   }
   return ret;
 }

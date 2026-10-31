@@ -27,6 +27,9 @@ KERNEL(G_W) fftP(P(T2) out, CP(Word2) in, Trig smallTrig, BigTab THREAD_WEIGHTS)
     T w1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
     T w2 = optionalHalve(fancyMul(w1, WEIGHT_STEP));
     u32 p = G_W * i + me;
+#if PFA
+    { T2 pw0, pw1; pfaWeights(p, g, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.y; w2 = pw1.y; }
+#endif
     u[i] = U2(in[p].x * w1, in[p].y * w2);
   }
 

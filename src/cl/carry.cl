@@ -31,7 +31,12 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
 
   // Calculate the most significant 32-bits of FRAC_BPW * the index of the FFT word.  Also add FRAC_BPW_HI to test first biglit flag.
   u32 line = gy * CARRY_LEN;
+#if PFA
+  // A chunk of CARRY_LEN lines never crosses a multiple of SMALL_HEIGHT, so its pairs are consecutive as in the stock layout
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
   u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
   u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
 
   T base = optionalDouble(fancyMul(THREAD_WEIGHTS[me].x, iweightStep(gx)));
@@ -40,6 +45,9 @@ KERNEL(G_W) carry(P(Word2) out, CP(T2) in, u32 posROE, P(CarryABM) carryOut, Big
     u32 p = G_W * gx + WIDTH * (CARRY_LEN * gy + i) + me;
     T w1 = optionalDouble(fancyMul(base, THREAD_WEIGHTS[G_W + gy * CARRY_LEN + i].x));
     T w2 = optionalDouble(fancyMul(w1, IWEIGHT_STEP));
+#if PFA
+    { T2 pw0, pw1; pfaWeights(G_W * gx + me, line + i, THREAD_WEIGHTS, &pw0, &pw1); w1 = pw0.x; w2 = pw1.x; }
+#endif
     bool biglit0 = frac_bits + (2*i) * FRAC_BPW_HI <= FRAC_BPW_HI;
     bool biglit1 = frac_bits + (2*i) * FRAC_BPW_HI >= -FRAC_BPW_HI;   // Same as frac_bits + (2*i) * FRAC_BPW_HI + FRAC_BPW_HI <= FRAC_BPW_HI;
     out[p] = weightAndCarryPair(SWAP_XY(in[p]), U2(w1, w2), carry, biglit0, biglit1, &carry, &roundMax, &carryMax);

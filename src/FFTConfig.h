@@ -12,6 +12,7 @@
 
 // We pre-calculate the maximum BPW for a number of fft specs.  From these entries we can either look up or interpolate to get the
 // maximum BPW for all variants of an FFT spec.  The variants for which maximum bpw are precomputed are 000, 101, 202, 010, 111, 212.
+// Middle variant 2 uses middle variant 1's values (it is at least as accurate).
 enum {
 NUM_BPW_ENTRIES = 6
 };
@@ -78,12 +79,23 @@ public:
   }
   [[nodiscard]] u32 pfaRadix() const { return pfaRadix(middle); }
   [[nodiscard]] bool isPfa() const { return pfaMiddle(middle, fft_type) && pfaType(fft_type); }
+  // Middle variant 2 differs from middle variant 1 only in the FP64 twiddles of a non-PFA MIDDLE above 2
+  [[nodiscard]] bool hasVariant2M() const { return middle > 2 && !isPfa() && (fft_type == FFT64 || fft_type == FFT6431); }
+  // FFT64 with middle variant 3 does an odd MIDDLE (times 1, 2 or 4) as a Good-Thomas transform as the FP part of FFT6431 does.  Radix 13
+  // has no PFA code.
+  [[nodiscard]] bool hasVariant3M() const {
+    u32 const r = pfaRadix();
+    return fft_type == FFT64 && (r == 3 || r == 5 || r == 7 || r == 9 || r == 11 || r == 15);
+  }
 };
 
 static const u32 N_VARIANT_W = 3;
-static const u32 N_VARIANT_M = 2;
+static const u32 N_VARIANT_M = 4;
 static const u32 N_VARIANT_H = 3;
 static const u32 LAST_VARIANT = (N_VARIANT_W - 1) * 100 + (N_VARIANT_M - 1) * 10 + N_VARIANT_H - 1;
+// The variant of an FFT spec without one:  middle variant 1.  Middle variant 2 (FP64 middle twiddles from tables) does fewer FP64
+// ops, which pays where FP64 is slow; on GPUs with fast FP64 and limited bandwidth the table reads may not.  -tune times it.
+static const u32 DEFAULT_VARIANT = (N_VARIANT_W - 1) * 100 + 1 * 10 + N_VARIANT_H - 1;
 inline u32 variant_WMH(u32 v_W, u32 v_M, u32 v_H) { return v_W * 100 + v_M * 10 + v_H; }
 inline u32 variant_W(u32 v) { return v / 100; }
 inline u32 variant_M(u32 v) { return v % 100 / 10; }
@@ -128,4 +140,6 @@ public:
 
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }
   [[nodiscard]] float maxBpw() const;
+  // A Good-Thomas MIDDLE:  the NTT and hybrid types' PFA shapes, and FFT64 with middle variant 3
+  [[nodiscard]] bool isPfa() const { return shape.isPfa() || (variant_M(variant) == 3 && shape.hasVariant3M()); }
 };
