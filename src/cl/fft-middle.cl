@@ -32,6 +32,16 @@
 #include "fft15.cl"
 #elif MIDDLE == 16
 #include "fft16.cl"
+#elif MIDDLE == 17
+#include "fft17.cl"
+#elif MIDDLE == 19
+#include "fft19.cl"
+#elif MIDDLE == 21
+#include "fft21.cl"
+#elif MIDDLE == 25
+#include "fft25.cl"
+#elif MIDDLE == 33
+#include "fft33.cl"
 #endif
 
 #if !defined(MM_CHAIN) && !defined(MM2_CHAIN) && FFT_VARIANT_M == 0
@@ -119,6 +129,16 @@ void OVERLOAD fft_MIDDLE(T2 *u) {
   fft15(u);
 #elif MIDDLE == 16
   fft16(u);
+#elif MIDDLE == 17
+  fft17(u);
+#elif MIDDLE == 19
+  fft19(u);
+#elif MIDDLE == 21
+  fft21(u);
+#elif MIDDLE == 25
+  fft25(u);
+#elif MIDDLE == 33
+  fft33(u);
 #else
 #error UNRECOGNIZED MIDDLE
 #endif
@@ -418,6 +438,12 @@ void OVERLOAD pfaDftR(T2 *a) {
   fft11(a);
 #elif PFA == 15
   fft15(a);
+#elif PFA == 21
+  fft21(a);
+#elif PFA == 25
+  fft25(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif
@@ -566,6 +592,16 @@ void OVERLOAD fft_MIDDLE(F2 *u) {
   fft15(u);
 #elif MIDDLE == 16
   fft16(u);
+#elif MIDDLE == 17
+  fft17(u);
+#elif MIDDLE == 19
+  fft19(u);
+#elif MIDDLE == 21
+  fft21(u);
+#elif MIDDLE == 25
+  fft25(u);
+#elif MIDDLE == 33
+  fft33(u);
 #else
 #error UNRECOGNIZED MIDDLE
 #endif
@@ -794,6 +830,28 @@ void OVERLOAD middleShuffle(local F *lds, F2 *u, u32 workgroupSize, u32 blockSiz
     for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
+  } else {
+    // Half the LDS of the MIDDLE <= 16 case (as the FP64 version above MIDDLE=8): each component in two passes of half the elements.
+    u32 p1idx, p2idx;
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
+    local F *p1 = lds + p1idx;
+    local F *p2 = lds + p2idx;
+    const u32 nh = (MIDDLE + 1) / 2;
+    for (int i = 0; i < nh; ++i) { p1[i * workgroupSize] = u[i].x; }
+    bar();
+    for (int i = 0; i < nh; ++i) { u[i].x = p2[workgroupSize * i]; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { p1[(i - nh) * workgroupSize] = u[i].x; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * (i - nh)]; }
+    bar();
+    for (int i = 0; i < nh; ++i) { p1[i * workgroupSize] = u[i].y; }
+    bar();
+    for (int i = 0; i < nh; ++i) { u[i].y = p2[workgroupSize * i]; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { p1[(i - nh) * workgroupSize] = u[i].y; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * (i - nh)]; }
   }
 }
 
@@ -839,6 +897,12 @@ void OVERLOAD pfaDftR(F2 *a) {
   fft11(a);
 #elif PFA == 15
   fft15(a);
+#elif PFA == 21
+  fft21(a);
+#elif PFA == 25
+  fft25(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif
@@ -1026,6 +1090,10 @@ void OVERLOAD pfaDftR(GF31 *a) {
   fft9(a);
 #elif PFA == 11
   fft11(a);
+#elif PFA == 21
+  fft21(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif
@@ -1156,6 +1224,28 @@ void OVERLOAD middleShuffle(local Z31 *lds, GF31 *u, u32 workgroupSize, u32 bloc
     for (int i = 0; i < MIDDLE; ++i) { p1[SHUFFLE_ROW(i) * workgroupSize] = u[i].y; }
     bar();
     for (int i = 0; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * i]; }
+  } else {
+    // Half the LDS of the MIDDLE <= 16 case (as the FP64 version above MIDDLE=8): each component in two passes of half the elements.
+    u32 p1idx, p2idx;
+    middleShuffleIdx(workgroupSize, blockSize, &p1idx, &p2idx);
+    local Z31 *p1 = lds + p1idx;
+    local Z31 *p2 = lds + p2idx;
+    const u32 nh = (MIDDLE + 1) / 2;
+    for (int i = 0; i < nh; ++i) { p1[i * workgroupSize] = u[i].x; }
+    bar();
+    for (int i = 0; i < nh; ++i) { u[i].x = p2[workgroupSize * i]; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { p1[(i - nh) * workgroupSize] = u[i].x; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { u[i].x = p2[workgroupSize * (i - nh)]; }
+    bar();
+    for (int i = 0; i < nh; ++i) { p1[i * workgroupSize] = u[i].y; }
+    bar();
+    for (int i = 0; i < nh; ++i) { u[i].y = p2[workgroupSize * i]; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { p1[(i - nh) * workgroupSize] = u[i].y; }
+    bar();
+    for (int i = nh; i < MIDDLE; ++i) { u[i].y = p2[workgroupSize * (i - nh)]; }
   }
 }
 
@@ -1271,6 +1361,12 @@ void OVERLOAD pfaDftR(GF61 *a) {
   fft11(a);
 #elif PFA == 15
   fft15(a);
+#elif PFA == 21
+  fft21(a);
+#elif PFA == 25
+  fft25(a);
+#elif PFA == 33
+  fft33(a);
 #else
 #error PFA
 #endif

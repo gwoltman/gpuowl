@@ -1,5 +1,7 @@
 // Copyright (C) Mihai Preda & George Woltman
 
+#pragma once
+
 #if FFT_FP64
 
 // 102 FMA + 30 ADD.  See prime95's gwnum/zr11.mac file for the method: pair inputs k and 11-k, then each output pair j, 11-j is
