@@ -159,19 +159,19 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    if (pos != string::npos && (key == "quick" || key == "fine" || isGroup)) {
+    if (pos != string::npos && (key == "quick" || key == "fine" || key == "warmup" || isGroup)) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
       auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
       if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (isGroup && n > 2)
           || (key == "fine" && (n < 1 || n > 50))) {
         log("-tune %s expects %s (found '%s')\n", key.c_str(),
-            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : "a percentage from 1 to 50", val.c_str());
+            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : key == "warmup" ? "a number of seconds" : "a percentage from 1 to 50", val.c_str());
         throw "-tune option value";
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>, warmup=<secs>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -366,6 +366,8 @@ named "config.txt" in the prpll run directory.
                                         The groups fp32, fp6431, 1k256, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
                                         config.txt settings are then not tuned, and the FFTs already in tune.txt are kept.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
+                         warmup=<secs> - Run the GPU this long before the first timing, so that it is timed hot, as it will run.  Default 300;
+                                        0 skips it.
                          regs         - (CUDA, AMD) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,
                                         if given, and of the entries used for exponents from minexp to maxexp, if either is given).
                                         -tune does this after timing the FFTs.  Rerun it after a new CUDA driver/toolkit or
