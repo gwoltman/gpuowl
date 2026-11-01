@@ -136,7 +136,7 @@ double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<Ke
 // the settings the tune started with, A B B A to cancel clock drift, and save it only if it is faster by minGain.  If it is not, the new
 // settings become suggestions.  Leaves in the flags what a restart will use:  the started-with settings plus the saved ones.
 void confirmNewSettings(u64 exponent, GpuCommon shared, FFTConfig fft, int quick, const map<string, string>& originalFlags,
-                        vector<pair<string, int>>& newConfigKeyVals, vector<pair<string, int>>& suggestedConfigKeyVals, double minGain = 0.003) {
+                        vector<pair<string, int>>& newConfigKeyVals, vector<pair<string, int>>& suggestedConfigKeyVals, double minGain = 0.001) {
   Args *args = shared.args;
   if (newConfigKeyVals.empty()) { return; }
   auto written = originalFlags;
