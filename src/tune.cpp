@@ -239,7 +239,7 @@ void logRemaining(u32 nFft, u32 nRegEntries, bool variants, bool amd) {
 // it is faster by minGain.  If it is not, the new settings become suggestions.  Leaves in the flags what a restart will use:  the
 // started-with settings plus the saved ones.  timeIt times the default FFT with the flags as they are (Tune::timeOption).
 void confirmNewSettings(Args* args, const string& spec, const map<string, string>& startFlags, const std::function<double()>& timeIt,
-                        vector<pair<string, int>>& newConfigKeyVals, vector<pair<string, int>>& suggestedConfigKeyVals, double minGain = 0.003) {
+                        vector<pair<string, int>>& newConfigKeyVals, vector<pair<string, int>>& suggestedConfigKeyVals, double minGain = 0.001) {
   if (newConfigKeyVals.empty()) { return; }
   auto written = startFlags;
   for (auto const& [key, value] : newConfigKeyVals) { written[key] = to_string(value); }
