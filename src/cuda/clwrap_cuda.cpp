@@ -1549,6 +1549,21 @@ void cudaSetL2PersistLimit(int pct) {
 void cudaSetL2PersistLimit(int) {}
 #endif
 
+#if CUDA_VERSION >= 11000
+bool cudaL2PersistSupported() {
+  ensureContextCurrent();
+
+  CUdevice dev;
+  if (cuCtxGetDevice(&dev) != CUDA_SUCCESS) return false;
+
+  int maxPersist = 0;
+  cuDeviceGetAttribute(&maxPersist, CU_DEVICE_ATTRIBUTE_MAX_PERSISTING_L2_CACHE_SIZE, dev);
+  return maxPersist > 0;
+}
+#else
+bool cudaL2PersistSupported() { return false; }
+#endif
+
 
 // OpenCL-like extensions invented to provide a clean interface to some nVidia CUDA features
 

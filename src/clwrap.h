@@ -194,6 +194,10 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 // access-policy window's "persisting" hint actually takes effect.
 void cudaSetL2PersistLimit(int pct);
 
+// True if the device of the current context can reserve L2 cache for persisting accesses (Volta and newer, built with CUDA 11 or newer).
+// When false, L2PERSIST has no effect.
+bool cudaL2PersistSupported();
+
 // Limit the registers of one kernel of a built program: maxRegs > 0 is a maximum register count, otherwise minBlocks > 0 is the
 // launch bounds minimum blocks per SM.  smemSpill lets ptxas spill registers to shared memory.  The program's module is rebuilt from
 // its PTX.  Returns false on failure.

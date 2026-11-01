@@ -1174,6 +1174,28 @@ void Tune::tune() {
       args->flags["GRAPHS"] = to_string(best_graphs);
     }
 
+    // Find best L2PERSIST setting (a bitmask of the buffers to mark for persisting L2: 1=buf1, 2=trig tables, 4=carry shuttle).  The default
+    // is 0, which left an RTX 4070 SUPER 6 % slower than L2PERSIST=1 on a 2.25M FFT.  Skipped where the device cannot reserve persisting L2,
+    // which would time the same code five times.
+    if (cudaL2PersistSupported()) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_l2persist = 0;
+      u32 current_l2persist = args->value("L2PERSIST", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 l2persist : {0, 1, 3, 5, 7}) {
+        args->flags["L2PERSIST"] = to_string(l2persist);
+        double cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using L2PERSIST=%u is %6.1f\n", fft.spec().c_str(), l2persist, cost);
+        if (l2persist == current_l2persist) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_l2persist = l2persist; }
+      }
+      log("Best L2PERSIST is %u.  Default L2PERSIST is 0.\n", best_l2persist);
+      configsUpdate(current_cost, best_cost, 0.003, "L2PERSIST", best_l2persist, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["L2PERSIST"] = to_string(best_l2persist);
+    }
+
 #endif
 
     // Find best TAIL_KERNELS setting.  After MULTI_Q and GRAPHS: 11 and 13 add queues (one per tail queue, see Gpu::replay_one), whose cost
