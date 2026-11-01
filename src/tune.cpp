@@ -112,6 +112,35 @@ double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<Ke
   return numeric_limits<double>::infinity();
 }
 
+// The sweeps of -tune change one key at a time on top of the earlier winners, and keep winners too small to save in the flags for the
+// sweeps that follow.  So the combination that goes to config.txt (only the winners above their thresholds) is never timed.  Time it against
+// the settings the tune started with, A B B A to cancel clock drift, and save it only if it is faster by minGain.  If it is not, the new
+// settings become suggestions.  Leaves in the flags what a restart will use:  the started-with settings plus the saved ones.
+void confirmNewSettings(u64 exponent, GpuCommon shared, FFTConfig fft, int quick, const map<string, string>& originalFlags,
+                        vector<pair<string, int>>& newConfigKeyVals, vector<pair<string, int>>& suggestedConfigKeyVals, double minGain = 0.003) {
+  Args *args = shared.args;
+  if (newConfigKeyVals.empty()) { return; }
+  auto written = originalFlags;
+  for (auto const& [key, value] : newConfigKeyVals) { written[key] = to_string(value); }
+  auto const timeWith = [&](const map<string, string>& flags) {
+    args->flags = flags;
+    return timeConfig(exponent, shared, fft, {}, std::min(quick, 3));
+  };
+  double const a1 = timeWith(originalFlags), b1 = timeWith(written), b2 = timeWith(written), a2 = timeWith(originalFlags);
+  double const before = (a1 + a2) / 2, after = (b1 + b2) / 2;
+  bool const faster = std::isfinite(after) && (!std::isfinite(before) || after < (1.0 - minGain) * before);
+  log("Time for %12s with the settings -tune started with is %6.1f (%.1f, %.1f), with the new settings %6.1f (%.1f, %.1f)\n",
+      fft.spec().c_str(), before, a1, a2, after, b1, b2);
+  if (faster) {
+    args->flags = written;
+    return;
+  }
+  log("The new settings are not faster than the settings -tune started with.  They are not saved to config.txt.\n");
+  suggestedConfigKeyVals.insert(suggestedConfigKeyVals.begin(), newConfigKeyVals.begin(), newConfigKeyVals.end());
+  newConfigKeyVals.clear();
+  args->flags = originalFlags;
+}
+
 } // namespace
 
 float Tune::maxBpw(FFTConfig fft) {
@@ -494,6 +523,7 @@ void Tune::tune() {
     if (workers > 1) { log("Timing each option with %d concurrent workers.  Times are microseconds per iteration of their combined throughput.\n", workers); }
     vector<pair<string,int>> newConfigKeyVals;
     vector<pair<string,int>> suggestedConfigKeyVals;
+    auto const originalFlags = args->flags;       // The settings this tune started with, to compare the result with
 
     // Select/init the default FFTshape(s) and FFTConfig(s) for optimal -use options testing
     FFTShape defaultFFTShape, defaultNTTShape, *defaultShape;
@@ -1310,6 +1340,12 @@ void Tune::tune() {
         log("Best TAIL_KERNELS is %u (but best may be %u when running two workers on one GPU).  Default TAIL_KERNELS is 2.\n", best_tail_kernels, best_tail_kernels + 1);
       configsUpdate(current_cost, best_cost, 0.000, "TAIL_KERNELS", best_tail_kernels, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
+    }
+
+    // The combination that goes to config.txt was never timed (see confirmNewSettings)
+    {
+      FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
+      confirmNewSettings(primes.prevPrime(fft.maxExp()), shared, fft, quick, originalFlags, newConfigKeyVals, suggestedConfigKeyVals);
     }
 
     // Output new settings to config.txt
