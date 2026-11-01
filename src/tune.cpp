@@ -1134,6 +1134,13 @@ void Tune::tune() {
       args->flags["256RADIX8_H"] = to_string(best_radix8_h);
     }
 
+    // Gpu.cpp turns LDSPAD_W off when width * SHUFL_BYTES_W * WMUL reaches the LDS limit.  The sweeps of SHUFL_BYTES_W and WMUL skip a
+    // value that would do that, so that no timing or saved setting silently carries an untested LDSPAD_W=0.
+    auto const ldsKeepsPadding = [&](u32 shufl_bytes_w, u32 wmul) {
+      u64 const lds_limit = std::min<u64>(32768, getLocalMemSize(shared.context->deviceId()));
+      return u64(defaultShape->width) * shufl_bytes_w * wmul < lds_limit;
+    };
+
     // Time a key's values on the default shape, as the blocks above, and keep the fastest.  These keys move the time by well under
     // 1 % on the GPUs measured so far, about the noise of one timing, so only a 1 % gain is written to config.txt (the rest are suggested).
     auto const tuneKey = [&](const char *key, initializer_list<u32> values, u32 deflt) {
@@ -1144,6 +1151,7 @@ void Tune::tune() {
       double best_cost = -1.0;
       double current_cost = -1.0;
       for (u32 const value : values) {
+        if (value != current_value && string(key) == "SHUFL_BYTES_W" && !ldsKeepsPadding(value, args->value("WMUL", 2))) { continue; }
         args->flags[key] = to_string(value);
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
         log("Time for %12s using %s=%u is %6.1f\n", fft.spec().c_str(), key, value, cost);
@@ -1226,6 +1234,7 @@ void Tune::tune() {
       double best_cost = -1.0;
       double current_cost = -1.0;
       for (u32 const wmul : {1, 2, 4}) {
+        if (wmul != current_wmul && !ldsKeepsPadding(args->value("SHUFL_BYTES_W", 8), wmul)) { continue; }
         args->flags["WMUL"] = to_string(wmul);
         // A WMUL this FFT or device cannot use is lowered (e.g. 4 to 2 for a 1K width).  Score and save the value that ran.
         u32 used = wmul;
@@ -1236,7 +1245,7 @@ void Tune::tune() {
       }
       log("Best WMUL is %u.  Default WMUL is 2.\n", best_wmul);
       configsUpdate(current_cost, best_cost, 0.000, "WMUL", best_wmul, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["WMUL"] = to_string(best_wmul);
+      if (best_wmul) { args->flags["WMUL"] = to_string(best_wmul); }       // 0: every WMUL was skipped (ldsKeepsPadding)
     }
 
     // Find best MULTI_Q setting (MULTI_Q can only be advantageous when using multiple data types such as FFT3161, FFT6431, etc).
