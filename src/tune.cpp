@@ -47,70 +47,6 @@ namespace {
 // The device's occupancy limits for register tuning: per SM on CUDA, per SIMD on AMD (defined with the register tuning below)
 RegLimits regLimits(cl_device_id id);
 
-vector<TuneConfig> permute(const vector<pair<string, vector<string>>>& params) {
-  vector<TuneConfig> configs;
-
-  int const n = int(params.size());
-  vector<int> vpos(n);
-  while (true) {
-    TuneConfig config;
-    for (int i = 0; i < n; ++i) {
-      config.emplace_back(params[i].first, params[i].second[vpos[i]]);
-    }
-    configs.push_back(config);
-
-    int i;
-    for (i = n-1; i >= 0; --i) {
-      if (vpos[i] < int(params[i].second.size()) - 1) {
-        ++vpos[i];
-        break;
-      } 
-        vpos[i] = 0;
-     
-    }
-
-    if (i < 0) { return configs; }
-  }
-}
-
-vector<TuneConfig> getTuneConfigs(const string& tune) {
-  vector<pair<string, vector<string>>> params;
-  for (auto& part : split(tune, ';')) {
-    auto keyVal = split(part, '=');
-    assert(keyVal.size() == 2);
-    string const& key = keyVal.front();
-    const string& val = keyVal.back();
-    params.emplace_back(key, split(val, ','));
-  }
-  return permute(params);
-}
-
-string toString(const TuneConfig& config) {
-  string s{};
-  for (const auto& [k, v] : config) { s += k + '=' + v + ','; }
-  s.pop_back();
-  return s;
-}
-
-struct Entry {
-  FFTShape shape;
-  TuneConfig config;
-  double cost;
-};
-
-string formatEntry(const Entry& e) {
-  char buf[256];
-  snprintf(buf, sizeof(buf), "! %s %s # %.0f\n",
-           e.shape.spec().c_str(), toString(e.config).c_str(), e.cost);
-  return buf;
-}
-
-string formatConfigResults(const vector<Entry>& results) {
-  string s;
-  for (const Entry& e : results) { if (e.shape.width) { s += formatEntry(e); } }
-  return s;
-}
-
 // Set once any candidate has been built and run.  Until then, a candidate that fails to build or run raises the question whether the GPU
 // can run anything at all (e.g. an NVRTC that cannot compile for this GPU); checkGpuCanRun answers it once rather than letting -tune grind
 // through hundreds of candidates that all cost infinity.
@@ -324,69 +260,6 @@ void Tune::carryTune() {
   }
 }
 
-template<typename T>
-static void add(vector<T>& a, const vector<T>& b) {
-  a.insert(a.end(), b.begin(), b.end());
-}
-
-void Tune::ctune() {
-  Args  const*args = shared.args;
-
-  vector<string> ctune = args->ctune;
-  if (ctune.empty()) { ctune.emplace_back("IN_WG=256,128,64;IN_SIZEX=32,16,8;OUT_WG=256,128,64;OUT_SIZEX=32,16,8"); }
-
-  vector<vector<TuneConfig>> configsVect;
-  configsVect.reserve(ctune.size());
-for (const string& s : ctune) {
-    configsVect.push_back(getTuneConfigs(s));
-  }
-
-  vector<Entry> results;
-
-  auto shapes = FFTShape::multiSpec(args->fftSpec);
-  {
-    string str;
-    for (const auto& s : shapes) { str += s.spec() + ','; }
-    if (!str.empty()) { str.pop_back(); }
-    log("FFTs: %s\n", str.c_str());
-  }
-
-  for (FFTShape const shape : shapes) {
-    FFTConfig const fft{shape, 101, CARRY_32};
-    u64 const exponent = primes.prevPrime(fft.maxExp());
-    // log("tuning %10s with exponent %" PRIu64 "\n", fft.shape.spec().c_str(), exponent);
-
-    vector<int> bestPos(configsVect.size());
-    Entry best{.shape={}, .config={}, .cost=1e9};
-
-    for (u32 i = 0; i < configsVect.size(); ++i) {
-      for (u32 pos = i ? 1 : 0; pos < configsVect[i].size(); ++pos) {
-        vector<KeyVal> c;
-
-        for (u32 k = 0; k < i; ++k) {
-          add(c, configsVect[k][bestPos[k]]);
-        }
-        add(c, configsVect[i][pos]);
-        for (u32 k = i + 1; k < configsVect.size(); ++k) {
-          add(c, configsVect[k][bestPos[k]]);
-        }
-        auto cost = timeConfig(exponent, shared, fft, c);
-
-        bool const isBest = (cost < best.cost);
-        if (isBest) {
-          bestPos[i] = pos;
-          best = {.shape=shape, .config=c, .cost=cost};
-        }
-        log("%c %6.0f : %s %s\n",
-            isBest ? '*' : ' ', cost, shape.spec().c_str(), toString(c).c_str());
-      }
-    }
-    results.push_back(best);
-    log("%s", formatEntry(best).c_str());
-  }
-  log("\nBest configs (lines can be copied to config.txt):\n%s", formatConfigResults(results).c_str());
-}
-
 // Add better -use settings to list of changes to be made to config.txt
 static void configsUpdate(double current_cost, double best_cost, double threshold, const char *key, u32 value, vector<pair<string,int>> &newConfigKeyVals, vector<pair<string,int>> &suggestedConfigKeyVals) {
   if (best_cost == current_cost) return;
@@ -566,12 +439,30 @@ void Tune::tune() {
     else {
       log("Checking whether this GPU is better suited for double-precision FFTs or integer NTTs.\n");
       defaultFFTShape = FFTShape(FFT64, 512, 16, 512);
-      FFTConfig const fft{defaultFFTShape, 101, CARRY_32};
-      double const fp64_time = timeConfig(141000001, shared, fft, {}, quick);
-      log("Time for FP64 FFT %12s is %6.1f\n", fft.spec().c_str(), fp64_time);
       defaultNTTShape = FFTShape(FFT3161, 512, 7, 512);
-      FFTConfig const ntt{defaultNTTShape, 202, CARRY_AUTO};
-      double const ntt_time = timeConfig(141000001, shared, ntt, {}, quick);
+      FFTConfig fft{defaultFFTShape, 101, CARRY_32};
+      FFTConfig ntt{defaultNTTShape, 202, CARRY_AUTO};
+      u64 probe_exponent = 141000001;
+      // An exponent range without 141M (e.g. exp=10M-20M) is decided in the middle of the range, with the smallest FP64 FFT and
+      // M31*M61 NTT that handle it:  smaller FFTs fit in the caches differently and are more bound by kernel launches.
+      if (range_given && (probe_exponent < min_exponent || probe_exponent > max_exponent)) {
+        probe_exponent = primes.prevPrime(min_exponent / 2 + max_exponent / 2);
+        vector<FFTShape> sizes = FFTShape::allShapes();
+        std::ranges::stable_sort(sizes, [](const FFTShape& a, const FFTShape& b) { return a.size() < b.size(); });
+        auto const smallest = [&](enum FFT_TYPES type, u32 variant, FFTConfig current) {
+          for (const FFTShape& shape : sizes) {
+            FFTConfig const c{shape, variant, CARRY_AUTO};
+            if (shape.fft_type == type && shape.isFavoredShape() && c.maxExp() >= probe_exponent) { return c; }
+          }
+          return current;
+        };
+        fft = smallest(FFT64, 101, fft);
+        ntt = smallest(FFT3161, 202, ntt);
+        log("Timing them at %" PRIu64 ", the middle of the exponent range\n", probe_exponent);
+      }
+      double const fp64_time = timeConfig(probe_exponent, shared, fft, {}, quick);
+      log("Time for FP64 FFT %12s is %6.1f\n", fft.spec().c_str(), fp64_time);
+      double const ntt_time = timeConfig(probe_exponent, shared, ntt, {}, quick);
       log("Time for M31*M61 NTT %12s is %6.1f\n", ntt.spec().c_str(), ntt_time);
       if (fp64_time < ntt_time) {
         defaultShape = &defaultFFTShape;
@@ -1060,18 +951,19 @@ void Tune::tune() {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
+      u32 const defaultModM31 = AMDGPU && getAmdWavefrontWidth(shared.context->deviceId()) == 32 ? 3 : 0;   // as base.cl
       u32 best_modm31 = 0;
-      u32 const current_modm31 = args->value("MODM31", 0);
+      u32 const current_modm31 = args->value("MODM31", defaultModM31);
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 const modm31 : {0, 1, 2}) {
+      for (u32 const modm31 : {0, 1, 2, 3}) {
         args->flags["MODM31"] = to_string(modm31);
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
         log("Time for %12s using MODM31=%u is %6.1f\n", fft.spec().c_str(), modm31, cost);
         if (modm31 == current_modm31) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_modm31 = modm31; }
       }
-      log("Best MODM31 is %u.  Default MODM31 is 0.\n", best_modm31);
+      log("Best MODM31 is %u.  Default MODM31 is %u.\n", best_modm31, defaultModM31);
       configsUpdate(current_cost, best_cost, 0.000, "MODM31", best_modm31, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["MODM31"] = to_string(best_modm31);
     }
@@ -1114,6 +1006,46 @@ void Tune::tune() {
       log("Best UNROLL_H is %u.  Default UNROLL_H is 1.\n", best_unroll_h);
       configsUpdate(current_cost, best_cost, 0.003, "UNROLL_H", best_unroll_h, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["UNROLL_H"] = to_string(best_unroll_h);
+    }
+
+    // Find best 256RADIX8_W setting.  It only matters at a width of 256, so time the default shape with width and height 256.
+    if (true) {
+      FFTConfig const fft{FFTShape(defaultShape->fft_type, 256, defaultShape->middle, 256), variant, CARRY_AUTO};
+      u64 const exponent = primes.prevPrime(fft.maxExp());
+      u32 best_radix8_w = 0;
+      u32 const current_radix8_w = args->value("256RADIX8_W", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 const radix8_w : {0, 1}) {
+        args->flags["256RADIX8_W"] = to_string(radix8_w);
+        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using 256RADIX8_W=%u is %6.1f\n", fft.spec().c_str(), radix8_w, cost);
+        if (radix8_w == current_radix8_w) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_radix8_w = radix8_w; }
+      }
+      log("Best 256RADIX8_W is %u.  Default 256RADIX8_W is 0.\n", best_radix8_w);
+      configsUpdate(current_cost, best_cost, 0.003, "256RADIX8_W", best_radix8_w, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["256RADIX8_W"] = to_string(best_radix8_w);
+    }
+
+    // Find best 256RADIX8_H setting.  It only matters at a height of 256, so time the default shape with height and width 256.
+    if (true) {
+      FFTConfig const fft{FFTShape(defaultShape->fft_type, 256, defaultShape->middle, 256), variant, CARRY_AUTO};
+      u64 const exponent = primes.prevPrime(fft.maxExp());
+      u32 best_radix8_h = 0;
+      u32 const current_radix8_h = args->value("256RADIX8_H", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 const radix8_h : {0, 1}) {
+        args->flags["256RADIX8_H"] = to_string(radix8_h);
+        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using 256RADIX8_H=%u is %6.1f\n", fft.spec().c_str(), radix8_h, cost);
+        if (radix8_h == current_radix8_h) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_radix8_h = radix8_h; }
+      }
+      log("Best 256RADIX8_H is %u.  Default 256RADIX8_H is 0.\n", best_radix8_h);
+      configsUpdate(current_cost, best_cost, 0.003, "256RADIX8_H", best_radix8_h, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["256RADIX8_H"] = to_string(best_radix8_h);
     }
 
     // Find best ZEROHACK_W setting
@@ -1397,14 +1329,14 @@ skip_some_WH_variants = 2;   // should default be 1??
       // nVidia now supports variant zero, but is slower on TitanV
       if (variant_W(variant) == 0) {
         if (!VARIANT0) continue;
-        if (!shape.hasVariant0W(shared.args->radix8At256(shape.spec(), false))) continue;
+        if (!shape.hasVariant0W(shared.args->radix8At256(false))) continue;
       }
 
       // Only AMD GPUs profitably support variant zero (BCAST) and only if height <= 1024.
       // nVidia now supports variant zero, but is slower on TitanV
       if (variant_H(variant) == 0) {
         if (!VARIANT0) continue;
-        if (!shape.hasVariant0H(shared.args->radix8At256(shape.spec(), true))) continue;
+        if (!shape.hasVariant0H(shared.args->radix8At256(true))) continue;
       }
 
       // Reject shapes that won't be used to test exponents in the user's desired range.
@@ -1439,7 +1371,7 @@ skip_some_WH_variants = 2;   // should default be 1??
             double cost, min_cost = -1.0;
             for (u32 w = 0; w < N_VARIANT_W; w++) {
               if (w == 0 && !VARIANT0) continue;
-              if (w == 0 && !test.hasVariant0W(shared.args->radix8At256(test.spec(), false))) continue;
+              if (w == 0 && !test.hasVariant0W(shared.args->radix8At256(false))) continue;
               FFTConfig const fft{test, variant_WMH (w, 0, 1), CARRY_32};
               cost = timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, adjusted_quick);
               log("Fast width search %6.1f %12s\n", cost, fft.spec().c_str());
@@ -1461,7 +1393,7 @@ skip_some_WH_variants = 2;   // should default be 1??
             double cost, min_cost = -1.0;
             for (u32 h = 0; h < N_VARIANT_H; h++) {
               if (h == 0 && !VARIANT0) continue;
-              if (h == 0 && !test.hasVariant0H(shared.args->radix8At256(test.spec(), true))) continue;
+              if (h == 0 && !test.hasVariant0H(shared.args->radix8At256(true))) continue;
               FFTConfig const fft{test, variant_WMH (1, 0, h), CARRY_32};
               cost = timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, quick);
               log("Fast height search %6.1f %12s\n", cost, fft.spec().c_str());
@@ -1583,8 +1515,8 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
   for (size_t i = 0; i < shapes.size(); ++i) {
     FFTShape const& shape = shapes[i];
     for (u32 variant = 0; variant <= LAST_VARIANT; variant = next_variant(variant)) {
-      if (variant_W(variant) == 0 && (!variant0 || !shape.hasVariant0W(shared.args->radix8At256(shape.spec(), false)))) { continue; }
-      if (variant_H(variant) == 0 && (!variant0 || !shape.hasVariant0H(shared.args->radix8At256(shape.spec(), true)))) { continue; }
+      if (variant_W(variant) == 0 && (!variant0 || !shape.hasVariant0W(shared.args->radix8At256(false)))) { continue; }
+      if (variant_H(variant) == 0 && (!variant0 || !shape.hasVariant0H(shared.args->radix8At256(true)))) { continue; }
       vector carries{CARRY_AUTO};
       if (shape.fft_type == FFT64) {
         carries = {CARRY_32};

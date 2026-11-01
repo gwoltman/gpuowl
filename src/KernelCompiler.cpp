@@ -171,7 +171,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   linkArgs{},   // no compile-only options here: clLinkProgram accepts only linker options (POCL enforces it)
   baseArgs{},
   useCache{args.useCache},
-  useMemCache{args.doTune || args.doZtune || args.doCtune || args.carryTune},
+  useMemCache{args.doTune || args.doZtune || args.carryTune},
   verbose{args.verbose},
   saveTemps{runtimeSavesTemps()},
   // main() re-execs with the compiler options set (Linux, AMD); otherwise the user may have set them (e.g. on Windows)

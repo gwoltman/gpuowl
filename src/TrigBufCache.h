@@ -65,38 +65,39 @@ u64 pfaPowMod(u32 q, u64 a, u64 e);
 u64 pfaRootOfUnity(u32 q, u32 R);
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of double2 values)
-#define SMALLTRIG_FP64_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) * 5 : SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)) // See genSmallTrigFP64
+// The width table is the combo table only when TrigBufCache::smallTrig shares it: W == H and nW == nH (not so with 256RADIX8 on one side)
+#define SMALLTRIG_FP64_SIZE(W,M,H,nW,nH)        ((W) != (H) || (nW) != (nH) || (H) == 0 ? (W) * 5 : SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)) // See genSmallTrigFP64
 #define SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)      ((H) * 5 + ((W) * (M) / 2 + 1) * 2 * (H) / (nH))                          // See genSmallTrigComboFP64
 #define MIDDLETRIG_FP64_SIZE(W,M,H)             ((M) & ((M) - 1) ? (H) * ((M) - 1) + (W) + (H) : (H) + (W) + (H))  // Larger for a PFA hybrid                                                     // See genMiddleTrigFP64
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of float2 values)
-#define SMALLTRIG_FP32_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) * 5 : SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)) // See genSmallTrigFP32
+#define SMALLTRIG_FP32_SIZE(W,M,H,nW,nH)        ((W) != (H) || (nW) != (nH) || (H) == 0 ? (W) * 5 : SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)) // See genSmallTrigFP32
 #define SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH)      ((H) * 5 + ((W) * (M) / 2 + 1) * 2 * (H) / (nH))                          // See genSmallTrigComboFP32
 #define MIDDLETRIG_FP32_SIZE(W,M,H)             ((M) & ((M) - 1) ? (H) * ((M) - 1) + (W) + (H) : (H) + (W) + (H))  // Larger for a PFA hybrid                                                     // See genMiddleTrigFP32
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of uint2 values)
-#define SMALLTRIG_GF31_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH))     // See genSmallTrigGF31
+#define SMALLTRIG_GF31_SIZE(W,M,H,nW,nH)        ((W) != (H) || (nW) != (nH) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH))     // See genSmallTrigGF31
 #define SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / (((M) & (~(M) + 1)) + ((M) == 0)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF31
 #define MIDDLETRIG_GF31_SIZE(W,M,H)             ((H) * ((M) - 1) + (W) + (H))                                           // See genMiddleTrigGF31
 
 // Compute the size of the largest possible trig buffer given width, middle, height (in number of ulong2 values)
-#define SMALLTRIG_GF61_SIZE(W,M,H,nH)           ((W) != (H) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH))     // See genSmallTrigGF61
+#define SMALLTRIG_GF61_SIZE(W,M,H,nW,nH)        ((W) != (H) || (nW) != (nH) || (H) == 0 ? (W) : SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH))     // See genSmallTrigGF61
 #define SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH)      ((H) + ((W) * (M) / 2 + ((M) / (((M) & (~(M) + 1)) + ((M) == 0)))) * 2 * (H) / (nH))                            // See genSmallTrigComboGF61
 #define MIDDLETRIG_GF61_SIZE(W,M,H)             ((H) * ((M) - 1) + (W) + (H))                                           // See genMiddleTrigGF61
 
 // Convert above sizes to distances (in units of double2)
-#define SMALLTRIG_FP64_DIST(W,M,H,nH)           SMALLTRIG_FP64_SIZE(W,M,H,nH)
+#define SMALLTRIG_FP64_DIST(W,M,H,nW,nH)        SMALLTRIG_FP64_SIZE(W,M,H,nW,nH)
 #define SMALLTRIGCOMBO_FP64_DIST(W,M,H,nH)      SMALLTRIGCOMBO_FP64_SIZE(W,M,H,nH)
 #define MIDDLETRIG_FP64_DIST(W,M,H)             MIDDLETRIG_FP64_SIZE(W,M,H)
 
-#define SMALLTRIG_FP32_DIST(W,M,H,nH)           SMALLTRIG_FP32_SIZE(W,M,H,nH) * sizeof(float) / sizeof(double)
+#define SMALLTRIG_FP32_DIST(W,M,H,nW,nH)        SMALLTRIG_FP32_SIZE(W,M,H,nW,nH) * sizeof(float) / sizeof(double)
 #define SMALLTRIGCOMBO_FP32_DIST(W,M,H,nH)      SMALLTRIGCOMBO_FP32_SIZE(W,M,H,nH) * sizeof(float) / sizeof(double)
 #define MIDDLETRIG_FP32_DIST(W,M,H)             MIDDLETRIG_FP32_SIZE(W,M,H) * sizeof(float) / sizeof(double)
 
-#define SMALLTRIG_GF31_DIST(W,M,H,nH)           SMALLTRIG_GF31_SIZE(W,M,H,nH) * sizeof(uint) / sizeof(double)
+#define SMALLTRIG_GF31_DIST(W,M,H,nW,nH)        SMALLTRIG_GF31_SIZE(W,M,H,nW,nH) * sizeof(uint) / sizeof(double)
 #define SMALLTRIGCOMBO_GF31_DIST(W,M,H,nH)      SMALLTRIGCOMBO_GF31_SIZE(W,M,H,nH) * sizeof(uint) / sizeof(double)
 #define MIDDLETRIG_GF31_DIST(W,M,H)             MIDDLETRIG_GF31_SIZE(W,M,H) * sizeof(uint) / sizeof(double)
 
-#define SMALLTRIG_GF61_DIST(W,M,H,nH)           SMALLTRIG_GF61_SIZE(W,M,H,nH) * sizeof(ulong) / sizeof(double)
+#define SMALLTRIG_GF61_DIST(W,M,H,nW,nH)        SMALLTRIG_GF61_SIZE(W,M,H,nW,nH) * sizeof(ulong) / sizeof(double)
 #define SMALLTRIGCOMBO_GF61_DIST(W,M,H,nH)      SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH) * sizeof(ulong) / sizeof(double)
 #define MIDDLETRIG_GF61_DIST(W,M,H)             MIDDLETRIG_GF61_SIZE(W,M,H) * sizeof(ulong) / sizeof(double)

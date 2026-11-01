@@ -511,17 +511,17 @@ KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #if L2_STRIPING
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
-  u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
+  u32 zerohack = g / 131072;                       // Keeps the write addresses from being CSE'd with the read addresses (at MIDDLE=16 that spills on RDNA3)
 #elif INPLACE == 1                                 // nVidia friendly padding
   u32 N = SMALL_HEIGHT / 16;
   u32 starty = g % N * 16;
   u32 startx = g / N * 16;
-  u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
+  u32 zerohack = (AMDGPU && MIDDLE >= 16) ? g / 131072 : 0;  // Keeps the write addresses from being CSE'd with the read addresses (that spills on RDNA3)
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
   u32 N = WIDTH / 16;
   u32 startx = g % N * 16;
   u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16 (for FP64, GF61 untimed)
+  u32 zerohack = g / 131072;                       // Keeps the write addresses from being CSE'd with the read addresses (at MIDDLE=16 that spills on RDNA3)
 #endif
 
   u32 me = get_local_id(0);

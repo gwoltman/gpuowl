@@ -1077,12 +1077,12 @@ static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix) {
 
   if (fft.FFT_FP64) {
     tab = genSmallTrigFP64(size, radix);
-    tab.resize(SMALLTRIG_FP64_SIZE(size, 0, 0, 0));
+    tab.resize(SMALLTRIG_FP64_SIZE(size, 0, 0, 0, 0));
   }
 
   if (fft.FFT_FP32) {
     vector<float2> tab1 = genSmallTrigFP32(size, radix);
-    tab1.resize(SMALLTRIG_FP32_SIZE(size, 0, 0, 0));
+    tab1.resize(SMALLTRIG_FP32_SIZE(size, 0, 0, 0, 0));
     // Append tab1 to tab
     tabsize = tab.size();
     tab.resize(tabsize + tab1.size() / 2);
@@ -1091,7 +1091,7 @@ static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix) {
 
   if (fft.NTT_GF31) {
     vector<uint2> tab2 = genSmallTrigGF31(size, radix);
-    tab2.resize(SMALLTRIG_GF31_SIZE(size, 0, 0, 0));
+    tab2.resize(SMALLTRIG_GF31_SIZE(size, 0, 0, 0, 0));
     // Append tab2 to tab
     tabsize = tab.size();
     tab.resize(tabsize + tab2.size() / 2);
@@ -1100,7 +1100,7 @@ static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix) {
 
   if (fft.NTT_GF61) {
     vector<ulong2> tab3 = genSmallTrigGF61(size, radix);
-    tab3.resize(SMALLTRIG_GF61_SIZE(size, 0, 0, 0));
+    tab3.resize(SMALLTRIG_GF61_SIZE(size, 0, 0, 0, 0));
     // Append tab3 to tab
     tabsize = tab.size();
     tab.resize(tabsize + tab3.size());

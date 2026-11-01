@@ -40,10 +40,10 @@ public:
   [[nodiscard]] static bool isRegisterKey(const string& k) {
     return k == "NOREG" || k.starts_with("REGCF") || k.starts_with("REGMI") || k.starts_with("REGMO") || k.starts_with("REGTS");
   }
-  // -use 256RADIX8_W / 256RADIX8_H (default off): radix 8 rather than radix 4 at WIDTH / SMALL_HEIGHT 256, also from the FFT's
-  // "! <fft>" config.txt line.  The C++ code reads them, never the .cl code (which sees NW and NH).
+  // -use 256RADIX8_W / 256RADIX8_H (default off): radix 8 rather than radix 4 at WIDTH / SMALL_HEIGHT 256
+  // The C++ code reads them, never the .cl code (which sees NW and NH).
   [[nodiscard]] static bool isRadixKey(const string& k) { return k == "256RADIX8_W" || k == "256RADIX8_H"; }
-  [[nodiscard]] bool radix8At256(const string& fftShapeSpec, bool height) const;
+  [[nodiscard]] bool radix8At256(bool height) const;
   // A copy of these args with a tune.txt line's -use settings for one FFT applied on top of config.txt, but not over the command line.
   [[nodiscard]] Args withFftUses(const string& fftSpec, const vector<KeyVal>& uses, bool doLog = true) const;
   [[nodiscard]] u32 getProofPow(u64 exponent) const;
@@ -59,16 +59,13 @@ public:
   string verifyPath;
 
   string tune;
-  vector<string> ctune;
 
-  bool doCtune{};
   bool doTune{};
   bool doZtune{};
   bool carryTune{};
   bool logROE{};
 
   std::map<std::string, std::string> flags;
-  std::map<std::string, vector<KeyVal>> perFftConfig;
 
   int device = 0;
 
