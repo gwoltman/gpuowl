@@ -1335,6 +1335,8 @@ void OVERLOAD pfaRowMiddle(GF61 *u, u32 y, TrigGF61 trig, bool inverse) {
 // keeps the columns apart; y passes through it so that the column's twiddle loads stay after it.  Elsewhere the fence costs about 1 %.
 #if (HAS_ASM && PFA_M2 > 1 && MIDDLE > 8)
 #define PFA_FENCE(b) do { for (u32 i = 0; i < MIDDLE; ++i) { OPAQUE(u[i].x); OPAQUE(u[i].y); } OPAQUE(b); } while (0)
+#else
+#define PFA_FENCE(b)
 #endif
 
 // fftMiddleIn for PFA: x is the width frequency, y the height position.  u[m] holds line pfaInIndex(m, y)*SMALL_HEIGHT + y
