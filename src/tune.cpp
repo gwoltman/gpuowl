@@ -16,6 +16,7 @@
 #include "Stage2.h"
 
 #include <algorithm>
+#include <functional>
 #include <future>
 #include <latch>
 #include <limits>
@@ -230,6 +231,35 @@ void logRemaining(u32 nFft, u32 nRegEntries, bool variants, bool amd) {
   log("About %u FFT timings to go%s%s:  roughly %s more%s\n", nFft, nRegEntries ? ", then the register tuning" : "",
       variants ? " and the FP64 variants" : "", minutesText(fftPhaseSecs(nFft, nRegEntries, variants, amd, scale) / 60).c_str(),
       timingsRun >= 5 ? (", from the " + to_string(lround(timingSecs / timingsRun)) + " seconds per timing so far").c_str() : "");
+}
+
+// The sweeps of -tune change one key at a time on top of the earlier winners, and keep winners too small to save in the flags for the
+// sweeps that follow.  So the combination that goes to config.txt (only the winners above their thresholds) is never timed.  Time it against
+// the settings the tune started with (plus the untimed settings a Minimal tune writes), A B B A to cancel clock drift, and save it only if
+// it is faster by minGain.  If it is not, the new settings become suggestions.  Leaves in the flags what a restart will use:  the
+// started-with settings plus the saved ones.  timeIt times the default FFT with the flags as they are (Tune::timeOption).
+void confirmNewSettings(Args* args, const string& spec, const map<string, string>& startFlags, const std::function<double()>& timeIt,
+                        vector<pair<string, int>>& newConfigKeyVals, vector<pair<string, int>>& suggestedConfigKeyVals, double minGain = 0.003) {
+  if (newConfigKeyVals.empty()) { return; }
+  auto written = startFlags;
+  for (auto const& [key, value] : newConfigKeyVals) { written[key] = to_string(value); }
+  auto const timeWith = [&](const map<string, string>& flags) {
+    args->flags = flags;
+    return timeIt();
+  };
+  double const a1 = timeWith(startFlags), b1 = timeWith(written), b2 = timeWith(written), a2 = timeWith(startFlags);
+  double const before = (a1 + a2) / 2, after = (b1 + b2) / 2;
+  bool const faster = std::isfinite(after) && (!std::isfinite(before) || after < (1.0 - minGain) * before);
+  log("Time for %12s with the settings -tune started with is %6.1f (%.1f, %.1f), with the new settings %6.1f (%.1f, %.1f)\n",
+      spec.c_str(), before, a1, a2, after, b1, b2);
+  if (faster) {
+    args->flags = written;
+    return;
+  }
+  log("The new settings are not faster than the settings -tune started with.  They are not saved to config.txt.\n");
+  suggestedConfigKeyVals.insert(suggestedConfigKeyVals.begin(), newConfigKeyVals.begin(), newConfigKeyVals.end());
+  newConfigKeyVals.clear();
+  args->flags = startFlags;
 }
 
 } // namespace
@@ -693,6 +723,7 @@ void Tune::tune() {
     if (workers > 1) { log("Timing each option with %d concurrent workers.  Times are microseconds per iteration of their combined throughput.\n", workers); }
     vector<pair<string,int>> newConfigKeyVals;
     vector<pair<string,int>> suggestedConfigKeyVals;
+    auto const originalFlags = args->flags;       // The settings this tune started with, to compare the result with
 
     // Select/init the default FFTshape(s) and FFTConfig(s) for optimal -use options testing
     FFTShape defaultFFTShape, defaultNTTShape, *defaultShape;
@@ -1569,6 +1600,16 @@ void Tune::tune() {
         log("Best TAIL_KERNELS is %u (but best may be %u when running two workers on one GPU).  Default TAIL_KERNELS is 2.\n", best_tail_kernels, best_tail_kernels + 1);
       configsUpdate(current_cost, best_cost, 0.000, "TAIL_KERNELS", best_tail_kernels, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
+    }
+
+    // The combination that goes to config.txt was never timed (see confirmNewSettings)
+    {
+      FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
+      u64 const exponent = primes.prevPrime(fft.maxExp());
+      auto startFlags = originalFlags;
+      for (auto const& [key, value] : untimedConfigKeyVals) { startFlags[key] = to_string(value); }
+      confirmNewSettings(args, fft.spec(), startFlags, [&] { return timeOption(exponent, fft, std::min(quick, 3)); },
+                         newConfigKeyVals, suggestedConfigKeyVals);
     }
 
     // Output new settings to config.txt
