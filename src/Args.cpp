@@ -193,13 +193,10 @@ void Args::readConfig(const fs::path& path) {
   }
 }
 
-// Same priority as clDefines: these args' flags (command line, config.txt, tune.txt), then the FFT's config.txt line
-bool Args::radix8At256(const string& fftShapeSpec, bool height) const {
+// Same priority as clDefines: these args' flags (command line, config.txt, tune.txt)
+bool Args::radix8At256(bool height) const {
   string const key = height ? "256RADIX8_H" : "256RADIX8_W";
   if (auto it = flags.find(key); it != flags.end()) { return atoi(it->second.c_str()) != 0; }
-  if (auto it = perFftConfig.find(fftShapeSpec); it != perFftConfig.end()) {
-    for (const auto& [k, v] : it->second) { if (k == key) { return atoi(v.c_str()) != 0; } }
-  }
   return false;
 }
 
@@ -448,16 +445,8 @@ void Args::parse(const string& line) {
   if (line.empty() || line[0] == '#') { return; }
 
   if (line[0] == '!') {
-    // conditional defines predicated on a FFT
-    char fftBuf[32];
-    char configBuf[256];
-    if (sscanf(line.c_str(), "! %31s %255s", fftBuf, configBuf) != 2) {   // otherwise the buffers are uninitialised
-      log("config line ignored (expected \"! <fft> <use-flags>\"): \"%s\"\n", line.c_str());
-      return;
-    }
-    string const fft = fftBuf;
-    string const config = configBuf;
-    perFftConfig[fft] = splitUses(config);
+    // old per-FFT config lines
+    log("WARNING: per-FFT config line ignored (\"! <fft> <use-flags>\" is no longer supported, use tune.txt): \"%s\"\n", line.c_str());
     return;
   }
 
@@ -500,9 +489,6 @@ void Args::parse(const string& line) {
     } else if (key == "-tune") {
       doTune = true;
       if (!s.empty()) { checkTuneOptions(s); tune = s; }
-//    } else if (key == "-ctune") {
-//      doCtune = true;
-//      if (!s.empty()) { ctune.push_back(s); }
     } else if (key == "-ztune") {
       doZtune = true;
     } else if (key == "-carryTune") {

@@ -8,7 +8,7 @@
 #pragma clang diagnostic ignored "-Wpass-failed"
 #endif
 
-/* Tunable paramaters for -ctune :
+/* Tunable parameters:
 
 IN_WG, OUT_WG: 64, 128, 256. Default: 128.
 IN_SIZEX, OUT_SIZEX: 4, 8, 16, 32. Default: 16.
