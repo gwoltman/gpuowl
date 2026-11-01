@@ -521,7 +521,7 @@ KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 N = WIDTH / 16;
   u32 startx = g % N * 16;
   u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16 (for FP64, GF61 untimed)
+  u32 zerohack = g / 131072;                       // Keeps the write addresses from being CSE'd with the read addresses (at MIDDLE=16 that spills on RDNA3)
 #endif
 
   u32 me = get_local_id(0);
