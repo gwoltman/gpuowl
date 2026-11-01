@@ -516,7 +516,7 @@ KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 N = SMALL_HEIGHT / 16;
   u32 starty = g % N * 16;
   u32 startx = g / N * 16;
-  u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
+  u32 zerohack = (AMDGPU && MIDDLE >= 16) ? g / 131072 : 0;  // Keeps the write addresses from being CSE'd with the read addresses (that spills on RDNA3)
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
   u32 N = WIDTH / 16;
   u32 startx = g % N * 16;
