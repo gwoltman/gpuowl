@@ -8,7 +8,7 @@
 #pragma clang diagnostic ignored "-Wpass-failed"
 #endif
 
-/* Tunable paramaters for -ctune :
+/* Tunable parameters:
 
 IN_WG, OUT_WG: 64, 128, 256. Default: 128.
 IN_SIZEX, OUT_SIZEX: 4, 8, 16, 32. Default: 16.
@@ -202,7 +202,12 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #endif
 #endif
 #if !defined(MODM31)
+#if AMDGPU && WAVEFRONT == 32
+#define MODM31 3      // Timed 1.5-2.8 % faster than 0 on an RX 7900 XTX.  Not on wave64 AMD:  on gfx906 it takes the 1K-wide carryFused of
+                      // FFT6431 and FFT323161 past 128 VGPRs (occupancy 2 -> 1)
+#else
 #define MODM31 0
+#endif
 #endif
 
 #if !defined(MIDDLE_CHAIN31)
@@ -1168,7 +1173,9 @@ void dependentLaunch() {
 
 void dependentLaunchWait() {
 #if CUDA_BACKEND && HAS_PTX >= 900 && PDL
-  __asm volatile("griddepcontrol.wait;");                 // same as cudaGridDependencySynchronize();
+  // The "memory" clobber keeps the compiler from moving loads of the previous kernel's output above the wait (volatile alone only
+  // keeps the asm itself in place).  CUDA's own cudaGridDependencySynchronize() is this asm with the same clobber.
+  __asm volatile("griddepcontrol.wait;" ::: "memory");     // same as cudaGridDependencySynchronize();
 #endif
 }
 
