@@ -61,9 +61,6 @@ public:
   // Find the max-BPW for each FFT
   void ztune();
 
-  // Find the best configuration for each FFT
-  void ctune();
-
   // Considering the cost of each FFT and the max-BPW, work out the transition points between them
   void tune();
 

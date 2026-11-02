@@ -744,7 +744,11 @@ F2 OVERLOAD addsubq(F2 a, F2 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, 
 // (a + h * 0x7FFFFFFF for a signed input).  On nVidia an IMAD runs on the FMA pipe and LOP3/SHF/LEA/IADD3 on the ALU pipe.  Timed on an
 // RTX 5080 (sm_120) in Oct 2026 it tied MODM31=1/2:  sm_120's ISETP/SEL/IADD issue on either pipe, so MODM31=1/2 already balance the pipes.
 // (Getting h from mul.hi(a, 2) instead of a shift was slower:  IMAD.HI is half rate on sm_120.)
-#if MODM31 == 0
+#if MODM31 == 3
+// The reduction Stwo and Plonky3 use for M31:  one subtract and an unsigned min (v_min_u32 is full rate on AMD).  A below M31 wraps a - M31 above a.
+Z31 OVERLOAD modM31(Z31 a) { return min(a, a - M31); }                                 // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
+Z31 OVERLOAD modM31(i32 a) { return min((u32) a, (u32) a + M31); }                     // Assumes a is not 0x80000000 (which would return 0x80000000)
+#elif MODM31 == 0
 Z31 OVERLOAD modM31(Z31 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0xFFFFFFFF (which would return 0x80000000)
 Z31 OVERLOAD modM31(i32 a) { return (a & M31) + (a >> 31); }                          // Assumes a is not 0x80000000 (which would return 0xFFFFFFFF)
 #elif MODM31 == 1
@@ -1179,6 +1183,14 @@ u64 OVERLOAD weakModM61(u128 a, u32 num_bits) {
           : "=r"(r.x), "=r"(r.y) : "r"(l.x), "r"(l.y), "r"(h.x), "r"(h.y));
   }
   return as_ulong(r);
+#elif AMDGPU && defined(__has_builtin) && __has_builtin(__builtin_amdgcn_alignbit)
+  // The same sums with a >> 61 from two funnel shifts of the 32-bit halves (v_alignbit_b32) instead of a 64-bit shift (v_lshlrev_b64,
+  // slower than a 32-bit op on RDNA3), a 32-bit shift and an or
+  uint2 l = as_uint2(u128_lo64(a)), h = as_uint2(u128_hi64(a));
+  u32 f0 = __builtin_amdgcn_alignbit(h.x, l.y, 29), f1 = __builtin_amdgcn_alignbit(h.y, h.x, 29);    // bits 61..92, 93..124
+  u64 lo61 = as_ulong((uint2)(l.x, l.y & 0x1FFFFFFF));
+  if (num_bits <= 125) return lo61 + as_ulong((uint2)(f0, f1));
+  return lo61 + as_ulong((uint2)(f0, f1 & 0x1FFFFFFF)) + (h.y >> 26);
 #else
   u64 lo = u128_lo64(a), hi = u128_hi64(a);
   u64 lo61 = lo & M61;                                  // Max value is M61
@@ -1426,6 +1438,9 @@ Z61 OVERLOAD addsubq(Z61 a, Z61 b, u32 lowMe, u32 halfWG) {
 GF61 OVERLOAD addq(GF61 a, GF61 b) { return a + b; }
 GF61 OVERLOAD subq(GF61 a, GF61 b) { return a - b; }
 GF61 OVERLOAD addsubq(GF61 a, GF61 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
+// Add m61_count * M61 (to make a later subtraction's result positive).  i32, not u32, so an int literal is an exact match rather than ambiguous with addq(Z61, Z61)
+Z61 OVERLOAD addq(Z61 a, const i32 m61_count) { return a + m61_count * M61; }
+GF61 OVERLOAD addq(GF61 a, const i32 m61_count) { return U2(addq(a.x, m61_count), addq(a.y, m61_count)); }
 GF61 OVERLOAD addiq(GF61 a, GF61 b) { return U2(a.x - b.y, a.y + b.x); }
 GF61 OVERLOAD subiq(GF61 a, GF61 b) { return U2(a.x + b.y, a.y - b.x); }
 

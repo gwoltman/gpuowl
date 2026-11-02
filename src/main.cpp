@@ -209,12 +209,10 @@ int main(int argc, char **argv) {
     shared.bufCache = &bufCache;
     shared.background = &background;
 
-    if (args.doCtune || args.doTune || args.doZtune || args.carryTune) {
+    if (args.doTune || args.doZtune || args.carryTune) {
       Tune tune{shared};
 
-      if (args.doCtune) {
-        tune.ctune();
-      } else if (args.doTune) {
+      if (args.doTune) {
         tune.tune();
       } else if (args.doZtune) {
         tune.ztune();

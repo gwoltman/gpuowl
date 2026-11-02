@@ -326,7 +326,7 @@ Word OVERLOAD carryStep(i64 x, i32 *outCarry, bool isBigWord) {
   *outCarry = xtractSafe32(x, nBits) + (w < 0);
   return w;
 #else
-  i32 w = lowBits(x, nBits);
+  i32 w = lowBits(lo32(x), nBits);
   *outCarry = xtract32(x, nBits) + (w < 0);
   return w;
 #endif
