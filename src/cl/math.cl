@@ -1404,6 +1404,9 @@ Z61 OVERLOAD addq(Z61 a, Z61 b) { return a + b; }
 Z61 OVERLOAD subq(Z61 a, Z61 b) { return a - b; }
 GF61 OVERLOAD addq(GF61 a, GF61 b) { return a + b; }
 GF61 OVERLOAD subq(GF61 a, GF61 b) { return a - b; }
+// Add m61_count * M61 (to make a later subtraction's result positive).  i32, not u32, so an int literal is an exact match rather than ambiguous with addq(Z61, Z61)
+Z61 OVERLOAD addq(Z61 a, const i32 m61_count) { return a + m61_count * M61; }
+GF61 OVERLOAD addq(GF61 a, const i32 m61_count) { return U2(addq(a.x, m61_count), addq(a.y, m61_count)); }
 GF61 OVERLOAD addiq(GF61 a, GF61 b) { return U2(a.x - b.y, a.y + b.x); }
 GF61 OVERLOAD subiq(GF61 a, GF61 b) { return U2(a.x + b.y, a.y - b.x); }
 
