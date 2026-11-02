@@ -956,7 +956,17 @@ static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix) {
     }
   }
 
-  tab.resize(size);
+  // Second half:  for each twiddle b of the standard lines, cmul's Karatsuba terms (b.y - b.x, -(b.x + b.y)), reduced to 0..M61-1, read by
+  // tabMul's cmulPre (TABMUL_CHAIN61=2)
+  tab.resize(2 * size);
+  if (!(size == 256 && radix == 8)) {
+    u64 const M61 = (u64(1) << 61) - 1;
+    for (u32 k = 0; k < (radix - 1) * WG; ++k) {
+      u64 const bx = tab[k].first % M61, by = tab[k].second % M61;
+      u64 const sum = (bx + by) % M61;
+      tab[size + k] = ulong2{by >= bx ? by - bx : by + M61 - bx, sum ? M61 - sum : 0};
+    }
+  }
   return tab;
 }
 

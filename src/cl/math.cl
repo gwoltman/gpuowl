@@ -1295,12 +1295,15 @@ GF61 OVERLOAD csqa(GF61 a, GF61 c) { return csqa(a, c, 2); }
 
 // Complex mul
 #if 1
-GF61 OVERLOAD cmul(GF61 a, GF61 b) {
-  u128 k1 = mul64s(b.x, a.x + a.y);                           // max value is 2*M61^2+epsilon
-  Z61 k1k2 = weakMulAdd(a.x, b.y + neg(b.x, 2), k1, 2, 4);    // max value is 6*M61+epsilon
-  Z61 k1k3 = weakMulAdd(a.y, neg(b.y + b.x, 3), k1, 2, 4);    // max value is 6*M61+epsilon
+// cmul given b.x and b's two Karatsuba terms pre = (b.y - b.x, -(b.y + b.x)) as 0..pre_m61_count-1 times M61 plus epsilon.  The GF61 twiddle
+// tables store them reduced (pre_m61_count = 2, see tabMul); cmul makes them with neg(), which leaves 0..3+ (pre_m61_count = 4).
+GF61 OVERLOAD cmulPre(GF61 a, Z61 bx, GF61 pre, const u32 pre_m61_count) {
+  u128 k1 = mul64s(bx, a.x + a.y);                            // max value is 2*M61^2+epsilon
+  Z61 k1k2 = weakMulAdd(a.x, pre.x, k1, 2, pre_m61_count);    // max value is 4*M61+epsilon with pre_m61_count = 2, 6*M61+epsilon with 4
+  Z61 k1k3 = weakMulAdd(a.y, pre.y, k1, 2, pre_m61_count);
   return U2(modM61(k1k3), modM61(k1k2));
 }
+GF61 OVERLOAD cmul(GF61 a, GF61 b) { return cmulPre(a, b.x, U2(b.y + neg(b.x, 2), neg(b.y + b.x, 3)), 4); }
 #else
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {
   u128 ayby = mul64(a.y, neg(b.y, 2));                        // max value is 2*M61^2+epsilon

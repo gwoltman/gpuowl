@@ -332,6 +332,7 @@ named "config.txt" in the prpll run directory.
                      0 = All trig values are pre-computed and read from memory.
                      1 = Read one trig value and compute the next 3 or 7 (chained multiplies, slightly less accurate).
                      TABMUL_CHAIN31, TABMUL_CHAIN32 and TABMUL_CHAIN61 do the same for the M31, FP32 and M61 parts.
+                     TABMUL_CHAIN61=2 reads the trig values plus, for each, the terms its complex multiply would otherwise compute (default on AMD).
   -use 256RADIX8_W, 256RADIX8_H : at a WIDTH (or HEIGHT) of 256 use the radix-8 code (32 threads per line, no
                      variant 0) instead of radix 4.  Faster on Radeon VII, and for FP64 on TitanV; slower for NTTs on TitanV.
 
