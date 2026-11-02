@@ -447,6 +447,20 @@ u128 OVERLOAD mad64s(u64 a, u64 b, u128 c) {
 #define X2t4ad(a, b, d)       X2t4ad_internal(&(a), &(b), d)          // b = mul_t4(b), b = d * b, X2(a, b)
 #define X2ad_mul_t4(a, b, d)  X2ad_mul_t4_internal(&(a), &(b), d)     // b = d * b, X2(a, b), b = mul_t4(b)
 
+// shufl_and_fft2's radix-2 step: lanes lowMe < halfWG add, the others subtract.  halfWG (WG / 2) is a multiple of the wavefront size
+// whenever shufl_and_fft2 is used (1K and 2K with RADIX 8), so the choice is the same for every lane of a wave.  On AMD, reading
+// lowMe from the first lane tells the compiler so: the floating point types then do fma(b, +-1, a) with the sign in a scalar
+// register, which is exact and so bit-identical to the add or sub.  Compared with the plain if/else, that removes an exec-mask
+// branch per element (RDNA) or computing both results plus v_cndmask (GCN).  The integer types do the same with an xor mask (see their addsubq).
+bool lowHalf(u32 lowMe, u32 halfWG) {
+#if AMDGPU                       // AMD's OpenCL compilers are clang, which has __has_builtin
+#if __has_builtin(__builtin_amdgcn_readfirstlane)
+  if (halfWG % WAVEFRONT == 0) { return (u32) __builtin_amdgcn_readfirstlane((int) lowMe) < halfWG; }
+#endif
+#endif
+  return lowMe < halfWG;
+}
+
 #if FFT_FP64
 
 T OVERLOAD add(T a, T b) { return a + b; }
@@ -590,6 +604,8 @@ T OVERLOAD addq(T a, T b) { return add(a, b); }
 T OVERLOAD subq(T a, T b) { return sub(a, b); }
 T2 OVERLOAD addq(T2 a, T2 b) { return add(a, b); }
 T2 OVERLOAD subq(T2 a, T2 b) { return sub(a, b); }
+T OVERLOAD addsubq(T a, T b, u32 lowMe, u32 halfWG) { return fma(b, lowHalf(lowMe, halfWG) ? 1.0 : -1.0, a); }
+T2 OVERLOAD addsubq(T2 a, T2 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
 
 #endif
 
@@ -739,6 +755,8 @@ F OVERLOAD addq(F a, F b) { return add(a, b); }
 F OVERLOAD subq(F a, F b) { return sub(a, b); }
 F2 OVERLOAD addq(F2 a, F2 b) { return add(a, b); }
 F2 OVERLOAD subq(F2 a, F2 b) { return sub(a, b); }
+F OVERLOAD addsubq(F a, F b, u32 lowMe, u32 halfWG) { return fma(b, lowHalf(lowMe, halfWG) ? 1.0f : -1.0f, a); }
+F2 OVERLOAD addsubq(F2 a, F2 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
 
 #endif
 
@@ -1008,8 +1026,20 @@ GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
 
 Z31 OVERLOAD addq(Z31 a, Z31 b) { return add(a, b); }
 Z31 OVERLOAD subq(Z31 a, Z31 b) { return sub(a, b); }
+#if AMDGPU && WAVEFRONT == 32     // RDNA: the plain if/else timed faster on an RX 7900 XTX than the xor form below; wave64 (GCN) and nVidia use that
+Z31 OVERLOAD addsubq(Z31 a, Z31 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
+#else
+// b ^ M31 is M31 - b, so a - b is a + (b ^ M31) mod M31.  The xor mask (0 or M31) is hidden from the optimizer:  otherwise it turns this back
+// into a select between b and M31 - b (or into both results and a select) for every element.
+Z31 OVERLOAD addsubq(Z31 a, Z31 b, u32 lowMe, u32 halfWG) {
+  u32 mask = lowHalf(lowMe, halfWG) ? 0 : M31;
+  OPAQUE(mask);
+  return addq(a, b ^ mask);
+}
+#endif
 GF31 OVERLOAD addq(GF31 a, GF31 b) { return add(a, b); }
 GF31 OVERLOAD subq(GF31 a, GF31 b) { return sub(a, b); }
+GF31 OVERLOAD addsubq(GF31 a, GF31 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
 
 // Quick (unreduced) GF31 arithmetic for the radix-PFA DFTs (fftN.cl).  A Z31q holds a sum of products below 0xFFFFFFFF7FFFFFFF, modM31(u64)'s
 // limit, reduced once by modM31.  Structs, so these overloads cannot collide with Z61's / GF61's u64 / ulong2 ones.
@@ -1438,8 +1468,20 @@ GF61 OVERLOAD foo(GF61 a) { return foo2(a, a); }
 
 Z61 OVERLOAD addq(Z61 a, Z61 b) { return a + b; }
 Z61 OVERLOAD subq(Z61 a, Z61 b) { return a - b; }
+#if AMDGPU      // AMD: the plain if/else is cheaper than the xor form below (which adds instructions and, with INPLACE=2, drops tailSquareGF61 to 12 waves on gfx1100)
+Z61 OVERLOAD addsubq(Z61 a, Z61 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
+#else
+// a + b for the low half, a - b = a + ~b + 1 (wrapping exactly as subq does) for the high half.  The mask is hidden from the optimizer as in Z31's.
+Z61 OVERLOAD addsubq(Z61 a, Z61 b, u32 lowMe, u32 halfWG) {
+  u32 mask = lowHalf(lowMe, halfWG) ? 0 : ~0u;
+  OPAQUE(mask);
+  Z61 const m = ((Z61) mask << 32) | mask;
+  return a + (b ^ m) + (m & 1);
+}
+#endif
 GF61 OVERLOAD addq(GF61 a, GF61 b) { return a + b; }
 GF61 OVERLOAD subq(GF61 a, GF61 b) { return a - b; }
+GF61 OVERLOAD addsubq(GF61 a, GF61 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
 // Add m61_count * M61 (to make a later subtraction's result positive).  i32, not u32, so an int literal is an exact match rather than ambiguous with addq(Z61, Z61)
 Z61 OVERLOAD addq(Z61 a, const i32 m61_count) { return a + m61_count * M61; }
 GF61 OVERLOAD addq(GF61 a, const i32 m61_count) { return U2(addq(a.x, m61_count), addq(a.y, m61_count)); }
