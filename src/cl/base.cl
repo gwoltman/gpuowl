@@ -195,7 +195,11 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define TABMUL_CHAIN32 0
 #endif
 #if !defined(TABMUL_CHAIN61)
+#if AMDGPU
+#define TABMUL_CHAIN61 2        // Karatsuba terms from the table:  timed faster on AMD (PR #190)
+#else
 #define TABMUL_CHAIN61 0
+#endif
 #endif
 #if !defined(MODM31)
 #define MODM31 0

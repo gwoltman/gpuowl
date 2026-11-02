@@ -1040,17 +1040,17 @@ void Tune::tune() {
       if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
-      u32 const current_tabmul_chain = args->value("TABMUL_CHAIN61", 0);
+      u32 const current_tabmul_chain = args->value("TABMUL_CHAIN61", isAmdGpu(shared.context->deviceId()) ? 2 : 0);
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 const tabmul_chain : {0, 1}) {
+      for (u32 const tabmul_chain : {0, 1, 2}) {
         args->flags["TABMUL_CHAIN61"] = to_string(tabmul_chain);
         double const cost = timeConfig(exponent, shared, fft, {}, quick);
         log("Time for %12s using TABMUL_CHAIN61=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
         if (tabmul_chain == current_tabmul_chain) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
       }
-      log("Best TABMUL_CHAIN61 is %u.  Default TABMUL_CHAIN61 is 0.\n", best_tabmul_chain);
+      log("Best TABMUL_CHAIN61 is %u.  Default TABMUL_CHAIN61 is %u.\n", best_tabmul_chain, current_tabmul_chain);
       configsUpdate(current_cost, best_cost, 0.003, "TABMUL_CHAIN61", best_tabmul_chain, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["TABMUL_CHAIN61"] = to_string(best_tabmul_chain);
     }

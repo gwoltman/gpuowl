@@ -2226,22 +2226,25 @@ void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
 // This code uses chained complex multiplies which could be faster on GPUs with great mul throughput or poor memory bandwidth or caching.
 
-  if (TABMUL_CHAIN61) {
+  if (TABMUL_CHAIN61 == 1) {
     chainMul(u, TFLOAD(&trig[p]));
     return;
   }
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-  if (!TABMUL_CHAIN61) {
+  if (TABMUL_CHAIN61 == 2) {
+    // The second half of the table holds each twiddle's Karatsuba terms (genSmallTrigGF61):  four fewer 64-bit adds/subs per cmul
     for (u32 i = 1; i < RADIX; ++i) {
-#if AMDGPU
-      // The second half of the table holds each twiddle's Karatsuba terms (genSmallTrigGF61):  four fewer 64-bit adds/subs per cmul
       GF61 w = TFLOAD(&trig[(i-1)*WG + p]);
-      u[i] = cmulPre(u[i], w.x, TFLOAD(&trig[WG*RADIX + (i-1)*WG + p]));
-#else
+      u[i] = cmulPre(u[i], w.x, TFLOAD(&trig[WG*RADIX + (i-1)*WG + p]), 2);
+    }
+    return;
+  }
+
+  if (TABMUL_CHAIN61 == 0) {
+    for (u32 i = 1; i < RADIX; ++i) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
-#endif
     }
     return;
   }
@@ -2270,7 +2273,7 @@ void OVERLOAD tabMul8_4a(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 // This code uses chained complex multiplies which could be faster on GPUs with great throughput or poor memory bandwidth or caching.
 // Perform two length=4 chain muls.
 
-    if (TABMUL_CHAIN61) {
+    if (TABMUL_CHAIN61 == 1) {
       GF61 w  = TFLOAD(&trig[p]);
       GF61 w2 = TFLOAD(&trig[WG + p]);
       u[2] = cmul(u[2], w);
@@ -2287,7 +2290,7 @@ void OVERLOAD tabMul8_4a(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-    if (!TABMUL_CHAIN61) {
+    if (TABMUL_CHAIN61 != 1) {
       for (u32 i = 2; i < RADIX; ++i) {
         u[i] = cmul(u[i], TFLOAD(&trig[(i-2)*WG + p]));
       }
@@ -2301,7 +2304,7 @@ void OVERLOAD tabMul8_4a(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
     u32 p = me / 8;                 // Generate index into condensed trig table that does not have duplicated trig values
     trig += 7 * WG;                 // Skip over the trig values used in the first tabmul
-    if (TABMUL_CHAIN61) {
+    if (TABMUL_CHAIN61 == 1) {
       GF61 w  = TFLOAD(&trig[p]);
       GF61 w2 = TFLOAD(&trig[WG/8 + p]);
       u[2] = cmul(u[2], w);
@@ -2318,7 +2321,7 @@ void OVERLOAD tabMul8_4a(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-    if (!TABMUL_CHAIN61) {
+    if (TABMUL_CHAIN61 != 1) {
       for (u32 i = 2; i < RADIX; ++i) {
         u[i] = cmul(u[i], TFLOAD(&trig[(i-2)*WG/8 + p]));
       }
@@ -2331,7 +2334,7 @@ void OVERLOAD tabMul8_4b(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
 // This code uses chained complex multiplies which could be faster on GPUs with great throughput or poor memory bandwidth or caching.
 
-  if (TABMUL_CHAIN61) {
+  if (TABMUL_CHAIN61 == 1) {
     u32 p = me & ~(f - 1);
     GF61 w = TFLOAD(&trig[p]);
 
@@ -2349,7 +2352,7 @@ void OVERLOAD tabMul8_4b(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-  if (!TABMUL_CHAIN61) {
+  if (TABMUL_CHAIN61 != 1) {
     u32 p = (me/4) & ~(f/4 - 1);     // Generate index into condensed trig table that does not have duplicated trig values
     trig += 6 * WG;                  // Skip over the trig values used in tabmul8_4a
 
