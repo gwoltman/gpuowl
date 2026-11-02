@@ -676,7 +676,11 @@ uint2 root1GF31(u32 N, u32 k) {
   return root1GF31(root1N, k);
 }
 
-static vector<uint2> genSmallTrigGF31(u32 size, u32 radix) {
+// TABMUL_CHAIN31 and MIDDLE_CHAIN31 chains multiply by powers computed from the table's twiddle, so their tables keep it as is.  Otherwise
+// the twiddles are stored times 2 for cmulScaled (math.cl).
+static bool chainTablesGF31(Args *args, bool middle) { return args->value(middle ? "MIDDLE_CHAIN31" : "TABMUL_CHAIN31", 0) != 0; }
+
+static vector<uint2> genSmallTrigGF31(u32 size, u32 radix, bool chain) {
   u32 const WG = size / radix;
   vector<uint2> tab;
   GF31 const root1size = GF31::root_one(size);
@@ -715,13 +719,14 @@ static vector<uint2> genSmallTrigGF31(u32 size, u32 radix) {
   }
 
   tab.resize(size);
+  if (!chain) { for (uint2& b : tab) { b = uint2{2 * b.first, 2 * b.second}; } }          // Stored times 2, see cmulScaled in math.cl
   return tab;
 }
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
 
 static vector<uint2> genSmallTrigComboGF31(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
-  vector<uint2> tab = genSmallTrigGF31(size, radix);
+  vector<uint2> tab = genSmallTrigGF31(size, radix, chainTablesGF31(args, false));
 
   u32 const tail_trigs = args->value("TAIL_TRIGS31", 0);          // Default is reading all trigs from memory
 
@@ -783,7 +788,7 @@ static vector<uint2> genSmallTrigComboGF31(Args *args, u32 width, u32 middle, u3
   return tab;
 }
 
-static vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width) {
+static vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width, bool chain) {
   vector<uint2> tab;
   if (middle & (middle - 1)) {
     // PFA, see genMiddleTrigGF61
@@ -808,6 +813,8 @@ static vector<uint2> genMiddleTrigGF31(u32 smallH, u32 middle, u32 width) {
     }
     GF31 const root1mw = GF31::root_one(middle * width);
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF31(root1mw, k)); }
+    // The twiddles middleMul and middleMul2 multiply by (the tables before the last smallH values) are stored times 2 unless chain, see cmulScaled in math.cl
+    if (!chain) { for (uint2& b : tab) { b = uint2{2 * b.first, 2 * b.second}; } }
     GF31 const root1wmh = GF31::root_one(width * middle * smallH);
     for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF31(root1wmh, k)); }
   }
@@ -1071,7 +1078,7 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
 /*  Build all the needed trig values into one big buffer  */
 /**********************************************************/
 
-static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix) {
+static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix, bool chain31) {
   vector<double2> tab;
   size_t tabsize;
 
@@ -1090,7 +1097,7 @@ static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix) {
   }
 
   if (fft.NTT_GF31) {
-    vector<uint2> tab2 = genSmallTrigGF31(size, radix);
+    vector<uint2> tab2 = genSmallTrigGF31(size, radix, chain31);
     tab2.resize(SMALLTRIG_GF31_SIZE(size, 0, 0, 0, 0));
     // Append tab2 to tab
     tabsize = tab.size();
@@ -1165,7 +1172,7 @@ static vector<T2> genPfaMiddleTrigFP(u32 smallH, u32 middle, u32 width, Root roo
   return tab;
 }
 
-static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width) {
+static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width, bool chain31) {
   vector<double2> tab;
   size_t tabsize;
 
@@ -1184,7 +1191,7 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
   }
 
   if (fft.NTT_GF31) {
-    vector<uint2> tab2 = genMiddleTrigGF31(smallH, middle, width);
+    vector<uint2> tab2 = genMiddleTrigGF31(smallH, middle, width, chain31);
     tab2.resize(MIDDLETRIG_GF31_SIZE(width, middle, smallH));
     // Append tab2 to tab
     tabsize = tab.size();
@@ -1215,8 +1222,9 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
 // field.  Two Gpus in one process can then share a cached table generated for the other one's number type,
 // which is silently wrong twiddles -- caught, if at all, only by the Gerbicz check.
 #define make_key_field(b, tt) (((((b) != 0) << 3) | ((tt) & 7)))
-#define make_key_part(b,tt,b31,tt31,b32,tt32,b61,tt61,tk) \
-  ((((((((make_key_field(b, tt) << 4) | make_key_field(b31, tt31)) << 4) | make_key_field(b32, tt32)) << 4) | make_key_field(b61, tt61)) << 1) | ((tk) != 0))
+// ch is the GF31 table setting (chainTablesGF31):  the twiddles are stored times 2 or not
+#define make_key_part(b,tt,b31,tt31,b32,tt32,b61,tt61,tk,ch) \
+  ((((((((((make_key_field(b, tt) << 4) | make_key_field(b31, tt31)) << 4) | make_key_field(b32, tt32)) << 4) | make_key_field(b61, tt61)) << 1) | ((tk) != 0)) << 1) | ((ch) != 0))
 
 TrigBufCache::~TrigBufCache() = default;
 
@@ -1229,7 +1237,8 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   u32 const tail_trigs31 = args->value("TAIL_TRIGS31", 2);             // Default is reading GF31 trigs from memory
   u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
   u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
-  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide);
+  bool const chain31 = chainTablesGF31(args, false);
+  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31);
 
   // See if there is an existing smallTrigCombo that we can return (using only a subset of the data)
   // In theory, we could match any smallTrigCombo where width matches.  However, SMALLTRIG_GF31_SIZE wouldn't be able to figure out the size.
@@ -1246,7 +1255,7 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   if (it != m.end() && (p = it->second.lock())) return p;
 
   // Create a new non-combo
-  p = make_shared<TrigBuf>(context, genSmallTrig(fft, width, nW));
+  p = make_shared<TrigBuf>(context, genSmallTrig(fft, width, nW, chain31));
   m[key] = p;
   smallCache.add(p);
   return p;
@@ -1257,7 +1266,8 @@ TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 m
   u32 const tail_trigs31 = args->value("TAIL_TRIGS31", 2);             // Default is reading GF31 trigs from memory
   u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
   u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
-  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide);
+  bool const chain31 = chainTablesGF31(args, false);
+  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31);
 
   // If there are no pre-computed trig values we might be able to share this trig table with fft_WIDTH
   if (((tail_trigs == 2 && fft.FFT_FP64) || (tail_trigs32 == 2 && fft.FFT_FP32)) && !fft.NTT_GF31 && !fft.NTT_GF61)
@@ -1277,16 +1287,17 @@ TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 m
   return p;
 }
 
-TrigPtr TrigBufCache::middleTrig(Args * /*args*/, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 width) {
+TrigPtr TrigBufCache::middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 width) {
   std::scoped_lock const lock{mut};
   auto& m = middle;
-  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, 0);
+  bool const chain31 = chainTablesGF31(args, true);
+  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, 0, chain31);
   decay_t<decltype(m)>::key_type const key{SMALL_H, MIDDLE, width, key_part};
 
   TrigPtr p{};
   auto it = m.find(key);
   if (it == m.end() || !(p = it->second.lock())) {
-    p = make_shared<TrigBuf>(context, genMiddleTrig(fft, SMALL_H, MIDDLE, width));
+    p = make_shared<TrigBuf>(context, genMiddleTrig(fft, SMALL_H, MIDDLE, width, chain31));
     m[key] = p;
     middleCache.add(p);
   }

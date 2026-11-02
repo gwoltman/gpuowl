@@ -938,18 +938,20 @@ GF31 OVERLOAD cmul(GF31 a, GF31 b) {
 }
 #endif
 
-// Complex mul where 2nd argument is a constant.  Allows cheaper modM31 in some cases.
-GF31 OVERLOAD cmul_const(GF31 a, GF31 b) {
-#if 0
-  return cmul(a, b);
-#else
-  u64 ayby = (u64) a.y * (u64) neg(b.y);
-  u64 aybx = (u64) a.y * (u64) b.x;
-  u64 r = mad32(a.x, b.x, ayby);                // Max value is (M31 - b.y + b.x)*M31
-  u64 i = mad32(a.x, b.y, aybx);                // Max value is (b.x + b.y)*M31
-  return U2(modM31(r, (M31 - b.y + b.x <= M31) ? 62 : 63), modM31(i, (b.x + b.y <= M31) ? 62 : 63));
-#endif
+// Unless TABMUL_CHAIN31 (small trig for fft_WIDTH / fft_HEIGHT) or MIDDLE_CHAIN31 (middle trig that middleMul and middleMul2 read) is set,
+// the GF31 twiddle tables store each twiddle b (0 <= b.x, b.y < M31) times 2 (see genSmallTrigGF31 and genMiddleTrigGF31).  cmulScaled(a, b2) is cmul(a, b) given b2 = 2 b:  each sum of products r is then 2 times the true value T, and
+// T = hi32(r) * 2^31 + lo32(r) / 2 == hi32(r) + (lo32(r) >> 1), with no shift across the 32-bit word boundary.  Bounds for a.x, a.y <= M31:
+// r <= M31 * (2 M31 - 2) + M31 * 2 M31 < 4 M31^2, so hi32(r) <= 0xFFFFFFFC; modM31 of it is at most M31, plus lo32(r) >> 1 at most 2 M31 = 0xFFFFFFFE,
+// and modM31 of that is 0..M31.  (Folding hi32 + (lo32 >> 1) without the inner reduction needs a carry fix and can produce M31 + 1.)
+Z31 OVERLOAD fold2(u64 r) { return modM31(modM31(hi32(r)) + (lo32(r) >> 1)); }
+GF31 OVERLOAD cmulScaled(GF31 a, GF31 b2) {
+  u64 r = mad32(a.x, b2.x, (u64) neg(a.y) * b2.y);
+  u64 i = mad32(a.x, b2.y, (u64) a.y * b2.x);
+  return U2(fold2(r), fold2(i));
 }
+
+// Complex mul where 2nd argument is a constant (b + b is then a constant too)
+GF31 OVERLOAD cmul_const(GF31 a, GF31 b) { return cmulScaled(a, U2(b.x + b.x, b.y + b.y)); }
 
 // Square a root of unity complex number
 GF31 OVERLOAD csqTrig(GF31 a) { u32 two_ay = a.y + a.y; return U2(modM31(mad32(two_ay, neg(a.y), (u32)1)), modM31(a.x * (u64)two_ay)); }

@@ -1984,7 +1984,7 @@ void OVERLOAD tabMul(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
   if (!TABMUL_CHAIN31) {
     #pragma unroll
     for (u32 i = 1; i < RADIX; ++i) {
-      u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
+      u[i] = cmulScaled(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
     return;
   }
@@ -2000,7 +2000,7 @@ void OVERLOAD tabMul16(TrigGF31 trig, GF31 *u, u32 me) {
   u32 h = me / (WG / 2);
   for (u32 i = 0; i < 8; ++i) {
     if (i == 0 && h == 0) continue;
-    u[i] = cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
+    u[i] = TABMUL_CHAIN31 ? cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q])) : cmulScaled(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
   }
 }
 
@@ -2032,7 +2032,7 @@ void OVERLOAD tabMul8_4a(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
 
     if (!TABMUL_CHAIN31) {
       for (u32 i = 2; i < RADIX; ++i) {
-        u[i] = cmul(u[i], TFLOAD(&trig[(i-2)*WG + p]));
+        u[i] = cmulScaled(u[i], TFLOAD(&trig[(i-2)*WG + p]));
       }
     }
   }
@@ -2063,7 +2063,7 @@ void OVERLOAD tabMul8_4a(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
 
     if (!TABMUL_CHAIN31) {
       for (u32 i = 2; i < RADIX; ++i) {
-        u[i] = cmul(u[i], TFLOAD(&trig[(i-2)*WG/8 + p]));
+        u[i] = cmulScaled(u[i], TFLOAD(&trig[(i-2)*WG/8 + p]));
       }
     }
   }
@@ -2098,7 +2098,7 @@ void OVERLOAD tabMul8_4b(TrigGF31 trig, GF31 *u, u32 f, u32 me) {
 
     #pragma unroll
     for (u32 i = 1; i < RADIX; ++i) {
-      u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*(WG/4) + p]));
+      u[i] = cmulScaled(u[i], TFLOAD(&trig[(i-1)*(WG/4) + p]));
     }
   }
 }
