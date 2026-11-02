@@ -993,6 +993,9 @@ GF31 OVERLOAD foo(GF31 a) { return foo2(a, a); }
 
 Z31 OVERLOAD addq(Z31 a, Z31 b) { return add(a, b); }
 Z31 OVERLOAD subq(Z31 a, Z31 b) { return sub(a, b); }
+#if AMDGPU && WAVEFRONT == 32     // RDNA: the plain if/else timed faster on an RX 7900 XTX than the xor form below; wave64 (GCN) and nVidia use that
+Z31 OVERLOAD addsubq(Z31 a, Z31 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
+#else
 // b ^ M31 is M31 - b, so a - b is a + (b ^ M31) mod M31.  The xor mask (0 or M31) is hidden from the optimizer:  otherwise it turns this back
 // into a select between b and M31 - b (or into both results and a select) for every element.
 Z31 OVERLOAD addsubq(Z31 a, Z31 b, u32 lowMe, u32 halfWG) {
@@ -1000,6 +1003,7 @@ Z31 OVERLOAD addsubq(Z31 a, Z31 b, u32 lowMe, u32 halfWG) {
   OPAQUE(mask);
   return addq(a, b ^ mask);
 }
+#endif
 GF31 OVERLOAD addq(GF31 a, GF31 b) { return add(a, b); }
 GF31 OVERLOAD subq(GF31 a, GF31 b) { return sub(a, b); }
 GF31 OVERLOAD addsubq(GF31 a, GF31 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
@@ -1428,6 +1432,9 @@ GF61 OVERLOAD foo(GF61 a) { return foo2(a, a); }
 
 Z61 OVERLOAD addq(Z61 a, Z61 b) { return a + b; }
 Z61 OVERLOAD subq(Z61 a, Z61 b) { return a - b; }
+#if AMDGPU      // AMD: the plain if/else is cheaper than the xor form below (which adds instructions and, with INPLACE=2, drops tailSquareGF61 to 12 waves on gfx1100)
+Z61 OVERLOAD addsubq(Z61 a, Z61 b, u32 lowMe, u32 halfWG) { if (lowMe < halfWG) return addq(a, b); else return subq(a, b); }
+#else
 // a + b for the low half, a - b = a + ~b + 1 (wrapping exactly as subq does) for the high half.  The mask is hidden from the optimizer as in Z31's.
 Z61 OVERLOAD addsubq(Z61 a, Z61 b, u32 lowMe, u32 halfWG) {
   u32 mask = lowHalf(lowMe, halfWG) ? 0 : ~0u;
@@ -1435,6 +1442,7 @@ Z61 OVERLOAD addsubq(Z61 a, Z61 b, u32 lowMe, u32 halfWG) {
   Z61 const m = ((Z61) mask << 32) | mask;
   return a + (b ^ m) + (m & 1);
 }
+#endif
 GF61 OVERLOAD addq(GF61 a, GF61 b) { return a + b; }
 GF61 OVERLOAD subq(GF61 a, GF61 b) { return a - b; }
 GF61 OVERLOAD addsubq(GF61 a, GF61 b, u32 lowMe, u32 halfWG) { return U2(addsubq(a.x, b.x, lowMe, halfWG), addsubq(a.y, b.y, lowMe, halfWG)); }
