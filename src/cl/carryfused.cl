@@ -1258,10 +1258,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
+
   readCarryFusedLine(in, u, line, lowMe);
   fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
-
-  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
   readCarryFusedLine(in31, u31, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
@@ -1558,10 +1558,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
+
   readCarryFusedLine(inF2, uF2, line, lowMe);
   fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
-
-  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
   readCarryFusedLine(in31, u31, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
@@ -1864,10 +1864,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
+
   readCarryFusedLine(inF2, uF2, line, lowMe);
   fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
-
-  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
   readCarryFusedLine(in61, u61, line, lowMe);
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
@@ -2171,10 +2171,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
+
   readCarryFusedLine(in31, u31, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
-
-  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
   readCarryFusedLine(in61, u61, line, lowMe);
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
@@ -2467,13 +2467,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 // which causes a terrible reduction in occupancy.
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
 
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
+
   readCarryFusedLine(inF2, uF2, line, lowMe);
   fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
 
   readCarryFusedLine(in31, u31, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
-
-  dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
   readCarryFusedLine(in61, u61, line, lowMe);
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);

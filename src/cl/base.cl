@@ -1175,6 +1175,8 @@ void dependentLaunchWait() {
 #if CUDA_BACKEND && HAS_PTX >= 900 && PDL
   // The "memory" clobber keeps the compiler from moving loads of the previous kernel's output above the wait (volatile alone only
   // keeps the asm itself in place).  CUDA's own cudaGridDependencySynchronize() is this asm with the same clobber.
+  // Read no global data before the wait, not even data written two or more kernels back: carryFused reading its first half
+  // early gave Gerbicz errors on an RTX 5080 (types 1 and 2).
   __asm volatile("griddepcontrol.wait;" ::: "memory");     // same as cudaGridDependencySynchronize();
 #endif
 }
