@@ -363,8 +363,12 @@ float FFTConfig::maxBpw() const {
   return (carry == CARRY_32 && twoWidths) ? std::min(shape.narrowCarryBPW(), b) : b;
 }
 
-FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses, bool errorChecked) {
-  return bestFits(args, E, spec, uses, errorChecked).front();
+FFTConfig FFTConfig::bestFit(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses, bool errorChecked, bool preferNtt) {
+  return bestFits(args, E, spec, uses, errorChecked, preferNtt).front();
+}
+
+vector<FFTConfig> FFTConfig::pm1Fits(const Args& args, u64 E, vector<KeyVal>* uses, bool errorChecked) {
+  return bestFits(args, E, args.fftSpec, uses, errorChecked, true);
 }
 
 // The FFTs of an -fft spec in order:  a list is split at the commas, a size range gives all its shapes smallest first
@@ -380,7 +384,8 @@ static vector<FFTConfig> specFfts(const string& spec) {
   return ret;
 }
 
-vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses, bool errorChecked) {
+vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spec, vector<KeyVal>* uses, bool errorChecked,
+                                      bool preferNtt) {
   if (uses) { uses->clear(); }
 
   // An FFT that can't handle E (above maxExp, extended by -od) or too large for it (below minBpw: the Gpu constructor would throw
@@ -439,7 +444,11 @@ vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spe
     for (u32 const v : {101, 202}) {
       if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft) && (fp64 || !fft.FFT_FP64)) { candidates.push_back(fft); break; }
     }
-    if (candidates.size() == 6) { break; }     // enough fallbacks
+    if (candidates.size() == 6 && !preferNtt) { break; }     // enough fallbacks
+  }
+  if (preferNtt) {
+    std::ranges::stable_partition(candidates, [](const FFTConfig& c) { return nttType(c.shape.fft_type); });
+    if (candidates.size() > 6) { candidates.erase(candidates.begin() + 6, candidates.end()); }
   }
   if (!candidates.empty()) { return candidates; }
 

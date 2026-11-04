@@ -29,6 +29,7 @@
 #include <memory>
 #include <cstring>
 #include <random>
+#include <optional>
 
 namespace {
 
@@ -38,7 +39,8 @@ constexpr u32 DUP_ONE_IN = 32;            // one block in this many (at random) 
 constexpr u32 ROE_FIRST = 16;             // ROE is sampled in the first blocks of a run and then in one block in ROE_ONE_IN
 constexpr u32 ROE_ONE_IN = 8;
 constexpr u32 EXTRA_BUFS = 6;             // big buffers besides the table:  A, C, G, delta and S (table build) in Low form, one spare
-constexpr size_t RESERVE_BYTES = size_t(256) << 20;
+constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // kept back when the free memory is not known, and under a -maxAlloc cap
+constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
 constexpr float MAX_ROE = 0.4f;
 constexpr int MAX_RETRIES = 3;
 
@@ -256,32 +258,16 @@ public:
 
   void saveAccForDup() { accDup << acc; }
 
-  // Testing only (PRPLL_STAGE2_FAULT):  simulated faults
+#ifdef PRPLL_PM1_FAULTS
+  // TEST ONLY (PRPLL_STAGE2_FAULT, fault build):  simulated faults
   void corruptTable() { table[0] << table[nR - 1]; }
   void corruptA() { wA << wC; }
   void corruptAcc() { acc << wA; }
+#endif
   u32 blockMain(u64 k) { return block(k, acc); }
 
   void finish() { g.queue.finish(); }
 
-  // Testing only:  3^E mod 2^g.E-1 by left-to-right binary exponentiation (one squaring per bit, the multiplication by 3 in the carry),
-  // unchecked.  Phase 1 has the real stage 1.
-  static vector<u32> stage1ForTest(Gpu& g, const vector<u32>& exp) {
-    u64 const n = pm1::bitLength(exp);
-    g.writeIn(g.bufData, makeWords(g.E, 3));
-    Gpu::LEAD_TYPE leadIn = Gpu::LEAD_NONE;
-    Timer t;
-    for (u64 i = n - 1; i-- > 0;) {
-      Gpu::LEAD_TYPE const leadOut = g.useLongCarry || i == 0 ? Gpu::LEAD_NONE : Gpu::LEAD_WIDTH;
-      g.square(g.bufData, g.bufData, leadIn, leadOut, pm1::testBit(exp, i));
-      leadIn = leadOut;
-      if (i % 100'000 == 0) {
-        g.queue.finish();
-        log("stage1ForTest %" PRIu64 " bits left, %.0f us/bit\n", i, t.reset() / 100'000 * 1e6);
-      }
-    }
-    return g.readData();
-  }
   bool roeCheck() { return roeOK(); }
   void roeReset() { roeOK(); roeN = roeMax = roeSum = roeSum2 = 0; }
   double maxROE() const { return roeMax; }
@@ -293,15 +279,13 @@ public:
 };
 
 FFTConfig Stage2::chooseFFT(const Args& args, u64 E, vector<KeyVal>* uses) {
-  // The FFT has to handle E + 0.5 bits per word of its own size:  raise the target until the choice does.  (PRPLL_STAGE2_MARGIN sets
-  // another margin, for measuring the round-off only.)
-  const char* m = getenv("PRPLL_STAGE2_MARGIN");
-  double const margin = m ? atof(m) : 0.5;
+  // The FFT has to handle E + 0.5 bits per word of its own size:  raise the target until the choice does
+  constexpr double margin = 0.5;
   u64 target = E;
-  FFTConfig fft = FFTConfig::bestFit(args, target, args.fftSpec, uses, false);
+  FFTConfig fft = FFTConfig::pm1Fits(args, target, uses, false).front();
   for (int i = 0; i < 10 && fft.maxExp() < E + u64(margin * fft.size()); ++i) {
     target = E + u64(margin * fft.size()) + 1;
-    fft = FFTConfig::bestFit(args, target, args.fftSpec, uses, false);
+    fft = FFTConfig::pm1Fits(args, target, uses, false).front();
   }
   // The products are up to twice as large, and so are the carries:  the narrow carry one bit per word sooner
   bool const twoWidths = fft.shape.fft_type == FFT64 || fft.shape.fft_type == FFT3231 || fft.shape.fft_type == FFT323161;
@@ -309,7 +293,13 @@ FFTConfig Stage2::chooseFFT(const Args& args, u64 E, vector<KeyVal>* uses) {
   return fft;
 }
 
-Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, u64 stopAtK) {
+bool Stage2::hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x) {
+  if (!fs::exists(fs::current_path() / (string(P2State::KIND) + '-' + to_string(E)))) { return false; }
+  P2State const s = Saver<P2State>{E, 1000, 4}.load();
+  return !s.acc.empty() && s.B1 == B1 && s.B2 == B2 && s.x64 == res64(x);
+}
+
+Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D) {
   const Args& args = *shared.args;
   if (B1 < 11 || B2 <= B1 || B2 > (u64(1) << 32) - 8192) {
     return {.status = Stage2Result::DECLINED, .why = "stage 2 needs 11 <= B1 < B2 < 2^32 - 8192"};
@@ -338,14 +328,38 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
     log("Stage 2 savefile is for B1=%" PRIu64 " B2=%" PRIu64 " x=%016" PRIx64 ", not this stage 2: starting over\n", saved.B1, saved.B2, saved.x64);
   }
 
-  // Memory:  the table and EXTRA_BUFS more big buffers
+  // Memory:  the table and EXTRA_BUFS more big buffers.  The budget is the memory free on the device now (after this Gpu's own buffers)
+  // less HEADROOM_BYTES; where the free memory can't be queried (OpenCL without CL_DEVICE_GLOBAL_FREE_MEMORY_AMD, e.g. Nvidia's or
+  // PoCL), 90% of the device RAM less what prpll holds and RESERVE_BYTES.  -maxAlloc, when given, caps it (less what prpll holds and
+  // RESERVE_BYTES).  Without -maxAlloc there is no cap:  AllocTrac's default limit (for PRP) is raised to the budget while stage 2 runs.
   size_t const bufBytes = Stage2Run::bufDoubles(g) * sizeof(double);
   cl_device_id const dev = shared.context->deviceId();
-  double budget = std::min(double(getFreeMem(dev)), double(AllocTrac::availableBytes()));
-  if (float const ramGB = getGpuRamGB(dev); ramGB > 0) {
-    budget = std::min(budget, ramGB * double(1u << 30) * 0.9 - double(AllocTrac::totalAllocBytes()));
+  double const GB = double(1u << 30);
+  double const held = double(AllocTrac::totalAllocBytes());
+#ifdef CUDA_BACKEND
+  bool const haveFree = true;      // cuMemGetInfo
+#else
+  bool const haveFree = hasFreeMemInfo(dev);
+#endif
+  double const freeBytes = haveFree ? double(getFreeMem(dev)) : -1;
+  float const ramGB = getGpuRamGB(dev);
+  double budget = haveFree ? freeBytes - HEADROOM_BYTES
+                : ramGB > 0 ? ramGB * GB * 0.9 - held - RESERVE_BYTES : 0;
+  double const cap = args.maxAlloc ? double(args.maxAlloc) - held - RESERVE_BYTES : -1;
+  if (args.maxAlloc) { budget = std::min(budget, cap); }
+  char memNote[256];
+  if (haveFree) {
+    snprintf(memNote, sizeof(memNote), "free %.2f GB - headroom %.2f GB", freeBytes / GB, HEADROOM_BYTES / GB);
+  } else {
+    snprintf(memNote, sizeof(memNote), "free unknown: 90%% of %.2f GB RAM - held %.2f GB - reserve %.2f GB", ramGB, held / GB,
+             RESERVE_BYTES / GB);
   }
-  budget -= RESERVE_BYTES;
+  char capNote[128] = "no cap";
+  if (args.maxAlloc) {
+    snprintf(capNote, sizeof(capNote), "-maxAlloc cap %.2f GB - held %.2f GB - reserve %.2f GB", args.maxAlloc / GB, held / GB,
+             RESERVE_BYTES / GB);
+  }
+  log("Stage 2 memory: %s, %s => budget %.2f GB\n", memNote, capNote, std::max(0.0, budget) / GB);
   u64 const maxR = budget > double(bufBytes) * (EXTRA_BUFS + 1) ? u64(budget / bufBytes) - EXTRA_BUFS : 0;
   if (resume && !D && pm1::stage2nR(saved.D) <= maxR) { D = saved.D; }
   if (resume && D != saved.D) {
@@ -377,6 +391,15 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
       B1, B2, D, nR, bufBytes / double(1u << 20), plan.kBegin, plan.kEnd - 1, plan.nPrimes, plan.nPairs,
       plan.nPrimes ? 200.0 * plan.nPairs / plan.nPrimes : 0.0, mulsTotal, plan.nNeeded, 2 * (plan.kEnd - plan.kBegin), timer.reset());
 
+  // Without a -maxAlloc cap, AllocTrac's limit must not refuse the planned buffers:  raised while stage 2 runs, then put back
+  struct AllocLimit {
+    size_t const old = AllocTrac::getMaxAlloc();
+    explicit AllocLimit(size_t want) { if (want > old) { AllocTrac::setMaxAlloc(want); } }
+    ~AllocLimit() { AllocTrac::setMaxAlloc(old); }
+  };
+  std::optional<AllocLimit> allocLimit;
+  if (!args.maxAlloc) { allocLimit.emplace(AllocTrac::totalAllocBytes() + size_t(budget) + RESERVE_BYTES); }
+
   std::unique_ptr<Stage2Run> s2Ptr;
   try {
     s2Ptr = std::make_unique<Stage2Run>(g, plan, x);
@@ -392,14 +415,18 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
 
   std::mt19937_64 rng{std::random_device{}()};
 
-  // Testing only:  PRPLL_STAGE2_FAULT=<table|A|acc>,<k> simulates one fault after block k (acc: in a block that is then duplicated)
+#ifdef PRPLL_PM1_FAULTS
+  // TEST ONLY (fault build):  PRPLL_STAGE2_FAULT=<table|A|acc>,<k> simulates one fault after block k (acc: in a block that is then
+  // duplicated)
   string faultKind;
   u64 faultK = 0;
   if (const char* f = getenv("PRPLL_STAGE2_FAULT"); f && strchr(f, ',')) {
     faultKind = string(f, strchr(f, ','));
     faultK = stoull(strchr(f, ',') + 1);
-    log("Stage 2 test: a simulated '%s' fault after k=%" PRIu64 "\n", faultKind.c_str(), faultK);
+    log("Stage 2 TEST FAULT: a simulated '%s' fault after k=%" PRIu64 "\n", faultKind.c_str(), faultK);
   }
+#endif
+  u64 const mulsBefore = state.nMul;     // -iters counts the multiplications of this run
   Signal signal;
   int retries = 0;
 
@@ -423,7 +450,7 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
 
     while (ok) {
       bool const atEnd = k >= plan.kEnd;
-      bool const stop = !atEnd && (signal.stopRequested() || (stopAtK && k >= stopAtK));
+      bool const stop = !atEnd && (signal.stopRequested() || (args.iters && nMul - mulsBefore >= u64(args.iters)));
       if (atEnd || stop || sinceCheckpoint.at() > CHECKPOINT_SECS) {
         // Checkpoint:  every long-lived value verified before the accumulator is saved
         vector<u32> a = s2.getAcc();
@@ -451,18 +478,26 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
         }
       }
 
+#ifdef PRPLL_PM1_FAULTS
       bool const fault = !faultKind.empty() && k == faultK;
       string const kind = faultKind;
       if (fault) { faultKind.clear(); }        // once
       bool const dup = rng() % DUP_ONE_IN == 0 || (fault && kind == "acc");
+#else
+      bool const dup = rng() % DUP_ONE_IN == 0;
+#endif
       s2.sampleROE(k - state.k < ROE_FIRST || rng() % ROE_ONE_IN == 0);
       if (dup) { s2.saveAccForDup(); }
       nMul += s2.blockMain(k) + 2;
+#ifdef PRPLL_PM1_FAULTS
       if (fault && kind == "acc") { s2.corruptAcc(); }
+#endif
       if (dup && !s2.dupOK(k)) { log("EE stage 2: block k=%" PRIu64 " gave two different results\n", k); ok = false; break; }
       s2.stepK();
+#ifdef PRPLL_PM1_FAULTS
       if (fault && kind == "table") { s2.corruptTable(); }
       if (fault && kind == "A") { s2.corruptA(); }
+#endif
       ++k;
       if (s2.roeFull() && !s2.roeCheck()) { log("EE stage 2: ROE %.3f\n", s2.maxROE()); ok = false; break; }
 
@@ -481,6 +516,8 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
   }
 }
 
+#ifdef PRPLL_PM1_FAULTS
+// TEST ONLY (fault build, test/pm1/run_stage2.sh)
 void stage2Test(GpuCommon shared, const char* spec) {
   vector<string> f;
   for (string item; ;) {
@@ -490,28 +527,17 @@ void stage2Test(GpuCommon shared, const char* spec) {
     if (!comma) { break; }
     spec = comma + 1;
   }
-  if (f.size() == 4 && f[0] == "stage1") {        // "stage1,E,B1,x.bin":  x = 3^(stage 1 exponent), for the larger tests
-    u64 const E = stoull(f[1]), B1 = stoull(f[2]);
-    LogContext const pushContext(std::to_string(E));
-    vector<KeyVal> uses;
-    FFTConfig const fft = FFTConfig::bestFit(*shared.args, E, shared.args->fftSpec, &uses);
-    auto gpu = Gpu::make(E, shared, fft, {}, true, uses);
-    vector<u32> const x = Stage2Run::stage1ForTest(*gpu, pm1::stage1Exponent(E, B1));
-    File::openWrite(f[3]).write(x.data(), x.size() * sizeof(u32));
-    log("stage1ForTest: done, x %016" PRIx64 "\n", res64(x));
-    return;
-  }
-  if (f.size() < 5) { throw "PRPLL_STAGE2_TEST=E,B1,B2,x.bin,acc.bin[,D[,stopAtK]] or stage1,E,B1,x.bin"; }
+  if (f.size() < 5) { throw "PRPLL_STAGE2_TEST=E,B1,B2,x.bin,acc.bin[,D]"; }
   u64 const E = stoull(f[0]), B1 = stoull(f[1]), B2 = stoull(f[2]);
   u32 const D = f.size() > 5 ? u32(stoul(f[5])) : 0;
-  u64 const stopAtK = f.size() > 6 ? stoull(f[6]) : 0;
 
   vector<u32> const x = File::openReadThrow(f[3]).read<u32>(nWords(E));
   LogContext const pushContext(std::to_string(E));
-  Stage2Result const r = Stage2::run(shared, E, B1, B2, x, D, stopAtK);
+  Stage2Result const r = Stage2::run(shared, E, B1, B2, x, D);
   log("stage2Test: %s, %" PRIu64 " multiplications\n", r.status == Stage2Result::DONE ? "done" : r.status == Stage2Result::STOPPED ? "stopped" : r.why.c_str(), r.nMul);
   if (r.status == Stage2Result::DONE) {
     File fo = File::openWrite(f[4]);
     fo.write(r.acc.data(), r.acc.size() * sizeof(u32));
   }
 }
+#endif

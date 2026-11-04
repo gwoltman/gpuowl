@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # prpll's P-1 against mprime:  with B2 <= B1, prpll runs stage 1 and its GCD alone and must report the factor that mprime finds from
-# scratch with the same B1 (and that GMP finds, stage1_oracle);  with B2 > B1, prpll's GCD finds nothing, it writes its residue and
-# the "Pminus1=" line into an mprime directory, and mprime runs stage 2 from it and must find the known factor.  Also compares the
+# scratch with the same B1 (and that GMP finds, stage1_oracle);  with B2 > B1 and stage 2 declined (-maxAlloc 100M), prpll's GCD
+# finds nothing, it writes its residue and the "Pminus1=" line into an mprime directory, and mprime runs stage 2 from it and must find
+# the known factor.  (prpll's own stage 2 on the same lines:  stage2.sh.)  Also compares the
 # stage 1 residue with GMP's and, when mprime logs its own ("stage 1 residue res64=...", see MPRIME_PRIME_TXT), with mprime's.
 #
 #   MPRIME=/path/to/mprime test/pm1/mprime.sh
@@ -84,7 +85,7 @@ handoff() {
   local d=$WORK/$name
   rm -rf "$d"; mkdir -p "$d/run"; mprimeDir "$d/mp"
   echo "Pminus1=1,2,$p,-1,$B1,$B2" > "$d/run/worktodo-0.txt"
-  (cd "$d/run" && "$PRPLL" -device "$DEVICE" -mprimeDir ../mp -log 10000 > out 2>&1)
+  (cd "$d/run" && "$PRPLL" -device "$DEVICE" -mprimeDir ../mp -maxAlloc 100M -log 10000 > out 2>&1)
   local f; f=$(ls "$d/mp" | grep -v -E 'worktodo|prime.txt|local.txt')
   cp "$d/mp/$f" "$d/run/handed-$f"
   "$ORACLE" "$p" "$B1" "$d/run/handed-$f" > "$d/run/oracle" 2>&1
@@ -130,7 +131,7 @@ handoff stage2-1M      1000099 50000 150000 1872347344039 2
 d=$WORK/b2-equals-b1
 rm -rf "$d"; mkdir -p "$d/run"; mprimeDir "$d/mp"
 echo "Pminus1=1,2,400033,-1,1000,2000" > "$d/run/worktodo-0.txt"
-(cd "$d/run" && "$PRPLL" -device "$DEVICE" -mprimeDir ../mp -log 10000 > out 2>&1)
+(cd "$d/run" && "$PRPLL" -device "$DEVICE" -mprimeDir ../mp -maxAlloc 100M -log 10000 > out 2>&1)
 echo "Pminus1=1,2,400033,-1,1000,1000" > "$d/mp/worktodo.add"
 runMprime "$d/mp"
 if grep -q "already tested to B1=1000 and B2=1000" "$d/mp/mp.out" && ! grep -q "completed P-1" "$d/mp/mp.out"; then

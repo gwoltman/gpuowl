@@ -315,11 +315,16 @@ named "config.txt" in the prpll run directory.
                      is cheap at high proof powers and expensive at low ones; it must also complete in
                      the same run that generated the proof. Use e.g. -autoverify 9 to skip it for the
                      low powers, or a value above the maximum power to skip it entirely.
--iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit.
--mprimeDir <dir>   : P-1 ("Pminus1=" worktodo lines): prpll runs stage 1 and its GCD.  When the line asks for a stage 2
-                     (B2 > B1) and stage 1 found no factor, write the residue as an mprime savefile into <dir> and append
+-iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit; P-1 stage 2 stops after about <N>
+                     multiplications.
+-mprimeDir <dir>   : P-1 ("Pminus1=" worktodo lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)
+                     and stage 1 found no factor, stage 2 and its GCD.  When stage 2 can't run here (too little GPU memory,
+                     an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
                      the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
-                     result.  Without it such a line is reported for B1 alone (prpll has no stage 2 yet).
+                     result.  Without it such a line is reported for B1 alone.
+-maxAlloc <size>   : a cap on the GPU memory prpll allocates (e.g. 8G).  P-1 stage 2 takes as many residue-sized buffers
+                     (about 30 to 500) as fit in the memory free on the GPU when it starts less 1 GB (where the free
+                     memory can't be queried, 90%% of the GPU's RAM), and with -maxAlloc in no more than the cap.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune

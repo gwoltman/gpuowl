@@ -52,7 +52,8 @@ oracle() {
 
 # outcome <dir> <p> <B1> <B2> [nomp]:  after oracle, checks what prpll did with the GMP gcd:  a factor -> an "F" result with it, B1 only;
 # no factor and B2 <= B1 -> an "NF" result for B1; no factor and B2 > B1 -> the residue handed to mprime (equal to GMP's) and no
-# result line of prpll's, or without -mprimeDir an "NF" result for B1 only.  The worktodo line is gone in every case.
+# result line of prpll's, or without -mprimeDir an "NF" result for B1 only.  The worktodo line is gone in every case.  The B2 > B1
+# cases here run with -maxAlloc 100M, so that stage 2 declines (prpll's own stage 2:  stage2.sh).
 outcome() {
   local d=$1 p=$2 B1=$3 B2=$4 nomp=${5:-} g; g=$(cat "$d/gcd")
   [ -s "$d/worktodo-0.txt" ] && return 1
@@ -78,14 +79,14 @@ residue_tests() {
   local cases=(
     "400009 1000 0"
     "400009 300000 0"
-    "1000003 50000 2000000"
+    "1000003 50000 2000000 -maxAlloc 100M"
     "1257787 100000 100000"
     "1257787 30000 0 -fft 1:256:1:256"
     "2000003 20000 0 -fft 4:256:1:256"
     "4000037 10000 0"
     "400381 1000 0"
     "400381 500 0"
-    "400381 500 1000"
+    "400381 500 1000 -maxAlloc 100M"
     "400381 1000 2000"
     "1000253 50000 0"
     "400033 1000 0"
@@ -104,10 +105,10 @@ residue_tests() {
     fi
   done
 
-  # No -mprimeDir and B2 > B1:  stage 1 and its GCD, the result for B1 alone, the savefile kept for a later stage 2
+  # No -mprimeDir and B2 > B1, stage 2 declined:  stage 1 and its GCD, the result for B1 alone, the savefile kept for a later stage 2
   local d=$WORK/res-nomp
   setup "$d" 400381 500 1000
-  NOMP=1 run "$d" "$PRPLL"
+  NOMP=1 run "$d" "$PRPLL" -maxAlloc 100M
   if oracle "$d" 400381 500 && outcome "$d" 400381 500 1000 nomp && grep -q "stage 2 (B2=1000) is not run" "$d/out"; then
     pass "no -mprimeDir, B2 > B1: NF for B1=500 only, stage 2 not claimed, savefile kept"
   else

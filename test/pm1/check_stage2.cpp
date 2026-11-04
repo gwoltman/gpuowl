@@ -9,6 +9,9 @@
 //   check_stage2 search p kmax B1 B2                 factors f = 2kp+1 of 2^p-1 with k <= kmax, each with the order of 3^E mod f and
 //                                                    whether stage 1 (B1) or stage 2 (B1, B2) finds it
 //   check_stage2 plan B1 B2 D                        src/Pm1.cpp's planStage2 counts against a count made here
+//   check_stage2 savefile p in.p1|in.p2 out.bin      the words of one of prpll's P-1 savefiles (header line, CRC, words) to out.bin,
+//                                                    and its header line
+//   check_stage2 gcd p acc.bin                       gcd(acc, 2^p-1) in decimal ("gcd 1": no factor)
 // Exit status 0 when every check passed.
 
 #include "Pm1.h"
@@ -181,6 +184,35 @@ int main(int argc, char** argv) {
     printf("%s acc p=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%" PRIu64 ": %" PRIu64 " primes, %" PRIu64 " pairs, %zu multiplications\n",
            ok ? "OK" : "FAIL", p, B1, B2, D, nPrimes, nPairs, pairs.size());
     return ok ? 0 : 1;
+  }
+
+  if (cmd == "savefile" && argc == 5) {
+    u64 const p = strtoull(argv[2], 0, 10);
+    size_t const n = (p - 1) / 32 + 1;
+    FILE* f = fopen(argv[3], "rb");
+    if (!f) { fprintf(stderr, "can't read %s\n", argv[3]); return 2; }
+    char header[512];
+    u32 crc;
+    vector<u32> w(n);
+    if (!fgets(header, sizeof(header), f) || fread(&crc, 4, 1, f) != 1 || fread(w.data(), 4, n, f) != n) {
+      fprintf(stderr, "short savefile %s\n", argv[3]);
+      return 2;
+    }
+    fclose(f);
+    FILE* fo = fopen(argv[4], "wb");
+    if (!fo || fwrite(w.data(), 4, n, fo) != n) { fprintf(stderr, "can't write %s\n", argv[4]); return 2; }
+    fclose(fo);
+    printf("header %s", header);
+    return 0;
+  }
+
+  if (cmd == "gcd" && argc == 4) {
+    u64 const p = strtoull(argv[2], 0, 10);
+    mersenne(N, p);
+    readWords(a, argv[3], p);
+    mpz_gcd(t, a, N);
+    gmp_printf("gcd %Zd\n", t);
+    return 0;
   }
 
   if (cmd == "factors" && argc >= 8) {

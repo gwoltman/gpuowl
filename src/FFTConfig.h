@@ -100,10 +100,22 @@ struct FFTConfig {
 public:
   // uses, if given, receives the -use settings from the chosen FFT's tune.txt line
   // errorChecked:  the work catches its own errors (PRP's Gerbicz check, proof verification), so an -fft that is too small for E is used anyway
-  static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
+  static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true,
+                           bool preferNtt = false);
   // The same choice as a list:  one FFT for an -fft spec or a tune.txt line, else the untuned candidates in order of preference
-  // (Task::execute tries the next when a GPU can't be built for one).  Throws "No FFT" if none can handle E.
-  static vector<FFTConfig> bestFits(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
+  // (Task::execute tries the next when a GPU can't be built for one).  Throws "No FFT" if none can handle E.  preferNtt puts the
+  // untuned candidates of the types with an NTT and no FP64 (nttType) before the others.
+  static vector<FFTConfig> bestFits(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr,
+                                    bool errorChecked = true, bool preferNtt = false);
+
+  // The FFTs for P-1 stage 1 of E, in order (the one place that makes this choice; Stage2::chooseFFT uses it for stage 2, with its
+  // margin):  an -fft spec is honoured whatever its type, then the fastest fitting tune.txt line (the tuner's stored choice, FP64
+  // types included), and without either the untuned candidates with the NTT types first (M61, M31+M61, FP32+M61, FP32+M31+M61:
+  // faster than FP64 on consumer GPUs, and their only error is an output beyond M/2), the FP64 types only when no NTT type fits.
+  static vector<FFTConfig> pm1Fits(const Args& args, u64 E, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
+
+  // An NTT and no FP64 part:  M61, M31+M61, FP32+M61, FP32+M31+M61
+  [[nodiscard]] static bool nttType(enum FFT_TYPES t) { return t == FFT61 || t == FFT3161 || t == FFT3261 || t == FFT323161; }
 
   // Which FP and NTT primes are involved in the FFT
   bool FFT_FP64;

@@ -49,6 +49,7 @@ public:
   }
 
   static void setMaxAlloc(size_t m) { maxAlloc = m; }
+  static size_t getMaxAlloc() { return maxAlloc; }
   static size_t totalAllocBytes() { return totalAlloc; }
   static size_t availableBytes() { return maxAlloc - totalAlloc; }
 };

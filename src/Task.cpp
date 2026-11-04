@@ -11,6 +11,7 @@
 #include "Primes.h"
 #include "Pm1.h"
 #include "Gcd.h"
+#include "Stage2.h"
 #include "Proof.h"
 #include "log.h"
 #include "timeutil.h"
@@ -222,9 +223,11 @@ void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1,
   writeResult(instance, exponent, "P-1", factors.empty() ? "NF" : "F", AID, args, fields);
 }
 
-// P-1:  stage 1 on the GPU, then the stage 1 GCD on the GPU.  A factor ends the assignment.  Otherwise, with no stage 2 asked for
-// (B2 <= B1) the assignment is done too; with a stage 2, -mprimeDir hands the residue to mprime for it (and mprime writes the result),
-// and without -mprimeDir the result is written for B1 alone (no "b2"), since prpll has no stage 2 yet.
+// P-1:  stage 1 on the GPU, then the stage 1 GCD on the GPU.  A factor ends the assignment, and so does B2 <= B1.  Otherwise stage 2
+// (Stage2) and its GCD run on the GPU too, and the result has "b2".  When stage 2 declines (too little GPU memory, an FFT type it
+// does not support), -mprimeDir hands the stage 1 residue to mprime for it (and mprime writes the result); without -mprimeDir the
+// result is written for B1 alone (no "b2") and the stage 1 savefile is kept.  A stop (signal, -iters) in stage 2 keeps the worktodo
+// line and the savefiles:  the next run loads the finished stage 1 and resumes stage 2 from its savefile.
 void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<Gpu> gpu) {
   const Args& args = *shared.args;
   fs::path const& dir = args.mprimeDir;
@@ -251,49 +254,79 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     if (args.clean) { Saver<P1State>::clear(exponent); }
   };
 
-  // There is no CPU GCD:  if the GPU one can't run (e.g. its kernels don't build), mprime can still run it
-  Words g;
-  string gcdError;
-  try {
-    g = gcd.gcdMinus1(x, u32(exponent));
-  } catch (const std::exception& e) {
-    if (dir.empty()) { throw; }
-    gcdError = e.what();
-  } catch (const string& mes) {
-    if (dir.empty()) { throw; }
-    gcdError = mes;
-  }
-  if (!gcdError.empty()) {
-    log("P-1 stage 1 GCD failed on the GPU (%s)\n", gcdError.c_str());
-    handOff(B2 > B1 ? B2 : B1 + 1, "the GCD and stage 2");
-    return;
-  }
-  log("P-1 stage 1 GCD: %.1f s\n", gcd.lastStats().seconds);
-
+  // The GCD, as a factor (empty when it is 1).  The gcd can be composite:  it is reported whole, as Prime95 does.
   vector<string> factors;
-  if (!pm1::isOne(g)) {
+  auto addFactor = [&](const Words& g, int stage) {
+    if (pm1::isOne(g)) { return; }
     string const f = pm1::toDecimal(g);
     int const prime = pm1::isProbablePrime(g);
-    log("P-1 found a factor in stage 1: %s (%" PRIu64 " bits, %s)\n", f.c_str(), pm1::bitLength(g),
+    log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s)\n", stage, f.c_str(), pm1::bitLength(g),
         prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here");
     factors.push_back(f);
+  };
+
+  // A stage 2 savefile for this residue means that this stage 1 GCD already ran and found nothing (stage 2 starts only then)
+  bool const stage2Started = B2 > B1 && Stage2::hasSavefile(exponent, B1, B2, x);
+  if (stage2Started) {
+    log("P-1 stage 1 GCD skipped: stage 2 was started from this residue, so it found no factor\n");
   } else {
-    log("P-1 stage 1 found no factor (B1=%" PRIu64 ")\n", B1);
+    // There is no CPU GCD:  if the GPU one can't run (e.g. its kernels don't build), mprime can still run it
+    Words g;
+    string gcdError;
+    try {
+      g = gcd.gcdMinus1(x, u32(exponent));
+    } catch (const std::exception& e) {
+      if (dir.empty()) { throw; }
+      gcdError = e.what();
+    } catch (const string& mes) {
+      if (dir.empty()) { throw; }
+      gcdError = mes;
+    }
+    if (!gcdError.empty()) {
+      log("P-1 stage 1 GCD failed on the GPU (%s)\n", gcdError.c_str());
+      handOff(B2 > B1 ? B2 : B1 + 1, "the GCD and stage 2");
+      return;
+    }
+    log("P-1 stage 1 GCD: %.1f s\n", gcd.lastStats().seconds);
+    addFactor(g, 1);
+    if (factors.empty()) { log("P-1 stage 1 found no factor (B1=%" PRIu64 ")\n", B1); }
   }
   if (nJacobi) { log("P-1 stage 1 had %u Jacobi check failures\n", nJacobi); }
 
+  u64 doneB2 = 0;     // the B2 of the result:  0 for a result of stage 1 alone
   if (factors.empty() && B2 > B1) {
-    if (!dir.empty()) {
+    Stage2Result const r = Stage2::run(shared, exponent, B1, B2, x);
+    if (r.status == Stage2Result::STOPPED) {
+      // As in stage 1:  the worktodo line stays, and so do the savefiles
+      throw "stop requested";
+    }
+    if (r.status == Stage2Result::DONE) {
+      // gcd(acc, 2^p - 1).  Stage 2 checks acc != 0 at every checkpoint, so a gcd of 2^p - 1 (acc = 0 mod 2^p - 1) is an error
+      Words const g = gcd.gcd(r.acc, u32(exponent));
+      log("P-1 stage 2 GCD: %.1f s\n", gcd.lastStats().seconds);
+      if (pm1::bitLength(g) >= exponent) {
+        log("P-1 stage 2: the accumulator is zero (the GCD is 2^%" PRIu64 " - 1)\n", exponent);
+        throw "P-1 stage 2 accumulator is zero";
+      }
+      addFactor(g, 2);
+      if (factors.empty()) { log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2=%" PRIu64 ")\n", B1, B2); }
+      doneB2 = B2;
+    } else if (!dir.empty()) {
+      log("P-1 stage 2 is not run here (%s)\n", r.why.c_str());
       handOff(B2, "stage 2");
       return;
+    } else {
+      log("P-1 stage 2 (B2=%" PRIu64 ") is not run (%s) and there is no -mprimeDir to hand it to.  The result is for B1=%" PRIu64
+          " only; the stage 1 residue is kept in '%s'\n", B2, r.why.c_str(), B1,
+          (fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent))).string().c_str());
     }
-    log("P-1 stage 2 (B2=%" PRIu64 ") is not run: prpll has no stage 2 yet, and there is no -mprimeDir to hand it to.  The result is "
-        "for B1=%" PRIu64 " only; the stage 1 residue is kept in '%s'\n", B2, B1,
-        (fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent))).string().c_str());
   }
-  writeResultPM1(fft, args, instance, B1, 0, factors, nErrors, nJacobi);
+  writeResultPM1(fft, args, instance, B1, doneB2, factors, nErrors, nJacobi);
   Worktodo::deleteTask(*this, instance);
-  if (args.clean && (B2 <= B1 || !factors.empty())) { Saver<P1State>::clear(exponent); }
+  if (args.clean && (B2 <= B1 || doneB2 || !factors.empty())) {
+    Saver<P1State>::clear(exponent);
+    Saver<P2State>::clear(exponent);
+  }
 }
 
 void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings) const {
@@ -346,7 +379,8 @@ void Task::execute(GpuCommon shared, u32 instance) {
   }
 
   vector<KeyVal> fftUses;
-  vector<FFTConfig> const ffts = FFTConfig::bestFits(*shared.args, exponent, shared.args->fftSpec, &fftUses, kind != LL && kind != CERT);
+  vector<FFTConfig> const ffts = kind == PM1 ? FFTConfig::pm1Fits(*shared.args, exponent, &fftUses)
+                                 : FFTConfig::bestFits(*shared.args, exponent, shared.args->fftSpec, &fftUses, kind != LL && kind != CERT);
 
   // Without -fft or a tune.txt line there are several untuned candidates.  If the kernels of one can't be built (e.g. an OpenCL
   // compiler that can't build the FP32 code), move on to the next.  Kernels compile on first use, so this can surface after the

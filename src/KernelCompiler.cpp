@@ -237,7 +237,9 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
     clSources.push_back(loadSource(context->get(), src));
 
     // The P-1 kernel files (pm1*.cl) are not in the hash of the context, so that adding or changing them leaves the cached PRP
-    // kernels valid:  their text goes into the key of their own kernels instead (see loadAux).
+    // kernels valid:  their text goes into the key of their own kernels instead (see loadAux).  The P-1 kernels use two ways to stay
+    // out of PRP's keys:  stage 2's pm1stage2.cl is in the main bundle under this name rule, since it needs the transform's defines
+    // and base.cl / math.cl;  the GCD kernels (src/cl/gcd, self-contained, no transform defines) are a bundle of their own (gcdBundle).
     if (string_view(clNames[i]).starts_with("pm1")) {
       ownHash[clNames[i]] = SHA3::hash(src)[0];
       continue;
