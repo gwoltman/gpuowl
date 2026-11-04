@@ -203,6 +203,20 @@ void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isP
   writeResult(instance, exponent, "LL", isPrime ? "P" : "C", AID, args, fields);
 }
 
+void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1, u64 B2, const vector<string>& factors, u32 nErrors) const {
+  // {"status":"NF", "exponent":45581713, "worktype":"P-1", "b1":50000, "b2":5000000, "fft-length":5120, ..., "factors":["..."]}
+  vector<string> fields{json("b1", B1)};
+  if (B2 > B1) { fields.push_back(json("b2", B2)); }
+  fields.push_back(json("fft-length", fft.size()));
+  fields.push_back(json("errors", vector<string>{json("gerbicz", nErrors)}));
+  if (!factors.empty()) {
+    string list = "[";
+    for (size_t i = 0; i < factors.size(); ++i) { list += (i ? ", " : "") + json(factors[i]); }
+    fields.push_back(json("factors") + ':' + list + ']');
+  }
+  writeResult(instance, exponent, "P-1", factors.empty() ? "NF" : "F", AID, args, fields);
+}
+
 void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings) const {
   string const hexhash = hex(hash[3]) + hex(hash[2]) + hex(hash[1]) + hex(hash[0]);
   vector<string> fields{json("worktype", "Cert"),

@@ -15,12 +15,30 @@
 #include <optional>
 #include <charconv>
 #include <cinttypes>
+#include <cmath>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
 
 namespace {
+
+// A non-negative number written as an integer or as a float ("1000000", "1e6"), as Prime95 reads its bounds.
+bool parseNumber(const string& s, double& x) {
+  if (s.empty()) { return false; }
+  char *end = nullptr;
+  x = strtod(s.c_str(), &end);
+  return end == s.c_str() + s.size() && std::isfinite(x) && x >= 0 && x < 9e15;
+}
+
+bool equalsIgnoreCase(const string& a, const char *b) {
+  size_t const n = strlen(b);
+  if (a.size() != n) { return false; }
+  for (size_t i = 0; i < n; ++i) {
+    if (tolower(static_cast<unsigned char>(a[i])) != b[i]) { return false; }
+  }
+  return true;
+}
 
 bool isHex(const string& s) {
   u32 dummy{};
@@ -33,6 +51,8 @@ bool isHex(const string& s) {
 // PRP=FEEE9DCD59A0855711265C1165C4C693,1,2,124647911,-1,77,0
 // DoubleCheck=E0F583710728343C61643028FBDBA0FB,70198703,75,1
 // Cert=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,162105
+// Pminus1=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,1000000,30000000
+// Pfactor=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,76,1.3
 std::optional<Task> parse(const std::string& line) {
   if (line.empty() || line[0] == '#') { return {}; }
 
@@ -42,6 +62,8 @@ std::optional<Task> parse(const std::string& line) {
   bool isPRP = false;
   bool isLL = false;
   bool isCERT = false;
+  bool isPM1 = false;
+  bool isPFACTOR = false;
 
   if (topParts.size() == 2) {
     const string& kind = topParts.front();
@@ -51,6 +73,55 @@ std::optional<Task> parse(const std::string& line) {
       isLL = true;
     } else if (kind == "Cert") {
       isCERT = true;
+    } else if (equalsIgnoreCase(kind, "pminus1")) {
+      isPM1 = true;
+    } else if (equalsIgnoreCase(kind, "pfactor")) {
+      isPFACTOR = true;
+    }
+  }
+
+  if (isPM1 || isPFACTOR) {
+    vector<string> parts = split(topParts.back(), ',');
+    if (!parts.empty() && (parts.front() == "N/A" || parts.front().empty())) {
+      parts.erase(parts.begin()); // skip empty AID
+    }
+
+    string AID;
+    if (!parts.empty() && parts.front().size() == 32 && isHex(parts.front())) {
+      AID = parts.front();
+      parts.erase(parts.begin());
+    }
+
+    // "k,b,n,c," then B1,B2 (Pminus1) or the trial factoring depth and the number of tests saved (Pfactor), optionally followed by
+    // B2_start and a quoted list of known factors, which are not used yet.  Only 2^n-1 is ours.
+    if (parts.size() >= 6 && parts[0] == "1" && parts[1] == "2" && parts[3] == "-1") {
+      u64 exp{};
+      const char *end = parts[2].c_str() + parts[2].size();
+      auto [ptr, ec] = from_chars(parts[2].c_str(), end, exp, 10);
+      double x{}, y{};
+      if (ptr == end && ec == std::errc{} && exp > 1000 && parseNumber(parts[4], x) && parseNumber(parts[5], y)) {
+        if (!Primes{}.isPrime(exp)) {
+          log("worktodo.txt line ignored, exponent %" PRIu64 " is not prime: \"%s\"\n", exp, rstripNewline(line).c_str());
+          return {};
+        }
+        Task task{};
+        task.kind = Task::PM1;
+        task.exponent = exp;
+        task.AID = AID;
+        task.line = line;
+        if (isPM1) {
+          if (x >= 2) {    // B1 = 0 or 1 is not a bound; B2 = 0 means no stage 2
+            task.B1 = u64(x);
+            task.B2 = u64(y);
+            return task;
+          }
+        } else {
+          task.pfactor = true;
+          task.tfBits = x;
+          task.testsSaved = y;
+          return task;
+        }
+      }
     }
   }
 
@@ -143,6 +214,8 @@ static std::optional<Task> bestTask(const Args& args, const fs::path& fileName) 
       log("Cert start file M%" PRIu64 ".cert not found; skipping that worktodo line for now\n", task->exponent);
       continue;
     }
+    // P-1 lines are recognised, so they are not reported as ignored, but nothing runs them yet.
+    if (task && task->kind == Task::PM1) { continue; }
     if (task && (!best
                  || (best->kind != Task::CERT && task->kind == Task::CERT)
                  || ((best->kind != Task::CERT || task->kind == Task::CERT) && smallest && task->exponent < best->exponent))) {
