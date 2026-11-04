@@ -161,6 +161,30 @@ static string narrowLongLongLiterals(const string& s) {
   return regex_replace(s, longLongLiteral, "$1$2L");
 }
 
+// The MULTIPLY_DELTA blocks of a PRP kernel file (each from a line "#if MULTIPLY_DELTA" to the next "#endif", no other directive
+// inside) are compiled only into P-1 kernels (pm1tailmul.cl defines MULTIPLY_DELTA).  The text without them goes into contextHash, so
+// that adding or changing them leaves the cached PRP kernels valid; `removed` collects them, for the pm1 kernels' keys.
+static string withoutDeltaBlocks(const string& src, const string& fileName, string& removed) {
+  string out;
+  bool inBlock = false;
+  for (size_t pos = 0; pos < src.size();) {
+    size_t const nl = src.find('\n', pos);
+    size_t const end = nl == string::npos ? src.size() : nl + 1;
+    string_view const line{src.data() + pos, end - pos};
+    size_t const first = line.find_first_not_of(" \t");
+    bool const directive = first != string_view::npos && line[first] == '#';
+    bool const opens = !inBlock && directive && line.substr(first).starts_with("#if MULTIPLY_DELTA");
+    if (inBlock && directive && !line.substr(first).starts_with("#endif")) {
+      throw std::runtime_error(fileName + ": a MULTIPLY_DELTA block may not contain another directive: " + string(line));
+    }
+    (opens || inBlock ? removed : out) += line;
+    if (opens) { inBlock = true; } else if (inBlock && directive) { inBlock = false; }
+    pos = end;
+  }
+  if (inBlock) { throw std::runtime_error(fileName + ": unterminated MULTIPLY_DELTA block"); }
+  return out;
+}
+
 KernelCompiler::~KernelCompiler() {
 #ifndef CUDA_BACKEND
   if (saveTemps) { removeFiles({}); }   // a last try at the temp files that could not be deleted yet
@@ -231,6 +255,7 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   assert(clNames.size() == clFiles.size());
   clSourceNames = clNames;
   int const n = int(clNames.size());
+  string deltaBlocks;    // see withoutDeltaBlocks
   for (int i = 0; i < n; ++i) {
     string const src = noInt128 ? narrowLongLongLiterals(clFiles[i]) : string(clFiles[i]);
     files.emplace_back(clNames[i], src);
@@ -245,7 +270,10 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
       continue;
     }
     hasher.update(clNames[i]);
-    hasher.update(src);
+    hasher.update(withoutDeltaBlocks(src, clNames[i], deltaBlocks));
+  }
+  if (!deltaBlocks.empty()) {
+    for (auto& [name, h] : ownHash) { h = SHA3::hash(h, deltaBlocks)[0]; }
   }
   contextHash = std::move(hasher).finish()[0];
   // log("OpenCL %d files, hash %016" PRIx64 "\n", n, contextHash);

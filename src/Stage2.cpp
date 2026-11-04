@@ -6,8 +6,8 @@
 // the form tailMulLow takes as its second operand.
 //   B_r = x^(r^2), the table:  r odd, coprime to D, below D/2;  built by second differences, x^((r+2)^2) = x^(r^2) * x^(4r+4).
 //   A_k = x^((kD)^2), C_k = x^((2k+1) D^2), G = x^(2 D^2):  A_{k+1} = A_k * C_k, C_{k+1} = C_k * G.
-//   For each needed (k, r):  acc *= A_k - B_r, the difference taken in the transform domain (subLow, pm1stage2.cl), the
-//   multiplication chained through carryFused as the PRP squarings are.
+//   For each needed (k, r):  acc *= A_k - B_r, the difference taken in the transform domain by the tail kernel itself (tailMulDelta,
+//   pm1tailmul.cl), the multiplication chained through carryFused as the PRP squarings are.
 // Checks (no Gerbicz-type check exists for a product of unrelated factors; see stage2-design.md):  sums of the table buffers (built
 // twice, re-verified at each checkpoint), the last table entry and A_k against Gpu::exponentiate, acc != 0, ROE of every carry, and
 // one randomly chosen block in DUP_ONE_IN computed twice and compared.  A failed check goes back to the last checkpoint.
@@ -38,7 +38,7 @@ constexpr double LOG_SECS = 60;
 constexpr u32 DUP_ONE_IN = 32;            // one block in this many (at random) is computed twice
 constexpr u32 ROE_FIRST = 16;             // ROE is sampled in the first blocks of a run and then in one block in ROE_ONE_IN
 constexpr u32 ROE_ONE_IN = 8;
-constexpr u32 EXTRA_BUFS = 6;             // big buffers besides the table:  A, C, G, delta and S (table build) in Low form, one spare
+constexpr u32 EXTRA_BUFS = 5;             // big buffers besides the table:  A, C, G and S (table build) in Low form, one spare
 constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // kept back when the free memory is not known, and under a -maxAlloc cap
 constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
 constexpr float MAX_ROE = 0.4f;
@@ -64,11 +64,9 @@ class Stage2Run {
   size_t const bufSize;            // doubles
   size_t const wordSize;           // Words of a residue buffer
 
-  Kernel kSub;
-
   vector<Buffer<double>> table;    // B_r, Low
   vector<u64> tableSums;
-  Buffer<double> lowA, lowC, lowG, lowS, delta;
+  Buffer<double> lowA, lowC, lowG, lowS;
   Buffer<Word> wX, wA, wC, wS, wR, acc, accDup;
 
   // ROE of every carry since the table was built:  the count, max, and sums for the mean and sd
@@ -137,10 +135,7 @@ public:
     g{g}, plan{plan}, x{x}, nR{u32(plan.rs.size())},
     bufSize{bufDoubles(g)},
     wordSize{g.N * g.fft.WordSize / sizeof(Word)},
-    kSub{"subLow", &g.compiler, g.profile.make("subLow"), &g.queue, "pm1stage2.cl", "subLow", 256 * 1024,
-         g.kernelDefines(Gpu::KALL) + "-DSUB_N2=" + to_string(PAD_ADJUST(g.WIDTH * g.fft.shape.middle * g.SMALL_H * 2, g.WIDTH,
-                                                                           g.fft.shape.middle, g.in_place, g.pad_size) / 2)},
-    lowA{big("p2A")}, lowC{big("p2C")}, lowG{big("p2G")}, lowS{big("p2S")}, delta{big("p2delta")},
+    lowA{big("p2A")}, lowC{big("p2C")}, lowG{big("p2G")}, lowS{big("p2S")},
     wX{words("p2x")}, wA{words("p2wA")}, wC{words("p2wC")}, wS{words("p2wS")}, wR{words("p2wR")},
     acc{words("p2acc")}, accDup{words("p2accDup")}
   {
@@ -226,10 +221,9 @@ public:
     u32 const total = plan.neededIn(k);
     for (u32 i = 0; i < nR; ++i) {
       if (!plan.needed(k, i)) { continue; }
-      kSub(delta, lowA, table[i]);
       if (n == 0) { g.fftP(g.buf1, a); }
       g.fftMidIn(g.buf1);
-      g.tailMulLow(g.buf1, delta);
+      g.tailMulDelta(g.buf1, lowA, table[i]);
       g.fftMidOut(g.buf1);
       if (++n == total) {
         g.fftW(g.buf3, g.buf1);

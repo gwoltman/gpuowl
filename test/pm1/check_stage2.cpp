@@ -315,16 +315,16 @@ int main(int argc, char** argv) {
   }
 
   if (cmd == "memplan" && argc == 6) {
-    // memplan B1 B2 budgetMB bufferMB:  the D the memory planner picks (src/Pm1.cpp chooseStage2D, 6 buffers besides the table) and
+    // memplan B1 B2 budgetMB bufferMB:  the D the memory planner picks (src/Pm1.cpp chooseStage2D, 5 buffers besides the table) and
     // its multiplication count
     u64 const B1 = strtoull(argv[2], 0, 10), B2 = strtoull(argv[3], 0, 10);
     double const budget = strtod(argv[4], 0), buf = strtod(argv[5], 0);
-    u64 const maxR = budget > buf * 7 ? u64(budget / buf) - 6 : 0;
+    u64 const maxR = budget > buf * 6 ? u64(budget / buf) - 5 : 0;
     u32 const D = pm1::chooseStage2D(B1, B2, maxR);
     if (!D) { printf("declined (%" PRIu64 " buffers)\n", maxR); return 0; }
     pm1::Stage2Plan const plan = pm1::planStage2(B1, B2, D);
     printf("D=%u nR=%zu (%.1f GB) muls=%" PRIu64 " (primes %" PRIu64 ", k steps %" PRIu64 ", table ~%u)\n", D, plan.rs.size(),
-           (plan.rs.size() + 6) * buf / 1024, plan.nNeeded + 2 * (plan.kEnd - plan.kBegin), plan.nNeeded, 2 * (plan.kEnd - plan.kBegin), D / 2);
+           (plan.rs.size() + 5) * buf / 1024, plan.nNeeded + 2 * (plan.kEnd - plan.kBegin), plan.nNeeded, 2 * (plan.kEnd - plan.kBegin), D / 2);
     return 0;
   }
 

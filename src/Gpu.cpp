@@ -1171,6 +1171,13 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
+  K(ktailMulDeltaZero,     "pm1tailmul.cl", "tailMulZero", PFA_FP ? PFA_FP_ZERO_THREADS : SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP) + "-DMUL_LOW=1"),
+  K(ktailMulDelta,         "pm1tailmul.cl", "tailMul",
+                                               PFA_FP2 ? PFA_FP_MAIN_THREADS :
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDOUT)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
@@ -1194,6 +1201,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
+  K(ktailMulDeltaZeroGF31, "pm1tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K31) + "-DMUL_LOW=1"),
+  K(ktailMulDeltaGF31,     "pm1tailmul.cl", "tailMulGF31",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDOUT31)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
@@ -1213,6 +1226,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K61)),                                       // Single-wide tailMul with one kernel
   K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
+  K(ktailMulDeltaZeroGF61, "pm1tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K61) + "-DMUL_LOW=1"),
+  K(ktailMulDeltaGF61,     "pm1tailmul.cl", "tailMulGF61",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
@@ -1325,6 +1344,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     ktailMulZero.setFixedArgs(3, bufTrigH);
     ktailMulLowZero.setFixedArgs(3, bufTrigH);
     ktailMulLow.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaZero.setFixedArgs(4, bufTrigH);
+    ktailMulDelta.setFixedArgs(5, bufTrigH);
     ktailMul.setFixedArgs(4, bufTrigH);
     kfftMidOut.setFixedArgs(3, bufTrigM);
     kfftW.setFixedArgs(2, bufTrigW);
@@ -1338,6 +1359,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     ktailMulZeroGF31.setFixedArgs(3, bufTrigH);
     ktailMulLowZeroGF31.setFixedArgs(3, bufTrigH);
     ktailMulLowGF31.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaZeroGF31.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaGF31.setFixedArgs(5, bufTrigH);
     ktailMulGF31.setFixedArgs(4, bufTrigH);
     kfftMidOutGF31.setFixedArgs(3, bufTrigM);
     kfftWGF31.setFixedArgs(2, bufTrigW);
@@ -1351,6 +1374,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     ktailMulZeroGF61.setFixedArgs(3, bufTrigH);
     ktailMulLowZeroGF61.setFixedArgs(3, bufTrigH);
     ktailMulLowGF61.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaZeroGF61.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaGF61.setFixedArgs(5, bufTrigH);
     ktailMulGF61.setFixedArgs(4, bufTrigH);
     kfftMidOutGF61.setFixedArgs(3, bufTrigM);
     kfftWGF61.setFixedArgs(2, bufTrigW);
@@ -1576,7 +1601,7 @@ void Gpu::replay() {
             replay_one(kern, cache_group, arg, &queue, base_hi, stripe_group_size * 16 * fft.shape.middle);
           }
  
-          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW || kern == KTAILMULDELTA) {
             // fftMiddleIn produces 16 * MIDDLE lines in base_lo and base_hi.  tailSquare kernel processes 2 lines linked by Hermetian symmetry.
             // Tail kernels use two dimensions, the X coordinate bumps line number by one, the Y coordinate bumps line number by WIDTH.
             u32 kernelsToExecuteX = stripe_group_size * 16;
@@ -1673,7 +1698,7 @@ void Gpu::replay() {
             replay_one(kern, cache_group, arg, &queue, base_lo, 2 * stripe_group_size * 16 * fft.shape.middle);
           }
  
-          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW || kern == KTAILMULDELTA) {
             // We can now completely process lines from the lower half of the base_lo stripe group (Hermetian mates are mostly in upper half of base_hi stripe group)
             u32 half_size = (fft.shape.middle + 1) / 2;  // For base_lo, round odd middles up.
             u32 stripeGroupLines = stripe_group_size * 16;
@@ -1779,7 +1804,7 @@ void Gpu::replay() {
             replay_one(kern, cache_group, arg, queues[q], base_lo, 2 * stripe_group_size * 16 * fft.shape.middle);
           }
 
-          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW || kern == KTAILMULDELTA) {
             // We can now completely process lines from the lower half of the base_lo stripe group (Hermetian mates are mostly in upper half of base_hi stripe group)
             u32 half_size = (fft.shape.middle + 1) / 2;    // For base_lo, round odd middles up.
             u32 stripeGroupLines = stripe_group_size * 16;
@@ -1936,6 +1961,24 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     });
   }
 
+  if (kern == KTAILMULDELTA) {
+    Buffer<double> const *buf = recorded_kernel_args[arg++];
+    Buffer<double> const *a = recorded_kernel_args[arg++];
+    Buffer<double> const *b = recorded_kernel_args[arg++];
+    // If not in place, the output is to the scratch buffer
+    Buffer<double> const *in1 = buf;
+    Buffer<double> const *out = in_place ? buf : &buf3;
+    tailWithZero([&](Queue* tq) {
+      if (cache_group == 1) { ktailMulDelta.setQueue(tq); ktailMulDelta.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulDelta(*out, *in1, *a, *b, base); }
+      if (cache_group == 2) { ktailMulDeltaGF31.setQueue(tq); ktailMulDeltaGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulDeltaGF31(*out, *in1, *a, *b, base); }
+      if (cache_group == 3) { ktailMulDeltaGF61.setQueue(tq); ktailMulDeltaGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulDeltaGF61(*out, *in1, *a, *b, base); }
+    }, [&](Queue* zq) {
+      if (cache_group == 1) { ktailMulDeltaZero.setQueue(zq); ktailMulDeltaZero(*out, *in1, *a, *b); }
+      if (cache_group == 2) { ktailMulDeltaZeroGF31.setQueue(zq); ktailMulDeltaZeroGF31(*out, *in1, *a, *b); }
+      if (cache_group == 3) { ktailMulDeltaZeroGF61.setQueue(zq); ktailMulDeltaZeroGF61(*out, *in1, *a, *b); }
+    });
+  }
+
   if (kern == KMIDOUT) {
     Buffer<double> const *buf = recorded_kernel_args[arg++];
     // If not in place, the input is from the scratch buffer
@@ -1960,6 +2003,10 @@ int Gpu::replay_next_arg(enum BOTTOM_HALF_KERNELS kern, int arg) {
 
   if (kern == KMIDIN || kern == KTAILSQUARE || kern == KMIDOUT) {
     return arg + 1;
+  }
+
+  else if (kern == KTAILMULDELTA) {
+    return arg + 3;
   }
 
   else { //if (kern == KFFTHIN || kern == KTAILMUL || kern == KTAILMULLOW || kern == KFFTW) {
@@ -2009,6 +2056,14 @@ void Gpu::tailMulLow(Buffer<double>& buf, Buffer<double>& in2) {
   recorded_kernels.push_back(KTAILMULLOW);
   recorded_kernel_args.push_back(&buf);
   recorded_kernel_args.push_back(&in2);
+}
+
+void Gpu::tailMulDelta(Buffer<double>& buf, Buffer<double>& a, Buffer<double>& b) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KTAILMULDELTA);
+  recorded_kernel_args.push_back(&buf);
+  recorded_kernel_args.push_back(&a);
+  recorded_kernel_args.push_back(&b);
 }
 
 void Gpu::fftMidOut(Buffer<double>& buf) {

@@ -138,6 +138,8 @@ private:
   Kernel ktailMulLowZero;
   Kernel ktailMul;
   Kernel ktailMulLow;
+  Kernel ktailMulDeltaZero;      // P-1 stage 2:  tailMulLow by the difference of two Low buffers (pm1tailmul.cl)
+  Kernel ktailMulDelta;
   Kernel kfftMidOut;
   Kernel kfftW;
 
@@ -150,6 +152,8 @@ private:
   Kernel ktailMulLowZeroGF31;
   Kernel ktailMulGF31;
   Kernel ktailMulLowGF31;
+  Kernel ktailMulDeltaZeroGF31;
+  Kernel ktailMulDeltaGF31;
   Kernel kfftMidOutGF31;
   Kernel kfftWGF31;
 
@@ -162,6 +166,8 @@ private:
   Kernel ktailMulLowZeroGF61;
   Kernel ktailMulGF61;
   Kernel ktailMulLowGF61;
+  Kernel ktailMulDeltaZeroGF61;
+  Kernel ktailMulDeltaGF61;
   Kernel kfftMidOutGF61;
   Kernel kfftWGF61;
 
@@ -248,7 +254,7 @@ private:
   TimeInfo* timeBufVect;
   ZAvg zAvg;
 
-  enum BOTTOM_HALF_KERNELS {KMIDIN, KFFTHIN, KTAILSQUARE, KTAILMUL, KTAILMULLOW, KMIDOUT, KFFTW};
+  enum BOTTOM_HALF_KERNELS {KMIDIN, KFFTHIN, KTAILSQUARE, KTAILMUL, KTAILMULLOW, KTAILMULDELTA, KMIDOUT, KFFTW};
   vector<enum BOTTOM_HALF_KERNELS> recorded_kernels;
   vector<Buffer<double> *> recorded_kernel_args;
 
@@ -271,6 +277,7 @@ private:
   void tailSquare(Buffer<double>& buf);
   void tailMul(Buffer<double>& buf, Buffer<double>& in2);
   void tailMulLow(Buffer<double>& buf, Buffer<double>& in2);
+  void tailMulDelta(Buffer<double>& buf, Buffer<double>& a, Buffer<double>& b);   // tailMulLow(buf, a - b)
   void fftW(Buffer<double>& out, Buffer<double>& in);
   void carryA(Buffer<double>& out, Buffer<double>& in) { carryA(reinterpret_cast<Buffer<Word>&>(out), in); }
   void carryA(Buffer<Word>& out, Buffer<double>& in);
