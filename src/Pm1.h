@@ -99,4 +99,37 @@ string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2);
 // Appends a line to <dir>/worktodo.add in one write.
 void appendMprimeWork(const fs::path& dir, const string& line);
 
+// ---- Stage 2 (paired, "n^2" form) ----
+// Each prime q in (B1, B2] is q = kD - r or q = kD + r with k = round(q / D), 0 < r < D/2 and gcd(r, D) = 1.  Since
+// (kD)^2 - r^2 = (kD - r)(kD + r), one accumulator multiplication by x^((kD)^2) - x^(r^2) covers both kD - r and kD + r.
+// The plan marks the (k, r) that cover at least one prime.
+struct Stage2Plan {
+  u64 B1{}, B2{};
+  u32 D{};
+  vector<u32> rs;              // the r values: odd, coprime to D, below D/2, increasing
+  u64 kBegin{}, kEnd{};        // the k with a needed pair are in [kBegin, kEnd)
+  vector<u64> bits;            // bit (k - kBegin) * rs.size() + i is set when (k, rs[i]) is needed
+  u64 nPrimes{};               // primes in (B1, B2]
+  u64 nPairs{};                // needed (k, r) whose kD - r and kD + r are both primes in (B1, B2]
+  u64 nNeeded{};               // needed (k, r):  one accumulator multiplication each
+
+  [[nodiscard]] bool needed(u64 k, u32 i) const {
+    u64 const pos = (k - kBegin) * rs.size() + i;
+    return (bits[pos / 64] >> (pos % 64)) & 1;
+  }
+  [[nodiscard]] u32 neededIn(u64 k) const;         // the number of needed (k, r) for this k
+  // Multiplications to do from block k (with the A/C step of 2 multiplications per k), not counting the table set-up
+  [[nodiscard]] u64 mulsFrom(u64 k) const;
+};
+
+// The even, 11-smooth D for which stage 2 is planned, with the count of their r values (phi(D) / 2)
+const vector<u32>& stage2Ds();
+u32 stage2nR(u32 D);
+
+// The D (from stage2Ds) with the least estimated cost among those that need at most maxR r buffers, or 0 if none fits.
+u32 chooseStage2D(u64 B1, u64 B2, u64 maxR);
+
+// Requires 11 <= B1 < B2 < 2^32 and D from stage2Ds().
+Stage2Plan planStage2(u64 B1, u64 B2, u32 D);
+
 }

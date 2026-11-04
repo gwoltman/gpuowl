@@ -30,6 +30,7 @@ static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%
 // Push version number to sync it with PRP.
 static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
 static constexpr const char *P1_v1 = "OWL P1 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
+static constexpr const char *P2_v1 = "OWL P2 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
 
 struct BadHeaderError : std::runtime_error {
@@ -175,6 +176,26 @@ void writeState(const File& fo, const CERTState& state) {
   fo.writeChecked(state.data);
 }
 
+P2State readState(const P2State& expected, File fi) {
+  P2State s{};
+  string const header = fi.readLine();
+  if (sscanf(header.c_str(), P2_v1, &s.exponent, &s.k, &s.B1, &s.B2, &s.D, &s.x64, &s.nMul, &s.elapsed) == 8) {
+    checkExponent(s.exponent, expected.exponent, header);
+    s.acc = fi.readChecked<u32>(nWords(s.exponent));
+    return s;
+  }
+  log("Loading P2 from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
+  throw BadHeaderError{fi.name};
+}
+
+void writeState(const File& fo, const P2State& state) {
+  assert(state.acc.size() == nWords(state.exponent));
+  if (fo.printf(P2_v1, state.exponent, state.k, state.B1, state.B2, state.D, state.x64, state.nMul, state.elapsed) <= 0) {
+    throw WriteError{fo.name};
+  }
+  fo.writeChecked(state.acc);
+}
+
 void writeState(const File& fo, const LLState& state) {
   assert(state.data.size() == nWords(state.exponent));
   if (fo.printf(LL_v13, state.exponent, state.k, state.elapsed) <= 0) {
@@ -228,6 +249,10 @@ template<> PRPState Saver<PRPState>::initState() {
 
 template<> LLState Saver<LLState>::initState() {
   return {.exponent=exponent, .k=0, .data=makeWords(exponent, 4), .elapsed=0};
+}
+
+template<> P2State Saver<P2State>::initState() {
+  return {.exponent=exponent, .k=0, .B1=0, .B2=0, .D=0, .x64=0, .nMul=0, .acc={}, .elapsed=0};   // no checkpoint
 }
 
 template<> CERTState Saver<CERTState>::initState() {
@@ -372,3 +397,4 @@ template class Saver<PRPState>;
 template class Saver<LLState>;
 template class Saver<CERTState>;
 template class Saver<P1State>;
+template class Saver<P2State>;

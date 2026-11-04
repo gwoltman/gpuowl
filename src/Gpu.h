@@ -92,6 +92,8 @@ struct Weights {
 };
 
 class Gpu {
+  friend class Stage2Run;   // P-1 stage 2 (Stage2.cpp) drives the transform kernels directly
+
   GpuCommon shared;
   Background* background;
   // Set by the background thread when a proof residue could not be written (see ProofSet::save).  Every

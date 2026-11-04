@@ -26,5 +26,9 @@ p1flip: p1flip.cpp $(OBJS)
 check_gcd: check_gcd.cpp $(PRPLL_OBJS) $(SRC)/Gcd.h
 	g++ -std=c++20 -O2 -flto -Wall -Wextra -I$(SRC) -o $@ check_gcd.cpp $(PRPLL_OBJS) -lgmp -lOpenCL -lpthread
 
+# Stage 2 oracle (see check_stage2.cpp and run_stage2.sh)
+check_stage2: check_stage2.cpp $(OBJS) $(SRC)/Pm1.h
+	g++ -std=c++20 -O2 -Wall -Wextra -I$(SRC) -o $@ check_stage2.cpp $(OBJS) -lgmp -pthread
+
 clean:
-	rm -rf check_pm1 check_gcd stage1_oracle p1flip savefile-test exp-cache-test
+	rm -rf check_pm1 check_gcd check_stage2 stage1_oracle p1flip savefile-test exp-cache-test

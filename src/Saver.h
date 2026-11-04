@@ -57,6 +57,21 @@ struct P1State {
   double elapsed{};
 };
 
+// P-1 stage 2 in progress: the accumulator after the k below `k` (see pm1::Stage2Plan).  x64 is the res64 of the stage 1 residue it
+// started from.
+struct P2State {
+  static const constexpr char* KIND = "p2";
+
+  u64 exponent;
+  u64 k;
+  u64 B1, B2;
+  u32 D;
+  u64 x64;
+  u64 nMul;
+  vector<u32> acc;
+  double elapsed{};
+};
+
 template<typename State>
 class Saver {
   u64 exponent;

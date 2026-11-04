@@ -4,6 +4,8 @@ add_executable(prpll
   Primes.cpp
   Pm1.cpp
   Gcd.cpp
+  Stage2.cpp
+  Memlock.cpp
   bundle.cpp
   Proof.cpp
   log.cpp md5.cpp sha3.cpp AllocTrac.cpp FFTConfig.cpp Worktodo.cpp common.cpp main.cpp Gpu.cpp clwrap.cpp Task.cpp timeutil.cpp Args.cpp state.cpp Signal.cpp

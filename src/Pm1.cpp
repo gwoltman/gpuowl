@@ -5,6 +5,7 @@
 #include "CycleFile.h"
 #include "log.h"
 
+#include <cassert>
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
@@ -391,6 +392,90 @@ string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2) {
 
 void appendMprimeWork(const fs::path& dir, const string& line) {
   File::append(dir / "worktodo.add", line);
+}
+
+// ---- Stage 2 plan ----
+
+const vector<u32>& stage2Ds() {
+  static const vector<u32> Ds{210, 330, 420, 462, 630, 770, 840, 1050, 1260, 1470, 2310, 4620};
+  return Ds;
+}
+
+static u32 gcd32(u32 a, u32 b) {
+  while (b) { u32 const t = a % b; a = b; b = t; }
+  return a;
+}
+
+u32 stage2nR(u32 D) {
+  u32 n = 0;
+  for (u32 r = 1; r < D / 2; r += 2) { n += gcd32(r, D) == 1; }
+  return n;
+}
+
+u32 chooseStage2D(u64 B1, u64 B2, u64 maxR) {
+  // The table costs about D/2 multiplications to build (2 per odd r below D/2), the k steps 2 per k, i.e. 2 (B2 - B1) / D.  The number
+  // of needed (k, r) hardly depends on D.
+  u32 best = 0;
+  double bestCost = 0;
+  for (u32 D : stage2Ds()) {
+    if (stage2nR(D) > maxR) { continue; }
+    double const cost = D / 2.0 + 2.0 * double(B2 - B1) / D;
+    if (!best || cost < bestCost) { best = D; bestCost = cost; }
+  }
+  return best;
+}
+
+u32 Stage2Plan::neededIn(u64 k) const {
+  u32 n = 0;
+  for (u32 i = 0; i < rs.size(); ++i) { n += needed(k, i); }
+  return n;
+}
+
+u64 Stage2Plan::mulsFrom(u64 k) const {
+  u64 n = 0;
+  for (; k < kEnd; ++k) { n += neededIn(k) + 2; }
+  return n;
+}
+
+Stage2Plan planStage2(u64 B1, u64 B2, u32 D) {
+  assert(B1 >= 11 && B1 < B2 && B2 < (u64(1) << 32));
+  assert(std::ranges::find(stage2Ds(), D) != stage2Ds().end());
+
+  Stage2Plan plan;
+  plan.B1 = B1;
+  plan.B2 = B2;
+  plan.D = D;
+  vector<u32> index(D / 2, u32(-1));        // r -> its position in rs
+  for (u32 r = 1; r < D / 2; r += 2) {
+    if (gcd32(r, D) == 1) {
+      index[r] = u32(plan.rs.size());
+      plan.rs.push_back(r);
+    }
+  }
+  u64 const nR = plan.rs.size();
+
+  // k = round(q / D) = (q + D/2) / D for the primes q in (B1, B2]
+  plan.kBegin = (B1 + 1 + D / 2) / D;
+  plan.kEnd = (B2 + D / 2) / D + 1;
+  plan.bits.assign(((plan.kEnd - plan.kBegin) * nR + 63) / 64, 0);
+
+  forEachPrime(B1 + 1, B2, [&](u64 q) {
+    u64 const k = (q + D / 2) / D;
+    u64 const kD = k * D;
+    u32 const r = u32(q > kD ? q - kD : kD - q);
+    assert(r < D / 2 && index[r] != u32(-1) && k >= plan.kBegin && k < plan.kEnd);
+    u64 const pos = (k - plan.kBegin) * nR + index[r];
+    u64& word = plan.bits[pos / 64];
+    u64 const bit = u64(1) << (pos % 64);
+    ++plan.nPrimes;
+    if (word & bit) {
+      ++plan.nPairs;         // the second prime of a pair
+    } else {
+      word |= bit;
+      ++plan.nNeeded;
+    }
+  });
+  return plan;
 }
 
 }  // namespace pm1

@@ -236,6 +236,12 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
     files.emplace_back(clNames[i], src);
     clSources.push_back(loadSource(context->get(), src));
 
+    // The P-1 kernel files (pm1*.cl) are not in the hash of the context, so that adding or changing them leaves the cached PRP
+    // kernels valid:  their text goes into the key of their own kernels instead (see loadAux).
+    if (string_view(clNames[i]).starts_with("pm1")) {
+      ownHash[clNames[i]] = SHA3::hash(src)[0];
+      continue;
+    }
     hasher.update(clNames[i]);
     hasher.update(src);
   }
@@ -528,7 +534,9 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
 
   Program program;
   string cacheFile;
-  u64 const key = SHA3::hash(contextHash, fileName, kernelName, compileArgs)[0];
+  auto const own = ownHash.find(fileName);
+  u64 const key = own == ownHash.end() ? SHA3::hash(contextHash, fileName, kernelName, compileArgs)[0]
+                                       : SHA3::hash(contextHash, own->second, fileName, kernelName, compileArgs)[0];
 
   if (useCache) {
     string const f = kernelName + '-' + to_hex(key);

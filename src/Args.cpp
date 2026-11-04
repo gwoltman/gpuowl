@@ -571,7 +571,7 @@ void Args::parse(const string& line) {
         throw("-pool <path> requires an absolute path");
       }
     }
-    else if (key == "-maxAlloc" || key == "-maxalloc") {                // DEPRECATED, was only used for P-1 buffers.  Parsing left in place so previous users do not get an error.
+    else if (key == "-maxAlloc" || key == "-maxalloc") {                // The GPU memory P-1 stage 2 may use for its buffers (AllocTrac)
       if (s.empty()) {                                                  // s.back() below would be undefined
         log("-maxAlloc expects a value, e.g. -maxAlloc 4G\n");
         throw "-maxAlloc <size>";

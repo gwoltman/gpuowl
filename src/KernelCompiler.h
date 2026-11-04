@@ -31,6 +31,7 @@ class KernelCompiler {
   std::vector<std::pair<std::string, std::string>> files;
 
   u64 contextHash{};
+  std::map<std::string, u64> ownHash;   // the hash of each pm1*.cl file, which is not in contextHash
 
   // -v 10 assembly dump: some kernelNames (e.g. "carryFused", "carry") are compiled several times
   // under this same name with different defines (plain/-DROE=1/-DMUL3=1/...). The args of every

@@ -15,6 +15,7 @@
 #include "GpuCommon.h"
 #include "Gpu.h"
 #include "tune.h"
+#include "Stage2.h"
 
 #include <atomic>
 #include <cctype>
@@ -208,6 +209,9 @@ int main(int argc, char **argv) {
     TrigBufCache bufCache{&context};
     shared.bufCache = &bufCache;
     shared.background = &background;
+
+    // Testing only (test/pm1):  P-1 stage 2 on a residue from a file
+    if (const char* spec = getenv("PRPLL_STAGE2_TEST")) { stage2Test(shared, spec); return 0; }
 
     if (args.doTune || args.doZtune || args.carryTune) {
       Tune tune{shared};
