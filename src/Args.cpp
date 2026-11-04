@@ -322,9 +322,10 @@ named "config.txt" in the prpll run directory.
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
                      the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
                      result.  Without it such a line is reported for B1 alone.
--maxAlloc <size>   : a cap on the GPU memory prpll allocates (e.g. 8G).  P-1 stage 2 takes as many residue-sized buffers
-                     (about 30 to 500) as fit in the memory free on the GPU when it starts less 1 GB (where the free
-                     memory can't be queried, 90%% of the GPU's RAM), and with -maxAlloc in no more than the cap.
+-maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
+                     takes as many residue-sized buffers (about 30 to 500) as fit in the memory free on the GPU when it
+                     starts less 1 GB (where the free memory can't be queried, 90%% of the GPU's RAM), and with -maxAlloc
+                     in no more than the cap.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune

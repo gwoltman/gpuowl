@@ -7,3 +7,4 @@ check_gcd
 p1flip
 work-stage2/
 check_stage2
+check_alloc

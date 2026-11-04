@@ -3,7 +3,7 @@
 # line, the hand-off to mprime when stage 2 declines, resume across the stage 1 / stage 2 boundary and inside stage 2, and the stage 2
 # checks under simulated faults.  GMP (stage1_oracle, check_stage2) is the oracle; prpll links neither.
 #
-#   test/pm1/stage2.sh [factor|decline|resume|fault|all]      (default all)
+#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built here with -DPRPLL_PM1_FAULTS if missing).
 
@@ -102,12 +102,12 @@ factor_tests() {
   e2e s2-1000099 1000099 50000 150000 1872347344039
   e2e s2-nf 400033 1000 50000 NF
   e2e s2-inplace 400381 500 3000 671839319 -use INPLACE=1
-  # The default P-1 FFT is an NTT type (here M31+M61); an explicit -fft of another supported type (FP64) is used by both stages
+  # The default P-1 FFT is an NTT type (here M61); an explicit -fft of another supported type (FP64) is used by both stages
   e2e s2-fp64 400381 500 3000 671839319 -fft 256:1:256
   local d=$WORK/s2-fp64
   if [ "$(grep -c 'FFT: 128K 256:1:256:' "$d/out")" = 2 ]; then pass "s2-fp64: -fft 256:1:256 (FP64) used by stage 1 and stage 2"; else fail "s2-fp64: FFT (see $d)"; fi
   d=$WORK/s2-400381
-  if [ "$(grep -c 'FFT: 128K 1:256:1:256:' "$d/out")" = 2 ]; then pass "default P-1 FFT: 1:256:1:256 (M31+M61) for both stages"; else fail "default P-1 FFT (see $d)"; fi
+  if [ "$(grep -c 'FFT: 128K 3:256:1:256:' "$d/out")" = 2 ]; then pass "default P-1 FFT: 3:256:1:256 (M61, first in the untuned order) for both stages"; else fail "default P-1 FFT (see $d)"; fi
 }
 
 decline_tests() {
@@ -204,12 +204,79 @@ fault_tests() {
   done
 }
 
+# FFT choice:  a stage 2 FFT that can't be built is replaced (no -fft) without redoing stage 1; an -fft is never replaced
+fft_tests() {
+  if [ ! -x "$FAULT_PRPLL" ]; then
+    make -s -C "$ROOT" -j8 BIN=build-pm1faults CPPFLAGS=-DPRPLL_PM1_FAULTS > /dev/null || { fail "fault build"; return; }
+  fi
+  local d p=400381 B1=500 B2=3000 f=671839319
+  # The first stage 2 FFT (M61 here) "fails to build" (fault build):  the next one (FP32+M31) runs stage 2, stage 1 ran once
+  d=$WORK/fft-fallback
+  setup "$d" $p $B1 $B2
+  PRPLL_STAGE2_BUILD_FAULT=1 run "$d" "$FAULT_PRPLL"
+  local first; first=$(grep -o "Stage 2 can't build FFT [^ ]*" "$d/out" | head -1 | cut -d' ' -f6)
+  if [ -n "$first" ] && grep -q "trying the next FFT" "$d/out" && [ "$(grep -c 'P-1 stage 1 B1=' "$d/out")" = 1 ] \
+     && ! grep -q "already done" "$d/out" && [ "$(grep -o 'FFT: [^ ]* [^ ]*' "$d/out" | sort -u | wc -l)" -ge 2 ] \
+     && stage2Oracle "$d" $p $B1 $B2 && result "$d" $p $B1 $B2 $f; then
+    pass "stage 2 FFT $first rejected (simulated build failure), stage 2 on $(grep -o 'FFT: [^ ]* [^ ]*' "$d/out" | tail -1 | cut -d' ' -f3), stage 1 run once, acc = GMP"
+  else
+    fail "stage 2 FFT fallback (see $d)"
+  fi
+  # No stage 2 FFT can be built:  stop, the line and the savefiles stay; the next run loads stage 1 and finishes
+  d=$WORK/fft-nonebuild
+  setup "$d" $p $B1 $B2
+  PRPLL_STAGE2_BUILD_FAULT=99 run "$d" "$FAULT_PRPLL"
+  local stopped=0
+  grep -q 'Exception "P-1 stage 2: no FFT could be built"' "$d/out" && [ -s "$d/worktodo-0.txt" ] && [ ! -e "$d/results-0.txt" ] \
+    && [ -n "$(lastSave "$d" p1 $p)" ] && [ "$(grep -c 'P-1 stage 1 B1=' "$d/out")" = 1 ] && stopped=1
+  run "$d" "$PRPLL"
+  if [ $stopped = 1 ] && grep -q "P-1 stage 1 already done" "$d/out" && stage2Oracle "$d" $p $B1 $B2 && result "$d" $p $B1 $B2 $f; then
+    pass "no stage 2 FFT builds: stopped once with the line and savefiles kept; the rerun loads stage 1 and finds $f"
+  else
+    fail "no stage 2 FFT builds (see $d)"
+  fi
+  # An -fft whose kernels "fail to build" in stage 2:  one line, stop, nothing replaced
+  d=$WORK/fft-user-build
+  setup "$d" $p $B1 $B2
+  PRPLL_STAGE2_BUILD_FAULT=1 run "$d" "$FAULT_PRPLL" -fft 1:256:1:256
+  if grep -q "the kernels of the -fft FFT 1:256:1:256.* can't be built .*P-1 does not replace it" "$d/out" \
+     && grep -q 'Exception "P-1 stage 2: the -fft FFT can.t be built"' "$d/out" && ! grep -q "Stage 2 B1=" "$d/out" \
+     && [ -s "$d/worktodo-0.txt" ] && [ ! -e "$d/results-0.txt" ] && [ "$(grep -o 'FFT: [^ ]* [^ ]*' "$d/out" | sort -u | wc -l)" = 1 ]; then
+    pass "-fft with a stage 2 build failure: $(grep -o 'P-1 stage 2: the kernels.*' "$d/out" | head -1 | cut -c1-90)..., stopped, line kept"
+  else
+    fail "-fft with a stage 2 build failure (see $d)"
+  fi
+  # An -fft that fits stage 1 but not stage 2's margin (1:256:1:256 handles 5.31M; stage 2 of 5280007 needs 5280007 + 0.5 * 128K)
+  d=$WORK/fft-user-margin
+  setup "$d" 5280007 50 1000
+  run "$d" "$PRPLL" -fft 1:256:1:256
+  if grep -q "P-1 stage 2 of 5280007 can't run on the -fft given, and P-1 does not replace it: 1:256:1:256.* handles up to [0-9]*, needs 5345543" "$d/out" \
+     && ! grep -q "Stage 2 B1=" "$d/out" && [ -s "$d/worktodo-0.txt" ] && [ ! -e "$d/results-0.txt" ] && [ -n "$(lastSave "$d" p1 5280007)" ]; then
+    pass "-fft too small for stage 2: $(grep -o 'P-1 stage 2 of 5280007.*' "$d/out" | head -1), stopped, line and p1 savefile kept"
+  elif grep -q "P-1 found a factor in stage 1" "$d/out"; then
+    fail "-fft margin case: stage 1 found a factor, pick another exponent (see $d)"
+  else
+    fail "-fft too small for stage 2 (see $d)"
+  fi
+  # An -fft too large for stage 1:  stopped before any work, not replaced
+  d=$WORK/fft-user-large
+  setup "$d" $p $B1 $B2
+  run "$d" "$PRPLL" -fft 1:1K:2:256
+  if grep -q "P-1 stage 1 of $p can't run on the -fft given, and P-1 does not replace it: 1:1K:2:256.* is too large" "$d/out" \
+     && ! grep -q 'FFT: ' "$d/out" && [ -s "$d/worktodo-0.txt" ]; then
+    pass "-fft too large for stage 1: $(grep -o 'P-1 stage 1 of.*' "$d/out" | head -1), stopped, line kept"
+  else
+    fail "-fft too large for stage 1 (see $d)"
+  fi
+}
+
 case $WHAT in
   factor) factor_tests ;;
   decline) decline_tests ;;
   resume) resume_tests ;;
   fault) fault_tests ;;
-  all) factor_tests; decline_tests; resume_tests; fault_tests ;;
+  fft) fft_tests ;;
+  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests ;;
 esac
 
 echo "$fails failure(s)"

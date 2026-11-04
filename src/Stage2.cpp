@@ -16,6 +16,7 @@
 #include "Gpu.h"
 #include "Pm1.h"
 #include "Memlock.h"
+#include "KernelCompiler.h"
 #include "Saver.h"
 #include "Signal.h"
 #include "Args.h"
@@ -43,6 +44,7 @@ constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // kept back when the fre
 constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
 constexpr float MAX_ROE = 0.4f;
 constexpr int MAX_RETRIES = 3;
+constexpr double MARGIN_BPW = 0.5;       // stage 2 runs at least this far below the FFT's bits-per-word limit
 
 bool isZero(const vector<u32>& w) { return std::ranges::all_of(w, [](u32 x) { return x == 0; }); }
 
@@ -272,19 +274,24 @@ public:
   }
 };
 
-FFTConfig Stage2::chooseFFT(const Args& args, u64 E, vector<KeyVal>* uses) {
-  // The FFT has to handle E + 0.5 bits per word of its own size:  raise the target until the choice does
-  constexpr double margin = 0.5;
-  u64 target = E;
-  FFTConfig fft = FFTConfig::pm1Fits(args, target, uses, false).front();
-  for (int i = 0; i < 10 && fft.maxExp() < E + u64(margin * fft.size()); ++i) {
-    target = E + u64(margin * fft.size()) + 1;
-    fft = FFTConfig::pm1Fits(args, target, uses, false).front();
+vector<Pm1Fft> Stage2::chooseFFTs(const Args& args, u64 E) {
+  // The FFT has to handle E + 0.5 bits per word of its own size (pm1Ffts)
+  vector<Pm1Fft> ffts = pm1Ffts(args, E, MARGIN_BPW);
+  // FFT31 and FFT32 alone have no measured bpw limits (fftbpw.h) and failed stage 2's table check at 11.4 bpw:  not supported
+  // (pm1Ffts offers them only from an -fft spec)
+  std::erase_if(ffts, [](const Pm1Fft& f) { return f.fft.shape.fft_type == FFT31 || f.fft.shape.fft_type == FFT32; });
+  if (ffts.empty()) {
+    log("P-1 stage 2 of %" PRIu64 " can't run on the -fft given (%s), and P-1 does not replace it: stage 2 does not support M31 or FP32 "
+        "alone\n", E, args.fftSpec.c_str());
+    throw "P-1: the -fft given can't run stage 2";
   }
   // The products are up to twice as large, and so are the carries:  the narrow carry one bit per word sooner
-  bool const twoWidths = fft.shape.fft_type == FFT64 || fft.shape.fft_type == FFT3231 || fft.shape.fft_type == FFT323161;
-  if (twoWidths && fft.carry == CARRY_AUTO && E / double(fft.size()) > fft.shape.narrowCarryBPW() - 1) { fft.carry = CARRY_64; }
-  return fft;
+  for (Pm1Fft& f : ffts) {
+    FFTConfig& fft = f.fft;
+    bool const twoWidths = fft.shape.fft_type == FFT64 || fft.shape.fft_type == FFT3231 || fft.shape.fft_type == FFT323161;
+    if (twoWidths && fft.carry == CARRY_AUTO && E / double(fft.size()) > fft.shape.narrowCarryBPW() - 1) { fft.carry = CARRY_64; }
+  }
+  return ffts;
 }
 
 bool Stage2::hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x) {
@@ -302,15 +309,57 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
     return {.status = Stage2Result::DECLINED, .why = "bad stage 1 residue"};
   }
 
-  vector<KeyVal> uses;
-  FFTConfig const fft = chooseFFT(args, E, &uses);
-  // FFT31 and FFT32 alone have no measured bpw limits (fftbpw.h) and failed stage 2's table check at 11.4 bpw:  not supported
-  if (fft.shape.fft_type == FFT31 || fft.shape.fft_type == FFT32) {
-    log("Stage 2 declined: FFT %s (M31 or FP32 alone) is not supported by stage 2\n", fft.spec().c_str());
-    return {.status = Stage2Result::DECLINED, .why = "FFT type not supported by stage 2"};
+  // The FFTs to try.  An -fft that can't run stage 2 throws (the user may be testing that FFT); with none fitting otherwise, decline.
+  vector<Pm1Fft> ffts;
+  try {
+    ffts = chooseFFTs(args, E);
+  } catch (const char* mes) {
+    if (strcmp(mes, "No FFT")) { throw; }
+    return {.status = Stage2Result::DECLINED, .why = "no FFT handles the exponent with stage 2's margin"};
   }
-  Memlock memlock{args.masterDir.empty() ? fs::current_path() : args.masterDir, u32(args.device)};
+  bool const userFft = !args.fftSpec.empty();
 
+  // One stage 2 per device:  the lock is named by the device's unique id where it has one, so that it does not depend on the
+  // OpenCL device numbering (ICD files, platforms) and two cards never share it
+  Memlock memlock{args.masterDir.empty() ? fs::current_path() : args.masterDir, args.uid.empty() ? to_string(args.device) : args.uid};
+
+  // Kernels compile on first use, so a build failure can come at any point; the next FFT resumes from the last checkpoint (the
+  // savefile holds words, whatever the FFT).  Only the FFTs of an -fft spec are tried when there is one.
+#ifdef PRPLL_PM1_FAULTS
+  // TEST ONLY (fault build):  PRPLL_STAGE2_BUILD_FAULT=<n> makes the first n FFTs fail as if their kernels did not compile
+  int nBuildFaults = getenv("PRPLL_STAGE2_BUILD_FAULT") ? atoi(getenv("PRPLL_STAGE2_BUILD_FAULT")) : 0;
+#endif
+  for (size_t i = 0; i < ffts.size(); ++i) {
+    bool const last = i + 1 == ffts.size();
+    string err;
+    try {
+#ifdef PRPLL_PM1_FAULTS
+      if (nBuildFaults > 0) {
+        --nBuildFaults;
+        throw "Can't compile (TEST FAULT) the stage 2 kernels of "s + ffts[i].fft.spec();
+      }
+#endif
+      return runOn(shared, E, B1, B2, x, D, ffts[i].fft, ffts[i].uses);
+    } catch (const string& mes) {
+      if (!isBuildFailure(mes)) { throw; }
+      err = mes;
+    } catch (const std::exception& e) {
+      if (!isBuildFailure(e.what())) { throw; }
+      err = e.what();
+    }
+    if (userFft) {
+      log("P-1 stage 2: the kernels of the -fft FFT %s can't be built (%s), and P-1 does not replace it%s\n", ffts[i].fft.spec().c_str(),
+          err.c_str(), last ? "" : "; trying the next FFT of the -fft list");
+    } else {
+      log("Stage 2 can't build FFT %s (%s)%s\n", ffts[i].fft.spec().c_str(), err.c_str(), last ? "" : ", trying the next FFT");
+    }
+  }
+  throw userFft ? "P-1 stage 2: the -fft FFT can't be built" : "P-1 stage 2: no FFT could be built";
+}
+
+Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, const FFTConfig& fft,
+                           const vector<KeyVal>& uses) {
+  const Args& args = *shared.args;
   auto gpuPtr = Gpu::make(E, shared, fft, {}, true, uses);
   Gpu& g = *gpuPtr;
   u64 const x64 = res64(x);
@@ -325,11 +374,13 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
   // Memory:  the table and EXTRA_BUFS more big buffers.  The budget is the memory free on the device now (after this Gpu's own buffers)
   // less HEADROOM_BYTES; where the free memory can't be queried (OpenCL without CL_DEVICE_GLOBAL_FREE_MEMORY_AMD, e.g. Nvidia's or
   // PoCL), 90% of the device RAM less what prpll holds and RESERVE_BYTES.  -maxAlloc, when given, caps it (less what prpll holds and
-  // RESERVE_BYTES).  Without -maxAlloc there is no cap:  AllocTrac's default limit (for PRP) is raised to the budget while stage 2 runs.
+  // RESERVE_BYTES).  Without -maxAlloc there is no cap:  AllocTrac's default limit (for PRP) is raised by the budget, for this device
+  // only, while stage 2 runs.
   size_t const bufBytes = Stage2Run::bufDoubles(g) * sizeof(double);
   cl_device_id const dev = shared.context->deviceId();
   double const GB = double(1u << 30);
-  double const held = double(AllocTrac::totalAllocBytes());
+  const void* const devKey = shared.context->get();      // AllocTrac's accounting is per device
+  double const held = double(AllocTrac::totalAllocBytes(devKey));
 #ifdef CUDA_BACKEND
   bool const haveFree = true;      // cuMemGetInfo
 #else
@@ -385,14 +436,10 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
       B1, B2, D, nR, bufBytes / double(1u << 20), plan.kBegin, plan.kEnd - 1, plan.nPrimes, plan.nPairs,
       plan.nPrimes ? 200.0 * plan.nPairs / plan.nPrimes : 0.0, mulsTotal, plan.nNeeded, 2 * (plan.kEnd - plan.kBegin), timer.reset());
 
-  // Without a -maxAlloc cap, AllocTrac's limit must not refuse the planned buffers:  raised while stage 2 runs, then put back
-  struct AllocLimit {
-    size_t const old = AllocTrac::getMaxAlloc();
-    explicit AllocLimit(size_t want) { if (want > old) { AllocTrac::setMaxAlloc(want); } }
-    ~AllocLimit() { AllocTrac::setMaxAlloc(old); }
-  };
-  std::optional<AllocLimit> allocLimit;
-  if (!args.maxAlloc) { allocLimit.emplace(AllocTrac::totalAllocBytes() + size_t(budget) + RESERVE_BYTES); }
+  // Without a -maxAlloc cap, AllocTrac's default limit must not refuse the planned buffers:  this device's limit is raised by the budget
+  // (which the device's free memory bounds) while stage 2 runs
+  std::optional<AllocTrac::Allowance> allowance;
+  if (!args.maxAlloc) { allowance.emplace(devKey, size_t(budget) + RESERVE_BYTES); }
 
   std::unique_ptr<Stage2Run> s2Ptr;
   try {

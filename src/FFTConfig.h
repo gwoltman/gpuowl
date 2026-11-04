@@ -27,7 +27,8 @@ enum FFT_TYPES {FFT64=0, FFT3161=1, FFT3261=2, FFT61=3, FFT323161=4, FFT3231=50,
 
 class FFTShape {
 public:
-  static std::vector<FFTShape> allShapes(u32 from=0, u32 to = -1);
+  // withFp32M31 adds the FFT3231 shapes (P-1:  pm1Ffts), which the PRP lists leave out
+  static std::vector<FFTShape> allShapes(u32 from=0, u32 to = -1, bool withFp32M31 = false);
 
   static vector<FFTShape> multiSpec(const string& spec);
 
@@ -100,22 +101,15 @@ struct FFTConfig {
 public:
   // uses, if given, receives the -use settings from the chosen FFT's tune.txt line
   // errorChecked:  the work catches its own errors (PRP's Gerbicz check, proof verification), so an -fft that is too small for E is used anyway
-  static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true,
-                           bool preferNtt = false);
+  static FFTConfig bestFit(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
   // The same choice as a list:  one FFT for an -fft spec or a tune.txt line, else the untuned candidates in order of preference
-  // (Task::execute tries the next when a GPU can't be built for one).  Throws "No FFT" if none can handle E.  preferNtt puts the
-  // untuned candidates of the types with an NTT and no FP64 (nttType) before the others.
-  static vector<FFTConfig> bestFits(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr,
-                                    bool errorChecked = true, bool preferNtt = false);
+  // (Task::execute tries the next when a GPU can't be built for one).  Throws "No FFT" if none can handle E.
+  static vector<FFTConfig> bestFits(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
 
-  // The FFTs for P-1 stage 1 of E, in order (the one place that makes this choice; Stage2::chooseFFT uses it for stage 2, with its
-  // margin):  an -fft spec is honoured whatever its type, then the fastest fitting tune.txt line (the tuner's stored choice, FP64
-  // types included), and without either the untuned candidates with the NTT types first (M61, M31+M61, FP32+M61, FP32+M31+M61:
-  // faster than FP64 on consumer GPUs, and their only error is an output beyond M/2), the FP64 types only when no NTT type fits.
-  static vector<FFTConfig> pm1Fits(const Args& args, u64 E, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
-
-  // An NTT and no FP64 part:  M61, M31+M61, FP32+M61, FP32+M31+M61
-  [[nodiscard]] static bool nttType(enum FFT_TYPES t) { return t == FFT61 || t == FFT3161 || t == FFT3261 || t == FFT323161; }
+  // An NTT and no FP64 part:  M61, FP32+M31, FP32+M61, M31+M61, FP32+M31+M61
+  [[nodiscard]] static bool nttType(enum FFT_TYPES t) {
+    return t == FFT61 || t == FFT3231 || t == FFT3261 || t == FFT3161 || t == FFT323161;
+  }
 
   // Which FP and NTT primes are involved in the FFT
   bool FFT_FP64;
@@ -141,3 +135,18 @@ public:
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }
   [[nodiscard]] float maxBpw() const;
 };
+
+// A P-1 FFT choice and its -use settings (from tune.txt or the -fft spec's tune line)
+struct Pm1Fft {
+  FFTConfig fft;
+  vector<KeyVal> uses;
+};
+
+// The FFTs for P-1, in order of preference:  the one place that makes the P-1 choice (stage 1 with margin = 0; stage 2 with its 0.5 bits
+// per word, see Stage2::chooseFFTs).  A type is used only if E plus margin bits per word fit its limit, and it is not too large for E.
+// - An -fft spec:  its FFTs that fit, in the spec's order, and nothing else.  If none fits, one log line says why and it throws (the user
+//   may be testing that FFT:  P-1 never substitutes another one).
+// - Otherwise the fastest fitting tune.txt line (the tuner's stored choice, any type), then the untuned candidates:  the smallest fitting
+//   shape of each type with an NTT and no FP64, in the order measured fastest for stage 2 on gfx1100 at p = 30M (61, 3231, 3261, 3161,
+//   323161), then the FP64 types (64, 6431).  M31 and FP32 alone are not offered (stage 2 does not support them).
+vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, double margin = 0);

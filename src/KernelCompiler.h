@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <string_view>
+
 #include "clwrap.h"
 
 #include <vector>
@@ -12,6 +14,12 @@
 
 class Args;
 class Context;
+
+// Whether an exception's message says that a kernel could not be built (compile error, missing kernel, workgroup too large):  the
+// errors after which another FFT may still work
+inline bool isBuildFailure(std::string_view mes) {
+  return mes.starts_with("Can't compile") || mes.starts_with("OpenCL kernel ") || mes.starts_with("workgroup size too large");
+}
 
 class KernelCompiler {
   std::string cacheDir;

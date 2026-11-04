@@ -12,6 +12,7 @@
 #include "Pm1.h"
 #include "Gcd.h"
 #include "Stage2.h"
+#include "KernelCompiler.h"
 #include "Proof.h"
 #include "log.h"
 #include "timeutil.h"
@@ -378,27 +379,39 @@ void Task::execute(GpuCommon shared, u32 instance) {
     }
   }
 
-  vector<KeyVal> fftUses;
-  vector<FFTConfig> const ffts = kind == PM1 ? FFTConfig::pm1Fits(*shared.args, exponent, &fftUses)
-                                 : FFTConfig::bestFits(*shared.args, exponent, shared.args->fftSpec, &fftUses, kind != LL && kind != CERT);
+  vector<Pm1Fft> ffts;      // (the FFTs with their -use settings)
+  if (kind == PM1) {
+    ffts = pm1Ffts(*shared.args, exponent);
+  } else {
+    vector<KeyVal> fftUses;
+    for (const FFTConfig& fft : FFTConfig::bestFits(*shared.args, exponent, shared.args->fftSpec, &fftUses, kind != LL && kind != CERT)) {
+      ffts.push_back({fft, fftUses});
+    }
+  }
 
   // Without -fft or a tune.txt line there are several untuned candidates.  If the kernels of one can't be built (e.g. an OpenCL
   // compiler that can't build the FP32 code), move on to the next.  Kernels compile on first use, so this can surface after the
   // work has started; the savefiles hold plain residues, so the next FFT resumes from them.  Other errors are not retried.
-  auto const buildFailure = [](const string& mes) {
-    return mes.starts_with("Can't compile") || mes.starts_with("OpenCL kernel ") || mes.starts_with("workgroup size too large");
-  };
+  // P-1 with an -fft never moves to an FFT the user did not give.
   for (size_t i = 0; ; ++i) {
     bool const last = i + 1 == ffts.size();
+    auto const failed = [&](const string& mes) {
+      if (!isBuildFailure(mes)) { return false; }
+      if (last && kind == PM1 && !shared.args->fftSpec.empty()) {
+        log("P-1 stage 1: the kernels of the -fft FFT %s can't be built (%s), and P-1 does not replace it\n",
+            ffts[i].fft.spec().c_str(), mes.c_str());
+      }
+      if (last) { return false; }
+      log("Can't build FFT %s (%s), trying the next untuned FFT\n", ffts[i].fft.spec().c_str(), mes.c_str());
+      return true;
+    };
     try {
-      executeWith(shared, instance, ffts[i], fftUses);
+      executeWith(shared, instance, ffts[i].fft, ffts[i].uses);
       return;
     } catch (const string& mes) {
-      if (last || !buildFailure(mes)) { throw; }
-      log("Can't build FFT %s (%s), trying the next untuned FFT\n", ffts[i].spec().c_str(), mes.c_str());
+      if (!failed(mes)) { throw; }
     } catch (const std::exception& e) {
-      if (last || !buildFailure(e.what())) { throw; }
-      log("Can't build FFT %s (%s), trying the next untuned FFT\n", ffts[i].spec().c_str(), e.what());
+      if (!failed(e.what())) { throw; }
     }
   }
 }

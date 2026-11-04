@@ -14,7 +14,8 @@ class Memlock {
   intptr_t handle = -1;
 
 public:
-  Memlock(const fs::path& dir, u32 device);
+  // The lock file is <dir>/memlock-<device>:  device is the device's unique id (or its index when it has none)
+  Memlock(const fs::path& dir, const std::string& device);
   ~Memlock();
 
   Memlock(const Memlock&) = delete;

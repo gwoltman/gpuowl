@@ -37,7 +37,7 @@ intptr_t tryLock(const fs::path& path) {
 
 }
 
-Memlock::Memlock(const fs::path& dir, u32 device) : path{dir / ("memlock-"s + to_string(device))} {
+Memlock::Memlock(const fs::path& dir, const std::string& device) : path{dir / ("memlock-"s + device)} {
   handle = tryLock(path);
   if (handle == -1) {
     log("Waiting for the memory lock '%s'\n", path.string().c_str());
