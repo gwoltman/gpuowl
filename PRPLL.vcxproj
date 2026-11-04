@@ -37,6 +37,7 @@
     <ClCompile Include=".\src\FFTConfig.cpp" />
     <ClCompile Include=".\src\File.cpp" />
     <ClCompile Include=".\src\fs.cpp" />
+    <ClCompile Include=".\src\Gcd.cpp" />
     <ClCompile Include=".\src\Gpu.cpp" />
     <ClCompile Include=".\src\gpuid.cpp" />
     <ClCompile Include=".\src\Kernel.cpp" />
@@ -222,7 +223,7 @@
     <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
   </PropertyGroup>
   <ItemGroup>
-    <BundleSource Include="$(ProjectDir)genbundle.sh;$(ProjectDir)src\cuda\*.cuh;$(ProjectDir)src\cl\*.cl" />
+    <BundleSource Include="$(ProjectDir)genbundle.sh;$(ProjectDir)src\cuda\*.cuh;$(ProjectDir)src\cl\*.cl;$(ProjectDir)src\cl\gcd\*.cl" />
   </ItemGroup>
   <Target Name="FindBash" Condition="'$(Bash)'==''">
     <Exec Command="git --exec-path" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
@@ -234,7 +235,7 @@
   </Target>
   <Target Name="GenerateBundle" BeforeTargets="ClCompile" DependsOnTargets="FindBash" Inputs="@(BundleSource)" Outputs="$(ProjectDir)src\bundle.cpp">
     <Error Condition="'$(Bash)'=='' Or !Exists('$(Bash)')" Text="Generating src\bundle.cpp needs bash from Git for Windows (git on PATH), or /p:Bash=path\to\bash.exe" />
-    <Exec Command="&quot;$(Bash)&quot; -c &quot;bash genbundle.sh src/cuda/*.cuh src/cl/*.cl &gt; src/bundle.new &amp;&amp; mv src/bundle.new src/bundle.cpp&quot;" WorkingDirectory="$(ProjectDir)" />
+    <Exec Command="&quot;$(Bash)&quot; -c &quot;bash genbundle.sh src/cuda/*.cuh src/cl/*.cl -- src/cl/gcd/*.cl &gt; src/bundle.new &amp;&amp; mv src/bundle.new src/bundle.cpp&quot;" WorkingDirectory="$(ProjectDir)" />
   </Target>
   <!-- The version string compiled into the binary; pass /p:PrpllVersion=... for a build without .git, as with make VERSION=. -->
   <Target Name="GenerateVersion" BeforeTargets="ClCompile">

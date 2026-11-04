@@ -3,6 +3,7 @@ add_executable(prpll
   Trig.cpp
   Primes.cpp
   Pm1.cpp
+  Gcd.cpp
   bundle.cpp
   Proof.cpp
   log.cpp md5.cpp sha3.cpp AllocTrac.cpp FFTConfig.cpp Worktodo.cpp common.cpp main.cpp Gpu.cpp clwrap.cpp Task.cpp timeutil.cpp Args.cpp state.cpp Signal.cpp
@@ -62,9 +63,14 @@ file(
   )
 set(CL_SOURCES ${CUH_SOURCES} ${CL_SOURCES})
 
+# The GCD kernels are a bundle of their own (see genbundle.sh)
+file(
+  GLOB GCD_CL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cl/gcd/*.cl
+  )
+
 add_custom_command(
   OUTPUT bundle.cpp
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  COMMAND ${CMAKE_SOURCE_DIR}/genbundle.sh ${CL_SOURCES} > ${CMAKE_CURRENT_BINARY_DIR}/bundle.cpp
-  DEPENDS ${CL_SOURCES}
+  COMMAND ${CMAKE_SOURCE_DIR}/genbundle.sh ${CL_SOURCES} -- ${GCD_CL_SOURCES} > ${CMAKE_CURRENT_BINARY_DIR}/bundle.cpp
+  DEPENDS ${CL_SOURCES} ${GCD_CL_SOURCES}
   )

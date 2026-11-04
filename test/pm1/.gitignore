@@ -3,3 +3,4 @@ stage1_oracle
 savefile-test/
 work/
 work-mprime/
+check_gcd

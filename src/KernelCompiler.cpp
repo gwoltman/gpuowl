@@ -29,6 +29,8 @@ namespace fs = std::filesystem;
 // Implemented in bundle.cpp
 const std::vector<const char*>& getClFileNames();
 const std::vector<const char*>& getClFiles();
+const std::vector<const char*>& getGcdClFileNames();
+const std::vector<const char*>& getGcdClFiles();
 
 static_assert(sizeof(Program) == sizeof(cl_program));
 
@@ -165,7 +167,7 @@ KernelCompiler::~KernelCompiler() {
 #endif
 }
 
-KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs) :
+KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs, bool gcdBundle) :
   cacheDir{args.cacheDir.string()},
   context{context->get()},
   linkArgs{},   // no compile-only options here: clLinkProgram accepts only linker options (POCL enforces it)
@@ -218,9 +220,16 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   hasher.update(hw);
   hasher.update(baseArgs);
 
-  auto& clNames = getClFileNames();
-  auto& clFiles = getClFiles();
+  // The GCD bundle starts with the main bundle's first file, the CUDA compatibility header (build() skips it on OpenCL)
+  vector<const char*> clNames = getClFileNames(), clFiles = getClFiles();
+  if (gcdBundle) {
+    clNames.resize(1);
+    clFiles.resize(1);
+    clNames.insert(clNames.end(), getGcdClFileNames().begin(), getGcdClFileNames().end());
+    clFiles.insert(clFiles.end(), getGcdClFiles().begin(), getGcdClFiles().end());
+  }
   assert(clNames.size() == clFiles.size());
+  clSourceNames = clNames;
   int const n = int(clNames.size());
   for (int i = 0; i < n; ++i) {
     string const src = noInt128 ? narrowLongLongLiterals(clFiles[i]) : string(clFiles[i]);
@@ -347,12 +356,12 @@ Program KernelCompiler::build(const string& fileName, const string& extraArgs) c
 
 #ifdef CUDA_BACKEND
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
-                             u32(clSources.size()), (const cl_program*) (clSources.data()), getClFileNames().data(),
+                             u32(clSources.size()), (const cl_program*) (clSources.data()), clSourceNames.data(),
                              nullptr, nullptr);
 #else
   // Skip first file (opencl_compat.cuh) if this is a standard openCL application rather than a CUDA translation
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
-                             u32(clSources.size())-1, (const cl_program*) (clSources.data()+1), getClFileNames().data()+1,
+                             u32(clSources.size())-1, (const cl_program*) (clSources.data()+1), clSourceNames.data()+1,
                              nullptr, nullptr);
 #endif
   if (string const mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }

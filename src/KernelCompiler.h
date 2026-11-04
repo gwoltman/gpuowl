@@ -27,6 +27,7 @@ class KernelCompiler {
                         // the "important" kernels (see isImportantKernel in KernelCompiler.cpp); -v 11 reports all of them.
 
   std::vector<Program> clSources;
+  std::vector<const char*> clSourceNames;   // the names of clSources
   std::vector<std::pair<std::string, std::string>> files;
 
   u64 contextHash{};
@@ -52,7 +53,9 @@ class KernelCompiler {
 public:
   const cl_device_id deviceId;
 
-  KernelCompiler(const Args& args, const Context* context, const string& clArgs);
+  // gcdBundle: compile the GCD kernels (src/cl/gcd/*.cl, see genbundle.sh) instead of the main ones.  The two bundles hash apart,
+  // so the GCD kernels do not change the keys of the main kernels' cached binaries.
+  KernelCompiler(const Args& args, const Context* context, const string& clArgs, bool gcdBundle = false);
 
   ~KernelCompiler();
   
