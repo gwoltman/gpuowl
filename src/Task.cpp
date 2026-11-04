@@ -9,6 +9,7 @@
 #include "Saver.h"
 #include "version.h"
 #include "Primes.h"
+#include "Pm1.h"
 #include "Proof.h"
 #include "log.h"
 #include "timeutil.h"
@@ -256,6 +257,18 @@ void Task::execute(GpuCommon shared, u32 instance) {
 
   LogContext const pushContext(std::to_string(exponent));
 
+  // There is no GCD here yet:  mprime finishes P-1 from the stage 1 residue, so without a place to hand it over there is no point
+  // in starting.  Fail before any GPU work.
+  if (kind == PM1) {
+    fs::path const& dir = shared.args->mprimeDir;
+    std::error_code ec;
+    if (dir.empty() || !fs::is_directory(dir, ec)) {
+      log("P-1 needs -mprimeDir <dir>, the mprime directory that finishes it (GCD and stage 2)%s: \"%s\"\n",
+          dir.empty() ? "" : (", and '" + dir.string() + "' is not a directory").c_str(), rstripNewline(line).c_str());
+      throw "P-1 without -mprimeDir";
+    }
+  }
+
   vector<KeyVal> fftUses;
   vector<FFTConfig> const ffts = FFTConfig::bestFits(*shared.args, exponent, shared.args->fftSpec, &fftUses, kind != LL && kind != CERT);
 
@@ -312,6 +325,23 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
     } else if (shared.args->clean) {
       gpu->clear(kind == PRP);
     }
+  } else if (kind == PM1) {
+    auto [x, nErrors] = gpu->pm1Stage1(*this);
+    fs::path const& dir = shared.args->mprimeDir;
+    // mprime runs the stage 1 GCD only on its way into stage 2, i.e. only if the B2 of the line is above the B1 it finds in the
+    // savefile (with B2 <= B1 it reports "already tested" and stops).  With no stage 2 asked for (B2 <= B1), ask for the smallest
+    // one; mprime's polynomial stage 2 then covers what one pass of its own choosing covers, so B2 ends up above B1 + 1.
+    u64 const handB2 = B2 > B1 ? B2 : B1 + 1;
+    pm1::writeMprimeStage1(dir, exponent, B1, x);
+    string const work = pm1::mprimePminus1Line(AID, exponent, B1, handB2);
+    pm1::appendMprimeWork(dir, work);
+    log("P-1 stage 1 complete, residue handed to mprime: %s in '%s', %u Gerbicz errors; %s", pm1::mprimeSaveName(exponent).c_str(),
+        dir.string().c_str(), nErrors, work.c_str());
+    if (handB2 != B2) { log("P-1 assignment has B2=%" PRIu64 ": handed to mprime with B2=%" PRIu64 " so that mprime runs the stage 1 GCD; mprime "
+                             "then also runs a stage 2 of its own smallest size (its B2 ends up above B1 + 1)\n", B2, handB2); }
+    if (B1 < 50000) { log("Note: mprime rejects P-1 lines with B1 < 50000 unless its prime.txt has AllowLowB1=1\n"); }
+    Worktodo::deleteTask(*this, instance);
+    if (shared.args->clean) { Saver<P1State>::clear(exponent); }
   } else if (kind == CERT) {
     auto sha256 = gpu->isCERT(*this);
     writeResultCERT(fft, *shared.args, instance, sha256, squarings);

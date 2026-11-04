@@ -155,7 +155,60 @@ static void testSaveFile() {
   fs::remove_all(dir);
 }
 
+// The Gerbicz check's sum of exponent chunks (addBits) and its high part (shiftRight64), against GMP
+static void testChunks() {
+  vector<u32> const E = stage1Exponent(1000003, 50000);
+  u64 const nBits = bitLength(E);
+  mpz_t e, c, chunk, h;
+  mpz_inits(e, c, chunk, h, nullptr);
+  mpz_import(e, E.size(), -1, 4, 0, 0, E.data());
+  srand(1);
+  for (u32 L : {1u, 2u, 31u, 32u, 33u, 64u, 268u, 3000u}) {
+    vector<u32> acc;
+    mpz_set_ui(c, 0);
+    for (int j = 0; j < 40; ++j) {
+      u64 const lo = u64(rand()) % (nBits - L);
+      addBits(acc, E, lo, L);
+      mpz_tdiv_q_2exp(chunk, e, lo);
+      mpz_tdiv_r_2exp(chunk, chunk, L);
+      mpz_add(c, c, chunk);
+    }
+    mpz_t got;
+    mpz_init(got);
+    mpz_import(got, acc.size(), -1, 4, 0, 0, acc.data());
+    mpz_tdiv_q_2exp(h, c, L);
+    char what[100];
+    snprintf(what, sizeof(what), "sum of 40 chunks of %u bits", L);
+    check(mpz_cmp(got, c) == 0, what);
+    snprintf(what, sizeof(what), "high part of the sum, L = %u", L);
+    check(mpz_fits_ulong_p(h) && shiftRight64(acc, L) == mpz_get_ui(h), what);
+    mpz_clear(got);
+  }
+  mpz_clears(e, c, chunk, h, nullptr);
+}
+
+// The exponent cache:  written once, read back equal, rewritten when damaged
+static void testExponentCache() {
+  fs::path const dir = "exp-cache-test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  vector<u32> const want = stage1Exponent(1000003, 100000);
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: computed");
+  check(fs::exists(dir / "B1-100000.exp"), "exponent cache: file written");
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: read back");
+  {
+    std::fstream f(dir / "B1-100000.exp", std::ios::in | std::ios::out | std::ios::binary);
+    f.seekp(200);
+    f.put('x');
+  }
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: damaged file recomputed");
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: rewritten");
+  fs::remove_all(dir);
+}
+
 int main() {
+  testChunks();
+  testExponentCache();
   testSieve();
   testExponent();
   testNames();

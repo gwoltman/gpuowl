@@ -16,6 +16,7 @@
 #include "TrigBufCache.h"
 #include "fs.h"
 #include "Sha3Hash.h"
+#include "Pm1.h"
 
 #include <algorithm>
 #include <limits>
@@ -3496,6 +3497,286 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
   }
 }
 
+
+// ---- P-1 stage 1 ----
+
+#ifdef PRPLL_PM1_FAULTS
+// TEST ONLY, compiled in only with -DPRPLL_PM1_FAULTS (make BIN=build-pm1faults CPPFLAGS=-DPRPLL_PM1_FAULTS); a normal build has none
+// of this.  PRPLL_PM1_FAULT="<k>[:<kind>],..." corrupts P-1 stage 1 once per process right after iteration k.  Kinds:  flip (default)
+// flips one bit of x;  square multiplies x by 4, a perfect square, which a Jacobi check cannot see;  check flips one bit of the
+// Gerbicz check product instead of x.
+namespace {
+struct Pm1Fault { u64 k; string kind; bool fired; };
+
+vector<Pm1Fault>& pm1Faults() {
+  static vector<Pm1Fault> faults = [] {
+    vector<Pm1Fault> v;
+    const char *env = getenv("PRPLL_PM1_FAULT");
+    if (!env) { return v; }
+    for (const string& item : ::split(env, ',')) {
+      auto colon = item.find(':');
+      v.push_back({stoull(item.substr(0, colon)), colon == string::npos ? "flip" : item.substr(colon + 1), false});
+    }
+    return v;
+  }();
+  return faults;
+}
+
+Pm1Fault* pm1FaultAt(u64 k) {
+  for (Pm1Fault& f : pm1Faults()) { if (f.k == k && !f.fired) { return &f; } }
+  return nullptr;
+}
+
+// x * 4 mod 2^E - 1: rotate the E bits left by two
+Words times4(const Words& x, u64 E) {
+  Words r(x.size(), 0);
+  for (u64 i = 0; i < E; ++i) {
+    if ((x[i / 32] >> (i % 32)) & 1) {
+      u64 const j = (i + 2) % E;
+      r[j / 32] |= u32(1) << (j % 32);
+    }
+  }
+  return r;
+}
+}
+#endif
+
+// Check the P-1 stage 1 block that has just ended (see pm1Stage1).  On entry bufData holds u_m, bufCheck holds P = u_0 * ... * u_{m-1}
+// and u0 holds u_0; C is the sum of the L-bit exponent chunks of the block.  bpow holds 3^(2^bpowL) and is recomputed when L
+// differs.  bufCheck is consumed, bufData is kept.
+bool Gpu::pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buffer<Word>& sum1, u32& bpowL, u32 L, const vector<u32>& C) {
+  u64 const H = pm1::shiftRight64(C, L);
+
+  // alt = u_0 * 3^(H * 2^L)
+  if (H == 0) {
+    alt << u0;
+  } else {
+    if (bpowL != L) {
+      // The first squarings of 3 are tiny values with no rounding error; keep them out of the ROE statistics
+      u32 const saveWantROE = wantROE;
+      wantROE = 0;
+      writeIn(bpow, makeWords(E, 3));
+      squareLoop(bpow, 0, L);
+      wantROE = saveWantROE;
+      bpowL = L;
+    }
+    alt << bpow;
+    expMul(alt, H, u0);
+  }
+
+  // checksum 1 = P * u_m
+  sum1 << bufData;
+  modMul(sum1, bufCheck);
+
+  // checksum 2 = P^(2^L) * 3^Lo * alt.  The bits of Lo = C mod 2^L are the multiplications by 3 of the L squarings.
+  enum LEAD_TYPE leadIn = LEAD_NONE;
+  for (u32 i = L; i-- > 0;) {
+    enum LEAD_TYPE const leadOut = (i == 0 || useLongCarry) ? LEAD_NONE : LEAD_WIDTH;
+    square(bufCheck, bufCheck, leadIn, leadOut, pm1::testBit(C, i));
+    leadIn = leadOut;
+  }
+  modMul(bufCheck, alt);
+
+  if (isEqual(bufCheck, sum1)) { return true; }
+
+  // The word representation of a residue is not unique; compare the values before calling it an error
+  Words const a = readAndCompress(bufCheck);
+  Words const b = readAndCompress(sum1);
+  return !a.empty() && a == b;
+}
+
+// P-1 stage 1:  x = 3^E mod 2^p-1 with E = pm1::stage1Exponent(p, B1), by left-to-right binary exponentiation, one squaring per bit
+// of E (times 3 when the bit is set).  Iteration k (k = 1 .. nBits - 1) takes x = 3^(top k bits of E) to 3^(top k + 1 bits).
+//
+// Every iteration is covered by a Gerbicz-type check, which starts over with every block:
+// a block starting at iteration s with u_0 = x_s is m <= L sub-blocks of L iterations.  With u_j the residue after j sub-blocks and
+// c_j the L-bit chunk of E consumed by sub-block j, u_{j+1} = u_j^(2^L) * 3^c_j, so with P = u_0 * ... * u_{m-1} and C = sum c_j
+//   checksum 1 = P * u_m                      (one multiplication every L iterations, as PRP's check)
+//   checksum 2 = u_0 * P^(2^L) * 3^C          (L squarings once per block)
+// must be equal.  C < m * 2^L, so C = H * 2^L + Lo with H < m:  the bits of Lo ride the L squarings as their multiplications by 3,
+// and 3^(H * 2^L) is a short exponentiation of 3^(2^L), computed once per L.  The cost is about 2/L of stage 1.
+// Unlike PRP's check, this one starts over with every block and x cannot be rebuilt from the check value, so the savefiles hold x
+// and only a verified x is saved; a block that fails goes back to the last savefile.
+PM1Result Gpu::pm1Stage1(const Task& task) {
+  assert(E == task.exponent);
+  u64 const B1 = task.B1;
+  constexpr u32 CHECKS_PER_RUN = 20;       // rollback exposure: about 5% of stage 1, however long it is
+  constexpr u32 MAX_L = 3000;
+
+  Saver<P1State> saver{E, 1000, args.nSavefiles};
+  vector<u32> const exp = pm1::stage1ExponentCached(saver.dir(), E, B1);
+  u64 const nBits = pm1::bitLength(exp);
+  assert(nBits >= 2);
+
+  // L of a full block, and the L in use: halved after a failed check, grown back over about 30 good blocks
+  u32 const fullL = u32(std::clamp(std::sqrt(double(nBits) / CHECKS_PER_RUN), 2.0, double(MAX_L)));
+  u32 curL = fullL;
+  log("P-1 stage 1 B1=%" PRIu64 ", %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), about %.2f%% overhead\n",
+      B1, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+
+  // Sized as bufData (makeBufVector's buffers are larger when the words are 32-bit), so that they can be copied to and from it
+  u32 const wordBufSize = N * fft.WordSize / sizeof(Word);
+  Buffer<Word> u0{profile.make("pm1U0"), &queue, wordBufSize};
+  Buffer<Word> alt{profile.make("pm1Alt"), &queue, wordBufSize};
+  Buffer<Word> bpow{profile.make("pm1Pow"), &queue, wordBufSize};
+  Buffer<Word> sum1{profile.make("pm1Sum1"), &queue, wordBufSize};
+  u32 bpowL = 0;
+
+  u32 nErrors = 0;
+  int nSeqErrors = 0;
+  u64 lastFailedRes64 = 0;
+  Timer elapsedTimer;
+
+ reload:
+  elapsedTimer.reset();
+  u64 k = 1;
+  double elapsedBefore = 0;
+  for (int nTries = 0; ; ++nTries) {
+    P1State state = saver.load();
+    if (state.data.empty()) {
+      writeIn(bufData, makeWords(E, 3));
+      k = 1;
+      break;
+    }
+    if (state.B1 != B1 || state.nBits != nBits || state.k < 1 || state.k > nBits) {
+      // Stage 1 runs over the bits of E from the top, so a run with another B1 can't be continued
+      log("P-1 savefile is for B1=%" PRIu64 " (%" PRIu64 " / %" PRIu64 "), the assignment has B1=%" PRIu64 "; setting it aside\n",
+          state.B1, state.k, state.nBits, B1);
+      saver.dropMostRecent();
+      nTries = -1;
+      continue;
+    }
+    writeIn(bufData, state.data);
+    u64 const res = dataResidue();
+    if (res == residue(state.data)) {
+      k = state.k;
+      nErrors = std::max(nErrors, state.nErrors);
+      elapsedBefore = state.elapsed;
+      log("OK %9" PRIu64 " P-1 loaded: %016" PRIx64 "\n", k, res);
+      break;
+    }
+    log("EE %9" PRIu64 " P-1 on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", state.k, res, residue(state.data));
+    if (nTries) { throw "P-1 savefile error on load"; }
+    saver.dropMostRecent();
+  }
+
+  if (k == nBits) {
+    log("P-1 stage 1 already done, B1=%" PRIu64 "\n", B1);
+    return {readData(), nErrors};
+  }
+
+  u64 const startK = k;
+  IterationTimer iterationTimer{k};
+  wantROE = 0; // skip the initial iterations
+  bool stopping = false;
+
+  while (true) {
+    // Plan the block:  m sub-blocks of L iterations; a remainder shorter than L is a block of its own (L = the remainder, m = 1)
+    u64 const left = nBits - k;
+    u32 L = curL;
+    u32 m = 0;
+    if (left >= u64(L) * L) {
+      m = L;
+    } else if (left >= L) {
+      m = u32(left / L);
+    } else {
+      L = u32(left);
+      m = 1;
+    }
+
+    u0 << bufData;
+    bufCheck << bufData;
+    vector<u32> C;
+    enum LEAD_TYPE leadIn = LEAD_NONE;
+
+    for (u32 j = 0; j < m; ++j) {
+      if (j) {
+        modMul(bufCheck, bufData, leadIn);
+        leadIn = LEAD_MIDDLE;
+      }
+
+      for (u32 i = 0; i < L; ++i) {
+        if (!wantROE && k - startK > 30) { wantROE = args.logROE ? ROE_SIZE : 2'000; }
+
+        bool const mul3 = pm1::testBit(exp, nBits - 1 - k);
+        ++k;
+
+        if (i == L - 1 && !stopping && (Signal::stopRequested() || (args.iters && k - startK >= args.iters))) {
+          stopping = true;
+          m = j + 1;     // end the block here
+          log("Stopping, please wait..\n");
+        }
+        bool const blockEnd = i == L - 1 && j == m - 1;
+        bool const doLog = k % args.logStep == 0;
+#ifdef PRPLL_PM1_FAULTS
+        Pm1Fault* const fault = pm1FaultAt(k);
+#else
+        constexpr bool fault = false;
+#endif
+        enum LEAD_TYPE const leadOut = blockEnd || doLog || fault || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+        square(bufData, bufData, leadIn, leadOut, mul3);
+        leadIn = leadOut;
+
+#ifdef PRPLL_PM1_FAULTS
+        if (fault) {
+          fault->fired = true;
+          Buffer<Word>& target = fault->kind == "check" ? bufCheck : bufData;
+          Words x = readAndCompress(target);
+          u64 const before = residue(x);
+          if (fault->kind == "square") { x = times4(x, E); } else { x[3] ^= 1u << 7; }
+          writeIn(target, x);
+          log("TEST FAULT %s at %" PRIu64 ": %016" PRIx64 " -> %016" PRIx64 "\n", fault->kind.c_str(), k, before, bufResidue(target));
+        }
+#endif
+
+        if (doLog && !blockEnd) {
+          float const secsPerIt = iterationTimer.reset(k);
+          queue.setSquareTime((int) (secsPerIt * 1'000'000));
+          log("%s\n", makeLogStr("", k, dataResidue(), secsPerIt, nBits).c_str());
+        }
+      }
+      pm1::addBits(C, exp, nBits - k, L);
+    }
+
+    float const secsPerIt = iterationTimer.reset(k);
+    queue.setSquareTime((int) (secsPerIt * 1'000'000));
+    bool const ok = pm1Verify(u0, alt, bpow, sum1, bpowL, L, C);
+    u64 const res = dataResidue();
+
+    if (ok) {
+      nSeqErrors = 0;
+      Words data = readData();
+      if (data.empty()) { throw "P-1 stage 1 residue is zero"; }
+      saver.save({.exponent=E, .B1=B1, .k=k, .nBits=nBits, .data=data, .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
+      doBigLog(k, res, true, secsPerIt, nBits, nErrors);
+      iterationTimer.reset(k);
+
+      if (k == nBits) { return {std::move(data), nErrors}; }
+      if (stopping) {
+        queue.finish();
+        throw "stop requested";
+      }
+      curL = std::min(fullL, u32(std::ceil(curL * 1.0234)));    // 30 good blocks double L again
+    } else {
+      ++nErrors;
+      doBigLog(k, res, false, secsPerIt, nBits, nErrors);
+      log("P-1 Gerbicz check failed at %" PRIu64 " (block of %u x %u from %" PRIu64 "), going back to the last verified savefile\n",
+          k, m, L, k - u64(m) * L);
+      if (++nSeqErrors > 2) {
+        log("%d sequential errors, will stop.\n", nSeqErrors);
+        throw "too many errors";
+      }
+      if (res == lastFailedRes64) {
+        log("Consistent error %016" PRIx64 ", will stop.\n", res);
+        throw "consistent error";
+      }
+      lastFailedRes64 = res;
+      curL = std::max(2u, curL / 2);
+      if (stopping) { throw "stop requested"; }
+      goto reload;
+    }
+  }
+}
 
 void Gpu::clear(bool isPRP) {
   if (isPRP) {

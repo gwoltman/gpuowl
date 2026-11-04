@@ -43,6 +43,20 @@ struct CERTState {
   double elapsed{};
 };
 
+// P-1 stage 1 after k of the nBits iterations of x <- x^2 * 3^bit (the bits of the exponent of B1, from the top), with x in data.
+// Only residues that passed the Gerbicz check are saved.  An empty `data` means "no checkpoint": start from x = 3 at k = 1.
+struct P1State {
+  static const constexpr char* KIND = "p1";
+
+  u64 exponent;
+  u64 B1;
+  u64 k;
+  u64 nBits;
+  vector<u32> data;
+  u32 nErrors;
+  double elapsed{};
+};
+
 template<typename State>
 class Saver {
   u64 exponent;
@@ -64,6 +78,9 @@ public:
   void save(const State& s);
 
   void dropMostRecent();
+
+  // The folder of the savefiles
+  const fs::path& dir() const { return base; }
 
   static void clear(u64 exponent);
 

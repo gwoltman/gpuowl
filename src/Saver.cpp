@@ -29,6 +29,7 @@ static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%
 // Anticipated next version.
 // Push version number to sync it with PRP.
 static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
+static constexpr const char *P1_v1 = "OWL P1 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
 
 struct BadHeaderError : std::runtime_error {
@@ -182,6 +183,30 @@ void writeState(const File& fo, const LLState& state) {
   fo.writeChecked(state.data);
 }
 
+P1State readState(const P1State& expected, File fi) {
+  u64 exponent{}, B1{}, k{}, nBits{};
+  u32 nErrors{};
+  double elapsed{};
+
+  string const header = fi.readLine();
+
+  if (sscanf(header.c_str(), P1_v1, &exponent, &B1, &k, &nBits, &nErrors, &elapsed) == 6) {
+    checkExponent(exponent, expected.exponent, header);
+    return {.exponent=exponent, .B1=B1, .k=k, .nBits=nBits, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed};
+  }
+
+  log("Loading P-1 from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
+  throw BadHeaderError{fi.name};
+}
+
+void writeState(const File& fo, const P1State& state) {
+  assert(state.data.size() == nWords(state.exponent));
+  if (fo.printf(P1_v1, state.exponent, state.B1, state.k, state.nBits, state.nErrors, state.elapsed) <= 0) {
+    throw WriteError{fo.name};
+  }
+  fo.writeChecked(state.data);
+}
+
 double roundNumberScore(u64 x) {
   if (x == 0) { return 1; }
 
@@ -207,6 +232,10 @@ template<> LLState Saver<LLState>::initState() {
 
 template<> CERTState Saver<CERTState>::initState() {
   return {.exponent=exponent, .k=0, .squarings=0, .data={}, .elapsed=0};   // no checkpoint: caller starts from the .cert file
+}
+
+template<> P1State Saver<P1State>::initState() {
+  return {.exponent=exponent, .B1=0, .k=0, .nBits=0, .data={}, .nErrors=0, .elapsed=0};   // no checkpoint: caller starts from 3
 }
 
 
@@ -342,3 +371,4 @@ void Saver<State>::dropMostRecent() {
 template class Saver<PRPState>;
 template class Saver<LLState>;
 template class Saver<CERTState>;
+template class Saver<P1State>;

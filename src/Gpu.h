@@ -46,6 +46,11 @@ struct LLResult {
   u64 res64;
 };
 
+struct PM1Result {
+  vector<u32> x;      // the stage 1 residue 3^E mod 2^p-1 (see pm1::stage1Exponent)
+  u32 nErrors{};      // Gerbicz check failures
+};
+
 struct ZAvg {
   double sum{};
   double n{};
@@ -312,6 +317,9 @@ private:
 
   PRPState loadPRP(Saver<PRPState>& saver);
 
+  // P-1 stage 1 Gerbicz check of a block of L-iteration sub-blocks (see pm1Stage1)
+  bool pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buffer<Word>& sum1, u32& bpowL, u32 L, const vector<u32>& C);
+
   vector<Word> readChecked(Buffer<Word>& buf);
 
   // void measureTransferSpeed();
@@ -335,6 +343,7 @@ public:
   PRPResult isPrimePRP(const Task& task);
   LLResult isPrimeLL(const Task& task);
   array<u64, 4> isCERT(const Task& task);
+  PM1Result pm1Stage1(const Task& task);
 
   double timePRP(int quick = 7);
 

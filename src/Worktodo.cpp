@@ -214,14 +214,14 @@ static std::optional<Task> bestTask(const Args& args, const fs::path& fileName) 
       log("Cert start file M%" PRIu64 ".cert not found; skipping that worktodo line for now\n", task->exponent);
       continue;
     }
-    // P-1 lines are recognised, so they are not reported as ignored, but nothing runs them yet.
-    if (task && task->kind == Task::PM1) { continue; }
+    // Pfactor lines are recognised, so they are not reported as ignored, but nothing chooses their bounds yet.
+    if (task && task->kind == Task::PM1 && task->pfactor) { continue; }
     if (task && (!best
                  || (best->kind != Task::CERT && task->kind == Task::CERT)
                  || ((best->kind != Task::CERT || task->kind == Task::CERT) && smallest && task->exponent < best->exponent))) {
       // A PRP/LL exponent that no FFT can run would throw in Task::execute and end the worker; the line is never
       // deleted, so every restart would pick it and die again, and the work behind it would never run.  Skip it.
-      if (task->kind != Task::CERT && !fftFits(args, task->exponent, task->kind == Task::PRP)) {
+      if (task->kind != Task::CERT && !fftFits(args, task->exponent, task->kind == Task::PRP || task->kind == Task::PM1)) {
         log("No FFT can run exponent %" PRIu64 "; skipping worktodo line \"%s\"\n", task->exponent, rstripNewline(task->line).c_str());
         continue;
       }

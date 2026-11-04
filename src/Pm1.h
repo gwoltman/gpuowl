@@ -63,8 +63,18 @@ void forEachPrime(u64 lo, u64 hi, Fn&& fn) {
 // no leading zero word.  Built with a balanced product tree, so it takes seconds even for B1 in the hundreds of millions.
 vector<u32> stage1Exponent(u64 p, u64 B1);
 
+// stage1Exponent(p, B1), kept in <dir>/B1-<B1>.exp so that a restart does not compute it again (seconds at B1 = 10M, about a
+// minute at 50M).  A missing or damaged file is recomputed and written again.
+vector<u32> stage1ExponentCached(const fs::path& dir, u64 p, u64 B1);
+
 u64 bitLength(const vector<u32>& words);
 bool testBit(const vector<u32>& words, u64 i);
+
+// acc += the number formed by bits [lo, lo + len) of words.  acc is little-endian 32-bit words and grows as needed.
+void addBits(vector<u32>& acc, const vector<u32>& words, u64 lo, u32 len);
+
+// acc >> shift, which must fit in 64 bits.
+u64 shiftRight64(const vector<u32>& acc, u32 shift);
 
 // Prime95 file name of the P-1 savefile of exponent p (commonc.c, tempFileName):  "m<p>" from 80,000,000 up, an encoded name below.
 string mprimeSaveName(u64 p);

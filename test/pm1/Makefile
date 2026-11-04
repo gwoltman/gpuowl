@@ -5,13 +5,16 @@
 #   make MPRIME_SRC=~/mprime   also compare the mprime save file names with Prime95's own tempFileName (commonc.c)
 
 SRC = ../../src
-OBJS = $(SRC)/Pm1.cpp $(SRC)/File.cpp $(SRC)/log.cpp $(SRC)/common.cpp $(SRC)/timeutil.cpp
+OBJS = $(SRC)/Pm1.cpp $(SRC)/CycleFile.cpp $(SRC)/fs.cpp $(SRC)/File.cpp $(SRC)/log.cpp $(SRC)/common.cpp $(SRC)/timeutil.cpp
 
 check: check_pm1
 	./check_pm1
+
+stage1_oracle: stage1_oracle.cpp
+	g++ -std=c++20 -O2 -Wall -Wextra -o $@ stage1_oracle.cpp -lgmp
 
 check_pm1: check_pm1.cpp $(OBJS) $(SRC)/Pm1.h
 	g++ -std=c++20 -O2 -Wall -Wextra -I$(SRC) -DMPRIME_SRC='"$(MPRIME_SRC)"' -o $@ check_pm1.cpp $(OBJS) -lgmp
 
 clean:
-	rm -rf check_pm1 savefile-test
+	rm -rf check_pm1 stage1_oracle savefile-test exp-cache-test

@@ -315,7 +315,10 @@ named "config.txt" in the prpll run directory.
                      is cheap at high proof powers and expensive at low ones; it must also complete in
                      the same run that generated the proof. Use e.g. -autoverify 9 to skip it for the
                      low powers, or a value above the maximum power to skip it entirely.
--iters <N>         : run next PRP test for <N> iterations and exit.
+-iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit.
+-mprimeDir <dir>   : P-1 ("Pminus1=" worktodo lines): at the end of stage 1 write the residue as an mprime savefile into <dir>
+                     and append the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs the GCD and stage 2.
+                     P-1 needs it for now.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune
@@ -593,13 +596,18 @@ void Args::parse(const string& line) {
     else if (key == "-binary") {         // used to load a precompiled kernel binary from a given file.
       log("-binary is deprecated and ignored; use -cache for a persistent kernel cache instead\n");
     }
-    // DEPRECATED: P-1 factoring (and its second-stage mprime interop) was removed along with the GMP
-    // dependency, not for cost (see PR history). These options would silently change what gets tested,
-    // so unlike the no-ops above they must not be swallowed quietly.
+    else if (key == "-mprimeDir") {
+      // Relative to -dir, like every other path (main parses the arguments again once it is in -dir).  Whether it is a directory
+      // is checked when a P-1 assignment starts.
+      if (s.empty()) { throw "-mprimeDir needs a directory"; }
+      mprimeDir = fs::absolute(s).lexically_normal();
+    }
+    // DEPRECATED: the P-1 options of old gpuowl.  The bounds now come from the "Pminus1=" worktodo lines.  These options would
+    // silently change what gets tested, so unlike the no-ops above they must not be swallowed quietly.
     else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2" || key == "-rB2" ||
-             key == "-pm1" || key == "-mprimeDir" || key == "-D") {
-      log("%s: P-1 factoring is no longer supported; remove it from config.txt\n", key.c_str());
-      throw "P-1 no longer supported";
+             key == "-pm1" || key == "-D") {
+      log("%s is no longer supported: P-1 bounds come from \"Pminus1=\" lines in worktodo.txt; remove it from config.txt\n", key.c_str());
+      throw "P-1 option no longer supported";
     }
     else if (key == "-from") {           // used to resume at a specific iteration instead of the latest checkpoint.
       log("-from is no longer supported; PRPLL always resumes from the most recent checkpoint in -dir\n");

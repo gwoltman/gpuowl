@@ -83,6 +83,7 @@ public:
   fs::path proofResultDir = "proof";
   fs::path proofToVerifyDir = "proof-tmp";
   fs::path cacheDir = "kernel-cache";
+  fs::path mprimeDir;       // P-1: where the stage 1 residue and the "Pminus1=" line go for mprime to finish
   // fs::path tuneFile = "tune.txt";
 
   bool keepProof = false;

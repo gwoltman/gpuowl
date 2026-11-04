@@ -2,6 +2,8 @@
 
 #include "Pm1.h"
 #include "File.h"
+#include "CycleFile.h"
+#include "log.h"
 
 #include <cinttypes>
 #include <cstdio>
@@ -128,6 +130,67 @@ vector<u32> stage1Exponent(u64 p, u64 B1) {
     level = std::move(next);
   }
   return level.front();
+}
+
+vector<u32> stage1ExponentCached(const fs::path& dir, u64 p, u64 B1) {
+  static constexpr const char *HEADER = "OWL P1EXP 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " words=%" PRIu64 "\n";
+  fs::path const path = dir / ("B1-" + to_string(B1) + ".exp");
+  if (File fi = File::openRead(path); fi) {
+    u64 fileP{}, fileB1{}, nWords{};
+    string const header = fi.readLine();
+    if (sscanf(header.c_str(), HEADER, &fileP, &fileB1, &nWords) == 3 && fileP == p && fileB1 == B1 && nWords && nWords < (u64(1) << 32)) {
+      try {
+        vector<u32> words = fi.readChecked<u32>(nWords);
+        if (words.back()) { return words; }
+      } catch (const CRCError&) {
+      } catch (const ReadError&) {
+      }
+    }
+    log("Recomputing the P-1 exponent: '%s' is not valid\n", path.string().c_str());
+  }
+
+  vector<u32> words = stage1Exponent(p, B1);
+  try {
+    CycleFile fo{path};
+    fo->printf(HEADER, p, B1, u64(words.size()));
+    fo->writeChecked(words);
+  } catch (const std::exception& e) {
+    log("Can't write '%s' (%s); continuing without it\n", path.string().c_str(), e.what());
+  }
+  return words;
+}
+
+void addBits(vector<u32>& acc, const vector<u32>& words, u64 lo, u32 len) {
+  if (acc.size() < (len + 31) / 32 + 1) { acc.resize((len + 31) / 32 + 1, 0); }
+  u64 carry = 0;
+  size_t i = 0;
+  for (u32 done = 0; done < len; done += 32, ++i) {
+    u32 chunk = 0;
+    u32 const n = std::min(32u, len - done);
+    for (u32 b = 0; b < n; ++b) {
+      if (testBit(words, lo + done + b)) { chunk |= u32(1) << b; }
+    }
+    u64 const t = u64(acc[i]) + chunk + carry;
+    acc[i] = u32(t);
+    carry = t >> 32;
+  }
+  for (; carry; ++i) {
+    if (i == acc.size()) { acc.push_back(0); }
+    u64 const t = u64(acc[i]) + carry;
+    acc[i] = u32(t);
+    carry = t >> 32;
+  }
+}
+
+u64 shiftRight64(const vector<u32>& acc, u32 shift) {
+  u64 r = 0;
+  for (u64 i = shift; i < 32 * u64(acc.size()); ++i) {
+    if (testBit(acc, i)) {
+      assert(i - shift < 64);
+      r |= u64(1) << (i - shift);
+    }
+  }
+  return r;
 }
 
 u64 bitLength(const vector<u32>& words) {
