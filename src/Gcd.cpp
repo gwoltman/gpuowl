@@ -78,10 +78,10 @@ Gcd::Gcd(GpuCommon shared, u32 skew) :
 #undef K
 #undef K1
 
-// f = 2^p - 1, g = x - (jacobi ? 0 : 1), then divsteps until g = 0 (GCD) or f = g (Jacobi).  Bernstein-Yang bound the GCD by
+// f = 2^p - 1, g = x - sub, then divsteps until g = 0 (GCD) or f = g (Jacobi).  Bernstein-Yang bound the GCD by
 // about 2.88 divsteps per bit.  The Jacobi steps have no proven bound: random x take 2.97 per bit, but structured ones can take
 // more (7.9 per bit for x = 3 (2^p - 1) / q + 1 with q a small factor), so their limit is only a guard against a hang.
-void Gcd::run(Run& r, const Words& x, u32 p, bool jacobi) {
+void Gcd::run(Run& r, const Words& x, i64 sub, u32 p, bool jacobi) {
   if (p < 3) { throw std::invalid_argument("Gcd: p must be at least 3"); }
   Timer timer;
   stats = {};
@@ -96,7 +96,7 @@ void Gcd::run(Run& r, const Words& x, u32 p, bool jacobi) {
   r.skewCount.zero();
   kToDigits.setKernelsToExecute(groups(nDigits));
   kToDigits(bufX, nWords, p, 1u, i64(0), 0u, r.F(), nDigits);
-  kToDigits(bufX, nWords, p, 0u, i64(jacobi ? 0 : 1), 0u, r.G(), nDigits);
+  kToDigits(bufX, nWords, p, 0u, sub, 0u, r.G(), nDigits);
 
   Kernel* kApplyX = jacobi ? kApplyJ : kApply;
   Kernel& kSummaryX = jacobi ? kSummaryJ : kSummary;
@@ -171,9 +171,13 @@ Words Gcd::toWords(Run& r, u32 nOut) {
   return w;
 }
 
-Words Gcd::gcdMinus1(const Words& x, u32 p) {
+Words Gcd::gcdMinus1(const Words& x, u32 p) { return gcdOf(x, 1, p); }
+
+Words Gcd::gcd(const Words& x, u32 p) { return gcdOf(x, 0, p); }
+
+Words Gcd::gcdOf(const Words& x, i64 sub, u32 p) {
   Run r{&queue, roundUp((p + 61) / 62 + 4, GW)};
-  run(r, x, p, false);
+  run(r, x, sub, p, false);
   // A result of 1 is told by one digit: f = +-1
   vector<i64> s = r.out.read(4);
   if (s[0] == 1 && (s[2] == 1 || s[2] == -1)) { return {1}; }
@@ -182,7 +186,7 @@ Words Gcd::gcdMinus1(const Words& x, u32 p) {
 
 int Gcd::jacobi(const Words& x, u32 p) {
   Run r{&queue, roundUp((p + 61) / 62 + 4, GW)};
-  run(r, x, p, true);
+  run(r, x, 0, p, true);
   vector<i64> s = r.out.read(6);
   if (s[1] == 0) { return 0; }                    // x = 0
   if (s[0] == 1 && s[2] == 1) { return s[5] ? -1 : 1; }    // f = g = 1

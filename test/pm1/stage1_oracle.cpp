@@ -2,9 +2,10 @@
 // the primes q <= B1 of the largest power of q that is <= B1 (Prime95's calc_exp; E is built here with GMP alone, not with
 // src/Pm1.cpp).  GMP is used only by this test program; prpll does not use it.
 //
-//   stage1_oracle <p> <B1> [<mprime savefile>]
-// prints the res64 of x and, given the P-1 savefile that prpll wrote for mprime, compares the whole residue in it with x and checks
-// the file's checksum.  Exit status 0 if they agree.
+//   stage1_oracle <p> <B1> [<mprime savefile> | <prpll .p1 savefile>]
+// prints the res64 of x and gcd(x - 1, 2^p-1) in decimal ("gcd 1" when there is no factor) and, given the P-1 savefile that prpll
+// wrote for mprime, compares the whole residue in it with x and checks the file's checksum; given one of prpll's own P-1 savefiles
+// (p1-<p>/<p>-<k>.p1, header line, CRC, words) it compares the residue, which must be the final one.  Exit status 0 if they agree.
 
 #include <gmp.h>
 
@@ -13,7 +14,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <fstream>
+#include <string>
 #include <iterator>
 #include <vector>
 
@@ -77,9 +80,38 @@ int main(int argc, char **argv) {
 
   u64 const res64 = mpz_getlimbn(x, 0);
   printf("p=%" PRIu64 " B1=%" PRIu64 " E bits=%zu res64=%016" PRIx64 "\n", p, B1, nBits, res64);
+  {
+    mpz_t g;
+    mpz_init(g);
+    mpz_sub_ui(g, x, 1);
+    mpz_gcd(g, g, M);
+    char *str = mpz_get_str(nullptr, 10, g);
+    printf("gcd %s\n", str);
+    free(str);
+    mpz_clear(g);
+  }
 
   int status = 0;
-  if (argc > 3) {
+  if (argc > 3 && !strncmp(argv[3] + std::max<size_t>(strlen(argv[3]), 3) - 3, ".p1", 3)) {
+    std::ifstream in(argv[3], std::ios::binary);
+    std::vector<unsigned char> b{std::istreambuf_iterator<char>(in), {}};
+    auto const nl = std::find(b.begin(), b.end(), '\n');
+    size_t o = nl - b.begin() + 1 + 4;    // after the header line and the CRC
+    size_t const n = (p - 1) / 32 + 1;
+    u64 fp = 0, fB1 = 0, k = 0, bits = 0;
+    std::string const header(b.begin(), nl);
+    bool const okHeader = sscanf(header.c_str(), "OWL P1 1 N=1*2^%" SCNu64 "-1 B1=%" SCNu64 " k=%" SCNu64 " bits=%" SCNu64, &fp, &fB1, &k, &bits) == 4
+                          && fp == p && fB1 == B1 && k == nBits && bits == nBits;
+    if (b.size() != o + 4 * n) { printf("FAIL: savefile size %zu, expected %zu\n", b.size(), o + 4 * n); return 1; }
+    mpz_t y;
+    mpz_init(y);
+    mpz_import(y, n, -1, 4, 0, 0, b.data() + o);
+    bool const okX = mpz_cmp(x, y) == 0;
+    printf("savefile %s: header %s, residue %s (res64 %016" PRIx64 ")\n", argv[3], okHeader ? "ok" : "BAD", okX ? "EQUAL" : "DIFFERENT",
+           u64(mpz_getlimbn(y, 0)));
+    status = okHeader && okX ? 0 : 1;
+    mpz_clear(y);
+  } else if (argc > 3) {
     std::ifstream in(argv[3], std::ios::binary);
     std::vector<unsigned char> b{std::istreambuf_iterator<char>(in), {}};
     // header (52 bytes, checksum at 48), state, B_done, C_done, have_x, then the giant:  count and words

@@ -316,9 +316,10 @@ named "config.txt" in the prpll run directory.
                      the same run that generated the proof. Use e.g. -autoverify 9 to skip it for the
                      low powers, or a value above the maximum power to skip it entirely.
 -iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit.
--mprimeDir <dir>   : P-1 ("Pminus1=" worktodo lines): at the end of stage 1 write the residue as an mprime savefile into <dir>
-                     and append the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs the GCD and stage 2.
-                     P-1 needs it for now.
+-mprimeDir <dir>   : P-1 ("Pminus1=" worktodo lines): prpll runs stage 1 and its GCD.  When the line asks for a stage 2
+                     (B2 > B1) and stage 1 found no factor, write the residue as an mprime savefile into <dir> and append
+                     the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
+                     result.  Without it such a line is reported for B1 alone (prpll has no stage 2 yet).
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune
@@ -353,6 +354,8 @@ named "config.txt" in the prpll run directory.
                      1 = Read one trig value and compute the next 3 or 7 (chained multiplies, slightly less accurate).
                      TABMUL_CHAIN31, TABMUL_CHAIN32 and TABMUL_CHAIN61 do the same for the M31, FP32 and M61 parts.
                      TABMUL_CHAIN61=2 reads the trig values plus, for each, the terms its complex multiply would otherwise compute (default on AMD).
+  -use PM1_JACOBI=1: P-1 stage 1: also check a loaded savefile and the final residue with a Jacobi symbol on the GPU (about
+                     as long as the GCD: two minutes at 100M bits).  The Gerbicz check already covers the arithmetic.
   -use 256RADIX8_W, 256RADIX8_H : at a WIDTH (or HEIGHT) of 256 use the radix-8 code (32 threads per line, no
                      variant 0) instead of radix 4.  Faster on Radeon VII, and for FP64 on TitanV; slower for NTTs on TitanV.
 

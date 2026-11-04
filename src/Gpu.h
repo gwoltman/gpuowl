@@ -27,6 +27,7 @@ class Task;
 
 class Signal;
 class ProofSet;
+class Gcd;
 
 using TrigBuf = Buffer<double2>;
 using TrigPtr = shared_ptr<TrigBuf>;
@@ -49,6 +50,7 @@ struct LLResult {
 struct PM1Result {
   vector<u32> x;      // the stage 1 residue 3^E mod 2^p-1 (see pm1::stage1Exponent)
   u32 nErrors{};      // Gerbicz check failures
+  u32 nJacobi{};      // Jacobi check failures (-use PM1_JACOBI=1) in this process
 };
 
 struct ZAvg {
@@ -343,7 +345,8 @@ public:
   PRPResult isPrimePRP(const Task& task);
   LLResult isPrimeLL(const Task& task);
   array<u64, 4> isCERT(const Task& task);
-  PM1Result pm1Stage1(const Task& task);
+  // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
+  PM1Result pm1Stage1(const Task& task, Gcd& gcd);
 
   double timePRP(int quick = 7);
 

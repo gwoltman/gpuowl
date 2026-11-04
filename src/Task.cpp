@@ -10,6 +10,7 @@
 #include "version.h"
 #include "Primes.h"
 #include "Pm1.h"
+#include "Gcd.h"
 #include "Proof.h"
 #include "log.h"
 #include "timeutil.h"
@@ -204,18 +205,95 @@ void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isP
   writeResult(instance, exponent, "LL", isPrime ? "P" : "C", AID, args, fields);
 }
 
-void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1, u64 B2, const vector<string>& factors, u32 nErrors) const {
+void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1, u64 B2, const vector<string>& factors, u32 nErrors,
+                          u32 nJacobi) const {
   // {"status":"NF", "exponent":45581713, "worktype":"P-1", "b1":50000, "b2":5000000, "fft-length":5120, ..., "factors":["..."]}
   vector<string> fields{json("b1", B1)};
   if (B2 > B1) { fields.push_back(json("b2", B2)); }
   fields.push_back(json("fft-length", fft.size()));
-  fields.push_back(json("errors", vector<string>{json("gerbicz", nErrors)}));
+  vector<string> errors{json("gerbicz", nErrors)};
+  if (nJacobi) { errors.push_back(json("jacobi", nJacobi)); }
+  fields.push_back(json("errors", errors));
   if (!factors.empty()) {
     string list = "[";
     for (size_t i = 0; i < factors.size(); ++i) { list += (i ? ", " : "") + json(factors[i]); }
     fields.push_back(json("factors") + ':' + list + ']');
   }
   writeResult(instance, exponent, "P-1", factors.empty() ? "NF" : "F", AID, args, fields);
+}
+
+// P-1:  stage 1 on the GPU, then the stage 1 GCD on the GPU.  A factor ends the assignment.  Otherwise, with no stage 2 asked for
+// (B2 <= B1) the assignment is done too; with a stage 2, -mprimeDir hands the residue to mprime for it (and mprime writes the result),
+// and without -mprimeDir the result is written for B1 alone (no "b2"), since prpll has no stage 2 yet.
+void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<Gpu> gpu) {
+  const Args& args = *shared.args;
+  fs::path const& dir = args.mprimeDir;
+  Gcd gcd{shared};
+  auto [x, nErrors, nJacobi] = gpu->pm1Stage1(*this, gcd);
+  gpu.reset();    // the stage 1 buffers are not needed any more
+
+  // x = 1 makes the GCD 2^p - 1:  no information (and not a correct stage 1 for any p that can run here)
+  if (pm1::isOne(x)) {
+    log("P-1 stage 1 residue is 1: the GCD would be 2^%" PRIu64 " - 1 itself\n", exponent);
+    throw "P-1 stage 1 residue is 1";
+  }
+
+  // mprime runs the stage 1 GCD only on its way into stage 2: only if the line's B2 is above the B1 in the savefile (otherwise it
+  // reports "already tested" and stops), so a hand-off for the GCD alone asks for B2 = B1 + 1.
+  auto handOff = [&](u64 handB2, const char* why) {
+    pm1::writeMprimeStage1(dir, exponent, B1, x);
+    string const work = pm1::mprimePminus1Line(AID, exponent, B1, handB2);
+    pm1::appendMprimeWork(dir, work);
+    log("P-1 stage 1 residue handed to mprime for %s: %s in '%s', %u Gerbicz errors; %s", why, pm1::mprimeSaveName(exponent).c_str(),
+        dir.string().c_str(), nErrors, work.c_str());
+    if (B1 < 50000) { log("Note: mprime rejects P-1 lines with B1 < 50000 unless its prime.txt has AllowLowB1=1\n"); }
+    Worktodo::deleteTask(*this, instance);
+    if (args.clean) { Saver<P1State>::clear(exponent); }
+  };
+
+  // There is no CPU GCD:  if the GPU one can't run (e.g. its kernels don't build), mprime can still run it
+  Words g;
+  string gcdError;
+  try {
+    g = gcd.gcdMinus1(x, u32(exponent));
+  } catch (const std::exception& e) {
+    if (dir.empty()) { throw; }
+    gcdError = e.what();
+  } catch (const string& mes) {
+    if (dir.empty()) { throw; }
+    gcdError = mes;
+  }
+  if (!gcdError.empty()) {
+    log("P-1 stage 1 GCD failed on the GPU (%s)\n", gcdError.c_str());
+    handOff(B2 > B1 ? B2 : B1 + 1, "the GCD and stage 2");
+    return;
+  }
+  log("P-1 stage 1 GCD: %.1f s\n", gcd.lastStats().seconds);
+
+  vector<string> factors;
+  if (!pm1::isOne(g)) {
+    string const f = pm1::toDecimal(g);
+    int const prime = pm1::isProbablePrime(g);
+    log("P-1 found a factor in stage 1: %s (%" PRIu64 " bits, %s)\n", f.c_str(), pm1::bitLength(g),
+        prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here");
+    factors.push_back(f);
+  } else {
+    log("P-1 stage 1 found no factor (B1=%" PRIu64 ")\n", B1);
+  }
+  if (nJacobi) { log("P-1 stage 1 had %u Jacobi check failures\n", nJacobi); }
+
+  if (factors.empty() && B2 > B1) {
+    if (!dir.empty()) {
+      handOff(B2, "stage 2");
+      return;
+    }
+    log("P-1 stage 2 (B2=%" PRIu64 ") is not run: prpll has no stage 2 yet, and there is no -mprimeDir to hand it to.  The result is "
+        "for B1=%" PRIu64 " only; the stage 1 residue is kept in '%s'\n", B2, B1,
+        (fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent))).string().c_str());
+  }
+  writeResultPM1(fft, args, instance, B1, 0, factors, nErrors, nJacobi);
+  Worktodo::deleteTask(*this, instance);
+  if (args.clean && (B2 <= B1 || !factors.empty())) { Saver<P1State>::clear(exponent); }
 }
 
 void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings) const {
@@ -257,15 +335,13 @@ void Task::execute(GpuCommon shared, u32 instance) {
 
   LogContext const pushContext(std::to_string(exponent));
 
-  // There is no GCD here yet:  mprime finishes P-1 from the stage 1 residue, so without a place to hand it over there is no point
-  // in starting.  Fail before any GPU work.
+  // A -mprimeDir that is not there would only be found at the end of stage 1:  fail before any GPU work
   if (kind == PM1) {
     fs::path const& dir = shared.args->mprimeDir;
     std::error_code ec;
-    if (dir.empty() || !fs::is_directory(dir, ec)) {
-      log("P-1 needs -mprimeDir <dir>, the mprime directory that finishes it (GCD and stage 2)%s: \"%s\"\n",
-          dir.empty() ? "" : (", and '" + dir.string() + "' is not a directory").c_str(), rstripNewline(line).c_str());
-      throw "P-1 without -mprimeDir";
+    if (!dir.empty() && !fs::is_directory(dir, ec)) {
+      log("-mprimeDir '%s' is not a directory: \"%s\"\n", dir.string().c_str(), rstripNewline(line).c_str());
+      throw "-mprimeDir is not a directory";
     }
   }
 
@@ -326,22 +402,7 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
       gpu->clear(kind == PRP);
     }
   } else if (kind == PM1) {
-    auto [x, nErrors] = gpu->pm1Stage1(*this);
-    fs::path const& dir = shared.args->mprimeDir;
-    // mprime runs the stage 1 GCD only on its way into stage 2, i.e. only if the B2 of the line is above the B1 it finds in the
-    // savefile (with B2 <= B1 it reports "already tested" and stops).  With no stage 2 asked for (B2 <= B1), ask for the smallest
-    // one; mprime's polynomial stage 2 then covers what one pass of its own choosing covers, so B2 ends up above B1 + 1.
-    u64 const handB2 = B2 > B1 ? B2 : B1 + 1;
-    pm1::writeMprimeStage1(dir, exponent, B1, x);
-    string const work = pm1::mprimePminus1Line(AID, exponent, B1, handB2);
-    pm1::appendMprimeWork(dir, work);
-    log("P-1 stage 1 complete, residue handed to mprime: %s in '%s', %u Gerbicz errors; %s", pm1::mprimeSaveName(exponent).c_str(),
-        dir.string().c_str(), nErrors, work.c_str());
-    if (handB2 != B2) { log("P-1 assignment has B2=%" PRIu64 ": handed to mprime with B2=%" PRIu64 " so that mprime runs the stage 1 GCD; mprime "
-                             "then also runs a stage 2 of its own smallest size (its B2 ends up above B1 + 1)\n", B2, handB2); }
-    if (B1 < 50000) { log("Note: mprime rejects P-1 lines with B1 < 50000 unless its prime.txt has AllowLowB1=1\n"); }
-    Worktodo::deleteTask(*this, instance);
-    if (shared.args->clean) { Saver<P1State>::clear(exponent); }
+    executePM1(shared, instance, fft, std::move(gpu));
   } else if (kind == CERT) {
     auto sha256 = gpu->isCERT(*this);
     writeResultCERT(fft, *shared.args, instance, sha256, squarings);

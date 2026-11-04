@@ -193,6 +193,95 @@ u64 shiftRight64(const vector<u32>& acc, u32 shift) {
   return r;
 }
 
+string toDecimal(const vector<u32>& words) {
+  vector<u32> n = words;
+  while (!n.empty() && n.back() == 0) { n.pop_back(); }
+  if (n.empty()) { return "0"; }
+  vector<u32> chunks;    // base 10^9, least significant first
+  while (!n.empty()) {
+    u64 rem = 0;
+    for (size_t i = n.size(); i-- > 0;) {
+      u64 const cur = (rem << 32) | n[i];
+      n[i] = u32(cur / 1'000'000'000);
+      rem = cur % 1'000'000'000;
+    }
+    chunks.push_back(u32(rem));
+    while (!n.empty() && n.back() == 0) { n.pop_back(); }
+  }
+  string s = to_string(chunks.back());
+  char buf[16];
+  for (size_t i = chunks.size() - 1; i-- > 0;) {
+    snprintf(buf, sizeof(buf), "%09u", chunks[i]);
+    s += buf;
+  }
+  return s;
+}
+
+bool isOne(const vector<u32>& words) {
+  if (words.empty() || words[0] != 1) { return false; }
+  for (size_t i = 1; i < words.size(); ++i) { if (words[i]) { return false; } }
+  return true;
+}
+
+namespace {
+
+// a b mod m, for m < 2^126, by doubling (only additions and shifts, so it also works with MSVC's U128)
+u128 mulMod(u128 a, u128 b, u128 m) {
+  u128 r = 0;
+  for (int i = 127; i >= 0; --i) {
+    r = r + r;
+    if (r >= m) { r = r - m; }
+    if (((b >> i) & 1) != 0) {
+      r = r + a;
+      if (r >= m) { r = r - m; }
+    }
+  }
+  return r;
+}
+
+u128 powMod(u128 a, u128 e, u128 m) {
+  u128 r = 1;
+  for (int i = 127; i >= 0; --i) {
+    r = mulMod(r, r, m);
+    if (((e >> i) & 1) != 0) { r = mulMod(r, a, m); }
+  }
+  return r;
+}
+
+}
+
+int isProbablePrime(const vector<u32>& w) {
+  vector<u32> words = w;
+  while (!words.empty() && words.back() == 0) { words.pop_back(); }
+  if (bitLength(words) > 126) { return -1; }
+  u128 n = 0;
+  for (size_t i = words.size(); i-- > 0;) { n = (n << 32) + words[i]; }
+  if (n < 2) { return 0; }
+  if (n == 2) { return 1; }
+  if ((n & 1) == 0) { return 0; }
+  static constexpr u32 BASES[] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53};
+  for (u32 q : BASES) {
+    if (n == q) { return 1; }
+    u64 rem = 0;
+    for (size_t i = words.size(); i-- > 0;) { rem = ((rem << 32) | words[i]) % q; }
+    if (rem == 0) { return 0; }
+  }
+  u128 d = n - 1;
+  int s = 0;
+  while ((d & 1) == 0) { d = d >> 1; ++s; }
+  for (u32 a : BASES) {
+    u128 x = powMod(a, d, n);
+    if (x == 1 || x == n - 1) { continue; }
+    bool composite = true;
+    for (int i = 1; i < s && composite; ++i) {
+      x = mulMod(x, x, n);
+      if (x == n - 1) { composite = false; }
+    }
+    if (composite) { return 0; }
+  }
+  return 1;
+}
+
 u64 bitLength(const vector<u32>& words) {
   if (words.empty()) { return 0; }
   u64 bits = 32 * (words.size() - 1);

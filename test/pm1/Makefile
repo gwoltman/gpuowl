@@ -20,8 +20,11 @@ stage1_oracle: stage1_oracle.cpp
 check_pm1: check_pm1.cpp $(OBJS) $(SRC)/Pm1.h
 	g++ -std=c++20 -O2 -Wall -Wextra -I$(SRC) -DMPRIME_SRC='"$(MPRIME_SRC)"' -o $@ check_pm1.cpp $(OBJS) -lgmp
 
+p1flip: p1flip.cpp $(OBJS)
+	g++ -std=c++20 -O2 -Wall -Wextra -I$(SRC) -o $@ p1flip.cpp $(OBJS)
+
 check_gcd: check_gcd.cpp $(PRPLL_OBJS) $(SRC)/Gcd.h
 	g++ -std=c++20 -O2 -flto -Wall -Wextra -I$(SRC) -o $@ check_gcd.cpp $(PRPLL_OBJS) -lgmp -lOpenCL -lpthread
 
 clean:
-	rm -rf check_pm1 check_gcd stage1_oracle savefile-test exp-cache-test
+	rm -rf check_pm1 check_gcd stage1_oracle p1flip savefile-test exp-cache-test

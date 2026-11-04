@@ -1,5 +1,5 @@
 // Checks of src/Pm1.cpp: the sieve and the stage 1 exponent against GMP, the mprime save file name against Prime95's tempFileName,
-// and the layout and checksum of the save file written for mprime.
+// the layout and checksum of the save file written for mprime, and the decimal output and primality test of a factor.
 
 #include "Pm1.h"
 
@@ -206,7 +206,81 @@ static void testExponentCache() {
   fs::remove_all(dir);
 }
 
+// toDecimal against mpz_get_str, isOne, and isProbablePrime against mpz_probab_prime_p, on random and edge numbers
+static void testDecimal() {
+  gmp_randstate_t rs;
+  gmp_randinit_default(rs);
+  gmp_randseed_ui(rs, 7);
+  mpz_t z, t;
+  mpz_inits(z, t, nullptr);
+  int nDec = 0, nPrime = 0, nUntested = 0;
+  auto one = [&](const char* what) {
+    vector<u32> w = toWords(z);
+    char *want = mpz_get_str(nullptr, 10, z);
+    string const got = toDecimal(w);
+    if (got != want) { printf("FAIL: decimal of %s: %s, GMP %s\n", what, got.size() < 200 ? got.c_str() : "(long)", strlen(want) < 200 ? want : "(long)"); ++bad; }
+    free(want);
+    w.resize(w.size() + 3, 0);      // leading zero words change nothing
+    check(toDecimal(w) == got, "decimal with leading zero words");
+    check(isOne(w) == (mpz_cmp_ui(z, 1) == 0), "isOne");
+    int const prime = isProbablePrime(w);
+    if (mpz_sizeinbase(z, 2) > 126) {
+      check(prime == -1, "isProbablePrime above 126 bits must say 'not tested'");
+      ++nUntested;
+    } else {
+      int const gmp = mpz_probab_prime_p(z, 30);
+      if ((prime == 1) != (gmp > 0)) { gmp_printf("FAIL: isProbablePrime(%Zd) = %d, GMP %d\n", z, prime, gmp); ++bad; }
+      ++nPrime;
+    }
+    ++nDec;
+  };
+  // edges
+  for (u64 v : {0ull, 1ull, 2ull, 3ull, 9ull, 10ull, 999999999ull, 1000000000ull, 1000000001ull, 4294967295ull, 4294967296ull,
+                999999999999999999ull, 1000000000000000000ull, 18446744073709551615ull}) {
+    mpz_set_ui(z, 0);
+    mpz_import(z, 1, -1, 8, 0, 0, &v);
+    one("edge");
+  }
+  for (u32 e : {9u, 18u, 27u, 36u, 81u, 90u, 900u}) {      // 10^e and 10^e - 1, 10^e + 1
+    mpz_ui_pow_ui(z, 10, e); one("10^e");
+    mpz_sub_ui(z, z, 1); one("10^e - 1");
+    mpz_add_ui(z, z, 2); one("10^e + 1");
+  }
+  for (u32 p : {31u, 61u, 89u, 107u, 127u, 521u, 4423u, 100003u}) {      // 2^p - 1 (prime or not), the size of N itself
+    mpz_set_ui(z, 1); mpz_mul_2exp(z, z, p); mpz_sub_ui(z, z, 1);
+    one("2^p - 1");
+  }
+  // known factors of Mersenne numbers (the test cases), products of two of them, and the 40M case's 73-bit gcd and its factors
+  for (const char* s : {"671839319", "132975634327", "1872347344039", "9360000703", "804880060367", "7533677930865802438001",
+                        "89338258289337889", "4611686014132420609" /* (2^31-1)^2 */, "170141183460469231731687303715884105727" /* 2^127-1 */,
+                        "85070591730234615865843651857942052863" /* 2^126 - 1 */, "42535295865117307932921825928971026431" /* prime 2^125 - 1? */}) {
+    mpz_set_str(z, s, 10);
+    one(s);
+  }
+  // random sizes, primes and semiprimes near the 126-bit limit
+  for (int i = 0; i < 3000; ++i) {
+    mpz_urandomb(z, rs, 1 + gmp_urandomm_ui(rs, i < 2000 ? 130 : 5000));
+    one("random");
+  }
+  for (int i = 0; i < 300; ++i) {
+    mpz_urandomb(z, rs, 20 + gmp_urandomm_ui(rs, 50));
+    mpz_nextprime(z, z);
+    if (i % 2) { mpz_urandomb(t, rs, 20 + gmp_urandomm_ui(rs, 36)); mpz_nextprime(t, t); mpz_mul(z, z, t); }
+    one(i % 2 ? "semiprime" : "prime");
+  }
+  // strong pseudoprimes to small bases (3215031751 = 151 * 751 * 28351, to bases 2, 3, 5, 7), Carmichael numbers
+  for (u64 v : {3215031751ull, 561ull, 41041ull, 825265ull, 321197185ull, 2152302898747ull, 3474749660383ull, 341550071728321ull}) {
+    mpz_set_ui(z, 0);
+    mpz_import(z, 1, -1, 8, 0, 0, &v);
+    one("pseudoprime");
+  }
+  printf("decimal: %d numbers, %d primality answers vs GMP, %d above 126 bits\n", nDec, nPrime, nUntested);
+  mpz_clears(z, t, nullptr);
+  gmp_randclear(rs);
+}
+
 int main() {
+  testDecimal();
   testChunks();
   testExponentCache();
   testSieve();

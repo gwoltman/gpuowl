@@ -28,6 +28,9 @@ public:
   // zero).  The result's words without the leading zero words: {1} when x - 1 and 2^p - 1 are coprime.
   Words gcdMinus1(const Words& x, u32 p);
 
+  // gcd(x, 2^p - 1), as gcdMinus1 (for the accumulator of stage 2).  x = 0 gives 2^p - 1.
+  Words gcd(const Words& x, u32 p);
+
   // The Jacobi symbol (x | 2^p - 1): -1, 0 or 1
   int jacobi(const Words& x, u32 p);
 
@@ -83,6 +86,7 @@ private:
   std::map<u32, vector<std::unique_ptr<Buffer<i64>>>> pool;      // free digit buffers by size, see newNum
   Buffer<u32> scratchCount;
   std::pair<i64, i64> halfGcd(Run& r, bool jacobi);
-  void run(Run& r, const Words& x, u32 p, bool jacobi);
+  void run(Run& r, const Words& x, i64 sub, u32 p, bool jacobi);   // g = x - sub
+  Words gcdOf(const Words& x, i64 sub, u32 p);
   Words toWords(Run& r, u32 nOut);
 };

@@ -46,24 +46,25 @@ struct Checker {
   u64 skewEvents = 0;
   bool timing = false;
 
-  void checkGcd(const char* what, const mpz_t x, u32 p) {
+  // sub = 1: gcdMinus1 (gcd(x - 1, N)), sub = 0: gcd (gcd(x, N), stage 2's test)
+  void checkGcd(const char* what, const mpz_t x, u32 p, int sub = 1) {
     mpz_t N, xm1, want, got;
     mpz_inits(N, xm1, want, got, nullptr);
     mpz_set_ui(N, 1); mpz_mul_2exp(N, N, p); mpz_sub_ui(N, N, 1);
-    mpz_sub_ui(xm1, x, 1);
+    mpz_sub_ui(xm1, x, sub);
     double t0 = now();
     mpz_gcd(want, xm1, N);
     double tGmp = now() - t0;
     Words w;
-    try { w = gcd.gcdMinus1(toWords(x, p), p); } catch (const std::exception& e) { printf("exception %s in gcd %s p=%u\n", e.what(), what, p); w = {0}; }
+    try { w = sub ? gcd.gcdMinus1(toWords(x, p), p) : gcd.gcd(toWords(x, p), p); } catch (const std::exception& e) { printf("exception %s in gcd %s p=%u\n", e.what(), what, p); w = {0}; }
     auto st = gcd.lastStats();
     fromWords(got, w);
     bool ok = mpz_cmp(want, got) == 0;
     ++runs; skewEvents += st.skewEvents;
     if (!ok) { ++fails; }
     if (!ok || timing) {
-      printf("%s gcd  p=%-9u %-24s %.3f s (GMP %.3f s) %.3f divsteps/bit, skew events %llu, result %zu bits\n", ok ? "OK  " : "FAIL",
-             p, what, st.seconds, tGmp, double(st.divsteps) / p, (unsigned long long) st.skewEvents, mpz_sizeinbase(want, 2));
+      printf("%s %s p=%-9u %-24s %.3f s (GMP %.3f s) %.3f divsteps/bit, skew events %llu, result %zu bits\n", ok ? "OK  " : "FAIL",
+             sub ? "gcd " : "gcd0", p, what, st.seconds, tGmp, double(st.divsteps) / p, (unsigned long long) st.skewEvents, mpz_sizeinbase(want, 2));
     }
     mpz_clears(N, xm1, want, got, nullptr);
   }
@@ -90,6 +91,7 @@ struct Checker {
 
   void both(const char* what, const mpz_t x, u32 p) {
     checkGcd(what, x, p);
+    checkGcd(what, x, p, 0);
     checkJacobi(what, x, p);
   }
 };
@@ -136,6 +138,11 @@ static void cases(Checker& c, u32 p, gmp_randstate_t rs, bool quick) {
     mpz_divexact(y, N, f);       // the cofactor: gcd(x - 1, N) = N / f
     mpz_mul_ui(x, y, 3); mpz_mod(x, x, N); mpz_add_ui(x, x, 1);
     c.both("planted cofactor N/f", x, p);
+    // gcd(x, N) (stage 2's accumulator test):  x = f y, and x = (N / f) * 3
+    mpz_urandomm(y, rs, N); mpz_mul(x, f, y); mpz_mod(x, x, N);
+    c.checkGcd("x = f y", x, p, 0);
+    mpz_divexact(y, N, f); mpz_mul_ui(x, y, 3); mpz_mod(x, x, N);
+    c.checkGcd("x = 3 N/f", x, p, 0);
   }
   mpz_clears(N, x, y, f, nullptr);
 }

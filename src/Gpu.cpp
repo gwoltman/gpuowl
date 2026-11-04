@@ -17,6 +17,7 @@
 #include "fs.h"
 #include "Sha3Hash.h"
 #include "Pm1.h"
+#include "Gcd.h"
 
 #include <algorithm>
 #include <limits>
@@ -433,7 +434,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "LOADS","STORES",
                               "WMUL",
                               "MULTI_Q",
-                              "SLEEP_WAIT"
+                              "SLEEP_WAIT",
+                              "PM1_JACOBI"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
       // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)
@@ -629,7 +631,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // Keys that only the host reads (and deprecated keys that nothing reads) are not defines either, so that changing them does not
   // recompile the kernels.  PTX_VERSION stays: the CUDA build reads it back from the build options (see clwrap_cuda.cpp).
   initializer_list<string> const hostOnlyKeys = {"GRAPHS", "GRAPH_BATCH", "L1CUDA", "L2PERSIST", "L2PERSISTPCT", "SLEEP_WAIT",
-                                                 "SMEM_SPILL", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
+                                                 "SMEM_SPILL", "PM1_JACOBI", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
   std::erase_if(config, [&](const auto& kv) {
     return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || isInList(kv.first, hostOnlyKeys);
   });
@@ -3504,7 +3506,8 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 // TEST ONLY, compiled in only with -DPRPLL_PM1_FAULTS (make BIN=build-pm1faults CPPFLAGS=-DPRPLL_PM1_FAULTS); a normal build has none
 // of this.  PRPLL_PM1_FAULT="<k>[:<kind>],..." corrupts P-1 stage 1 once per process right after iteration k.  Kinds:  flip (default)
 // flips one bit of x;  square multiplies x by 4, a perfect square, which a Jacobi check cannot see;  check flips one bit of the
-// Gerbicz check product instead of x.
+// Gerbicz check product instead of x;  negate replaces the final residue, after its Gerbicz check passed, by 2^p-1 - x, whose Jacobi
+// symbol is the opposite one (k must then be the last iteration).
 namespace {
 struct Pm1Fault { u64 k; string kind; bool fired; };
 
@@ -3522,8 +3525,8 @@ vector<Pm1Fault>& pm1Faults() {
   return faults;
 }
 
-Pm1Fault* pm1FaultAt(u64 k) {
-  for (Pm1Fault& f : pm1Faults()) { if (f.k == k && !f.fired) { return &f; } }
+Pm1Fault* pm1FaultAt(u64 k, bool atEnd = false) {
+  for (Pm1Fault& f : pm1Faults()) { if (f.k == k && !f.fired && (f.kind == "negate") == atEnd) { return &f; } }
   return nullptr;
 }
 
@@ -3597,7 +3600,12 @@ bool Gpu::pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buf
 // and 3^(H * 2^L) is a short exponentiation of 3^(2^L), computed once per L.  The cost is about 2/L of stage 1.
 // Unlike PRP's check, this one starts over with every block and x cannot be rebuilt from the check value, so the savefiles hold x
 // and only a verified x is saved; a block that fails goes back to the last savefile.
-PM1Result Gpu::pm1Stage1(const Task& task) {
+//
+// With -use PM1_JACOBI=1 the Jacobi symbol (x | 2^p-1) also checks a savefile when it is loaded (x_k = 3^(the top k bits of E), and
+// (3 | 2^p-1) = -1, so the symbol is -1 exactly when those bits are odd) and the final residue (+1: E is even).  A wrong symbol on
+// load sets the savefile aside as a bad one; at the end it fails the last block as a failed Gerbicz check does.  Off by default:
+// Gerbicz with verified-only saves covers the arithmetic, and a Jacobi symbol costs about as much as a GCD (two minutes at 100M bits).
+PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd) {
   assert(E == task.exponent);
   u64 const B1 = task.B1;
   constexpr u32 CHECKS_PER_RUN = 20;       // rollback exposure: about 5% of stage 1, however long it is
@@ -3621,6 +3629,19 @@ PM1Result Gpu::pm1Stage1(const Task& task) {
   Buffer<Word> bpow{profile.make("pm1Pow"), &queue, wordBufSize};
   Buffer<Word> sum1{profile.make("pm1Sum1"), &queue, wordBufSize};
   u32 bpowL = 0;
+
+  bool const useJacobi = args.value("PM1_JACOBI", 0) > 0;
+  u32 nJacobi = 0;
+  // A savefile this process wrote, or one already checked, needs no Jacobi check when it is loaded again after a failed block
+  bool savesChecked = false;
+  // Whether x_k has the Jacobi symbol it must have, (-1)^(the top k bits of E)
+  auto jacobiOK = [&](const Words& x, u64 k) {
+    int const want = pm1::testBit(exp, nBits - k) ? -1 : 1;
+    Timer timer;
+    int const got = gcd.jacobi(x, u32(E));
+    log("P-1 Jacobi check at %" PRIu64 ": %s (%d, expected %d), %.1f s\n", k, got == want ? "OK" : "FAILED", got, want, timer.at());
+    return got == want;
+  };
 
   u32 nErrors = 0;
   int nSeqErrors = 0;
@@ -3649,6 +3670,17 @@ PM1Result Gpu::pm1Stage1(const Task& task) {
     writeIn(bufData, state.data);
     u64 const res = dataResidue();
     if (res == residue(state.data)) {
+      if (useJacobi && !savesChecked) {
+        if (jacobiOK(state.data, state.k)) {
+          savesChecked = true;
+        } else {
+          ++nJacobi;
+          log("EE %9" PRIu64 " P-1 savefile fails the Jacobi check\n", state.k);
+          if (nTries) { throw "P-1 savefile error on load"; }
+          saver.dropMostRecent();
+          continue;
+        }
+      }
       k = state.k;
       nErrors = std::max(nErrors, state.nErrors);
       elapsedBefore = state.elapsed;
@@ -3662,7 +3694,7 @@ PM1Result Gpu::pm1Stage1(const Task& task) {
 
   if (k == nBits) {
     log("P-1 stage 1 already done, B1=%" PRIu64 "\n", B1);
-    return {readData(), nErrors};
+    return {readData(), nErrors, nJacobi};
   }
 
   u64 const startK = k;
@@ -3740,28 +3772,47 @@ PM1Result Gpu::pm1Stage1(const Task& task) {
 
     float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
-    bool const ok = pm1Verify(u0, alt, bpow, sum1, bpowL, L, C);
+    bool ok = pm1Verify(u0, alt, bpow, sum1, bpowL, L, C);
     u64 const res = dataResidue();
+    Words data;
+    bool jacobiFailed = false;
+    if (ok) {
+      data = readData();
+      if (data.empty()) { throw "P-1 stage 1 residue is zero"; }
+#ifdef PRPLL_PM1_FAULTS
+      if (Pm1Fault* const fault = pm1FaultAt(k, true)) {
+        fault->fired = true;
+        u64 const before = residue(data);
+        for (u32& w : data) { w = ~w; }
+        if (E % 32) { data.back() &= (u32(1) << (E % 32)) - 1; }
+        log("TEST FAULT negate at %" PRIu64 ": %016" PRIx64 " -> %016" PRIx64 "\n", k, before, residue(data));
+      }
+#endif
+      if (useJacobi && k == nBits && !jacobiOK(data, k)) {
+        ok = false;
+        jacobiFailed = true;
+        ++nJacobi;
+      }
+    }
 
     if (ok) {
       nSeqErrors = 0;
-      Words data = readData();
-      if (data.empty()) { throw "P-1 stage 1 residue is zero"; }
+      savesChecked = true;
       saver.save({.exponent=E, .B1=B1, .k=k, .nBits=nBits, .data=data, .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
       doBigLog(k, res, true, secsPerIt, nBits, nErrors);
       iterationTimer.reset(k);
 
-      if (k == nBits) { return {std::move(data), nErrors}; }
+      if (k == nBits) { return {std::move(data), nErrors, nJacobi}; }
       if (stopping) {
         queue.finish();
         throw "stop requested";
       }
       curL = std::min(fullL, u32(std::ceil(curL * 1.0234)));    // 30 good blocks double L again
     } else {
-      ++nErrors;
+      if (!jacobiFailed) { ++nErrors; }
       doBigLog(k, res, false, secsPerIt, nBits, nErrors);
-      log("P-1 Gerbicz check failed at %" PRIu64 " (block of %u x %u from %" PRIu64 "), going back to the last verified savefile\n",
-          k, m, L, k - u64(m) * L);
+      log("P-1 %s check failed at %" PRIu64 " (block of %u x %u from %" PRIu64 "), going back to the last verified savefile\n",
+          jacobiFailed ? "Jacobi" : "Gerbicz", k, m, L, k - u64(m) * L);
       if (++nSeqErrors > 2) {
         log("%d sequential errors, will stop.\n", nSeqErrors);
         throw "too many errors";

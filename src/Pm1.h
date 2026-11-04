@@ -76,6 +76,16 @@ void addBits(vector<u32>& acc, const vector<u32>& words, u64 lo, u32 len);
 // acc >> shift, which must fit in 64 bits.
 u64 shiftRight64(const vector<u32>& acc, u32 shift);
 
+// The decimal digits of a number given as little-endian 32-bit words (by repeated division by 10^9: quadratic, meant for factors).
+string toDecimal(const vector<u32>& words);
+
+// Whether the number in words (little-endian 32-bit words) is 1.
+bool isOne(const vector<u32>& words);
+
+// For a factor found by the GCD:  0 if it is certainly composite, 1 if it is prime or a strong probable prime to the bases 3 .. 53
+// (Miller-Rabin; base 2 tells nothing for a divisor of 2^p - 1, where 2^p = 1), -1 if it has more than 126 bits (not tested).
+int isProbablePrime(const vector<u32>& words);
+
 // Prime95 file name of the P-1 savefile of exponent p (commonc.c, tempFileName):  "m<p>" from 80,000,000 up, an encoded name below.
 string mprimeSaveName(u64 p);
 
