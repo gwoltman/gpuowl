@@ -2905,6 +2905,21 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
   throw "Error on load";
 }
 
+std::optional<PRPState> Gpu::loadPRPAt(u64 k) {
+  std::optional<PRPState> state = getSaver()->loadAt(k);
+  // The start of the test has no savefile
+  if (!state && !k) { state = PRPState{.exponent=E, .k=0, .blockSize=args.blockSize, .res64=3, .check=makeWords(E, 1), .nErrors=0}; }
+  if (!state || !isValidBlockSize(state->blockSize)) { return {}; }
+  writeState(state->k, state->check, state->blockSize);
+  u64 const res = dataResidue();
+  if (res != state->res64) {
+    log("EE %9" PRIu64 " on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", state->k, res, state->res64);
+    return {};
+  }
+  log("OK %9" PRIu64 " on-load: blockSize %d, %016" PRIx64 "\n", state->k, state->blockSize, res);
+  return state;
+}
+
 u32 Gpu::getProofPower(u64 k) {
   u32 const power = ProofSet::effectivePower(E, args.getProofPow(E), k);
 
@@ -3157,8 +3172,13 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   return secsPerIt * 1e6;
 }
 
-PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
+PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm1Report) {
   assert(E == task.exponent);
+  auto pm1FactorResult = [] { PRPResult r{}; r.pm1Factor = true; return r; };
+
+  // -prpPm1:  P-1 stage 1 from this test's squarings (see Pm1Prp.h).  Without it there is nothing:  pm1 stays null.
+  std::unique_ptr<Pm1Prp> pm1;
+  if (args.prpPm1B1) { pm1 = Pm1Prp::make(*this, args.prpPm1B1, args.prpPm1B2, pm1Report); }
 
   // This timer is used to measure total elapsed time to be written to the savefile.
   Timer elapsedTimer;
@@ -3175,12 +3195,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   double elapsedBefore = 0;
 
   {
-    PRPState const state = loadPRP(*getSaver());
+    PRPState const state = pm1 ? pm1->sync(loadPRP(*getSaver())) : loadPRP(*getSaver());
     nErrors = std::max(nErrors, state.nErrors);
     blockSize = state.blockSize;
     k = state.k;
     elapsedBefore = state.elapsed;
   }
+
+  if (pm1 && pm1->foundFactor()) { return pm1FactorResult(); }
 
   assert(blockSize > 0 && logStep % blockSize == 0);
 
@@ -3224,6 +3246,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   bool skipNextCheckUpdate = false;
 
   u64 persistK = proofSet ? proofSet->next(k) : u64(-1);
+  // The next iteration with work besides the squaring:  a proof residue, or (-prpPm1) a P-1 accumulator step
+  u64 eventK = persistK;
+  bool eventWords = true;     // the event needs the residue in words (bufData), not only its transform (buf1, the fused carry's output)
+  auto nextEvent = [&] {
+    eventK = std::min(persistK, pm1->nextK());
+    eventWords = eventK == persistK || pm1->wantsWords();
+  };
+  if (pm1) { nextEvent(); }
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
   assert(k % blockSize == 0);
@@ -3231,6 +3261,9 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
 
   const u64 startK = k;
   u32 const graphBatch = std::clamp(args.value("GRAPH_BATCH", 1), 1, 256);
+
+  // The first check comes early, at 2 blocks; -prpPm1 also wants one when its last step is done
+  u64 extraCheckK = startK + 2 * blockSize;
   IterationTimer iterationTimer{k};
 
   wantROE = 0; // skip the initial iterations
@@ -3243,7 +3276,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     // Batch only unsampled, already-captured squarings on bufData, stopping strictly before the next block/check/log, proof residue,
     // final residue or -iters boundary, which keeps its single-iteration path.  Halving the batch to fit bounds the graph cache
     // to GRAPH_BATCH, GRAPH_BATCH / 2, ... squarings.
-    u64 boundary = std::min({roundUp(k + 1, blockSize), persistK, kEnd});
+    u64 boundary = std::min({roundUp(k + 1, blockSize), eventK, kEnd});     // eventK: the proof residue, and the P-1 steps of -prpPm1
+    if (extraCheckK > k) { boundary = std::min(boundary, extraCheckK); }
     if (args.iters) { boundary = std::min(boundary, startK + args.iters); }
     u32 repeat = graphBatch;
     while (repeat > 1 && k + repeat >= boundary) { repeat /= 2; }
@@ -3266,30 +3300,43 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     ++k; // !! early inc
 
     bool const doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
-    bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k - startK == 2 * blockSize);
+    bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k == extraCheckK);
     bool const doLog = k % logStep == 0;
-    enum LEAD_TYPE const leadOut = doCheck || doLog || k == persistK || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     if (doStop) { log("Stopping, please wait..\n"); }
 
     square(bufData, bufData, leadIn, leadOut, false);
     leadIn = leadOut;
 
-    if (k == persistK) {
-      vector<Word> const rawData = readChecked(bufData);
-      if (rawData.empty()) {
-        log("Data error ZERO\n");
-        ++nErrors;
-        goto reload;
-      }
-      (*background)([=, this] {
-        try {
-          ProofSet::save(E, power, k, compactBits(rawData, E));
-        } catch (const FileError&) {
-          proofSaveFailed = true;
+    if (k == eventK) {
+      if (k == persistK) {
+        vector<Word> const rawData = readChecked(bufData);
+        if (rawData.empty()) {
+          log("Data error ZERO\n");
+          ++nErrors;
+          goto reload;
         }
-      });
-      persistK = proofSet->next(k);
+        (*background)([=, this] {
+          try {
+            ProofSet::save(E, power, k, compactBits(rawData, E));
+          } catch (const FileError&) {
+            proofSaveFailed = true;
+          }
+        });
+        persistK = proofSet->next(k);
+      }
+      if (pm1) {
+        if (k == pm1->nextK()) {
+          // The multiplication leaves the residue's transform in buf1, where the next squaring (or check update) starts from
+          if (pm1->step(k, leadOut == LEAD_NONE)) { leadIn = LEAD_MIDDLE; }
+          u64 const c = pm1->checkAt();
+          if (c > k && (extraCheckK <= k || c < extraCheckK)) { extraCheckK = c; }
+        }
+        nextEvent();
+      } else {
+        eventK = persistK;
+      }
     }
 
     if (k == kEnd) {
@@ -3344,6 +3391,19 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
         // lastFailedRes64 = 0;
         skipNextCheckUpdate = true;
 
+        if (pm1) {
+          // The fold uses buf1:  the next squaring starts from bufData
+          leadIn = LEAD_NONE;
+          Pm1Prp::Outcome const outcome = pm1->verified(k, res);
+          if (outcome == Pm1Prp::FACTOR) {
+            doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
+            return pm1FactorResult();
+          }
+          if (outcome == Pm1Prp::RELOAD) { goto reload; }
+          if (u64 const c = pm1->checkAt(); c > k) { extraCheckK = c; }
+          nextEvent();
+        }
+
         if (k < kEnd) {
           (*background)([=, this, rawCheck = std::move(rawCheck)] {
             if (proofSaveFailed) { return; }
@@ -3352,6 +3412,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
         }
 
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
+
+        if (pm1 && pm1->afterSave() == Pm1Prp::FACTOR) { return pm1FactorResult(); }
 
         if (k >= kEndEnd) {
           // The test is complete; nothing after this point may lose the result.  Make sure the final proof residue,
@@ -3887,6 +3949,7 @@ PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd) {
 void Gpu::clear(bool isPRP) {
   if (isPRP) {
     Saver<PRPState>::clear(E);
+    if (args.prpPm1B1) { Saver<P1PrpState>::clear(E); }
   } else {
     Saver<LLState>::clear(E);
   }

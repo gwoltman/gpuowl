@@ -48,6 +48,7 @@
     <ClCompile Include=".\src\Primes.cpp" />
     <ClCompile Include=".\src\Pm1.cpp" />
     <ClCompile Include=".\src\Pm1Bounds.cpp" />
+    <ClCompile Include=".\src\Pm1Prp.cpp" />
     <ClCompile Include=".\src\Stage2.cpp" />
     <ClCompile Include=".\src\Memlock.cpp" />
     <ClCompile Include=".\src\Profile.cpp" />

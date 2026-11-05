@@ -73,6 +73,22 @@ struct P2State {
   double elapsed{};
 };
 
+// P-1 stage 1 inside a PRP test (Pm1Prp, -prpPm1):  written beside the verified PRP savefile of iteration k, whose res64 is prp64.  data
+// is the product of the PRP residues 3^(2^j) over the set bits j < next of the stage 1 exponent of B1.  stage 0:  accumulating;
+// 1:  stage 1 done without a factor, stage 2 to run;  2:  the P-1 result is written;  3:  given up (accumulator or GCD errors).
+struct P1PrpState {
+  static const constexpr char* KIND = "p1prp";
+
+  u64 exponent;
+  u64 B1, B2;
+  u64 k;
+  u64 prp64;
+  u64 next;
+  u32 stage;
+  u32 nErrors;
+  vector<u32> data;
+};
+
 template<typename State>
 class Saver {
   u64 exponent;
@@ -94,6 +110,11 @@ public:
   void save(const State& s);
 
   void dropMostRecent();
+
+  // The iterations of the savefiles (not the unverified one), increasing;  the savefile of iteration k, if it can be read;  its removal
+  vector<u64> listK() const;
+  std::optional<State> loadAt(u64 k) const;
+  void removeAt(u64 k) const;
 
   // The folder of the savefiles
   const fs::path& dir() const { return base; }

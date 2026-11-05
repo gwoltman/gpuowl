@@ -209,7 +209,7 @@ void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isP
 }
 
 void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1, u64 B2, const vector<string>& factors, u32 nErrors,
-                          u32 nJacobi) const {
+                          u32 nJacobi, bool integrated) const {
   // {"status":"NF", "exponent":45581713, "worktype":"P-1", "b1":50000, "b2":5000000, "fft-length":5120, ..., "factors":["..."]}
   vector<string> fields{json("b1", B1)};
   if (B2 > B1) { fields.push_back(json("b2", B2)); }
@@ -217,6 +217,7 @@ void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1,
   vector<string> errors{json("gerbicz", nErrors)};
   if (nJacobi) { errors.push_back(json("jacobi", nJacobi)); }
   fields.push_back(json("errors", errors));
+  if (integrated) { fields.push_back(json("integrated") + ":true"); }    // stage 1 from the squarings of a PRP test (-prpPm1)
   if (!factors.empty()) {
     string list = "[";
     for (size_t i = 0; i < factors.size(); ++i) { list += (i ? ", " : "") + json(factors[i]); }
@@ -479,7 +480,17 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
   } else if (kind == PRP || kind == LL) {
     bool isPrime;
     if (kind == PRP) {
-      auto [tmpIsPrime, res64, nErrors, proofPath, res2048] = gpu->isPrimePRP(*this);
+      // -prpPm1:  the P-1 inside the PRP test reports through this; a factor ends the test (it is composite) with no PRP result
+      Pm1Report const pm1Report = [&](u64 b1, u64 b2, const vector<string>& factors, u32 nErr) {
+        writeResultPM1(fft, *shared.args, instance, b1, b2, factors, nErr, 0, true);
+      };
+      auto [tmpIsPrime, res64, nErrors, proofPath, res2048, pm1Factor] = gpu->isPrimePRP(*this, pm1Report);
+      if (pm1Factor) {
+        log("%" PRIu64 " has a factor: the PRP test is not needed\n", exponent);
+        Worktodo::deleteTask(*this, instance);
+        if (shared.args->clean) { gpu->clear(true); }
+        return;
+      }
       isPrime = tmpIsPrime;
       writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath);
     } else { // LL

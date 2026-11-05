@@ -14,6 +14,7 @@
 #include "Profile.h"
 #include "GpuCommon.h"
 #include "FFTConfig.h"
+#include "Pm1Prp.h"
 
 #include <numbers>
 #include <vector>
@@ -40,6 +41,7 @@ struct PRPResult {
   u32 nErrors = 0;
   fs::path proofPath;
   std::string res2048;
+  bool pm1Factor{};     // -prpPm1 found a factor (its result line is written):  the PRP test stopped
 };
 
 struct LLResult {
@@ -93,6 +95,7 @@ struct Weights {
 
 class Gpu {
   friend class Stage2Run;   // P-1 stage 2 (Stage2.cpp) drives the transform kernels directly
+  friend class Pm1Prp;      // P-1 stage 1 inside the PRP test (-prpPm1)
 
   GpuCommon shared;
   Background* background;
@@ -327,6 +330,7 @@ private:
   u32 updateCarryPos(u32 bit);
 
   PRPState loadPRP(Saver<PRPState>& saver);
+  std::optional<PRPState> loadPRPAt(u64 k);     // the savefile of iteration k, checked as loadPRP does; none if it isn't there or fails
 
   // P-1 stage 1 Gerbicz check of a block of L-iteration sub-blocks (see pm1Stage1)
   bool pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buffer<Word>& sum1, u32& bpowL, u32 L, const vector<u32>& C);
@@ -351,7 +355,8 @@ public:
   // The WMUL this Gpu runs with, after clDefines lowered a requested value the FFT or device cannot use
   [[nodiscard]] u32 effectiveWmul() const { return wmul; }
 
-  PRPResult isPrimePRP(const Task& task);
+  // pm1Report writes the result line of the P-1 that -prpPm1 runs inside the PRP test
+  PRPResult isPrimePRP(const Task& task, const Pm1Report& pm1Report = {});
   LLResult isPrimeLL(const Task& task);
   array<u64, 4> isCERT(const Task& task);
   // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.

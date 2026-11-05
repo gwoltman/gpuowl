@@ -85,6 +85,7 @@ public:
   fs::path proofToVerifyDir = "proof-tmp";
   fs::path cacheDir = "kernel-cache";
   fs::path mprimeDir;       // P-1: where the stage 1 residue and the "Pminus1=" line go for mprime to finish
+  u64 prpPm1B1{}, prpPm1B2{};   // -prpPm1:  P-1 stage 1 (and stage 2 when B2 > B1) inside each PRP test; 0: off
   // fs::path tuneFile = "tune.txt";
 
   bool keepProof = false;

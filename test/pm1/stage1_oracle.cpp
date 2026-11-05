@@ -2,10 +2,12 @@
 // the primes q <= B1 of the largest power of q that is <= B1 (Prime95's calc_exp; E is built here with GMP alone, not with
 // src/Pm1.cpp).  GMP is used only by this test program; prpll does not use it.
 //
-//   stage1_oracle <p> <B1> [<mprime savefile> | <prpll .p1 savefile>]
+//   stage1_oracle <p> <B1> [<mprime savefile> | <prpll .p1 savefile> | <prpll .p1prp savefile>...]
 // prints the res64 of x and gcd(x - 1, 2^p-1) in decimal ("gcd 1" when there is no factor) and, given the P-1 savefile that prpll
 // wrote for mprime, compares the whole residue in it with x and checks the file's checksum; given one of prpll's own P-1 savefiles
-// (p1-<p>/<p>-<k>.p1, header line, CRC, words) it compares the residue, which must be the final one.  Exit status 0 if they agree.
+// (p1-<p>/<p>-<k>.p1, header line, CRC, words) it compares the residue, which must be the final one.  Given savefiles of -prpPm1
+// (p1prp-<p>/<p>-<k>.p1prp), each one's residue must be 3^(E mod 2^next) and its prp64 the res64 of 3^(2^k).  Exit status 0 if they
+// agree.
 
 #include <gmp.h>
 
@@ -69,7 +71,9 @@ int main(int argc, char **argv) {
   }
 
   // Cross-check the exponent and the residue with GMP's own powm (cheap only for small p; skipped for the larger cases)
-  if (double(p) * double(nBits) < 5e10) {
+  // (not with -prpPm1 savefiles:  their check below builds 3^E right to left, an independent cross-check of x)
+  bool const prpFiles = argc > 3 && strlen(argv[3]) > 6 && !strcmp(argv[3] + strlen(argv[3]) - 6, ".p1prp");
+  if (!prpFiles && double(p) * double(nBits) < 5e10) {
     mpz_t y, three;
     mpz_inits(y, three, nullptr);
     mpz_set_ui(three, 3);
@@ -92,7 +96,58 @@ int main(int argc, char **argv) {
   }
 
   int status = 0;
-  if (argc > 3 && !strncmp(argv[3] + std::max<size_t>(strlen(argv[3]), 3) - 3, ".p1", 3)) {
+  auto endsWith = [](const char* s, const char* suffix) { size_t a = strlen(s), b = strlen(suffix); return a >= b && !strcmp(s + a - b, suffix); };
+  if (argc > 3 && endsWith(argv[3], ".p1prp")) {
+    struct Save { std::string name; u64 k, prp64, next; unsigned stage, err; bool okHeader; std::vector<unsigned char> data; };
+    std::vector<Save> saves;
+    size_t const n = (p - 1) / 32 + 1;
+    for (int i = 3; i < argc; ++i) {
+      std::ifstream in(argv[i], std::ios::binary);
+      std::vector<unsigned char> b{std::istreambuf_iterator<char>(in), {}};
+      auto const nl = std::find(b.begin(), b.end(), '\n');
+      size_t const o = nl - b.begin() + 1 + 4;    // after the header line and the CRC
+      u64 fp = 0, fB1 = 0, fB2 = 0, k = 0, prp64 = 0, next = 0;
+      unsigned stage = 0, err = 0;
+      std::string const header(b.begin(), nl);
+      bool const okHeader = sscanf(header.c_str(), "OWL P1PRP 1 N=1*2^%" SCNu64 "-1 B1=%" SCNu64 " B2=%" SCNu64 " k=%" SCNu64 " prp64=%"
+                                   SCNx64 " next=%" SCNu64 " stage=%u err=%u", &fp, &fB1, &fB2, &k, &prp64, &next, &stage, &err) == 8
+                            && fp == p && fB1 == B1 && next > k && (stage == 0 || next >= nBits);
+      if (b.size() != o + 4 * n) { printf("FAIL: savefile size %zu, expected %zu\n", b.size(), o + 4 * n); return 1; }
+      saves.push_back({argv[i], k, prp64, next, stage, err, okHeader, std::vector<unsigned char>(b.begin() + o, b.end())});
+    }
+    // One pass over j:  u = 3^(2^j), acc = 3^(E mod 2^j) = the product of u_i over the set bits i < j
+    u64 maxJ = 0;
+    for (const Save& v : saves) { maxJ = std::max({maxJ, v.k, std::min<u64>(v.next, nBits)}); }
+    maxJ = std::max<u64>(maxJ, nBits);
+    std::vector<u64> prpAt(saves.size());
+    std::vector<int> okX(saves.size(), -1);
+    mpz_t u, acc, y;
+    mpz_inits(u, acc, y, nullptr);
+    mpz_set_ui(u, 3);
+    mpz_set_ui(acc, 1);
+    for (u64 j = 0; ; ++j) {
+      for (size_t i = 0; i < saves.size(); ++i) {
+        if (saves[i].k == j) { prpAt[i] = mpz_getlimbn(u, 0); }
+        if (std::min<u64>(saves[i].next, nBits) == j) {
+          mpz_import(y, n, -1, 4, 0, 0, saves[i].data.data());
+          okX[i] = mpz_cmp(acc, y) == 0;
+        }
+      }
+      if (j == nBits && mpz_cmp(acc, x)) { printf("FAIL: right to left 3^E differs from left to right\n"); return 1; }
+      if (j >= maxJ) { break; }
+      if (mpz_tstbit(E, j)) { mpz_mul(acc, acc, u); reduce(acc, t, M, p); }
+      mpz_mul(u, u, u);
+      reduce(u, t, M, p);
+    }
+    for (size_t i = 0; i < saves.size(); ++i) {
+      const Save& v = saves[i];
+      bool const okPrp = prpAt[i] == v.prp64;
+      printf("savefile %s: k=%" PRIu64 " next=%" PRIu64 " stage=%u err=%u header %s, residue %s, prp64 %s\n", v.name.c_str(), v.k, v.next,
+             v.stage, v.err, v.okHeader ? "ok" : "BAD", okX[i] == 1 ? "EQUAL" : "DIFFERENT", okPrp ? "ok" : "BAD");
+      if (!(v.okHeader && okX[i] == 1 && okPrp)) { status = 1; }
+    }
+    mpz_clears(u, acc, y, nullptr);
+  } else if (argc > 3 && !strncmp(argv[3] + std::max<size_t>(strlen(argv[3]), 3) - 3, ".p1", 3)) {
     std::ifstream in(argv[3], std::ios::binary);
     std::vector<unsigned char> b{std::istreambuf_iterator<char>(in), {}};
     auto const nl = std::find(b.begin(), b.end(), '\n');

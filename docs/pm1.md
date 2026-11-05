@@ -178,7 +178,30 @@ in the P-1 savefile (`p1-<p>/`, header version 2), so a resume keeps them. A ver
 - **Probability:** at mprime's own bounds, PRPLL's model gives mprime's printed chance of a factor to within 1% (relative) in
   every case above.
 
-<!-- Integrated mode (P-1 stage 1 inside a PRP test): to be documented with its flag (Phase 4). -->
+## P-1 inside a PRP test (`-prpPm1`)
+
+`-prpPm1 <B1>[,<B2>]` runs P-1 stage 1 on the PRP test's own squarings. It is off by default: without it a PRP test has no extra
+buffer, kernel or savefile, and the PRP loop does the same work per iteration as before.
+
+- **How:** the PRP residue u_k = 3^(2^k), and 3^E is the product of the u_k over the set bits k of E. Every L iterations the
+  residue is multiplied into one of 2^L buckets chosen by the L bits of E at that point (one multiplication per L squarings). The
+  buckets are combined when the PRP passes the last set bit of E, at iteration about 1.44 * B1.
+- **Cost** (7900 XTX, measured): about 13.5% of a stand-alone stage 1 (35 s over a 250 s PRP at 40M with B1 = 1M; 86 s over 515 s at
+  100M), plus the GCD (17 s at 40M, 87 s at 100M). As a share of a full 100M PRP test (about 9.9 h) that is 0.5%, 1.4% and 2.6% for
+  B1 = 1M, 5M and 10M (the 5M and 10M figures are extrapolated), against running stage 1 on its own first.
+- **Memory:** 2^L residue buffers, L chosen (about 8 to 11) from the memory free on the GPU less 1 GB; `-maxAlloc` caps it.
+- **Checks:** the PRP's Gerbicz check covers the squarings. The accumulator has its own exact check at every fold, a Gerbicz-style
+  identity over the bucket grid that covers every multiplication into a bucket and the fold itself. A failed check rolls back to the
+  last accumulator savefile; after 3 failures in a row P-1 is given up and the PRP carries on.
+- **Savefiles:** `p1prp-<exponent>/`, next to each verified PRP savefile. The PRP savefile format is unchanged. After a PRP
+  rollback to an iteration with no accumulator save, the accumulator goes back to its last save (at most 2 check intervals,
+  otherwise P-1 is given up with a log line).
+- **Only for a PRP test started with the flag** (from iteration 0). Turned on mid-run it logs that P-1 is not possible and the PRP
+  continues.
+- **Result:** at completion the GPU GCD runs and a P-1 result line is written with `"integrated":true`. A factor ends the PRP test
+  and deletes the worktodo line. With B2 > B1 and no factor, stage 2 runs while the PRP test waits; a failure in stage 2 gives a B1-only
+  result and the PRP goes on.
+- The bounds of `Pfactor=` are not wired to `-prpPm1`; give B1 (and B2) explicitly.
 
 ## Not implemented
 

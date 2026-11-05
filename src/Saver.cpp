@@ -32,6 +32,7 @@ static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64
 static constexpr const char *P1_v1 = "OWL P1 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
 static constexpr const char *P1_v2 = "OWL P1 2 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
 static constexpr const char *P2_v1 = "OWL P2 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
+static constexpr const char *P1PRP_v1 = "OWL P1PRP 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " prp64=%016" SCNx64 " next=%" PRIu64 " stage=%u err=%u\n";
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
 
 struct BadHeaderError : std::runtime_error {
@@ -231,6 +232,26 @@ void writeState(const File& fo, const P1State& state) {
   fo.writeChecked(state.data);
 }
 
+P1PrpState readState(const P1PrpState& expected, File fi) {
+  P1PrpState s{};
+  string const header = fi.readLine();
+  if (sscanf(header.c_str(), P1PRP_v1, &s.exponent, &s.B1, &s.B2, &s.k, &s.prp64, &s.next, &s.stage, &s.nErrors) == 8) {
+    checkExponent(s.exponent, expected.exponent, header);
+    s.data = fi.readChecked<u32>(nWords(s.exponent));
+    return s;
+  }
+  log("Loading P-1 (in PRP) from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
+  throw BadHeaderError{fi.name};
+}
+
+void writeState(const File& fo, const P1PrpState& state) {
+  assert(state.data.size() == nWords(state.exponent));
+  if (fo.printf(P1PRP_v1, state.exponent, state.B1, state.B2, state.k, state.prp64, state.next, state.stage, state.nErrors) <= 0) {
+    throw WriteError{fo.name};
+  }
+  fo.writeChecked(state.data);
+}
+
 double roundNumberScore(u64 x) {
   if (x == 0) { return 1; }
 
@@ -266,6 +287,9 @@ template<> P1State Saver<P1State>::initState() {
   return {.exponent=exponent, .B1=0, .B2=0, .k=0, .nBits=0, .data={}, .nErrors=0, .elapsed=0};   // no checkpoint: caller starts from 3
 }
 
+template<> P1PrpState Saver<P1PrpState>::initState() {
+  return {.exponent=exponent, .B1=0, .B2=0, .k=0, .prp64=0, .next=0, .stage=0, .nErrors=0, .data={}};   // no checkpoint
+}
 
 // ---- Saver ----
 
@@ -395,9 +419,34 @@ void Saver<State>::dropMostRecent() {
   if (!path.empty()) { moveToTrash(path); }
 }
 
+template<typename State>
+vector<u64> Saver<State>::listK() const { return savefiles(base, prefix, State::KIND); }
+
+template<typename State>
+std::optional<State> Saver<State>::loadAt(u64 k) const {
+  File fi{File::openRead(pathFor(base, prefix, State::KIND, k))};
+  if (!fi) { return {}; }
+  try {
+    State expected{};
+    expected.exponent = exponent;
+    State state = readState(expected, std::move(fi));
+    if (state.exponent == exponent && state.k == k) { return state; }
+  } catch (const CRCError& e) {
+  } catch (const BadHeaderError& e) {
+  } catch (const ReadError& e) {
+  }
+  return {};
+}
+
+template<typename State>
+void Saver<State>::removeAt(u64 k) const {
+  error_code dummy;
+  fs::remove(pathFor(base, prefix, State::KIND, k), dummy);
+}
 
 template class Saver<PRPState>;
 template class Saver<LLState>;
 template class Saver<CERTState>;
 template class Saver<P1State>;
 template class Saver<P2State>;
+template class Saver<P1PrpState>;

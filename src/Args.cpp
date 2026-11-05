@@ -343,6 +343,13 @@ named "config.txt" in the prpll run directory.
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
                      the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
                      result.  Without it such a line is reported for B1 alone.
+-prpPm1 <B1>[,<B2>]: P-1 with bound B1 inside each PRP test, from the PRP's own squarings (off by default; without it
+                     a PRP test has no extra buffer, kernel or savefile).  Stage 1 then costs about 15%% of a stage 1
+                     run on its own (one multiplication per L squarings), and GPU memory for 2^L residue buffers (L
+                     about 8 to 11, from the memory free on the GPU; -maxAlloc caps it) until the PRP passes iteration
+                     1.44 * B1.  Then the GCD runs, the P-1 result is written ("integrated":true) and, with B2 > B1 and
+                     no factor, stage 2 runs while the PRP test waits.  A factor ends the PRP test.  Only for PRP tests
+                     started with it (from iteration 0).  The savefiles are in p1prp-<exponent>.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
                      takes as many residue-sized buffers (about 30 to 500) as fit in the memory free on the GPU when it
                      starts less 1 GB (where the free memory can't be queried, 90%% of the GPU's RAM), and with -maxAlloc
@@ -648,6 +655,22 @@ void Args::parse(const string& line) {
     else if (key == "-from") {           // used to resume at a specific iteration instead of the latest checkpoint.
       log("-from is no longer supported; PRPLL always resumes from the most recent checkpoint in -dir\n");
       throw "-from no longer supported";
+    }
+    else if (key == "-prpPm1") {
+      // -prpPm1 B1[,B2]
+      vector<string> const v = split(s, ',');
+      try {
+        if (v.empty() || v.size() > 2) { throw std::invalid_argument(s); }
+        prpPm1B1 = stoull(v[0]);
+        prpPm1B2 = v.size() > 1 ? stoull(v[1]) : 0;
+      } catch (const std::logic_error&) {
+        log("-prpPm1 expects <B1>[,<B2>], e.g. -prpPm1 1000000 or -prpPm1 1000000,30000000\n");
+        throw "-prpPm1 <B1>[,<B2>]";
+      }
+      if (prpPm1B1 < 2 || (prpPm1B2 && prpPm1B2 <= prpPm1B1) || prpPm1B2 >= (u64(1) << 32)) {
+        log("-prpPm1 %s: B1 must be at least 2 and B2, when given, above B1 and below 2^32\n", s.c_str());
+        throw "-prpPm1 <B1>[,<B2>]";
+      }
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
