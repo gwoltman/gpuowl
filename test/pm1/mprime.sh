@@ -61,18 +61,19 @@ alone() {
   rm -rf "$d"; mkdir -p "$d/run"
   echo "Pminus1=1,2,$p,-1,$B1,0" > "$d/run/worktodo-0.txt"
   (cd "$d/run" && "$PRPLL" -device "$DEVICE" -log 10000 -noclean > out 2>&1)
+  # shellcheck disable=SC2012  # the names are prpll's own savefile names: no spaces or newlines
   "$ORACLE" "$p" "$B1" "$(ls "$d/run/p1-$p/"*.p1 | sort | tail -1)" > "$d/run/oracle" 2>&1
   local ours gmp got; ours=$(grep -o 'res64 [0-9a-f]*)' "$d/run/oracle" | tr -d ')' | cut -d' ' -f2)
-  gmp=$(grep '^gcd ' "$d/run/oracle" | cut -d' ' -f2); [ "$gmp" = 1 ] && gmp=NF
+  gmp=$(grep '^gcd ' "$d/run/oracle" | cut -d' ' -f2); [[ "$gmp" = 1 ]] && gmp=NF
   local res; res=$(cat "$d/run/results-0.txt" 2>/dev/null)
   got=$(echo "$res" | grep -o '"factors":\["[0-9]*"' | grep -o '[0-9]*'); echo "$res" | grep -q '"status":"NF"' && got=NF
   ownRun "$d/own" "$p" "$B1"
   local ok=1
   grep -q "residue EQUAL" "$d/run/oracle" || ok=0
-  if [ -n "$theirs" ]; then [ -n "$ours" ] && [ "$ours" = "$theirs" ] || ok=0; else echo "skipped: the residue comparison with mprime's own needs an mprime that can dump the stage 1 residue ($name)"; fi
-  [ -n "$got" ] && [ "$got" = "$gmp" ] && [ "$got" = "$theirF" ] || ok=0
-  if [ "$want" = NF ]; then [ "$got" = NF ] || ok=0; else python3 -c "import sys; sys.exit(int('$got') % $want != 0)" || ok=0; fi
-  if [ $ok = 1 ]; then
+  if [[ -n "$theirs" ]]; then [[ -n "$ours" ]] && [[ "$ours" = "$theirs" ]] || ok=0; else echo "skipped: the residue comparison with mprime's own needs an mprime that can dump the stage 1 residue ($name)"; fi
+  [[ -n "$got" ]] && [[ "$got" = "$gmp" ]] && [[ "$got" = "$theirF" ]] || ok=0
+  if [[ "$want" = NF ]]; then [[ "$got" = NF ]] || ok=0; else python3 -c "import sys; sys.exit(int('$got') % $want != 0)" || ok=0; fi
+  if [[ "$ok" = 1 ]]; then
     pass "$name: p=$p B1=$B1 B2=0, prpll alone: $got (GMP $gmp, mprime from scratch $theirF), residue $ours = GMP${theirs:+ = the one mprime logs}, GCD $(grep -o 'GCD: [0-9.]* s' "$d/run/out")"
   else
     fail "$name (see $d)"
@@ -86,7 +87,9 @@ handoff() {
   rm -rf "$d"; mkdir -p "$d/run"; mprimeDir "$d/mp"
   echo "Pminus1=1,2,$p,-1,$B1,$B2" > "$d/run/worktodo-0.txt"
   (cd "$d/run" && "$PRPLL" -device "$DEVICE" -mprimeDir ../mp -maxAlloc 100M -log 10000 > out 2>&1)
-  local f; f=$(ls "$d/mp" | grep -v -E 'worktodo|prime.txt|local.txt')
+  local f
+  # shellcheck disable=SC2010  # mprime's savefile name (p<exponent>-style): no spaces or newlines
+  f=$(ls "$d/mp" | grep -v -E 'worktodo|prime.txt|local.txt')
   cp "$d/mp/$f" "$d/run/handed-$f"
   "$ORACLE" "$p" "$B1" "$d/run/handed-$f" > "$d/run/oracle" 2>&1
   local ours; ours=$(grep -o 'res64 [0-9a-f]*)' "$d/run/oracle" | tr -d ')' | cut -d' ' -f2)
@@ -97,19 +100,19 @@ handoff() {
   grep -q "residue EQUAL" "$d/run/oracle" || ok=0
   grep -q '^gcd 1$' "$d/run/oracle" || ok=0                            # no stage 1 factor (else prpll reports it and hands nothing)
   grep -q "P-1 stage 1 found no factor" "$d/run/out" || ok=0
-  [ -e "$d/run/results-0.txt" ] && ok=0                                 # mprime reports this assignment, not prpll
-  if [ -n "$theirs" ]; then [ -n "$ours" ] && [ "$ours" = "$theirs" ] || ok=0; else echo "skipped: the residue comparison with mprime's own needs an mprime that can dump the stage 1 residue ($name)"; fi
+  [[ -e "$d/run/results-0.txt" ]] && ok=0                                 # mprime reports this assignment, not prpll
+  if [[ -n "$theirs" ]]; then [[ -n "$ours" ]] && [[ "$ours" = "$theirs" ]] || ok=0; else echo "skipped: the residue comparison with mprime's own needs an mprime that can dump the stage 1 residue ($name)"; fi
   grep -i "error" "$d/mp/mp.out" | grep -v -i "error check" | grep -q . && ok=0
-  if [ "$want" = NF ]; then
+  if [[ "$want" = NF ]]; then
     echo "$res" | grep -q '"status":"NF"' || ok=0
   else
     # mprime reports the GCD, which can hold other factors of 2^p-1 as well:  it must be a multiple of the known one
     local got; got=$(echo "$res" | grep -o '"factors":\["[0-9]*"' | grep -o '[0-9]*' | tail -1)
-    [ -n "$got" ] && python3 -c "import sys; sys.exit(int($got) % $want != 0)" || ok=0
+    [[ -n "$got" ]] && python3 -c "import sys; sys.exit(int($got) % $want != 0)" || ok=0
     grep -q "P-1 found a factor in stage #$stage" "$d/mp/mp.out" || ok=0
   fi
-  if [ $ok = 1 ]; then
-    pass "$name: p=$p B1=$B1 B2=$B2, prpll's GCD: no factor, handed $(grep -o 'Pminus1=.*' "$d/run/out" | head -1), stage 1 residue $ours = GMP${theirs:+ = the one mprime logs}, mprime: $(grep -o 'P-1 found a factor in stage #[12].*\|M[0-9]* completed P-1.*' "$d/mp/mp.out" | head -1)$( [ "$want" != NF ] && echo " $got, a multiple of $want")"
+  if [[ "$ok" = 1 ]]; then
+    pass "$name: p=$p B1=$B1 B2=$B2, prpll's GCD: no factor, handed $(grep -o 'Pminus1=.*' "$d/run/out" | head -1), stage 1 residue $ours = GMP${theirs:+ = the one mprime logs}, mprime: $(grep -o 'P-1 found a factor in stage #[12].*\|M[0-9]* completed P-1.*' "$d/mp/mp.out" | head -1)$( [[ "$want" != NF ]] && echo " $got, a multiple of $want")"
   else
     fail "$name (see $d)"
   fi
@@ -141,4 +144,4 @@ else
 fi
 
 echo "$fails failure(s)"
-[ $fails = 0 ]
+[[ "$fails" = 0 ]]

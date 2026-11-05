@@ -36,8 +36,8 @@ plan_tests() {
   for c in "${cases[@]}"; do
     read -r B1 B2 D M KW <<< "$c"
     local r1 r2
-    r1=$("$CHECK" plan $B1 $B2 $D $M $KW)
-    r2=$("$CHECK" match $B1 $B2 $D $M $KW)
+    r1=$("$CHECK" plan "$B1" "$B2" "$D" "$M" "$KW")
+    r2=$("$CHECK" match "$B1" "$B2" "$D" "$M" "$KW")
     if [[ $r1 == OK* && $r2 == OK* ]]; then pass "$r1 | ${r2#OK match B1=* M=*: }"; else fail "$r1 | $r2"; fi
   done
 }
@@ -45,7 +45,7 @@ plan_tests() {
 # gpu1 <name> <B1> <B2> <D> <M> [kWindow] [fft] [use]:  run_stage2.sh with this plan, acc = GMP and every prime covered
 gpu1() {
   local name=$1 B1=$2 B2=$3 D=$4 M=$5 KW=${6:-} FFT=${7:--} USE=${8:--} r
-  if [ -n "$KW" ] && [ "$KW" != 0 ]; then
+  if [[ -n "$KW" ]] && [[ "$KW" != 0 ]]; then
     r=$(PRPLL_STAGE2_KWINDOW=$KW "$HERE/run_stage2.sh" "$PRPLL" "$WORK" "$DEVICE" "$name" "$P" "$B1" "$B2" "$D" "$FFT" "$USE" random:7 "$M")
   else
     r=$("$HERE/run_stage2.sh" "$PRPLL" "$WORK" "$DEVICE" "$name" "$P" "$B1" "$B2" "$D" "$FFT" "$USE" random:7 "$M")
@@ -56,10 +56,10 @@ gpu1() {
 gpu_tests() {
   for D in "${Ds[@]}"; do
     local B2=$((D * 40 > 30000 ? D * 40 : 30000)) Ls
-    if [ "$QUICK" = 1 ]; then Ls="2.6"; elif [ $D -le 2310 ]; then Ls="1 2.6 8"; else Ls="1 2.6"; fi
+    if [[ "$QUICK" = 1 ]]; then Ls="2.6"; elif [[ "$D" -le 2310 ]]; then Ls="1 2.6 8"; else Ls="1 2.6"; fi
     for L in $Ls; do
-      local M; M=$(awk -v d=$D -v l=$L 'BEGIN { m = int(l * d / 2); if (m < d / 2) m = d / 2; print m }')
-      gpu1 "D$D-L$L" 13 $B2 $D $M
+      local M; M=$(awk -v d="$D" -v l="$L" 'BEGIN { m = int(l * d / 2); if (m < d / 2) m = d / 2; print m }')
+      gpu1 "D$D-L$L" 13 "$B2" "$D" "$M"
     done
   done
   # B2 just above B1 (one prime 1009; no prime at all), primes of D at B1 (B1 = 5 with D = 30, 7 is the next prime; B1 = 7 with D = 210,
@@ -70,13 +70,13 @@ gpu_tests() {
   gpu1 b1-7-D210 7 20000 210 2000
   gpu1 windows-3 1000 100000 420 3000 3
   gpu1 auto-30000 1000 30000 0 0
-  [ "$QUICK" = 1 ] && return
+  [[ "$QUICK" = 1 ]] && return
   gpu1 windows-1 1000 60000 210 1050 1
   gpu1 auto-300000 30000 300000 0 0
   # A D with a prime above B1 must decline (11 > B1 = 7 for D = 2310)
   local d="$WORK/decline-D2310"
   mkdir -p "$d" && "$CHECK" random "$P" 7 "$d/x.bin" && (cd "$d" && rm -rf p2-* && PRPLL_STAGE2_TEST=$P,7,20000,x.bin,acc.bin,2310,1155 "$PRPLL" -device "$DEVICE" > log.txt 2>&1)
-  if grep -q "Stage 2 declined: .*D=2310 has a prime factor above B1" "$d/log.txt" && [ ! -f "$d/acc.bin" ]; then
+  if grep -q "Stage 2 declined: .*D=2310 has a prime factor above B1" "$d/log.txt" && [[ ! -f "$d/acc.bin" ]]; then
     pass "decline-D2310: B1=7 with D=2310 declined ($(grep -o 'D=2310 has a prime factor above B1' "$d/log.txt"))"
   else
     fail "decline-D2310: (see $d)"
@@ -100,8 +100,8 @@ planted_tests() {
   for DM in "30 120" "60 240" "420 1680" "0 0"; do
     read -r D M <<< "$DM"
     local name="planted-D$D-M$M" r f
-    r=$("$HERE/run_stage2.sh" "$PRPLL" "$WORK" "$DEVICE" "$name" $P 500 200000 $D - - stage1 $M)
-    f=$("$CHECK" factors $P 500 200000 "$WORK/$name/x.bin" "$WORK/$name/acc.bin" 671839319)
+    r=$("$HERE/run_stage2.sh" "$PRPLL" "$WORK" "$DEVICE" "$name" "$P" 500 200000 "$D" - - stage1 "$M")
+    f=$("$CHECK" factors "$P" 500 200000 "$WORK/$name/x.bin" "$WORK/$name/acc.bin" 671839319)
     if [[ $r == *": OK acc"* && $f == OK* && $f == *found* && $f != *"not found"* ]]; then pass "$r | $f"; else fail "$r | $f"; fi
   done
 }
@@ -114,4 +114,4 @@ case $MODE in
   *) echo "usage: see the top of $0"; exit 2 ;;
 esac
 echo "sets.sh $MODE: $npass passed, $nfail failed"
-[ $nfail = 0 ]
+[[ "$nfail" = 0 ]]

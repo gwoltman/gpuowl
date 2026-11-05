@@ -19,11 +19,11 @@ case $XSRC in
 esac
 OPTS=(-device "$DEV")
 # KCACHE=<dir>:  a kernel cache shared by the runs (-cache), so that each run does not compile the kernels again
-if [ -n "${KCACHE:-}" ]; then mkdir -p "$KCACHE"; rm -rf kernel-cache; ln -s "$KCACHE" kernel-cache; OPTS+=(-cache); fi
-[ "$FFT" != - ] && OPTS+=(-fft "$FFT")
-[ "$USE" != - ] && OPTS+=(-use "$USE")
+if [[ -n "${KCACHE:-}" ]]; then mkdir -p "$KCACHE"; rm -rf kernel-cache; ln -s "$KCACHE" kernel-cache; OPTS+=(-cache); fi
+[[ "$FFT" != - ]] && OPTS+=(-fft "$FFT")
+[[ "$USE" != - ]] && OPTS+=(-use "$USE")
 PRPLL_STAGE2_TEST=$P,$B1,$B2,x.bin,acc.bin,$D,$M "$PRPLL" "${OPTS[@]}" > log.txt 2>&1
-if [ ! -f acc.bin ]; then echo "FAIL $NAME: no acc ($(grep -E 'stage2Test|Exception|EE' log.txt | tail -1))"; exit 1; fi
+if [[ ! -f acc.bin ]]; then echo "FAIL $NAME: no acc ($(grep -E 'stage2Test|Exception|EE' log.txt | tail -1))"; exit 1; fi
 read -r D M KW <<< "$(grep -o 'Stage 2 B1=[0-9]* B2=[0-9]*: D=[0-9]* M=[0-9]* .* windows of [0-9]*' log.txt | tail -1 \
   | sed 's/.*D=\([0-9]*\) M=\([0-9]*\) .* windows of \([0-9]*\).*/\1 \2 \3/')"
 R=$("$HERE/check_stage2" acc "$P" "$B1" "$B2" "$D" "$M" x.bin acc.bin "$KW")

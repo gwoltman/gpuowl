@@ -20,7 +20,7 @@ emit() {
     do
         x=$(basename "$xx")
 
-        if [ "$x" = "genbundle.sh" ] ; then continue ; fi
+        if [[ "$x" = "genbundle.sh" ]] ; then continue ; fi
 
         names=${names}\"${x}\",
 
@@ -30,7 +30,7 @@ emit() {
         echo '        R"cltag('
         while IFS= read -r line; do
             echo ')cltag" R"cltag('"$line"
-        done < $xx
+        done < "$xx"
         echo ')cltag",'
 
         echo
@@ -43,8 +43,8 @@ gcd=()
 inGcd=0
 for xx in "$@"
 do
-    if [ "$xx" = "--" ] ; then inGcd=1 ; continue ; fi
-    if [ $inGcd = 1 ] ; then gcd+=("$xx") ; else main+=("$xx") ; fi
+    if [[ "$xx" = "--" ]] ; then inGcd=1 ; continue ; fi
+    if [[ "$inGcd" = 1 ]] ; then gcd+=("$xx") ; else main+=("$xx") ; fi
 done
 
 emit CL_FILES "${main[@]}"
