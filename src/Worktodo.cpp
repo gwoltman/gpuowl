@@ -10,6 +10,7 @@
 #include "Primes.h"
 #include "FFTConfig.h"
 
+#include <algorithm>
 #include <cassert>
 #include <string>
 #include <optional>
@@ -115,10 +116,11 @@ std::optional<Task> parse(const std::string& line) {
             task.B2 = u64(y);
             return task;
           }
-        } else {
+        } else if (x >= 0 && x < 100 && y >= 0) {
+          // The bounds are chosen when the line runs (Task::executePM1).  testsSaved is capped at 100, as Prime95 caps it.
           task.pfactor = true;
           task.tfBits = x;
-          task.testsSaved = y;
+          task.testsSaved = std::min(y, 100.0);
           return task;
         }
       }
@@ -214,8 +216,6 @@ static std::optional<Task> bestTask(const Args& args, const fs::path& fileName) 
       log("Cert start file M%" PRIu64 ".cert not found; skipping that worktodo line for now\n", task->exponent);
       continue;
     }
-    // Pfactor lines are recognised, so they are not reported as ignored, but nothing chooses their bounds yet.
-    if (task && task->kind == Task::PM1 && task->pfactor) { continue; }
     if (task && (!best
                  || (best->kind != Task::CERT && task->kind == Task::CERT)
                  || ((best->kind != Task::CERT || task->kind == Task::CERT) && smallest && task->exponent < best->exponent))) {

@@ -41,6 +41,9 @@ runs `genbundle.sh`. Pass `/p:Bash=path\to\bash.exe` to use another bash, and
 ## Use
 See `prpll -h` for the command line options.
 
+P-1 factoring (`Pminus1=` and `Pfactor=` worktodo lines, stage 1 and stage 2 on the GPU, the hand-off to mprime) is described in
+[docs/pm1.md](docs/pm1.md).
+
 
 ## License
 

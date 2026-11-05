@@ -98,9 +98,13 @@ int main(int argc, char **argv) {
     auto const nl = std::find(b.begin(), b.end(), '\n');
     size_t o = nl - b.begin() + 1 + 4;    // after the header line and the CRC
     size_t const n = (p - 1) / 32 + 1;
-    u64 fp = 0, fB1 = 0, k = 0, bits = 0;
+    u64 fp = 0, fB1 = 0, fB2 = 0, k = 0, bits = 0;
     std::string const header(b.begin(), nl);
-    bool const okHeader = sscanf(header.c_str(), "OWL P1 1 N=1*2^%" SCNu64 "-1 B1=%" SCNu64 " k=%" SCNu64 " bits=%" SCNu64, &fp, &fB1, &k, &bits) == 4
+    // version 2 has the B2 of the assignment after B1
+    bool const okHeader = (sscanf(header.c_str(), "OWL P1 2 N=1*2^%" SCNu64 "-1 B1=%" SCNu64 " B2=%" SCNu64 " k=%" SCNu64 " bits=%" SCNu64,
+                                  &fp, &fB1, &fB2, &k, &bits) == 5
+                           || sscanf(header.c_str(), "OWL P1 1 N=1*2^%" SCNu64 "-1 B1=%" SCNu64 " k=%" SCNu64 " bits=%" SCNu64, &fp, &fB1, &k,
+                                     &bits) == 4)
                           && fp == p && fB1 == B1 && k == nBits && bits == nBits;
     if (b.size() != o + 4 * n) { printf("FAIL: savefile size %zu, expected %zu\n", b.size(), o + 4 * n); return 1; }
     mpz_t y;

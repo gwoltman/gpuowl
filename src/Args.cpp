@@ -278,6 +278,15 @@ In turn the work files can be supplied through AutoPrimeNet, located at https://
 
 It is also possible to manually add exponents by adding lines of the form "PRP=118063003" to worktodo-<N>.txt
 
+P-1 factoring (see docs/pm1.md):
+  Pminus1=[AID,]1,2,<p>,-1,<B1>,<B2>       : P-1 with the given bounds (B2 <= B1: stage 1 only)
+  Pfactor=[AID,]1,2,<p>,-1,<tf>,<saved>    : P-1 with bounds chosen by prpll for an exponent trial factored to 2^<tf>, where a
+                                             factor saves <saved> primality tests (as in Prime95's Pfactor lines, e.g. 1 or 2).
+                                             The bounds maximise the expected saving for the stage 2 memory this GPU has, are
+                                             logged and kept in the P-1 savefile; with too little memory for stage 2, B2 = B1.  A
+                                             line whose P-1 can't save more than it costs, even with stage 2's largest table, is
+                                             removed without a result.
+
 
 The configuration options listed below can be passed on the command line or can be put in a file
 named "config.txt" in the prpll run directory.
@@ -329,7 +338,7 @@ named "config.txt" in the prpll run directory.
                      low powers, or a value above the maximum power to skip it entirely.
 -iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit; P-1 stage 2 stops after about <N>
                      multiplications.
--mprimeDir <dir>   : P-1 ("Pminus1=" worktodo lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)
+-mprimeDir <dir>   : P-1 (Pminus1= and Pfactor= lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)
                      and stage 1 found no factor, stage 2 and its GCD.  When stage 2 can't run here (too little GPU memory,
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
                      the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
@@ -337,7 +346,7 @@ named "config.txt" in the prpll run directory.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
                      takes as many residue-sized buffers (about 30 to 500) as fit in the memory free on the GPU when it
                      starts less 1 GB (where the free memory can't be queried, 90%% of the GPU's RAM), and with -maxAlloc
-                     in no more than the cap.
+                     in no more than the cap.  The bounds of a Pfactor line are chosen for that memory.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune

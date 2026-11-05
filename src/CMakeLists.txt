@@ -3,6 +3,7 @@ add_executable(prpll
   Trig.cpp
   Primes.cpp
   Pm1.cpp
+  Pm1Bounds.cpp
   Gcd.cpp
   Stage2.cpp
   Memlock.cpp

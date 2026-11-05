@@ -12,6 +12,7 @@
 #include "Pm1.h"
 #include "Gcd.h"
 #include "Stage2.h"
+#include "Pm1Bounds.h"
 #include "KernelCompiler.h"
 #include "Proof.h"
 #include "log.h"
@@ -224,6 +225,48 @@ void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1,
   writeResult(instance, exponent, "P-1", factors.empty() ? "NF" : "F", AID, args, fields);
 }
 
+namespace {
+
+// The bounds of a Pfactor line (pm1::chooseBounds), chosen once:  when stage 1 has a savefile, the bounds in it, so that a resume keeps
+// them (a version 1 savefile has B1 alone:  B2 is chosen for it).  False when P-1 is not worth its cost for this line even with stage 2's
+// largest table (e.g. testsSaved = 0); a line that would pay with a stage 2 this GPU has no room for runs stage 1 alone.
+bool pfactorBounds(Task& task, GpuCommon shared, const Gpu& gpu) {
+  u64 const E = task.exponent;
+  P1State saved{};
+  if (fs::exists(fs::current_path() / (string(P1State::KIND) + '-' + to_string(E)))) {
+    saved = Saver<P1State>{E, 1000, shared.args->nSavefiles}.load();
+  }
+  if (!saved.data.empty() && saved.B1 && saved.B2) {
+    task.B1 = saved.B1;
+    task.B2 = saved.B2;
+    log("P-1 bounds from the stage 1 savefile: B1=%" PRIu64 " B2=%" PRIu64 "\n", task.B1, task.B2);
+    return true;
+  }
+  u64 const maxR = Stage2::tableCapacity(shared, gpu, E);
+  bool const haveB1 = !saved.data.empty() && saved.B1;
+  pm1::Bounds const b = haveB1 ? pm1::chooseB2(E, task.tfBits, task.testsSaved, saved.B1, maxR)
+                               : pm1::chooseBounds(E, task.tfBits, task.testsSaved, maxR);
+  u64 const maxTable = pm1::stage2nR(pm1::stage2Ds().back());
+  if (!haveB1 && b.savings <= 0 && (maxR >= maxTable || pm1::chooseBounds(E, task.tfBits, task.testsSaved, maxTable).savings <= 0)) {
+    log("P-1 is not worth its cost for %" PRIu64 " (no factor below 2^%g, %g tests saved): nothing to do\n", E, task.tfBits,
+        task.testsSaved);
+    return false;
+  }
+  task.B1 = b.B1;
+  task.B2 = b.B2;
+  log("P-1 bounds%s (no factor below 2^%g, %g tests saved): B1=%" PRIu64 " B2=%" PRIu64 ", chance of a factor %.2f%% (stage 1 %.2f%%), "
+      "expected cost %.2f%% of a PRP test, saving %.2f%% of one\n", haveB1 ? " (B1 of the stage 1 savefile)" : "", task.tfBits,
+      task.testsSaved, b.B1, b.B2, 100 * b.prob.total(), 100 * b.prob.stage1, 100 * b.cost / double(E), 100 * b.savings / double(E));
+  if (b.B2 == b.B1) {
+    bool const noRoom = maxR < pm1::stage2nR(pm1::stage2Ds().front());
+    log("P-1 without stage 2 (B2 = B1): %s%s\n", noRoom ? "too little GPU memory for stage 2's smallest table" : "a stage 2 does not pay "
+        "for itself here", b.savings <= 0 ? "; stage 1 alone does not pay for itself either, but P-1 with a stage 2 would" : "");
+  }
+  return true;
+}
+
+}
+
 // P-1:  stage 1 on the GPU, then the stage 1 GCD on the GPU.  A factor ends the assignment, and so does B2 <= B1.  Otherwise stage 2
 // (Stage2) and its GCD run on the GPU too, and the result has "b2".  When stage 2 declines (too little GPU memory, an FFT type it
 // does not support), -mprimeDir hands the stage 1 residue to mprime for it (and mprime writes the result); without -mprimeDir the
@@ -232,6 +275,10 @@ void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1,
 void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<Gpu> gpu) {
   const Args& args = *shared.args;
   fs::path const& dir = args.mprimeDir;
+  if (pfactor && !B1 && !pfactorBounds(*this, shared, *gpu)) {
+    Worktodo::deleteTask(*this, instance);
+    return;
+  }
   Gcd gcd{shared};
   auto [x, nErrors, nJacobi] = gpu->pm1Stage1(*this, gcd);
   gpu.reset();    // the stage 1 buffers are not needed any more

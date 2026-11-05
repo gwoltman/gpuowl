@@ -3853,7 +3853,7 @@ PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd) {
     if (ok) {
       nSeqErrors = 0;
       savesChecked = true;
-      saver.save({.exponent=E, .B1=B1, .k=k, .nBits=nBits, .data=data, .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
+      saver.save({.exponent=E, .B1=B1, .B2=task.B2, .k=k, .nBits=nBits, .data=data, .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
       doBigLog(k, res, true, secsPerIt, nBits, nErrors);
       iterationTimer.reset(k);
 

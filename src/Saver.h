@@ -50,6 +50,7 @@ struct P1State {
 
   u64 exponent;
   u64 B1;
+  u64 B2;       // the B2 of the assignment (0 in a savefile of version 1):  a Pfactor line's chosen bounds are kept with the residue
   u64 k;
   u64 nBits;
   vector<u32> data;

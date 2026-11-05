@@ -30,6 +30,7 @@ static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%
 // Push version number to sync it with PRP.
 static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
 static constexpr const char *P1_v1 = "OWL P1 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
+static constexpr const char *P1_v2 = "OWL P1 2 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
 static constexpr const char *P2_v1 = "OWL P2 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
 
@@ -205,15 +206,17 @@ void writeState(const File& fo, const LLState& state) {
 }
 
 P1State readState(const P1State& expected, File fi) {
-  u64 exponent{}, B1{}, k{}, nBits{};
+  u64 exponent{}, B1{}, B2{}, k{}, nBits{};
   u32 nErrors{};
   double elapsed{};
 
   string const header = fi.readLine();
 
-  if (sscanf(header.c_str(), P1_v1, &exponent, &B1, &k, &nBits, &nErrors, &elapsed) == 6) {
+  if (sscanf(header.c_str(), P1_v2, &exponent, &B1, &B2, &k, &nBits, &nErrors, &elapsed) == 7
+      || sscanf(header.c_str(), P1_v1, &exponent, &B1, &k, &nBits, &nErrors, &elapsed) == 6) {
     checkExponent(exponent, expected.exponent, header);
-    return {.exponent=exponent, .B1=B1, .k=k, .nBits=nBits, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed};
+    return {.exponent=exponent, .B1=B1, .B2=B2, .k=k, .nBits=nBits, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors,
+            .elapsed=elapsed};
   }
 
   log("Loading P-1 from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
@@ -222,7 +225,7 @@ P1State readState(const P1State& expected, File fi) {
 
 void writeState(const File& fo, const P1State& state) {
   assert(state.data.size() == nWords(state.exponent));
-  if (fo.printf(P1_v1, state.exponent, state.B1, state.k, state.nBits, state.nErrors, state.elapsed) <= 0) {
+  if (fo.printf(P1_v2, state.exponent, state.B1, state.B2, state.k, state.nBits, state.nErrors, state.elapsed) <= 0) {
     throw WriteError{fo.name};
   }
   fo.writeChecked(state.data);
@@ -260,7 +263,7 @@ template<> CERTState Saver<CERTState>::initState() {
 }
 
 template<> P1State Saver<P1State>::initState() {
-  return {.exponent=exponent, .B1=0, .k=0, .nBits=0, .data={}, .nErrors=0, .elapsed=0};   // no checkpoint: caller starts from 3
+  return {.exponent=exponent, .B1=0, .B2=0, .k=0, .nBits=0, .data={}, .nErrors=0, .elapsed=0};   // no checkpoint: caller starts from 3
 }
 
 

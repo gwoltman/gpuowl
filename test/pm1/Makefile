@@ -38,9 +38,25 @@ check_tune: check_tune.cpp $(PRPLL_OBJS) $(SRC)/TuneEntry.h
 check_tune_base: check_tune.cpp
 	g++ -std=c++20 -O1 -Wall -Wextra -DOLD_API -I$(BASE)/../src -I$(BASE) -o $@ check_tune.cpp $(filter-out $(BASE)/main.o,$(wildcard $(BASE)/*.o)) -lOpenCL -lpthread
 
+# The Pfactor bounds model (no GPU).  With MPRIME_SRC, mprime's pm1prob.c (an independent copy of the probability model) is the oracle:
+# it is compiled in pm1prob-build/ with a stub for mprime's common.h; nothing of it is part of prpll.
+ifneq ($(MPRIME_SRC),)
+PM1PROB = pm1prob-build/pm1prob.o
+PM1PROB_FLAGS = -DHAVE_PM1PROB
+endif
+
+pm1prob-build/pm1prob.o: $(MPRIME_SRC)/pm1prob.c
+	mkdir -p pm1prob-build
+	cp $(MPRIME_SRC)/pm1prob.c $(MPRIME_SRC)/pm1prob.h pm1prob-build/
+	printf '#include <stdint.h>\n#include <math.h>\n#include <assert.h>\n#define ASSERTG assert\n' > pm1prob-build/common.h
+	gcc -O2 -c -o $@ pm1prob-build/pm1prob.c
+
+check_bounds: check_bounds.cpp $(OBJS) $(SRC)/Pm1Bounds.cpp $(SRC)/Pm1Bounds.h $(SRC)/Pm1.h $(PM1PROB)
+	g++ -std=c++20 -O2 -Wall -Wextra -I$(SRC) $(PM1PROB_FLAGS) -o $@ check_bounds.cpp $(SRC)/Pm1Bounds.cpp $(OBJS) $(PM1PROB)
+
 # AllocTrac's per-device accounting (no GPU)
 check_alloc: check_alloc.cpp $(SRC)/AllocTrac.cpp $(SRC)/AllocTrac.h
 	g++ -std=c++20 -O1 -Wall -Wextra -I$(SRC) -I$(BIN) -o $@ check_alloc.cpp $(SRC)/AllocTrac.cpp $(SRC)/log.cpp $(SRC)/common.cpp $(SRC)/timeutil.cpp $(SRC)/File.cpp $(SRC)/fs.cpp
 
 clean:
-	rm -rf check_pm1 check_gcd check_stage2 check_alloc check_tune check_tune_base stage1_oracle p1flip savefile-test exp-cache-test
+	rm -rf check_bounds pm1prob-build check_pm1 check_gcd check_stage2 check_alloc check_tune check_tune_base stage1_oracle p1flip savefile-test exp-cache-test

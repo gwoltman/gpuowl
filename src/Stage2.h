@@ -11,6 +11,7 @@
 #include "FFTConfig.h"
 
 class Args;
+class Gpu;
 
 struct Stage2Result {
   enum Status {DONE, DECLINED, STOPPED};
@@ -51,6 +52,11 @@ public:
     u32 inPlace{}, tailKernels{}, multiQ{}, l2Striping{};
   };
   static MulTime timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, const vector<KeyVal>& uses, int quick = 7);
+
+  // The number of table buffers a stage 2 of E would have room for, estimated before stage 1 (for the bounds of a Pfactor line):  run()'s
+  // memory budget now, with g (the stage 1 Gpu) holding about what stage 2's own Gpu will hold, in buffers of the size of chooseFFTs'
+  // first FFT with g's layout.  0 when stage 2 can't run at all.
+  static u64 tableCapacity(GpuCommon shared, const Gpu& g, u64 E);
 
   // Whether p2-<E>/ holds a savefile of the stage 2 for these E, B1, B2 and x (it was started, so the stage 1 GCD found no factor)
   static bool hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x);

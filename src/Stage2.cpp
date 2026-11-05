@@ -147,6 +147,11 @@ public:
     return size_t(TOTAL_DATA_SIZE(g.fft, g.WIDTH, g.fft.shape.middle, g.SMALL_H, g.in_place, g.pad_size));
   }
 
+  // The same for another FFT with g's layout settings (INPLACE, PAD)
+  static size_t bufDoubles(const Gpu& g, const FFTConfig& fft) {
+    return size_t(TOTAL_DATA_SIZE(fft, fft.shape.width, fft.shape.middle, fft.shape.height, g.in_place, g.pad_size));
+  }
+
   Stage2Run(Gpu& g, const pm1::Stage2Plan& plan, const vector<u32>& x) :
     g{g}, plan{plan}, x{x}, nR{u32(plan.rs.size())},
     bufSize{bufDoubles(g)},
@@ -577,26 +582,21 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
   throw userFft ? "P-1 stage 2: the -fft FFT can't be built" : "P-1 stage 2: no FFT could be built";
 }
 
-Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, const FFTConfig& fft,
-                           const vector<KeyVal>& uses) {
+namespace {
+
+// The stage 2 memory budget
+struct Budget {
+  double bytes;   // can be negative
+  u64 maxR;       // the table buffers it leaves room for (0: none)
+};
+
+// Memory for stage 2 on the device of `shared`:  the table and EXTRA_BUFS more big buffers of bufBytes.  The budget is the memory free
+// on the device now (after the stage 2 Gpu's own buffers) less HEADROOM_BYTES; where the free memory can't be queried (OpenCL without
+// CL_DEVICE_GLOBAL_FREE_MEMORY_AMD, e.g. Nvidia's or PoCL), 90% of the device RAM less what prpll holds and RESERVE_BYTES.  -maxAlloc,
+// when given, caps it (less what prpll holds and RESERVE_BYTES).  Without -maxAlloc there is no cap:  AllocTrac's default limit (for
+// PRP) is raised by the budget, for this device only, while stage 2 runs.
+Budget memoryBudget(GpuCommon shared, size_t bufBytes, const char* what) {
   const Args& args = *shared.args;
-  auto gpuPtr = Gpu::make(E, shared, fft, {}, true, uses);
-  Gpu& g = *gpuPtr;
-  u64 const x64 = res64(x);
-
-  auto saverPtr = std::make_unique<Saver<P2State>>(E, 1000, 4);
-  P2State saved = saverPtr->load();
-  bool resume = !saved.acc.empty() && saved.B1 == B1 && saved.B2 == B2 && saved.x64 == x64;
-  if (!saved.acc.empty() && !resume) {
-    log("Stage 2 savefile is for B1=%" PRIu64 " B2=%" PRIu64 " x=%016" PRIx64 ", not this stage 2: starting over\n", saved.B1, saved.B2, saved.x64);
-  }
-
-  // Memory:  the table and EXTRA_BUFS more big buffers.  The budget is the memory free on the device now (after this Gpu's own buffers)
-  // less HEADROOM_BYTES; where the free memory can't be queried (OpenCL without CL_DEVICE_GLOBAL_FREE_MEMORY_AMD, e.g. Nvidia's or
-  // PoCL), 90% of the device RAM less what prpll holds and RESERVE_BYTES.  -maxAlloc, when given, caps it (less what prpll holds and
-  // RESERVE_BYTES).  Without -maxAlloc there is no cap:  AllocTrac's default limit (for PRP) is raised by the budget, for this device
-  // only, while stage 2 runs.
-  size_t const bufBytes = Stage2Run::bufDoubles(g) * sizeof(double);
   cl_device_id const dev = shared.context->deviceId();
   double const GB = double(1u << 30);
   const void* const devKey = shared.context->get();      // AllocTrac's accounting is per device
@@ -624,8 +624,43 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
     snprintf(capNote, sizeof(capNote), "-maxAlloc cap %.2f GB - held %.2f GB - reserve %.2f GB", args.maxAlloc / GB, held / GB,
              RESERVE_BYTES / GB);
   }
-  log("Stage 2 memory: %s, %s => budget %.2f GB\n", memNote, capNote, std::max(0.0, budget) / GB);
+  log("Stage 2 memory%s: %s, %s => budget %.2f GB\n", what, memNote, capNote, std::max(0.0, budget) / GB);
   u64 const maxR = budget > double(bufBytes) * (EXTRA_BUFS + 1) ? u64(budget / bufBytes) - EXTRA_BUFS : 0;
+  return {budget, maxR};
+}
+
+} // namespace
+
+u64 Stage2::tableCapacity(GpuCommon shared, const Gpu& g, u64 E) {
+  vector<Pm1Fft> ffts;
+  try {
+    ffts = chooseFFTs(*shared.args, E);
+  } catch (const char*) {
+    return 0;
+  }
+  size_t const bufBytes = Stage2Run::bufDoubles(g, ffts.front().fft) * sizeof(double);
+  u64 const maxR = memoryBudget(shared, bufBytes, " (estimate for the bounds)").maxR;
+  log("Stage 2 estimate: %s, buffers of %.0f MB, room for %" PRIu64 " table buffers\n", ffts.front().fft.spec().c_str(),
+      bufBytes / double(1u << 20), maxR);
+  return maxR;
+}
+
+Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, const FFTConfig& fft,
+                           const vector<KeyVal>& uses) {
+  const Args& args = *shared.args;
+  auto gpuPtr = Gpu::make(E, shared, fft, {}, true, uses);
+  Gpu& g = *gpuPtr;
+  u64 const x64 = res64(x);
+
+  auto saverPtr = std::make_unique<Saver<P2State>>(E, 1000, 4);
+  P2State saved = saverPtr->load();
+  bool resume = !saved.acc.empty() && saved.B1 == B1 && saved.B2 == B2 && saved.x64 == x64;
+  if (!saved.acc.empty() && !resume) {
+    log("Stage 2 savefile is for B1=%" PRIu64 " B2=%" PRIu64 " x=%016" PRIx64 ", not this stage 2: starting over\n", saved.B1, saved.B2, saved.x64);
+  }
+
+  size_t const bufBytes = Stage2Run::bufDoubles(g) * sizeof(double);
+  auto const [budget, maxR] = memoryBudget(shared, bufBytes, "");
   if (resume && !D && pm1::stage2nR(saved.D) <= maxR) { D = saved.D; }
   if (resume && D != saved.D) {
     log("Stage 2 savefile is for D=%u, which does not fit now (or another D was asked for): starting over\n", saved.D);
@@ -659,7 +694,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
   // Without a -maxAlloc cap, AllocTrac's default limit must not refuse the planned buffers:  this device's limit is raised by the budget
   // (which the device's free memory bounds) while stage 2 runs
   std::optional<AllocTrac::Allowance> allowance;
-  if (!args.maxAlloc) { allowance.emplace(devKey, size_t(budget) + RESERVE_BYTES); }
+  if (!args.maxAlloc) { allowance.emplace(shared.context->get(), size_t(budget) + RESERVE_BYTES); }
 
   std::unique_ptr<Stage2Run> s2Ptr;
   try {

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # End-to-end tests of P-1 with stage 2 in prpll, from "Pminus1=" worktodo lines:  stage 1, its GCD, stage 2 and its GCD, the result
 # line, the hand-off to mprime when stage 2 declines, resume across the stage 1 / stage 2 boundary and inside stage 2, and the stage 2
-# checks under simulated faults.  GMP (stage1_oracle, check_stage2) is the oracle; prpll links neither.
+# checks under simulated faults; and "Pfactor=" lines (pfactor:  the bounds prpll chooses equal check_bounds' for the stage 2 room it
+# logged, kept across a restart, stage 1 alone without memory, no P-1 when it can't pay).  GMP (stage1_oracle, check_stage2) is the
+# oracle; prpll links neither.
 #
-#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|all]      (default all)
+#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built here with -DPRPLL_PM1_FAULTS if missing).
 
@@ -16,6 +18,7 @@ PRPLL=${PRPLL:-$ROOT/build-release/prpll}
 FAULT_PRPLL=${FAULT_PRPLL:-$ROOT/build-pm1faults/prpll}
 ORACLE=$HERE/stage1_oracle
 CHECK=$HERE/check_stage2
+BOUNDS=$HERE/check_bounds
 WHAT=${1:-all}
 TINY=(-maxAlloc 100M)       # leaves stage 2 less than its 256 MB reserve:  it declines, stage 1 still runs
 
@@ -372,6 +375,114 @@ tunefile_tests() {
   fi
 }
 
+# ---- Pfactor lines:  the bounds chosen by prpll (src/Pm1Bounds.cpp), checked against check_bounds for the same stage 2 room ----
+
+# psetup <dir> <p> <tfBits> <testsSaved>
+psetup() {
+  rm -rf "$1"; mkdir -p "$1/mp"
+  echo "Pfactor=N/A,1,2,$2,-1,$3,$4" > "$1/worktodo-0.txt"
+}
+
+# chosen <dir>:  "B1 B2" of the bounds prpll logged (the last choice)
+chosen() { grep -o 'P-1 bounds.*: B1=[0-9]* B2=[0-9]*' "$1/out" | tail -1 | sed 's/.*B1=\([0-9]*\) B2=\([0-9]*\)/\1 \2/'; }
+
+# modelOK <dir> <p> <tf> <ts>:  the logged bounds are check_bounds' choice for the stage 2 room prpll logged
+modelOK() {
+  local room; room=$(grep -o 'room for [0-9]* table buffers' "$1/out" | tail -1 | grep -o '[0-9]*')
+  [ -n "$room" ] || return 1
+  local want; want=$("$BOUNDS" "$2,$3,$4,$room" | sed 's/.*: B1=\([0-9]*\) B2=\([0-9]*\) .*/\1 \2/')
+  [ "$(chosen "$1")" = "$want" ]
+}
+
+pfactor_tests() {
+  make -s -C "$HERE" check_bounds || { fail "check_bounds does not build"; return; }
+  local d B1 B2 p=400381 f=671839319
+  # A stage 2 factor:  M400381, 671839319 = 2 * 839 * 400381 + 1;  testsSaved 0.3 gives B1 < 839 < B2.  acc = GMP's product
+  d=$WORK/pf-stage2
+  psetup "$d" $p 25 0.3
+  run "$d" "$PRPLL" -maxAlloc 1G
+  read -r B1 B2 <<< "$(chosen "$d")"
+  if [ -n "$B1" ] && [ "$B1" -lt 839 ] && [ "$B2" -gt 839 ] && modelOK "$d" $p 25 0.3 && stage2Oracle "$d" $p "$B1" "$B2" \
+     && [ "$(cat "$d/gcd2")" = $f ] && result "$d" $p "$B1" "$B2" $f; then
+    pass "pf-stage2: Pfactor $p tf 25 saved 0.3 -> B1=$B1 B2=$B2 (= check_bounds), factor $f in stage 2 (= GMP gcd(acc)), result has the bounds"
+  else
+    fail "pf-stage2 (see $d)"
+  fi
+  # A stage 1 factor (testsSaved 1:  B1 > 839):  the result has b1 alone
+  d=$WORK/pf-stage1
+  psetup "$d" $p 25 1
+  run "$d" "$PRPLL" -maxAlloc 1G
+  read -r B1 B2 <<< "$(chosen "$d")"
+  if [ -n "$B1" ] && [ "$B1" -gt 839 ] && [ "$B2" -gt "$B1" ] && modelOK "$d" $p 25 1 && result "$d" $p "$B1" 0 $f \
+     && grep -q "P-1 found a factor in stage 1: $f" "$d/out"; then
+    pass "pf-stage1: Pfactor $p tf 25 saved 1 -> B1=$B1 B2=$B2 (= check_bounds), factor $f in stage 1, result b1=$B1 without b2"
+  else
+    fail "pf-stage1 (see $d)"
+  fi
+  # No memory for stage 2:  B2 = B1, chosen for stage 1 alone, logged
+  d=$WORK/pf-nomem
+  psetup "$d" $p 25 1
+  run "$d" "$PRPLL" "${TINY[@]}"
+  read -r B1 B2 <<< "$(chosen "$d")"
+  if [ -n "$B1" ] && [ "$B1" = "$B2" ] && grep -q "room for 0 table buffers" "$d/out" && modelOK "$d" $p 25 1 \
+     && grep -q "P-1 without stage 2 (B2 = B1): too little GPU memory" "$d/out" && result "$d" $p "$B1" 0 $f; then
+    pass "pf-nomem: -maxAlloc 100M -> B1=B2=$B1 (= check_bounds without stage 2), logged, factor $f in stage 1"
+  else
+    fail "pf-nomem (see $d)"
+  fi
+  # No memory, and stage 1 alone does not pay at M1000099 TF 50 (while P-1 with a stage 2 would):  stage 1 alone runs all the same
+  d=$WORK/pf-nomem-neg
+  psetup "$d" 1000099 50 1
+  run "$d" "$PRPLL" "${TINY[@]}"
+  read -r B1 B2 <<< "$(chosen "$d")"
+  if [ -n "$B1" ] && [ "$B1" = "$B2" ] && modelOK "$d" 1000099 50 1 && grep -q "stage 1 alone does not pay for itself either" "$d/out" \
+     && grep -q '"exponent":1000099, "worktype":"P-1", "b1":'"$B1"', "fft-length"' "$d/results-0.txt" && [ ! -s "$d/worktodo-0.txt" ]; then
+    pass "pf-nomem-neg: no stage 2 room, stage 1 alone not paying -> still run with B1=B2=$B1 (= check_bounds), result b1 only"
+  else
+    fail "pf-nomem-neg (see $d)"
+  fi
+  # Resume:  stopped in stage 1, restarted with less memory (which alone would choose B2 = B1):  the savefile's bounds are kept
+  d=$WORK/pf-resume
+  psetup "$d" 400033 25 0.3
+  run "$d" "$PRPLL" -maxAlloc 1G -iters 300
+  local first; first=$(chosen "$d")
+  run "$d" "$PRPLL" "${TINY[@]}"
+  read -r B1 B2 <<< "$first"
+  if [ -n "$B1" ] && [ "$B2" -gt "$B1" ] && grep -q "P-1 bounds from the stage 1 savefile: B1=$B1 B2=$B2" "$d/out" \
+     && head -1 "$(lastSave "$d" p1 400033)" | grep -q "^OWL P1 2 N=1\*2^400033-1 B1=$B1 B2=$B2 " \
+     && [ "$(grep -c 'P-1 bounds (no factor' "$d/out")" = 1 ]; then
+    # The second run's stage 2 declines (-maxAlloc 100M):  NF for B1 alone, as a Pminus1 line with these bounds would give
+    if result "$d" 400033 "$B1" 0 NF && grep -q "P-1 stage 2 (B2=$B2) is not run" "$d/out"; then
+      pass "pf-resume: bounds B1=$B1 B2=$B2 kept from the p1 savefile (version 2 header) across a restart with -maxAlloc 100M"
+    else
+      fail "pf-resume: result (see $d)"
+    fi
+  else
+    fail "pf-resume (see $d)"
+  fi
+  # Not worth it even with stage 2's largest table (no test saved):  nothing runs, no result, the line is deleted
+  d=$WORK/pf-zero
+  psetup "$d" $p 25 0
+  run "$d" "$PRPLL" -maxAlloc 1G
+  if grep -q "P-1 is not worth its cost for $p" "$d/out" && [ ! -e "$d/results-0.txt" ] && [ ! -s "$d/worktodo-0.txt" ] \
+     && ! grep -q "P-1 stage 1 B1" "$d/out"; then
+    pass "pf-zero: testsSaved 0 -> no P-1, line deleted, no result"
+  else
+    fail "pf-zero (see $d)"
+  fi
+  # Bad lines are not run:  TF depth >= 100, a negative testsSaved
+  for bad in "Pfactor=N/A,1,2,$p,-1,150,1" "Pfactor=N/A,1,2,$p,-1,70,-1"; do
+    d=$WORK/pf-bad
+    rm -rf "$d"; mkdir -p "$d"; echo "$bad" > "$d/worktodo-0.txt"
+    run "$d" "$PRPLL" -maxAlloc 1G
+    if [ ! -e "$d/results-0.txt" ] && grep -q "No work to do" "$d/out" && [ -s "$d/worktodo-0.txt" ]; then
+      pass "pf-bad: '$bad' not run"
+    else
+      fail "pf-bad: '$bad' (see $d)"
+    fi
+  done
+}
+
 case $WHAT in
   factor) factor_tests ;;
   decline) decline_tests ;;
@@ -379,7 +490,8 @@ case $WHAT in
   fault) fault_tests ;;
   fft) fft_tests ;;
   tunefile) tunefile_tests ;;
-  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests ;;
+  pfactor) pfactor_tests ;;
+  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests; pfactor_tests ;;
 esac
 
 echo "$fails failure(s)"
