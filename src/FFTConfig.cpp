@@ -38,6 +38,17 @@ u32 parseInt(const string& s) {
   return u32(strtod(s.c_str(), nullptr) * multiple);
 }
 
+// The middles above 16 are offered (by allShapes(): -tune, a size range in -fft, the -h list) only in the shapes whose BPW has been
+// checked.  For the pure NTTs (FFT3161, FFT61) the interpolated BPW (see the FFTShape constructor) is within 0.05 of, or below, a
+// closed-form model of the CRT wrap at every width and height; they are offered up to 1K:M:1K, the sizes that have been run.
+// The other types have roundoff that interpolation can only guess at, so only their shapes with a measured fftbpw.h row are
+// offered (FP64 rows are stored as W >= H and cover the mirrored shape too).
+bool checkedAbove16(enum FFT_TYPES t, u32 w, u32 m, u32 h) {
+  if (t == FFT3161 || t == FFT61) { return m == 21 && w <= 1024 && h <= 1024; }
+  auto const spec = [&](u32 a, u32 b) { return (t ? to_string(t) + ':' : "") + numberK(a) + ':' + numberK(m) + ':' + numberK(b); };
+  return BPW.contains(spec(w, h)) || (t == FFT64 && h > w && BPW.contains(spec(h, w)));
+}
+
 } // namespace
 
 // Accepts:
@@ -92,9 +103,11 @@ vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
   for (enum FFT_TYPES const type : {FFT64, FFT6431, FFT3161, FFT3261, FFT61, FFT323161}) {
     for (u32 const width : {256, 512, 1024, 2048, 4096}) {
       for (u32 const height : {256, 512, 1024, 2048}) {
-        for (u32 const middle : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
+        for (u32 middle = 1; middle <= 33; ++middle) {
+          if (!validMiddle(middle)) continue;
           if (middle == 1 && (width != 256 || height != 256)) continue;  // MIDDLE=1 only for the 128K FFT; larger sizes are better with MIDDLE > 1
           if (type != FFT64 && type != FFT32 && (middle & (middle - 1)) && !(pfaMiddle(middle, type) && pfaType(type))) continue;  // Reject unsupported middles in NTTs and hybrid FFTs
+          if (middle > 16 && !checkedAbove16(type, width, middle, height)) continue;
           u32 const sz = width * height * middle * 2;
           if (sizeFrom <= sz && sz <= sizeTo) {
             configs.emplace_back(type, width, middle, height);
@@ -141,8 +154,8 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
 
   // Same limits FFTConfig applies to a full spec.  Shapes can also arrive here from -tune / -info / size ranges, and a
   // too-small one (e.g. 128:2:128) drives middle to 0 in the fallback below and then loops forever.
-  if ((w != 256 && w != 512 && w != 1024 && w != 2048 && w != 4096) || m < 1 || m > 16 || (h != 256 && h != 512 && h != 1024 && h != 2048)) {
-    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 1..16, height 256/512/1024/2048)\n", w, m, h);
+  if ((w != 256 && w != 512 && w != 1024 && w != 2048 && w != 4096) || !validMiddle(m) || (h != 256 && h != 512 && h != 1024 && h != 2048)) {
+    log("Invalid FFT shape %u:%u:%u (width 256/512/1024/2048/4096, middle 1..16 or 21, height 256/512/1024/2048)\n", w, m, h);
     throw "Invalid FFT shape";
   }
 
@@ -162,15 +175,29 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
     }
   } else if (isPfa()) {
     // An NTT has no roundoff, so its BPW depends only on its size.  Interpolate in log2(size) between the W:M0:H and
-    // W:2*M0:H shapes of the same type, M0 the largest power of two below MIDDLE.
+    // W:2*M0:H shapes of the same type, M0 the largest power of two below MIDDLE.  Above MIDDLE=16 the twice-as-large shape is
+    // 2W:M0:H (W:M0:2H at the largest width), the same word count.
     u32 m0 = 1;
     while (2 * m0 < m) m0 *= 2;
-    FFTShape const lo{t, w, m0, h}, hi{t, w, 2 * m0, h};
+    FFTShape const lo{t, w, m0, h};
+    FFTShape const hi = 2 * m0 <= 16 ? FFTShape{t, w, 2 * m0, h} : w < 4096 ? FFTShape{t, 2 * w, m0, h} : FFTShape{t, w, m0, 2 * h};
     float const f = float(log2(double(m) / m0));
     for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] = lo.bpw[j] + f * (hi.bpw[j] - lo.bpw[j]);
   } else {
     if (height > width) {
       bpw = FFTShape{t, h, m, w}.bpw;
+    } else if (m > 16) {
+      // A shape above MIDDLE=16 without a row of its own.  Interpolate in log2(size) between W:16:H and the twice-as-large 2W:16:H
+      // (W:16:2H at the largest width), as the PFA rule above, less the margin the fallback below takes.  At 512:21:512 this gives
+      // 17.78..18.08, 0.08..0.16 below what -ztune measured for its row.
+      FFTShape const lo{t, w, 16, h}, hi = w < 4096 ? FFTShape{t, 2 * w, 16, h} : FFTShape{t, w, 16, 2 * h};
+      float const f = float(log2(m / 16.0));
+      for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] = lo.bpw[j] + f * (hi.bpw[j] - lo.bpw[j]) - 0.05f;
+      if (this->isFavoredShape()) {
+        printf("BPW info for %s not found, defaults={", s.c_str());
+        for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) printf("%s%.2f", j ? ", " : "", (double) bpw[j]);
+        printf("}\n");
+      }
     } else {
       // Manipulate the shape into something that was likely pre-computed
       u32 const orig_w = w;
@@ -277,8 +304,8 @@ FFTConfig::FFTConfig(const string& spec) {
       log("Width must be 256, 512, 1024, 2048, or 4096.\n");
       throw "Invalid FFT spec";
     }
-    if (m < 1 || m > 16) {
-      log("Middle must be between 1 and 16.\n");
+    if (!FFTShape::validMiddle(m)) {
+      log("Middle must be between 1 and 16, or 21.\n");
       throw "Invalid FFT spec";
     }
     if (h != 256 && h != 512 && h != 1024 && h != 2048) {
@@ -286,7 +313,7 @@ FFTConfig::FFTConfig(const string& spec) {
       throw "Invalid FFT spec";
     }
     if (fft_type != FFT64 && fft_type != FFT32 && (m & (m - 1)) && !(FFTShape::pfaMiddle(m, fft_type) && FFTShape::pfaType(fft_type))) {
-      log("NTT and hybrid FFT middle must be 1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 14 or 16 (also 5, 10 and 15 for the types with GF61 but no GF31).\n");
+      log("NTT and hybrid FFT middle must be 1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 14, 16 or 21 (also 5, 10 and 15 for the types with GF61 but no GF31).\n");
       throw "Invalid FFT spec";
     }
   }
@@ -428,7 +455,11 @@ vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spe
   // can't build the FP32 code, so the smallest fitting FFT of up to six types is returned in this order:  Task::execute moves on to the next when
   // a GPU can't be built for one.
   auto const rank = [](const FFTShape& s) { return s.fft_type == FFT64 ? 0 : s.fft_type == FFT3161 ? 1 : 2; };
+  // The middles above 16 are left out here.  Whether one is faster than the next larger power-of-two-times-small-radix FFT depends
+  // on the GPU (on a Radeon VII the MIDDLE=21 FP64 middle kernels run at a lower occupancy than MIDDLE=11's), so they are chosen
+  // only when -tune has timed them into tune.txt, or when asked for with -fft.
   vector<FFTShape> shapes = FFTShape::allShapes();
+  std::erase_if(shapes, [](const FFTShape& s) { return s.middle > 16; });
   std::ranges::stable_sort(shapes, [&](const FFTShape& a, const FFTShape& b) {
     if (a.size() != b.size()) { return a.size() < b.size(); }
     return rank(a) < rank(b);
