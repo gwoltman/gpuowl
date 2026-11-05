@@ -215,6 +215,7 @@ int main(int argc, char **argv) {
 #ifdef PRPLL_PM1_FAULTS
     // TEST ONLY, fault build (test/pm1/run_stage2.sh):  P-1 stage 2 on a residue from a file
     if (const char* spec = getenv("PRPLL_STAGE2_TEST")) { stage2Test(shared, spec); return 0; }
+    if (const char* spec = getenv("PRPLL_TIMEMUL_TEST")) { timeMulTest(shared, spec); return 0; }
 #endif
 
     if (args.doTune || args.doZtune || args.carryTune) {

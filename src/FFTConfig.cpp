@@ -451,7 +451,8 @@ vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spe
 }
 
 
-vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, double margin) {
+vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, bool stage2) {
+  double const margin = stage2 ? PM1_TUNE.margin : 0;
   auto const tooLarge = [&](const FFTConfig& fft) { return E / float(fft.size()) < fft.minBpw(); };
   // Stage 1 (margin 0) is Gerbicz-checked and may use -od as PRP does; stage 2 has no such check and keeps its margin
   auto const limit = [&](const FFTConfig& fft) { return margin > 0 ? double(fft.maxExp()) : fft.maxExp() * args.fftOverdrive; };
@@ -463,7 +464,9 @@ vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, double margin) {
     string why;
     for (const FFTConfig& fft : specFfts(args.fftSpec)) {
       if (fits(fft)) {
-        ret.push_back({fft, TuneEntry::usesFor(args, fft)});
+        vector<KeyVal> uses;
+        if (!stage2 || !TuneEntry::hasLineFor(args, fft, PM1_TUNE, &uses)) { uses = TuneEntry::usesFor(args, fft); }
+        ret.push_back({fft, uses, Pm1Fft::SPEC});
       } else {
         char buf[200];
         if (tooLarge(fft)) {
@@ -477,7 +480,7 @@ vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, double margin) {
       }
     }
     if (ret.empty()) {
-      log("P-1 %s of %" PRIu64 " can't run on the -fft given, and P-1 does not replace it: %s\n", margin > 0 ? "stage 2" : "stage 1", E,
+      log("P-1 %s of %" PRIu64 " can't run on the -fft given, and P-1 does not replace it: %s\n", stage2 ? "stage 2" : "stage 1", E,
           why.c_str());
       throw "P-1: the -fft given can't handle the exponent";
     }
@@ -485,17 +488,29 @@ vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, double margin) {
   }
 
   bool const fp64 = hasFP64(getDevice(args.device));
+  auto const has = [&](const FFTConfig& fft) { return std::ranges::any_of(ret, [&](const Pm1Fft& r) { return r.fft.spec() == fft.spec(); }); };
+  if (stage2) {
+    for (const TuneEntry& e : TuneEntry::readTuneFile(args, PM1_TUNE)) {
+      if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) {
+        ret.push_back({e.fft, e.uses, Pm1Fft::PM1_TUNED});
+        break;
+      }
+    }
+  }
   for (const TuneEntry& e : TuneEntry::readTuneFile(args)) {
     if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) {
-      ret.push_back({e.fft, e.uses});
+      if (!has(e.fft)) {
+        vector<KeyVal> uses = e.uses;
+        if (stage2) { TuneEntry::hasLineFor(args, e.fft, PM1_TUNE, &uses); }    // stage 2's own settings for this FFT, if it has any
+        ret.push_back({e.fft, uses, Pm1Fft::TUNED});
+      }
       break;
     }
   }
 
-  // Untuned:  the smallest fitting shape of each type, in a fixed order of types:  the NTT types without FP64 first, in the order of
-  // their stage 2 speed on gfx1100 at p = 30M with the fused tail (M61 1.25M 165 us per multiplication, FP32+M31 2M 174, FP32+M61 1M
-  // 188, M31+M61 1M 191, FP32+M31+M61 1M 257), then the FP64 types, which are only fallbacks.  Measured at one size on one GPU:  a
-  // tune.txt line (the tuner) overrides it.
+  // Untuned:  the smallest fitting shape of each type, in a fixed order of types:  the NTT types without FP64 first (in the order of
+  // their stage 2 speed on gfx1100 at p = 30M with the fused tail), then the FP64 types.  The speed order of the types changes with the
+  // size and the GPU, so stage 2 times these candidates before it chooses (Stage2::run).
   vector<FFTShape> shapes = FFTShape::allShapes(0, u32(-1), true);
   std::ranges::stable_sort(shapes, [](const FFTShape& a, const FFTShape& b) { return a.size() < b.size(); });
   for (FFT_TYPES const type : {FFT61, FFT3231, FFT3261, FFT3161, FFT323161, FFT64, FFT6431}) {
@@ -506,12 +521,12 @@ vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, double margin) {
         if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft) && (fp64 || !fft.FFT_FP64)) { found = fft; break; }
       }
       if (!found) { continue; }
-      if (std::ranges::none_of(ret, [&](const Pm1Fft& r) { return r.fft.spec() == found->spec(); })) { ret.push_back({*found, {}}); }
+      if (!has(*found)) { ret.push_back({*found, {}, Pm1Fft::UNTUNED}); }
       break;
     }
   }
   if (ret.empty()) {
-    log("No FFT can run P-1 %s of %" PRIu64 "\n", margin > 0 ? "stage 2" : "stage 1", E);
+    log("No FFT can run P-1 %s of %" PRIu64 "\n", stage2 ? "stage 2" : "stage 1", E);
     throw "No FFT";
   }
   return ret;

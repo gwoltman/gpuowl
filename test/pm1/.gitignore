@@ -8,3 +8,5 @@ p1flip
 work-stage2/
 check_stage2
 check_alloc
+check_tune
+check_tune_base

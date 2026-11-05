@@ -11,8 +11,10 @@
 #include "File.h"
 #include "TuneEntry.h"
 #include "Signal.h"
+#include "Stage2.h"
 
 #include <limits>
+#include <optional>
 #include <map>
 #include <set>
 #include <numeric>
@@ -317,6 +319,8 @@ void Tune::tune() {
   if (!args->fftSpec.empty()) { min_exponent = 0; max_exponent = 1000000000000ull; }
   bool range_given = false;                     // minexp= or maxexp= was given
   u32 warmup_secs = 300;                        // Seconds the GPU runs before the first timing (warmup=)
+  bool pm1 = false;                             // -tune pm1:  P-1 stage 2 (pm1Tune), tune-pm1.txt only
+  bool m61_given = false;
 
   // Parse input args
   for (const string& s : split(args->tune, ',')) {
@@ -334,6 +338,8 @@ void Tune::tune() {
     if (s == "1k256") time_1K_256 = 1;
     if (s == "m61") time_M61 = 1;
     if (s == "pfa") time_PFA = 1;
+    if (s == "pm1") pm1 = true;
+    if (s == "m61" || s.starts_with("m61=")) m61_given = true;
     auto keyVal = split(s, '=');
     if (keyVal.size() == 2) {
       if (keyVal.front() == "quick") quick = stoi(keyVal.back());
@@ -416,6 +422,14 @@ void Tune::tune() {
     time_FFTs = false;
     time_FFT6431 = 0;
     time_NTTs = true;
+  }
+
+  // P-1 stage 2 tunes into its own file (M61 is one of stage 2's fastest types, so it is timed unless m61=0)
+  if (pm1) {
+    pm1Tune({.quick = quick, .minExp = min_exponent, .maxExp = max_exponent, .noSettings = !tune_config, .fp64 = time_FFTs,
+             .ntt = time_NTTs, .fp32 = time_FP32, .fp6431 = time_FFT6431, .m61 = m61_given ? time_M61 : 1, .k1k256 = time_1K_256,
+             .pfa = time_PFA});
+    return;
   }
 
   // A group set to 2 asks to time only those FFTs, e.g. fp6431=2 to add FFT6431 to a tune.txt made with -tune fp64.  The config.txt
@@ -1524,6 +1538,229 @@ skip_some_WH_variants = 2;   // should default be 1??
   // The FFTs were timed with the compiler's default registers.  Now find the best register limits for the entries this run
   // added.  The other entries keep theirs (-tune regs retunes them).  -tune fine has already done this for every FFT that earned an entry.
   if (fine_pct == 0) { regTune(quick, args->fftSpec.empty() ? vector<FFTShape>{} : shapes, &addedSpecs); }
+}
+
+namespace {
+
+vector<KeyVal> withUse(vector<KeyVal> uses, const string& key, const string& value) {
+  auto it = std::ranges::find_if(uses, [&](const KeyVal& kv) { return kv.first == key; });
+  if (it != uses.end()) { it->second = value; } else { uses.emplace_back(key, value); }
+  return uses;
+}
+
+// One stage 2 timing for -tune pm1, as timeConfig for PRP:  a candidate that can't run, fails a check (Stage2::timeMul) or computes a
+// different accumulator than `ref` (when given) costs infinity.
+Stage2::MulTime timeStage2(u64 E, GpuCommon shared, const FFTConfig& fft, const vector<KeyVal>& uses, int quick, const u64* ref = nullptr) {
+  if (Signal::stopRequested()) { throw "stop requested"; }
+  double const inf = numeric_limits<double>::infinity();
+  try {
+    Stage2::MulTime m = Stage2::timeMul(shared, E, fft, uses, quick);
+    anyCandidateRan = true;
+    if (ref && std::isfinite(m.us) && m.res64 != *ref) {
+      log("%s computed a wrong stage 2 accumulator %016" PRIx64 " (expected %016" PRIx64 ")\n", fft.spec().c_str(), m.res64, *ref);
+      m.us = inf;
+    }
+    return m;
+  } catch (const std::exception& e) {
+    log("%s failed: %s\n", fft.spec().c_str(), e.what());
+  } catch (const string& mes) {
+    log("%s failed: %s\n", fft.spec().c_str(), mes.c_str());
+  }
+  checkGpuCanRun(E, shared, fft, uses.empty());
+  return {inf};
+}
+
+}
+
+void Tune::pm1Tune(const Pm1Options& opt) {
+  Args* args = shared.args;
+  bool const fp64Device = hasFP64(shared.context->deviceId());
+  bool const specGiven = !args->fftSpec.empty();
+  // The FFT types stage 2 supports (not M31 or FP32 alone), with the FP32+M31 shapes
+  vector<FFTShape> shapes = specGiven ? FFTShape::multiSpec(args->fftSpec) : FFTShape::allShapes(0, u32(-1), true);
+  std::erase_if(shapes, [&](const FFTShape& sh) {
+    return sh.fft_type == FFT31 || sh.fft_type == FFT32 || (!fp64Device && FFTConfig{sh, 202, CARRY_AUTO}.FFT_FP64);
+  });
+  if (shapes.empty()) { log("-tune pm1: no FFT of a type P-1 stage 2 supports in '%s'\n", args->fftSpec.c_str()); throw "No FFT"; }
+  log("-tune pm1: timing P-1 stage 2 multiplications for exponents %" PRIu64 " to %" PRIu64 " into %s\n", opt.minExp, opt.maxExp,
+      PM1_TUNE.name);
+
+  auto const isFp64 = [](const FFTShape& sh) { return sh.fft_type == FFT64 || sh.fft_type == FFT6431; };
+  // FP64 types:  the variant of the shape's tune.txt entry (PRP chose it), else 101.  The others have no variants.
+  vector<TuneEntry> const prpEntries = TuneEntry::readTuneFile(*args);
+  auto const configOf = [&](const FFTShape& sh) {
+    if (!isFp64(sh)) { return FFTConfig{sh, 202, CARRY_AUTO}; }
+    for (const TuneEntry& e : prpEntries) { if (e.fft.shape.spec() == sh.spec()) { return FFTConfig{sh, e.fft.variant, CARRY_AUTO}; } }
+    return FFTConfig{sh, 101, CARRY_AUTO};
+  };
+  // The settings of the tune.txt line of the stage 2 FFT for E (PRP's line may give the carry width)
+  auto const prpUses = [&](const FFTConfig& fft, u64 E) {
+    vector<KeyVal> uses;
+    for (const FFTConfig& c : {Stage2::configFor(fft, E), fft, FFTConfig{fft.shape, fft.variant, CARRY_32}, FFTConfig{fft.shape, fft.variant, CARRY_64}}) {
+      if (TuneEntry::hasLineFor(*args, c, PRP_TUNE, &uses)) { break; }
+    }
+    return uses;
+  };
+
+  // FP64 or NTT:  as tune() decides, by one FFT64 and one M31+M61 timing in the middle of the range (the smallest of each that handles it)
+  bool timeFFTs = opt.fp64 && fp64Device, timeNTTs = opt.ntt || !fp64Device;
+  if (specGiven) {
+    timeFFTs = timeNTTs = true;
+  } else if (!timeFFTs && !timeNTTs) {
+    u64 const E = primes.prevPrime(opt.minExp / 2 + opt.maxExp / 2);
+    vector<FFTShape> sizes = FFTShape::allShapes();
+    std::ranges::stable_sort(sizes, [](const FFTShape& a, const FFTShape& b) { return a.size() < b.size(); });
+    auto const smallest = [&](enum FFT_TYPES type) -> optional<FFTConfig> {
+      for (const FFTShape& sh : sizes) {
+        if (sh.fft_type == type && sh.isFavoredShape() && PM1_TUNE.maxExp(configOf(sh)) >= E) { return configOf(sh); }
+      }
+      return {};
+    };
+    optional<FFTConfig> const fft = smallest(FFT64), ntt = smallest(FFT3161);
+    double const fp64Time = fft ? timeStage2(E, shared, Stage2::configFor(*fft, E), prpUses(*fft, E), opt.quick).us : numeric_limits<double>::infinity();
+    double const nttTime = ntt ? timeStage2(E, shared, Stage2::configFor(*ntt, E), prpUses(*ntt, E), opt.quick).us : numeric_limits<double>::infinity();
+    log("Stage 2 at %" PRIu64 ": FP64 FFT %s %.1f, M31*M61 NTT %s %.1f us per multiplication\n", E, fft ? fft->spec().c_str() : "-", fp64Time,
+        ntt ? ntt->spec().c_str() : "-", nttTime);
+    timeFFTs = fp64Time < 1.20 * nttTime;
+    timeNTTs = nttTime < 1.20 * fp64Time || !std::isfinite(fp64Time);
+    log("%s\n", !timeFFTs ? "FP64 FFTs are significantly slower for stage 2.  Only NTTs will be timed." :
+                !timeNTTs ? "FP64 FFTs are significantly faster for stage 2.  Only FP64 FFTs will be timed." : "Both FP64 FFTs and NTTs will be timed.");
+  }
+
+  bool const onlyGroups = opt.k1k256 == 2 || opt.m61 == 2 || opt.pfa == 2 || opt.fp6431 == 2 || opt.fp32 == 2;
+  vector<TuneEntry> results = TuneEntry::readTuneFile(*args, PM1_TUNE);
+  set<string> oldSpecs;
+  for (const TuneEntry& e : results) { oldSpecs.insert(e.fft.spec()); }
+  set<string> addedSpecs;
+  map<string, u64> refs;               // the accumulator res64 of each timed FFT at its timing exponent, the reference for the settings
+  std::ranges::stable_sort(shapes, [](const FFTShape& a, const FFTShape& b) { return a.maxExp() < b.maxExp(); });
+
+  Timer wall;
+  for (const FFTShape& shape : shapes) {
+    if (isFp64(shape) && !timeFFTs) { continue; }
+    if (!isFp64(shape) && !timeNTTs) { continue; }
+    if (shape.fft_type == FFT6431 && !opt.fp6431) { continue; }
+    bool const hasFp32 = shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231;
+    if (hasFp32 && !opt.fp32) { continue; }
+    if (shapes.size() > 1) {
+      if (!shape.isFavoredShape()) { continue; }
+      FFTConfig const anyVariant{shape, 202, CARRY_AUTO};
+      bool skip = false, inOnlyGroup = false;
+      for (auto [inGroup, setting] : {pair{(shape.width == 256 && shape.height == 1024) || (shape.width == 1024 && shape.height == 256), opt.k1k256},
+                                      pair{shape.fft_type == FFT61, opt.m61},
+                                      pair{shape.fft_type == FFT6431, opt.fp6431},
+                                      pair{hasFp32, opt.fp32},
+                                      pair{shape.isPfa() && (anyVariant.FFT_FP64 || anyVariant.FFT_FP32), opt.pfa}}) {
+        if (!inGroup) continue;
+        if (setting == 0) skip = true;
+        if (setting == 2) inOnlyGroup = true;
+      }
+      if (skip || (onlyGroups && !inOnlyGroup)) { continue; }
+    }
+    FFTConfig const fft = configOf(shape);
+    u64 const maxExp = PM1_TUNE.maxExp(fft);
+    if (!specGiven && (maxExp < opt.minExp || maxExp > (isFp64(shape) ? 1.2 : 1.3) * opt.maxExp)) { continue; }
+    u64 const E = primes.prevPrime(maxExp);
+    if (E / double(fft.size()) < fft.minBpw()) { continue; }
+    vector<KeyVal> const uses = prpUses(fft, E);
+    Stage2::MulTime const m = timeStage2(E, shared, Stage2::configFor(fft, E), uses, opt.quick);
+    TuneEntry const entry{m.us, fft, uses};
+    bool const isUseful = std::isfinite(m.us) && entry.update(results, PM1_TUNE);
+    log("%c %6.1f %12s %9" PRIu64 "  ROE %.3f\n", isUseful ? '*' : ' ', m.us, fft.spec().c_str(), maxExp, m.maxROE);
+    if (std::isfinite(m.us)) { refs[fft.spec()] = m.res64; }
+    if (isUseful) {
+      TuneEntry::writeTuneFile(results, PM1_TUNE);
+      addedSpecs.insert(fft.spec());
+    }
+  }
+
+  // As tune():  of the new entries above maxexp only the cheapest that handles it is kept
+  if (!specGiven) {
+    vector<TuneEntry> kept;
+    bool haveAbove = false;
+    for (const TuneEntry& e : results) {
+      bool const above = PM1_TUNE.maxExp(e.fft) >= opt.maxExp;
+      if (!above || !haveAbove || oldSpecs.contains(e.fft.spec())) { kept.push_back(e); }
+      haveAbove = haveAbove || above;
+    }
+    if (kept.size() < results.size()) {
+      log("Removed %u new %s entries above maxexp=%" PRIu64 ", one entry handles it\n", u32(results.size() - kept.size()), PM1_TUNE.name, opt.maxExp);
+      results = std::move(kept);
+      TuneEntry::writeTuneFile(results, PM1_TUNE);
+    }
+  }
+  log("-tune pm1: FFTs timed in %.0f s\n", wall.reset());
+
+  if (opt.noSettings) { return; }
+
+  // The stage 2 settings of each new entry, one key at a time (the best value of a key is kept for the next):  INPLACE, TAIL_KERNELS
+  // (11 and 13 are not tried:  their extra queues cost dearly on ROCm), for the types with more than one part MULTI_Q, and with INPLACE
+  // and a power-of-two MIDDLE L2_STRIPING 1 and 2.  A value is
+  // written to the line only if it beats the one the entry ran with by 0.3%, in two more timings of each.  Keys given on the command line are not tuned (they would
+  // win over the line anyway).  Not tuned on purpose:  TAIL_TRIGS and TABMUL_CHAIN (they trade accuracy, and stage 2 has no Gerbicz
+  // check), the register limits.
+  bool changed = false;
+  for (TuneEntry& e : results) {
+    if (!addedSpecs.contains(e.fft.spec())) { continue; }
+    u64 const E = primes.prevPrime(PM1_TUNE.maxExp(e.fft));
+    FFTConfig const fft = Stage2::configFor(e.fft, E);
+    u64 const ref = refs.at(e.fft.spec());
+    bool const multiPart = fft.shape.fft_type != FFT64 && fft.shape.fft_type != FFT61;
+    vector<pair<string, vector<u32>>> keys{{"INPLACE", {0, 1, 2}}, {"TAIL_KERNELS", {0, 1, 2, 3}}};
+    if (multiPart) { keys.push_back({"MULTI_Q", {0, 1}}); }
+    // L2_STRIPING needs INPLACE (1 or 2) and a power-of-two MIDDLE; clDefines lowers a value the width or MULTI_Q can't take
+    if (!fft.shape.isPfa()) { keys.push_back({"L2_STRIPING", {0, 1, 2}}); }
+    auto const resolved = [](const string& key, const Stage2::MulTime& m) {
+      return key == "INPLACE" ? m.inPlace : key == "TAIL_KERNELS" ? m.tailKernels : key == "MULTI_Q" ? m.multiQ : m.l2Striping;
+    };
+    for (const auto& [key, values] : keys) {
+      if (args->usedOnCommandLine(key)) { log("%s: %s is given on the command line, not tuned\n", e.fft.spec().c_str(), key.c_str()); continue; }
+      // The value the entry runs with now, and its time in this round
+      Stage2::MulTime const now = timeStage2(E, shared, fft, e.uses, opt.quick, &ref);
+      if (key == "L2_STRIPING" && !now.inPlace) { continue; }
+      u32 const nowValue = resolved(key, now);
+      double bestCost = now.us;
+      u32 bestValue = nowValue;
+      for (u32 const v : values) {
+        if (v == nowValue) { continue; }
+        Stage2::MulTime const m = timeStage2(E, shared, fft, withUse(e.uses, key, to_string(v)), opt.quick, &ref);
+        if (std::isfinite(m.us) && resolved(key, m) != v) {      // the Gpu changed it:  not a candidate of its own
+          log("  %12s %s=%u runs as %u, skipped\n", e.fft.spec().c_str(), key.c_str(), v, resolved(key, m));
+          continue;
+        }
+        log("  %6.1f %12s %s=%u (now %u: %.1f)\n", m.us, e.fft.spec().c_str(), key.c_str(), v, nowValue, now.us);
+        if (m.us < bestCost) { bestCost = m.us; bestValue = v; }
+      }
+      double nowCost = now.us;
+      if (bestValue != nowValue && bestCost < 0.997 * nowCost) {
+        // Confirm the win:  single timings in a row of different settings differ by several % on the XTX (110M:  the same setting gave
+        // 490 and 526 us a minute apart).  Two more timings of each, interleaved (best, now, now, best), and the means decide.
+        vector<KeyVal> const bestUses = withUse(e.uses, key, to_string(bestValue));
+        double b1 = timeStage2(E, shared, fft, bestUses, opt.quick, &ref).us;
+        double n1 = timeStage2(E, shared, fft, e.uses, opt.quick, &ref).us;
+        double n2 = timeStage2(E, shared, fft, e.uses, opt.quick, &ref).us;
+        double b2 = timeStage2(E, shared, fft, bestUses, opt.quick, &ref).us;
+        bestCost = (b1 + b2) / 2;
+        nowCost = (n1 + n2) / 2;
+        log("  %s=%u %.1f %.1f against %u %.1f %.1f\n", key.c_str(), bestValue, b1, b2, nowValue, n1, n2);
+      }
+      if (bestValue != nowValue && bestCost < 0.997 * nowCost) {
+        e.uses = withUse(e.uses, key, to_string(bestValue));
+        e.cost = bestCost;
+        changed = true;
+        log("* %6.1f %12s %s=%u (%.1f%% faster than %u)\n", bestCost, e.fft.spec().c_str(), key.c_str(), bestValue, 100 * (1 - bestCost / nowCost), nowValue);
+      }
+      // (Otherwise the entry keeps its cost:  a noisy slower timing of the same setting must not drop it from the frontier)
+    }
+  }
+  if (changed) {
+    // A cheaper entry may now cover the exponents of others
+    vector<TuneEntry> frontier;
+    for (const TuneEntry& e : results) { e.update(frontier, PM1_TUNE); }
+    results = std::move(frontier);
+  }
+  TuneEntry::writeTuneFile(results, PM1_TUNE);
+  log("-tune pm1: settings timed in %.0f s\n", wall.reset());
 }
 
 void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlyShapes, u64 minExp, u64 maxExp) {

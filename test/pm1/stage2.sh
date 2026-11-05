@@ -3,7 +3,7 @@
 # line, the hand-off to mprime when stage 2 declines, resume across the stage 1 / stage 2 boundary and inside stage 2, and the stage 2
 # checks under simulated faults.  GMP (stage1_oracle, check_stage2) is the oracle; prpll links neither.
 #
-#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|all]      (default all)
+#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built here with -DPRPLL_PM1_FAULTS if missing).
 
@@ -270,13 +270,116 @@ fft_tests() {
   fi
 }
 
+# Stored FFT choices:  stage 2 takes the fitting tune-pm1.txt line (-tune pm1) with its settings, else the tune.txt line (PRP's); stage
+# 1 never reads tune-pm1.txt; the command line beats a line's settings; an -fft takes its tune-pm1.txt line's settings in stage 2 and its
+# tune.txt line's in stage 1
+tunefile_tests() {
+  local d p=400381 B1=500 B2=3000 f=671839319
+  # stage2FFT <dir>:  the FFT stage 2 ran on (the last "FFT:" line);  stage1FFT:  the first
+  stage2FFT() { grep -o 'FFT: [^ ]* [^ ]*' "$1/out" | tail -1 | cut -d' ' -f3; }
+  stage1FFT() { grep -o 'FFT: [^ ]* [^ ]*' "$1/out" | head -1 | cut -d' ' -f3; }
+  check() {     # <dir> <name> <stage 1 FFT> <stage 2 FFT> <source> <grep pattern that must be in out or ''>
+    if [ "$(stage1FFT "$1")" = "$3" ] && [ "$(stage2FFT "$1")" = "$4" ] && grep -q "Stage 2 FFT $4 ($5)" "$1/out" \
+       && { [ -z "$6" ] || grep -q "$6" "$1/out"; } && stage2Oracle "$1" $p $B1 $B2 && result "$1" $p $B1 $B2 $f; then
+      pass "$2: stage 1 on $3, stage 2 on $4 ($5)${6:+, '$6'}, acc = GMP"
+    else
+      fail "$2 (see $1)"
+    fi
+  }
+
+  d=$WORK/tf-pm1
+  setup "$d" $p $B1 $B2
+  echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=3" > "$d/tune-pm1.txt"
+  run "$d" "$PRPLL"
+  check "$d" "tune-pm1.txt line" 3:256:1:256:101 4:256:1:256:202 tune-pm1.txt "4:256:1:256:202: tune.txt sets TAIL_KERNELS=3"
+
+  d=$WORK/tf-prp
+  setup "$d" $p $B1 $B2
+  echo "  100.0 1:256:1:256:202 # 0, TAIL_KERNELS=1" > "$d/tune.txt"
+  run "$d" "$PRPLL"
+  check "$d" "tune.txt line" 1:256:1:256:202 1:256:1:256:202 tune.txt "1:256:1:256:202: tune.txt sets TAIL_KERNELS=1"
+
+  d=$WORK/tf-both
+  setup "$d" $p $B1 $B2
+  echo "  100.0 1:256:1:256:202 # 0, TAIL_KERNELS=1" > "$d/tune.txt"
+  echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=3" > "$d/tune-pm1.txt"
+  run "$d" "$PRPLL"
+  check "$d" "tune-pm1.txt and tune.txt lines" 1:256:1:256:202 4:256:1:256:202 tune-pm1.txt "4:256:1:256:202: tune.txt sets TAIL_KERNELS=3"
+
+  d=$WORK/tf-cmdline
+  setup "$d" $p $B1 $B2
+  echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=3" > "$d/tune-pm1.txt"
+  run "$d" "$PRPLL" -use TAIL_KERNELS=0
+  check "$d" "command line over the tune-pm1.txt line" 3:256:1:256:101 4:256:1:256:202 tune-pm1.txt \
+    "tune.txt TAIL_KERNELS=3 overridden by command line TAIL_KERNELS=0"
+
+  # an -fft's settings:  stage 2 from its tune-pm1.txt line, stage 1 from its tune.txt line; and the same -fft without a tune-pm1.txt
+  # line takes the tune.txt line's in stage 2 too
+  d=$WORK/tf-spec
+  setup "$d" $p $B1 $B2
+  echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=1" > "$d/tune.txt"
+  echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=3" > "$d/tune-pm1.txt"
+  run "$d" "$PRPLL" -fft 4:256:1:256:202
+  if [ "$(grep -c '4:256:1:256:202: tune.txt sets TAIL_KERNELS=1' "$d/out")" = 1 ]; then
+    check "$d" "-fft with both lines" 4:256:1:256:202 4:256:1:256:202 -fft "4:256:1:256:202: tune.txt sets TAIL_KERNELS=3"
+  else
+    fail "-fft with both lines: stage 1 settings (see $d)"
+  fi
+  # tune-pm1.txt as -tune pm1 wrote it on PoCL (7 types at 128K):  for p = 3000017 the 1:256:1:256 line with its TAIL_KERNELS=1; -use on
+  # the command line wins over it.  (Stage 1 has no tune.txt here:  the untuned order.)
+  local p0=$p; p=3000017
+  local tuned='13130.2  256:1:256:101 # 2496528
+17984.5 1:256:1:256:202 # 5248123, TAIL_KERNELS=1
+25403.4 4:256:1:256:202 # 6633554, TAIL_KERNELS=3'
+  for v in plain cmdline; do
+    d=$WORK/tf-tuned-$v
+    setup "$d" $p $B1 $B2
+    echo "$tuned" > "$d/tune-pm1.txt"
+    if [ $v = plain ]; then run "$d" "$PRPLL"; else run "$d" "$PRPLL" -use TAIL_KERNELS=2; fi
+    local want="1:256:1:256:202: tune.txt sets TAIL_KERNELS=1"
+    [ $v = cmdline ] && want="tune.txt TAIL_KERNELS=1 overridden by command line TAIL_KERNELS=2"
+    local s1; s1=$(stage1FFT "$d")
+    if [ "$(stage2FFT "$d")" = 1:256:1:256:202 ] && grep -q "Stage 2 FFT 1:256:1:256:202 (tune-pm1.txt)" "$d/out" && grep -q "$want" "$d/out" \
+       && stage2Oracle "$d" $p $B1 $B2 && result "$d" $p $B1 $B2 "$(sed 's/^1$/NF/' "$d/gcd2")"; then
+      pass "tuner-written tune-pm1.txt ($v): stage 1 on $s1, stage 2 on 1:256:1:256:202 (tune-pm1.txt), '$want', acc = GMP, $(sed 's/^1$/NF/' "$d/gcd2")"
+    else
+      fail "tuner-written tune-pm1.txt ($v) (see $d)"
+    fi
+  done
+  p=$p0
+
+  # A tune.txt line with the narrow carry (PRP tunes both widths) where stage 2's doubled products need the wide one (19.04 bits per word
+  # on 256:2:256, narrow carry limit 20):  stage 1 keeps the line's carry, stage 2 widens it
+  d=$WORK/tf-carry
+  setup "$d" 4990049 11 1000
+  echo "  100.0 256:2:256:101:0 # 0" > "$d/tune.txt"
+  run "$d" "$PRPLL"
+  if [ "$(stage1FFT "$d")" = 256:2:256:101:0 ] && grep -q "Stage 2 FFT 256:2:256:101:1 (tune.txt)" "$d/out" && [ "$(stage2FFT "$d")" = 256:2:256:101:1 ] \
+     && { grep -q "P-1 found a factor in stage 1" "$d/out" || stage2Oracle "$d" 4990049 11 1000; }; then
+    pass "tune.txt 256:2:256:101:0 at 19.04 bpw: stage 1 on :0, stage 2 on 256:2:256:101:1 (wide carry)"
+  else
+    fail "narrow carry widened for stage 2 (see $d)"
+  fi
+
+  d=$WORK/tf-spec2
+  setup "$d" $p $B1 $B2
+  echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=1" > "$d/tune.txt"
+  run "$d" "$PRPLL" -fft 4:256:1:256:202
+  if [ "$(grep -c '4:256:1:256:202: tune.txt sets TAIL_KERNELS=1' "$d/out")" = 2 ]; then
+    check "$d" "-fft with a tune.txt line only" 4:256:1:256:202 4:256:1:256:202 -fft ""
+  else
+    fail "-fft with a tune.txt line only: settings (see $d)"
+  fi
+}
+
 case $WHAT in
   factor) factor_tests ;;
   decline) decline_tests ;;
   resume) resume_tests ;;
   fault) fault_tests ;;
   fft) fft_tests ;;
-  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests ;;
+  tunefile) tunefile_tests ;;
+  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests ;;
 esac
 
 echo "$fails failure(s)"

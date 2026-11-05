@@ -144,9 +144,21 @@ std::optional<std::set<string>> Args::retuneKeys(const string& val) {
 // Checks the comma separated -tune options up front: Tune::tune() silently skips anything it does not recognise,
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
-  for (const string& s : split(options, ',')) {
+  // pm1 (P-1 stage 2, tune-pm1.txt) takes the options that choose FFTs, not those of the PRP-only phases
+  vector<string> const all = split(options, ',');
+  if (std::ranges::find(all, "pm1") != all.end()) {
+    for (const string& s : all) {
+      string const key = s.substr(0, s.find('='));
+      if (key == "regs" || key == "variants" || key == "fine" || key == "tk" || key == "inplace" || key == "nofp32") {
+        log("-tune pm1 can't be combined with %s (valid with pm1: noconfig, fp64, ntt, fp32=0, fp6431, 1k256, m61=0, pfa=0, minexp=<val>, "
+            "maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>)\n", s.c_str());
+        throw "-tune option";
+      }
+    }
+  }
+  for (const string& s : all) {
     if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "fp32" || s == "inplace"
-        || s == "1k256" || s == "m61" || s == "pfa") { continue; }
+        || s == "1k256" || s == "m61" || s == "pfa" || s == "pm1") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
     bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431" || key == "fp32";
@@ -188,7 +200,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, pm1\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -409,6 +421,12 @@ named "config.txt" in the prpll run directory.
                          fine         - (CUDA, AMD) Time FFTs as -tune does, but an FFT within 2%% of earning a tune.txt entry gets its register
                                         limits tuned, and is added if it then earns the entry.  config.txt settings are not tuned.
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
+                         pm1          - Time P-1 stage 2 multiplications instead (all the FFT types stage 2 supports; FP64 types as
+                                        above) and write the fastest FFT for each exponent range, with its stage 2 settings (INPLACE,
+                                        TAIL_KERNELS, MULTI_Q, L2_STRIPING), to tune-pm1.txt.  Does not change tune.txt or config.txt.  Stage 2
+                                        uses tune-pm1.txt first, then tune.txt.  With pm1: noconfig skips the settings, m61 is timed
+                                        by default (m61=0 skips it), and minexp/maxexp/exp, quick, warmup, fp64, ntt, fp32=0, fp6431,
+                                        1k256, pfa=0 and -fft work as above; regs, variants, fine, tk and inplace do not apply.
 -device <N>        : select the GPU at position N in the list of devices
 -device <P>:<D>    : select GPU D of OpenCL platform P (GPUs counted per platform)
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)

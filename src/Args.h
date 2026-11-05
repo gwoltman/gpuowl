@@ -37,6 +37,7 @@ public:
   void parse(const string& line);
   void setDefaults();
   [[nodiscard]] bool uses(const std::string& key) const { return flags.contains(key); }
+  [[nodiscard]] bool usedOnCommandLine(const std::string& key) const { return cmdlineUses.contains(key); }
   [[nodiscard]] int value(const std::string& key, int valNotFound = -1) const;
   void readConfig(const fs::path& path);
   // The REGxxxx register limit keys (see Gpu::numRegisters) and NOREG.  The C++ code reads them, never the .cl code.

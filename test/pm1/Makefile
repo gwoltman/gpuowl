@@ -30,9 +30,17 @@ check_gcd: check_gcd.cpp $(PRPLL_OBJS) $(SRC)/Gcd.h
 check_stage2: check_stage2.cpp $(OBJS) $(SRC)/Pm1.h
 	g++ -std=c++20 -O2 -Wall -Wextra -I$(SRC) -o $@ check_stage2.cpp $(OBJS) -lgmp -pthread
 
+# Tune file round trips (no GPU; links prpll's objects).  check_tune_base:  the same against another build's objects (BASE=<its
+# build-release directory>, PRP part only), to compare tune.txt round trips between the two builds.
+check_tune: check_tune.cpp $(PRPLL_OBJS) $(SRC)/TuneEntry.h
+	g++ -std=c++20 -O1 -Wall -Wextra -I$(SRC) -I$(BIN) -o $@ check_tune.cpp $(PRPLL_OBJS) -lOpenCL -lpthread
+
+check_tune_base: check_tune.cpp
+	g++ -std=c++20 -O1 -Wall -Wextra -DOLD_API -I$(BASE)/../src -I$(BASE) -o $@ check_tune.cpp $(filter-out $(BASE)/main.o,$(wildcard $(BASE)/*.o)) -lOpenCL -lpthread
+
 # AllocTrac's per-device accounting (no GPU)
 check_alloc: check_alloc.cpp $(SRC)/AllocTrac.cpp $(SRC)/AllocTrac.h
 	g++ -std=c++20 -O1 -Wall -Wextra -I$(SRC) -I$(BIN) -o $@ check_alloc.cpp $(SRC)/AllocTrac.cpp $(SRC)/log.cpp $(SRC)/common.cpp $(SRC)/timeutil.cpp $(SRC)/File.cpp $(SRC)/fs.cpp
 
 clean:
-	rm -rf check_pm1 check_gcd check_stage2 check_alloc stage1_oracle p1flip savefile-test exp-cache-test
+	rm -rf check_pm1 check_gcd check_stage2 check_alloc check_tune check_tune_base stage1_oracle p1flip savefile-test exp-cache-test

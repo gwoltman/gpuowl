@@ -15,12 +15,14 @@
 #include "Stage2.h"
 #include "Gpu.h"
 #include "Pm1.h"
+#include "Gcd.h"
 #include "Memlock.h"
 #include "KernelCompiler.h"
 #include "Saver.h"
 #include "Signal.h"
 #include "Args.h"
 #include "AllocTrac.h"
+#include "TuneEntry.h"
 #include "timeutil.h"
 #include "log.h"
 
@@ -31,6 +33,12 @@
 #include <cstring>
 #include <random>
 #include <optional>
+#include <limits>
+#include <map>
+#include <mutex>
+#include <numeric>
+#include <cmath>
+#include <algorithm>
 
 namespace {
 
@@ -44,7 +52,13 @@ constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // kept back when the fre
 constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
 constexpr float MAX_ROE = 0.4f;
 constexpr int MAX_RETRIES = 3;
-constexpr double MARGIN_BPW = 0.5;       // stage 2 runs at least this far below the FFT's bits-per-word limit
+// The untuned FFT candidates are timed (Stage2::timeMul) before a stage 2 with at least this many primes, about B2 = 8M:  about a second
+// per candidate (XTX:  7 candidates in 7-13 s at 30M-110M) against a stage 2 of minutes or more
+constexpr double PROBE_MIN_PRIMES = 500'000;
+constexpr int PROBE_QUICK = 9;            // 600 multiplications per candidate
+
+// The primes in (B1, B2], about
+double primesIn(u64 B1, u64 B2) { return B2 / log(double(B2)) - B1 / log(double(B1)); }
 
 bool isZero(const vector<u32>& w) { return std::ranges::all_of(w, [](u32 x) { return x == 0; }); }
 
@@ -217,17 +231,22 @@ public:
   void setAcc(const vector<u32>& w) { g.writeIn(acc, w); }
   vector<u32> getAcc() { return read(acc); }
 
-  // a *= A_k - B_r for the needed r of block k, as a chain through carryFused.  Returns the number of multiplications.
-  u32 block(u64 k, Buffer<Word>& a) {
-    u32 n = 0;
-    u32 const total = plan.neededIn(k);
-    for (u32 i = 0; i < nR; ++i) {
-      if (!plan.needed(k, i)) { continue; }
+  // The table indices of the needed r of block k
+  vector<u32> neededOf(u64 k) const {
+    vector<u32> ret;
+    for (u32 i = 0; i < nR; ++i) { if (plan.needed(k, i)) { ret.push_back(i); } }
+    return ret;
+  }
+
+  // a *= A_k - B_r for the table entries `idx`, as a chain through carryFused.  Returns the number of multiplications.
+  u32 block(const vector<u32>& idx, Buffer<Word>& a) {
+    u32 const total = idx.size();
+    for (u32 n = 0; n < total; ++n) {
       if (n == 0) { g.fftP(g.buf1, a); }
       g.fftMidIn(g.buf1);
-      g.tailMulDelta(g.buf1, lowA, table[i]);
+      g.tailMulDelta(g.buf1, lowA, table[idx[n]]);
       g.fftMidOut(g.buf1);
-      if (++n == total) {
+      if (n + 1 == total) {
         g.fftW(g.buf3, g.buf1);
         g.carryA(a, g.buf3);
         g.carryB(a);
@@ -235,7 +254,7 @@ public:
         g.doCarry(g.buf1, a);
       }
     }
-    return n;
+    return total;
   }
 
   // A_k, C_k -> A_{k+1}, C_{k+1}
@@ -246,21 +265,79 @@ public:
     toLow(lowC, wC);
   }
 
+  // The kernels of stepK on scratch buffers (A and C unchanged), for timeMul's warm-up
+  void stepKWarm() {
+    wS << wA;
+    mulLow(wS, lowC);
+    toLow(lowS, wS);
+  }
+
   // The block computed a second time from accBefore (in accDup) and compared with acc
   bool dupOK(u64 k) {
-    block(k, accDup);
+    block(neededOf(k), accDup);
     return g.isEqual(acc, accDup);
   }
 
   void saveAccForDup() { accDup << acc; }
+
+  // One accumulator multiplication by A_k - B_i (tailMulDelta) against acc * A_k and acc * B_i (tailMulLow, which buildTable checked
+  // against Gpu::exponentiate) subtracted mod 2^E - 1 here.  Exact:  for timeMul, whose chain has no other reference.
+  bool deltaOK(u32 i) {
+    accDup << acc;
+    mulLow(accDup, lowA);
+    vector<u32> const pa = read(accDup);
+    accDup << acc;
+    mulLow(accDup, table[i]);
+    vector<u32> const pb = read(accDup);
+#ifdef PRPLL_PM1_FAULTS
+    if (faultTable) { table[i] << table[0]; }
+#endif
+    block({i}, acc);
+    return canonical(subMod(pa, pb)) == canonical(read(acc));
+  }
+
+  // (a - b) mod 2^E - 1 on E-bit words
+  vector<u32> subMod(const vector<u32>& a, const vector<u32>& b) const {
+    vector<u32> r(a.size());
+    u64 borrow = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+      u64 const d = u64(a[i]) - b[i] - borrow;
+      r[i] = u32(d);
+      borrow = d >> 63;
+    }
+    if (borrow) {      // r + 2^E - 1 = r - 1 + 2^E:  subtract 1, then drop the bits above E
+      for (size_t i = 0; i < r.size() && r[i]-- == 0; ++i) {}
+    }
+    if (g.E % 32) { r.back() &= (1u << (g.E % 32)) - 1; }
+    return r;
+  }
+
+  // 2^E - 1 (all ones) is 0
+  vector<u32> canonical(vector<u32> w) const {
+    u32 const top = g.E % 32 ? (1u << (g.E % 32)) - 1 : ~0u;
+    bool const allOnes = w.back() == top && std::all_of(w.begin(), w.end() - 1, [](u32 v) { return v == ~0u; });
+    if (allOnes) { std::ranges::fill(w, 0); }
+    return w;
+  }
+
+  // The settings the Gpu resolved (clDefines):  INPLACE, TAIL_KERNELS, MULTI_Q, L2_STRIPING
+  u32 inPlace() const { return g.in_place; }
+  u32 tailKernels() const { return (g.tail_single_wide ? 0 : 2) + (g.tail_single_kernel ? 0 : 1) + (g.zero_q ? 10 : 0); }
+  u32 multiQ() const { return g.multi_q; }
+  u32 l2Striping() const { return g.l2_striping; }
 
 #ifdef PRPLL_PM1_FAULTS
   // TEST ONLY (PRPLL_STAGE2_FAULT, fault build):  simulated faults
   void corruptTable() { table[0] << table[nR - 1]; }
   void corruptA() { wA << wC; }
   void corruptAcc() { acc << wA; }
+  void corruptTableLast() { faultTable = true; }
+  void corruptAccOnce() { acc << wA; }
+  bool faultTable = false;
 #endif
-  u32 blockMain(u64 k) { return block(k, acc); }
+  u32 blockMain(u64 k) { return block(neededOf(k), acc); }
+  u32 blockOn(const vector<u32>& idx) { return block(idx, acc); }
+  u32 blockOnDup(const vector<u32>& idx) { return block(idx, accDup); }
 
   void finish() { g.queue.finish(); }
 
@@ -274,9 +351,18 @@ public:
   }
 };
 
+FFTConfig Stage2::configFor(FFTConfig fft, u64 E, bool keepCarry) {
+  // The products are up to twice as large, and so are the carries:  the narrow carry one bit per word sooner.  A tune file's narrow
+  // carry (PRP's tune.txt times both widths) is PRP's choice:  stage 2 widens it too.
+  bool const twoWidths = fft.shape.fft_type == FFT64 || fft.shape.fft_type == FFT3231 || fft.shape.fft_type == FFT323161;
+  bool const mayWiden = fft.carry == CARRY_AUTO || (fft.carry == CARRY_32 && !keepCarry);
+  if (twoWidths && mayWiden && E / double(fft.size()) > fft.shape.narrowCarryBPW() - 1) { fft.carry = CARRY_64; }
+  return fft;
+}
+
 vector<Pm1Fft> Stage2::chooseFFTs(const Args& args, u64 E) {
   // The FFT has to handle E + 0.5 bits per word of its own size (pm1Ffts)
-  vector<Pm1Fft> ffts = pm1Ffts(args, E, MARGIN_BPW);
+  vector<Pm1Fft> ffts = pm1Ffts(args, E, true);
   // FFT31 and FFT32 alone have no measured bpw limits (fftbpw.h) and failed stage 2's table check at 11.4 bpw:  not supported
   // (pm1Ffts offers them only from an -fft spec)
   std::erase_if(ffts, [](const Pm1Fft& f) { return f.fft.shape.fft_type == FFT31 || f.fft.shape.fft_type == FFT32; });
@@ -285,12 +371,7 @@ vector<Pm1Fft> Stage2::chooseFFTs(const Args& args, u64 E) {
         "alone\n", E, args.fftSpec.c_str());
     throw "P-1: the -fft given can't run stage 2";
   }
-  // The products are up to twice as large, and so are the carries:  the narrow carry one bit per word sooner
-  for (Pm1Fft& f : ffts) {
-    FFTConfig& fft = f.fft;
-    bool const twoWidths = fft.shape.fft_type == FFT64 || fft.shape.fft_type == FFT3231 || fft.shape.fft_type == FFT323161;
-    if (twoWidths && fft.carry == CARRY_AUTO && E / double(fft.size()) > fft.shape.narrowCarryBPW() - 1) { fft.carry = CARRY_64; }
-  }
+  for (Pm1Fft& f : ffts) { f.fft = configFor(f.fft, E, f.source == Pm1Fft::SPEC); }
   return ffts;
 }
 
@@ -298,6 +379,141 @@ bool Stage2::hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x) {
   if (!fs::exists(fs::current_path() / (string(P2State::KIND) + '-' + to_string(E)))) { return false; }
   P2State const s = Saver<P2State>{E, 1000, 4}.load();
   return !s.acc.empty() && s.B1 == B1 && s.B2 == B2 && s.x64 == res64(x);
+}
+
+Stage2::MulTime Stage2::timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, const vector<KeyVal>& uses, int quick) {
+  // As many multiplications as Gpu::timePRP times squarings for this quick, in blocks of BLOCK (stage 2 at D = 2310 has ~120 per k)
+  u32 BLOCK = 120, TABLE = 24;      // 24 entries (D = 210's, the smallest table):  more than a GPU cache holds
+#ifdef PRPLL_PM1_FAULTS
+  // TEST ONLY (fault build):  PRPLL_TIMEMUL_SHAPE=<block>,<table>
+  if (const char* sh = getenv("PRPLL_TIMEMUL_SHAPE"); sh && strchr(sh, ',')) { BLOCK = atoi(sh); TABLE = atoi(strchr(sh, ',') + 1); }
+#endif
+  static constexpr u32 itersByQuick[] = {20000, 12000, 8000, 5000, 3000, 1800, 1200, 900, 600, 400};
+  u32 const nBlocks = std::max(2u, itersByQuick[std::clamp(quick, 1, 10) - 1] / BLOCK);
+
+  auto gpu = Gpu::make(E, shared, fft, {}, false, uses);
+  Gpu& g = *gpu;
+
+  // A fixed pseudo-random x (a stage 1 residue looks random), the r of D = 2310 for the table and a k as in a real stage 2, so that every
+  // FFT computes the same accumulator for E
+  vector<u32> x(nWords(E));
+  std::mt19937 rng{u32(E)};
+  for (u32& w : x) { w = rng(); }
+  if (E % 32) { x.back() &= (1u << (E % 32)) - 1; }
+  pm1::Stage2Plan plan = pm1::planStage2(1000, 2000, TABLE <= 240 ? 2310 : 4620);
+  plan.rs.resize(TABLE);
+  Stage2Run s2{g, plan, x};
+  if (!s2.buildTable(true)) { return {std::numeric_limits<double>::infinity()}; }
+  s2.startK(433);
+  s2.setAcc(x);
+  vector<u32> idx(BLOCK);
+  for (u32 i = 0; i < BLOCK; ++i) { idx[i] = i % TABLE; }
+
+  // Warm-up blocks for WARMUP_SECS, without ROE as the timed blocks (stage 2 samples it in 1 block in 8):  the first builds the kernels
+  // the timed blocks use (a build inside the timed window cost 15-35% of a 600-multiplication timing on the XTX), and a GPU that idled
+  // while the kernels compiled takes a while to reach its clocks.  They run on the spare accumulator and do not step k, so that the
+  // result does not depend on their number.  Then the timed blocks, and one block with ROE.
+  constexpr double WARMUP_SECS = 0.25;
+  s2.roeReset();
+  s2.sampleROE(false);
+  s2.saveAccForDup();
+  for (Timer warm; ; ) {
+    s2.blockOnDup(idx);
+    s2.stepKWarm();
+    s2.finish();
+    if (warm.at() >= WARMUP_SECS) { break; }
+  }
+  Timer timer;
+  for (u32 b = 0; b < nBlocks; ++b) {
+    s2.blockOn(idx);
+    s2.stepK();
+    if (Signal::stopRequested()) { throw "stop requested"; }
+  }
+  s2.finish();
+  double const us = timer.at() * 1e6 / (nBlocks * (BLOCK + 2));      // counted as stage 2 counts them:  the k step as 2
+  s2.sampleROE(true);
+  s2.blockOn(idx);
+#ifdef PRPLL_PM1_FAULTS
+  // TEST ONLY (fault build):  PRPLL_TIMEMUL_FAULT=<delta|acc>[,<spec>] makes the multiplication by A_k - B_r wrong (a table entry
+  // changed between its two checks) or the accumulator wrong (for the reference check), on every FFT or only on <spec>
+  if (const char* f = getenv("PRPLL_TIMEMUL_FAULT"); f && (!strchr(f, ',') || fft.spec() == strchr(f, ',') + 1)) {
+    string const kind = strchr(f, ',') ? string(f, strchr(f, ',')) : string(f);
+    log("timeMul TEST FAULT: '%s' on %s\n", kind.c_str(), fft.spec().c_str());
+    if (kind == "delta") { s2.corruptTableLast(); }
+    if (kind == "acc") { s2.corruptAccOnce(); }
+  }
+#endif
+  bool const deltaOK = s2.deltaOK(TABLE - 1);
+  bool const roeOK = s2.roeCheck();
+  vector<u32> const a = s2.getAcc();
+  if (!roeOK) { log("%s: stage 2 ROE %.3f is too large\n", fft.spec().c_str(), s2.maxROE()); }
+  if (!deltaOK) { log("%s: a stage 2 multiplication by A_k - B_r differs from A_k and B_r multiplied apart\n", fft.spec().c_str()); }
+  bool const ok = roeOK && deltaOK && !isZero(a);
+  return {ok ? us : std::numeric_limits<double>::infinity(), res64(a), s2.maxROE(), s2.inPlace(), s2.tailKernels(), s2.multiQ(),
+          s2.l2Striping()};
+}
+
+void Stage2::rankUntuned(GpuCommon shared, u64 E, vector<Pm1Fft>& ffts) {
+  // The ranking of the same candidates (nearby exponents have the same smallest fitting FFT of each type) is kept for the run
+  static std::mutex mutex;
+  static std::map<string, vector<string>> rankings;
+  string key;
+  for (const Pm1Fft& f : ffts) { key += f.fft.spec() + ' '; }
+  std::unique_lock lock{mutex};
+  auto it = rankings.find(key);
+  if (it == rankings.end()) {
+    struct Timed { double us; u64 res64; };
+    vector<Timed> timed;
+    Timer timer;
+    for (const Pm1Fft& f : ffts) {
+      Timed t{std::numeric_limits<double>::infinity(), 0};
+      try {
+        int quick = PROBE_QUICK;
+#ifdef PRPLL_PM1_FAULTS
+        // TEST ONLY (fault build):  PRPLL_STAGE2_PROBE_QUICK=<1..10> times the candidates longer or shorter
+        if (const char* q = getenv("PRPLL_STAGE2_PROBE_QUICK")) { quick = atoi(q); }
+#endif
+        MulTime const m = timeMul(shared, E, f.fft, f.uses, quick);
+        t = {m.us, m.res64};
+      } catch (const string& mes) {
+        log("Stage 2 FFT %s can't run: %s\n", f.fft.spec().c_str(), mes.c_str());
+      } catch (const std::exception& e) {
+        log("Stage 2 FFT %s can't run: %s\n", f.fft.spec().c_str(), e.what());
+      }
+      timed.push_back(t);
+    }
+    // Every FFT computes the same accumulator:  a candidate whose result differs from that of two or more others is wrong
+    for (Timed& t : timed) {
+      if (!std::isfinite(t.us)) { continue; }
+      auto const same = std::ranges::count_if(timed, [&](const Timed& o) { return std::isfinite(o.us) && o.res64 == t.res64; });
+      auto const other = std::ranges::count_if(timed, [&](const Timed& o) { return std::isfinite(o.us) && o.res64 != t.res64; });
+      if (same == 1 && other >= 2) {
+        log("EE stage 2 FFT %s computed a wrong accumulator (%016" PRIx64 "): not used\n",
+            ffts[&t - timed.data()].fft.spec().c_str(), t.res64);
+        t.us = std::numeric_limits<double>::infinity();
+      }
+    }
+    vector<u32> order(ffts.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::ranges::stable_sort(order, [&](u32 a, u32 b) { return timed[a].us < timed[b].us; });
+    string times;
+    vector<string> specs;
+    for (u32 i : order) {
+      char buf[96];
+      snprintf(buf, sizeof(buf), "%s%s %.0f", times.empty() ? "" : ", ", ffts[i].fft.spec().c_str(), timed[i].us);
+      times += buf;
+      specs.push_back(ffts[i].fft.spec());
+    }
+    log("Stage 2 untuned FFTs for %" PRIu64 ", us per multiplication: %s; timed in %.1f s (-tune pm1 stores a choice per exponent range)\n",
+        E, times.c_str(), timer.at());
+    it = rankings.emplace(key, std::move(specs)).first;
+  }
+  // The same order (an FFT that failed last, still a fallback)
+  vector<Pm1Fft> ranked;
+  for (const string& spec : it->second) {
+    ranked.push_back(*std::ranges::find_if(ffts, [&](const Pm1Fft& f) { return f.fft.spec() == spec; }));
+  }
+  ffts = std::move(ranked);
 }
 
 Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D) {
@@ -323,6 +539,9 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
   // OpenCL device numbering (ICD files, platforms) and two cards never share it
   Memlock memlock{args.masterDir.empty() ? fs::current_path() : args.masterDir, args.uid.empty() ? to_string(args.device) : args.uid};
 
+  // Untuned (no -fft, no tune-pm1.txt or tune.txt line for E):  the order of the types depends on the size and the GPU, so time them
+  if (ffts.size() > 1 && ffts.front().source == Pm1Fft::UNTUNED && primesIn(B1, B2) >= PROBE_MIN_PRIMES) { rankUntuned(shared, E, ffts); }
+
   // Kernels compile on first use, so a build failure can come at any point; the next FFT resumes from the last checkpoint (the
   // savefile holds words, whatever the FFT).  Only the FFTs of an -fft spec are tried when there is one.
 #ifdef PRPLL_PM1_FAULTS
@@ -339,6 +558,7 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
         throw "Can't compile (TEST FAULT) the stage 2 kernels of "s + ffts[i].fft.spec();
       }
 #endif
+      log("Stage 2 FFT %s (%s)\n", ffts[i].fft.spec().c_str(), ffts[i].sourceName());
       return runOn(shared, E, B1, B2, x, D, ffts[i].fft, ffts[i].uses);
     } catch (const string& mes) {
       if (!isBuildFailure(mes)) { throw; }
@@ -558,6 +778,34 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
 }
 
 #ifdef PRPLL_PM1_FAULTS
+// TEST ONLY (fault build):  spec "E,fft[+fft...][,quick[,rounds]]" logs Stage2::timeMul of fft at E
+void timeMulTest(GpuCommon shared, const char* spec) {
+  vector<string> f;
+  for (const char* p = spec; ; ) {
+    const char* comma = strchr(p, ',');
+    f.push_back(comma ? string(p, comma) : string(p));
+    if (!comma) { break; }
+    p = comma + 1;
+  }
+  u64 const E = stoull(f[0]);
+  if (f[1] == "probe") {     // "E,probe[,gcd]":  Stage2::rankUntuned as stage 2 runs it, with a Gcd object alive (as in a P-1 task) if gcd
+    std::optional<Gcd> gcd;
+    if (f.size() > 2 && f[2] == "gcd") { gcd.emplace(shared); gcd->gcdMinus1(makeWords(E, 3), u32(E)); }
+    vector<Pm1Fft> ffts = Stage2::chooseFFTs(*shared.args, E);
+    Stage2::rankUntuned(shared, E, ffts);
+    return;
+  }
+  int const quick = f.size() > 2 ? stoi(f[2]) : 7;
+  int const rounds = f.size() > 3 ? stoi(f[3]) : 1;
+  for (int i = 0; i < rounds; ++i) {
+    for (const string& spec : split(f[1], '+')) {      // several FFTs in one process, in this order
+      FFTConfig const fft = Stage2::configFor(FFTConfig{spec}, E);
+      Stage2::MulTime const m = Stage2::timeMul(shared, E, fft, TuneEntry::usesFor(*shared.args, fft), quick);
+      log("timeMulTest %" PRIu64 " %s quick=%d: %.1f us/mul, res64 %016" PRIx64 ", ROE %.3f\n", E, fft.spec().c_str(), quick, m.us, m.res64, m.maxROE);
+    }
+  }
+}
+
 // TEST ONLY (fault build, test/pm1/run_stage2.sh)
 void stage2Test(GpuCommon shared, const char* spec) {
   vector<string> f;

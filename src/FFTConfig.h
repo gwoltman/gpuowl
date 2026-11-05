@@ -136,17 +136,26 @@ public:
   [[nodiscard]] float maxBpw() const;
 };
 
-// A P-1 FFT choice and its -use settings (from tune.txt or the -fft spec's tune line)
+// A P-1 FFT choice, its -use settings (from the -fft spec's or the chosen line's tune file) and where the choice came from
 struct Pm1Fft {
+  enum Source {SPEC, PM1_TUNED, TUNED, UNTUNED};
   FFTConfig fft;
   vector<KeyVal> uses;
+  Source source = UNTUNED;
+
+  [[nodiscard]] const char* sourceName() const {
+    return source == SPEC ? "-fft" : source == PM1_TUNED ? "tune-pm1.txt" : source == TUNED ? "tune.txt" : "untuned";
+  }
 };
 
-// The FFTs for P-1, in order of preference:  the one place that makes the P-1 choice (stage 1 with margin = 0; stage 2 with its 0.5 bits
-// per word, see Stage2::chooseFFTs).  A type is used only if E plus margin bits per word fit its limit, and it is not too large for E.
+// The FFTs for P-1, in order of preference:  the one place that makes the P-1 choice (stage 1; stage 2 with its 0.5 bits per word of
+// margin, PM1_TUNE, see Stage2::chooseFFTs).  A type is used only if E plus the margin fits its limit, and it is not too large for E.
 // - An -fft spec:  its FFTs that fit, in the spec's order, and nothing else.  If none fits, one log line says why and it throws (the user
-//   may be testing that FFT:  P-1 never substitutes another one).
-// - Otherwise the fastest fitting tune.txt line (the tuner's stored choice, any type), then the untuned candidates:  the smallest fitting
-//   shape of each type with an NTT and no FP64, in the order measured fastest for stage 2 on gfx1100 at p = 30M (61, 3231, 3261, 3161,
-//   323161), then the FP64 types (64, 6431).  M31 and FP32 alone are not offered (stage 2 does not support them).
-vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, double margin = 0);
+//   may be testing that FFT:  P-1 never substitutes another one).  Stage 2 takes the settings of the FFT's tune-pm1.txt line if it has
+//   one, else those of its tune.txt line.
+// - Otherwise, for stage 2, the fastest fitting tune-pm1.txt line (-tune pm1:  timed stage 2 multiplications, any type); then the
+//   fastest fitting tune.txt line (PRP's tuned choice, any type); then the untuned candidates:  the smallest fitting shape of each
+//   type with an NTT and no FP64 (61, 3231, 3261, 3161, 323161), then the FP64 types (64, 6431).  Stage 2 ranks the untuned candidates
+//   by a quick timing of each (Stage2::run); stage 1 takes them in this order.  M31 and FP32 alone are not offered (stage 2 does not
+//   support them).
+vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, bool stage2 = false);
