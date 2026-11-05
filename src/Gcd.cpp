@@ -38,10 +38,10 @@ struct Gcd::Run {
   Buffer<i64> out;
   int cur = 0;
 
-  Run(Queue* q, u32 n) :
-    n{n},
+  Run(Queue* q, u32 nDigits) :
+    n{nDigits},
     limit{},
-    f{{nullptr, q, n}, {nullptr, q, n}}, g{{nullptr, q, n}, {nullptr, q, n}}, mat{{nullptr, q, 16}, {nullptr, q, 16}},
+    f{{nullptr, q, nDigits}, {nullptr, q, nDigits}}, g{{nullptr, q, nDigits}, {nullptr, q, nDigits}}, mat{{nullptr, q, 16}, {nullptr, q, 16}},
     lens{nullptr, q, 2}, flag{nullptr, q, 1}, skewCount{nullptr, q, 1}, out{nullptr, q, 8} {}
 
   Buffer<i64>& F() { return f[cur]; }
