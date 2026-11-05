@@ -49,7 +49,7 @@ public:
 
   void run(cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY, TimeInfo* tInfo);
   void readSync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo);
-  void readAsync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo);
+  void readAsync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo, size_t start = 0);   // start: byte offset in buf
   void copyBuf(cl_mem src, cl_mem dst, size_t size, TimeInfo* tInfo);
   void finish();
 

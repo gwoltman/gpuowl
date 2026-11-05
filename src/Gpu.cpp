@@ -31,6 +31,9 @@
 #include <cmath>
 #include <bit>
 #include <ranges>
+#include <random>
+#include <chrono>
+#include <cstdlib>
 #include <utility>
 
 #ifndef M_PIl
@@ -2285,14 +2288,16 @@ void Gpu::modMul(Buffer<Word>& ioA, Buffer<Word>& inB, enum LEAD_TYPE leadInB, b
   mul(ioA, buf1, buf2, mul3);
 };
 
-void Gpu::writeState(u64 k, const vector<u32>& check, u32 blockSize) {
+void Gpu::writeState(u64 k, const vector<u32>& check, u32 blockSize, bool shifted) {
   assert(blockSize > 0);
   writeIn(bufCheck, check);
 
   bufData << bufCheck;
   bufAux  << bufCheck;
 
-  if (k) {  // Only verify bufData that was read in from a save file
+  // Only verify bufData that was read in from a save file.  A shifted check C = 2^a needs the full C^(2^blockSize - 1) * 3 also
+  // at k == 0: the shortcut C * C * 3 below has the wrong shift.
+  if (k || shifted) {
     u32 n;
     for (n = 1; blockSize % (2 * n) == 0; n *= 2) {
       squareLoop(bufData, 0, n);
@@ -2314,12 +2319,186 @@ void Gpu::writeState(u64 k, const vector<u32>& check, u32 blockSize) {
     squareLoop(bufData, 0, n);
   }
   modMul(bufData, bufAux, true);
+  if (shifted && shiftMul) { modMul(bufData, *bufShiftMul); }
 }
 
 bool Gpu::doCheck(u32 blockSize) {
   squareLoop(bufAux, bufCheck, 0, blockSize, true);
+  if (shiftMul) { modMul(bufAux, *bufShiftMul); }
   modMul(bufCheck, bufData);
   return isEqual(bufCheck, bufAux);
+}
+
+// Arithmetic on shift counts, mod E.  E < 2^63, so the sum of two values below E fits in a u64.
+static u64 mulModE(u64 a, u64 b, u64 E) {
+  u64 r = 0;
+  for (a %= E; b; b >>= 1) {
+    if (b & 1) { r += a; if (r >= E) { r -= E; } }
+    a += a; if (a >= E) { a -= E; }
+  }
+  return r;
+}
+
+static u64 powModE(u64 base, u64 exp, u64 E) {
+  u64 r = 1 % E;
+  for (base %= E; exp; exp >>= 1) {
+    if (exp & 1) { r = mulModE(r, base, E); }
+    base = mulModE(base, base, E);
+  }
+  return r;
+}
+
+// E is prime (Task::execute makes sure), so x^(E-2) is the inverse of x != 0.
+static u64 invModE(u64 x, u64 E) {
+  assert(x % E);
+  u64 const inv = powModE(x, E - 2, E);
+  assert(mulModE(inv, x, E) == 1);
+  return inv;
+}
+
+#ifdef PRPLL_TEST_HOOKS
+// Test builds only (make CPPFLAGS=-DPRPLL_TEST_HOOKS), never in a release binary.
+//   PRPLL_TEST_SHIFT_MUL=1 : take the "E divides 2^blockSize - 1" shift path on any exponent.
+//   PRPLL_TEST_FAULT=<k>   : corrupt the PRP data once per process, after iteration k (which must be a log or check point).
+static u64 testEnv(const char* name) {
+  const char* v = getenv(name);
+  return v ? strtoull(v, nullptr, 10) : 0;
+}
+#endif
+
+// A shift for a new start or reload: -shift <N> gives N at iteration 0; "random" a fresh draw in [1, E-1].
+u64 Gpu::initialShift() {
+  if (args.shiftRandom) { return nextShift(0); }
+  u64 const s = args.shift % E;
+  if (args.shift && !s) { log("-shift %" PRIu64 " is a multiple of the exponent: no shift\n", args.shift); }
+  return s;
+}
+
+// The shift to retry with after an error: so that the retry computes on other data, a new random one or the doubled one (as
+// Mlucas does).  nextShift(0) is a fresh random shift.
+u64 Gpu::nextShift(u64 shift) {
+  if (shift && !args.shiftRandom) { return mulModE(shift, 2, E); }
+  std::mt19937_64 rng{u64(std::random_device{}()) ^ u64(std::chrono::steady_clock::now().time_since_epoch().count())};
+  std::uniform_int_distribution<u64> dist(1, E - 1);
+  u64 s;
+  do { s = dist(rng); } while (s == shift);
+  return s;
+}
+
+u64 Gpu::dataShift(u64 k) const { return mulModE(shift0, powModE(2, k, E), E); }
+
+// The shift of bufCheck at iteration k of the segment started at shiftK0, before it takes in the data of iteration k (k is a multiple
+// of blockSize).  Write L = blockSize.  The check C = 2^a * check takes in data shifted by s at every block: a' = a + s.
+// The Gerbicz identity C^(2^L) * 3 == C * data (doCheck) then needs s = a * (2^L - 1); with that, a' = a * 2^L and the new data
+// shift s * 2^L agrees again.  So a = dataShift(k) / (2^L - 1).
+// That fails when E divides 2^L - 1 (rare, e.g. E = 1074001 with blockSize 1000): no check shift shifts the data.  Then (shiftMul) the
+// check starts unshifted and the multiplier is m = 3 * 2^b, b = dataShift(shiftK0): data = C^(2^L - 1) * m has shift b, and
+// C^(2^L) * m == C * data needs a' = a * 2^L + b, so after j blocks a = b * (1 + 2^L + ... + 2^((j-1)L)) (= j * b when 2^L == 1).
+u64 Gpu::checkShift(u64 k, u32 blockSize) const {
+  assert(k >= shiftK0 && (k - shiftK0) % blockSize == 0);
+  u64 const r = powModE(2, blockSize, E);     // 2^L
+  if (!shiftMul) { return mulModE(dataShift(k), invModE(r + E - 1, E), E); }
+
+  u64 const j = (k - shiftK0) / blockSize;
+  u64 const geom = (r == 1) ? j % E : mulModE(powModE(r, j, E) + E - 1, invModE(r + E - 1, E), E);
+  return mulModE(dataShift(shiftK0), geom, E);
+}
+
+// Start a PRP shift segment at iteration k (a load); shift0 must be set.
+void Gpu::startShiftSegment(u64 k, u32 blockSize) {
+  assert(shift0);
+  shiftK0 = k;
+  shiftMul = powModE(2, blockSize, E) == 1;
+  if (shiftMul) { log("Shift: E divides 2^%u - 1, so the error check multiplies by 3 * 2^shift instead of 3\n", blockSize); }
+#ifdef PRPLL_TEST_HOOKS
+  if (!shiftMul && testEnv("PRPLL_TEST_SHIFT_MUL")) {
+    shiftMul = true;
+    log("TEST: forcing the E | 2^%u - 1 shift path\n", blockSize);
+  }
+#endif
+  if (!shiftMul) {
+    bufShiftMul.reset();
+    return;
+  }
+  u64 const b = dataShift(k);
+  if (!bufShiftMul) { bufShiftMul = make_unique<Buffer<Word>>(timeBufVect, &queue, N * fft.WordSize / sizeof(Word)); }
+  Words w = makeWords(E, 0);
+  w[b / 32] = u32(1) << (b % 32);
+  writeIn(*bufShiftMul, w);
+}
+
+// The unshifted res64 of bufData after iteration k: the 64 bits of the GPU value from bit s = dataShift(k) on.  As in bufResidue, which
+// is this with s = 0, the carry into them is taken from the 32 words below.  Only those words are read, pair by pair, so that a log
+// point costs about what an unshifted one does (a full readData() and compactBits() take tens of ms at the wavefront).
+u64 Gpu::unshiftedDataResidue(u64 k) {
+  u64 const s = dataShift(k);
+  u32 const p0 = u32(s * N / E);                    // the word holding bit s: word p starts at bit ceil(p * E / N)
+  u32 const off = u32(s - (u64(p0) * E + N - 1) / N);
+  assert(off < bitlen(N, E, p0) && off < 64);
+
+  // The words p0 - 32 .. p0 + nAfter - 1 (mod N; the bits wrap at E the same way), enough for off + 64 bits from word p0 on
+  u32 const nBefore = 32;
+  u32 nAfter = 0;
+  for (u32 have = 0; have < off + 64; ++nAfter) { have += bitlen(N, E, (p0 + nAfter) % N); }
+  u32 const nWin = nBefore + nAfter;
+  u32 const w0 = (p0 + N - nBefore) % N;
+
+  // Logical pair kp is at pair WIDTH * y + x of the buffer, as in readResidue (etc.cl)
+  u32 const R = fft.shape.isPfa() ? fft.shape.pfaRadix() : 1, PFA_BH = SMALL_H * (fft.shape.middle / R), PFA_L = WIDTH * PFA_BH;
+  u32 bhInv = 1;
+  while (PFA_BH % R * bhInv % R != 1 % R) { ++bhInv; }
+  auto physPair = [&](u32 kp) {
+    u32 x, y;
+    if (fft.shape.isPfa()) {
+      u32 const q = kp % PFA_L;
+      x = q / PFA_BH;
+      y = q % PFA_BH + PFA_BH * ((kp % R + R - q % PFA_BH % R) * bhInv % R);
+    } else {
+      y = kp % BIG_H;
+      x = kp / BIG_H;
+    }
+    return WIDTH * y + x;
+  };
+
+  // One pair of GPU words is 2 * fft.WordSize bytes, i.e. 1 or 2 elements of the Buffer<Word>
+  u32 const perPair = 2 * fft.WordSize / sizeof(Word);
+  u32 const nPairs = (w0 % 2 + nWin + 1) / 2;
+  vector<Word> raw(nPairs * 2);
+  for (u32 i = 0; i < nPairs; ++i) {
+    u32 const kp = (w0 / 2 + i) % (N / 2);
+    bufData.readAsync(&raw[i * 2], physPair(kp) * perPair, perPair);
+  }
+  queue.finish();
+  auto word = [&](u32 i) -> i64 {          // word w0 + i of the window
+    u32 const j = w0 % 2 + i;
+    if (fft.WordSize == 8) { return raw[j]; }
+    Word const pair = raw[j / 2 * 2];
+    return j % 2 ? (pair >> 32) : i64(i32(pair));
+  };
+
+  i64 carry = 0;
+  for (u32 i = 0; i < nBefore; ++i) { carry = (word(i) + carry) >> bitlen(N, E, (w0 + i) % N); }
+
+  u64 bits[4] = {};
+  u32 nBits = 0;
+  for (u32 i = nBefore; i < nWin; ++i) {
+    u32 const len = bitlen(N, E, (w0 + i) % N);
+    i64 const tmp = word(i) + carry;
+    carry = tmp >> len;
+    u64 const w = u64(tmp - (carry << len));
+    assert(w < (u64(1) << len));
+    for (u32 b = 0; b < len && nBits < 256; ++b, ++nBits) { bits[nBits / 64] |= ((w >> b) & 1) << (nBits % 64); }
+  }
+  assert(nBits >= off + 64);
+  u64 const res = off ? (bits[0] >> off) | (bits[1] << (64 - off)) : bits[0];
+
+#ifdef PRPLL_TEST_HOOKS
+  if (u64 const full = res64(rotateRight(readData(), s, E)); full != res) {
+    log("TEST: windowed residue %016" PRIx64 " != full %016" PRIx64 " at %" PRIu64 " (shift %" PRIu64 ")\n", res, full, k, s);
+    throw "windowed residue mismatch";
+  }
+#endif
+  return res;
 }
 
 void Gpu::logTimeKernels() {
@@ -2889,8 +3068,14 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
       continue;
     }
 
-    writeState(state.k, state.check, state.blockSize);
-    u64 const res = dataResidue();
+    // Savefiles are unshifted: a shifted segment starts here, with the check rotated to its shift
+    if (shift0) {
+      startShiftSegment(state.k, state.blockSize);
+      writeState(state.k, rotateLeft(state.check, checkShift(state.k, state.blockSize), E), state.blockSize, true);
+    } else {
+      writeState(state.k, state.check, state.blockSize);
+    }
+    u64 const res = shift0 ? unshiftedDataResidue(state.k) : dataResidue();
 
     if (res == state.res64) {
       log("OK %9" PRIu64 " on-load: blockSize %d, %016" PRIx64 "\n", state.k, state.blockSize, res);
@@ -3189,7 +3374,12 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   u64 lastFailedRes64 = 0;
   u32 const logStep = args.logStep;
 
+  shift0 = initialShift();
+  bool isRetry = false;     // every reload is after an error
+
  reload:
+  if (isRetry && shift0) { shift0 = nextShift(shift0); }
+  isRetry = true;
   elapsedTimer.reset();
   u32 blockSize{};
   u64 k{};
@@ -3204,6 +3394,9 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   }
 
   if (pm1 && pm1->foundFactor()) { return pm1FactorResult(); }
+  if (shift0) {
+    log("Shift %" PRIu64 " at iteration %" PRIu64 " (shift-count %" PRIu64 ")\n", dataShift(k), k, shift0);
+  }
 
   assert(blockSize > 0 && logStep % blockSize == 0);
 
@@ -3310,6 +3503,16 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     square(bufData, bufData, leadIn, leadOut, false);
     leadIn = leadOut;
 
+#ifdef PRPLL_TEST_HOOKS
+    if (static bool faultDone = false; !faultDone && leadOut == LEAD_NONE && k == testEnv("PRPLL_TEST_FAULT")) {
+      faultDone = true;
+      Words w = readData();
+      w[w.size() / 2] ^= 0x10;
+      writeIn(bufData, w);
+      log("TEST: corrupted the data after iteration %" PRIu64 "\n", k);
+    }
+#endif
+
     if (k == eventK) {
       if (k == persistK) {
         vector<Word> const rawData = readChecked(bufData);
@@ -3318,9 +3521,10 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
           ++nErrors;
           goto reload;
         }
+        u64 const shift = shift0 ? dataShift(k) : 0;
         (*background)([=, this] {
           try {
-            ProofSet::save(E, power, k, compactBits(rawData, E));
+            ProofSet::save(E, power, k, shift ? rotateRight(compactBits(rawData, E), shift, E) : compactBits(rawData, E));
           } catch (const FileError&) {
             proofSaveFailed = true;
           }
@@ -3342,6 +3546,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
 
     if (k == kEnd) {
       Words words = readData();
+      if (shift0) { words = rotateRight(words, dataShift(k), E); }
       isPrime = equals9(words);
       doDiv9(E, words);
       finalRes64 = residue(words);
@@ -3353,11 +3558,12 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
 
     if (!doCheck && !doLog) continue;
 
-    u64 const res = dataResidue();
+    u64 const res = shift0 ? unshiftedDataResidue(k) : dataResidue();
     float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
 
     vector<Word> rawCheck = readChecked(bufCheck);
+    u64 const checkSh = shift0 ? checkShift(k, blockSize) : 0;   // computed here: a reload changes the shift before the save runs
     if (rawCheck.empty()) {
       ++nErrors;
       log("%9" PRIu64 " %016" PRIx64 " read NULL check\n", k, res);
@@ -3372,7 +3578,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     if (!doCheck) {
       (*background)([=, this] {
         if (proofSaveFailed) { return; }
-        getSaver()->saveUnverified({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors,
+        getSaver()->saveUnverified({.exponent=E, .k=k, .blockSize=blockSize, .res64=res,
+                                    .check=checkSh ? rotateRight(compactBits(rawCheck, E), checkSh, E) : compactBits(rawCheck, E), .nErrors=nErrors,
                                     .elapsed=elapsedBefore + elapsedTimer.at()});
       });
 
@@ -3408,7 +3615,9 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
         if (k < kEnd) {
           (*background)([=, this, rawCheck = std::move(rawCheck)] {
             if (proofSaveFailed) { return; }
-            getSaver()->save({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
+            getSaver()->save({.exponent=E, .k=k, .blockSize=blockSize, .res64=res,
+                            .check=checkSh ? rotateRight(compactBits(rawCheck, E), checkSh, E) : compactBits(rawCheck, E), .nErrors=nErrors,
+                            .elapsed=elapsedBefore + elapsedTimer.at()});
           });
         }
 
@@ -3431,7 +3640,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
               log("Proof generation failed; reporting the result without a proof\n");
             }
           }
-          return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048)};
+          return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048),
+                  .shiftCount=shift0};
         }
       } else {
         ++nErrors;
@@ -3463,6 +3673,9 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
 LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
   assert(E == task.exponent);
   wantROE = 0;
+
+  // An LL shift would need the -2 subtracted at a bit that moves every iteration, i.e. kernel changes
+  if (args.shift || args.shiftRandom) { log("-shift is not supported for LL tests: running without a shift\n"); }
 
   Timer elapsedTimer;
 
@@ -3557,15 +3770,19 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
     state = CERTState{.exponent=E, .k=0, .squarings=0, .data={}, .elapsed=0};
   }
 
+  // A shifted CERT computes on B * 2^dataShift(k); the checkpoints hold the unshifted value
+  shift0 = initialShift();
+
   if (!state.data.empty()) {
-    writeIn(bufData, state.data);
+    writeIn(bufData, shift0 ? rotateLeft(state.data, dataShift(state.k), E) : state.data);
     log("CERT loaded @ %" PRIu64 "\n", state.k);
   } else { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
     File fi = File::openReadThrow(fname);
     u32 const nBytes = u32((E - 1) / 8 + 1);
     Words const B = fi.readBytesLE(nBytes);
-    writeIn(bufData, B);
+    writeIn(bufData, shift0 ? rotateLeft(B, dataShift(0), E) : B);
   }
+  if (shift0) { log("CERT shift %" PRIu64 " at iteration %" PRIu64 " (shift-count %" PRIu64 ")\n", dataShift(state.k), state.k, shift0); }
 
   double const elapsedBefore = state.elapsed;
   Timer elapsedTimer;
@@ -3598,6 +3815,7 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
     if (!doLog) continue;
 
     Words data = readData();
+    if (shift0) { data = rotateRight(data, dataShift(k), E); }
     assert(data.size() >= 2);
     u64 const res64 = (u64(data[1]) << 32) | data[0];
 
