@@ -101,6 +101,70 @@ Nat mul(const Nat& a, const Nat& b) {
   return r;
 }
 
+// a mod m for m != 0: Knuth's algorithm D on 32-bit limbs
+Nat modNat(const Nat& a, const Nat& m) {
+  size_t const n = m.size();
+  if (a.size() < n) { return a; }
+  if (n == 1) {
+    u64 r = 0;
+    for (size_t i = a.size(); i-- > 0;) { r = ((r << 32) | a[i]) % m[0]; }
+    Nat out{u32(r)};
+    trim(out);
+    return out;
+  }
+  unsigned s = 0;
+  for (u32 t = m.back(); !(t & 0x80000000u); t <<= 1) { ++s; }
+  Nat vn(n), un(a.size() + 1);
+  for (size_t i = n - 1; i > 0; --i) { vn[i] = (m[i] << s) | (s ? m[i - 1] >> (32 - s) : 0); }
+  vn[0] = m[0] << s;
+  un[a.size()] = s ? a.back() >> (32 - s) : 0;
+  for (size_t i = a.size() - 1; i > 0; --i) { un[i] = (a[i] << s) | (s ? a[i - 1] >> (32 - s) : 0); }
+  un[0] = a[0] << s;
+  for (size_t j = a.size() - n + 1; j-- > 0;) {
+    u64 const num = (u64(un[j + n]) << 32) | un[j + n - 1];
+    u64 qhat = num / vn[n - 1];
+    u64 rhat = num % vn[n - 1];
+    while (qhat >> 32 || qhat * vn[n - 2] > ((rhat << 32) | un[j + n - 2])) {
+      --qhat;
+      rhat += vn[n - 1];
+      if (rhat >> 32) { break; }
+    }
+    i64 borrow = 0;
+    u64 carry = 0;
+    for (size_t i = 0; i < n; ++i) {
+      u64 const prod = qhat * vn[i] + carry;
+      carry = prod >> 32;
+      i64 const t = i64(un[i + j]) - borrow - i64(prod & 0xFFFFFFFFu);
+      un[i + j] = u32(t);
+      borrow = t < 0 ? 1 : 0;
+    }
+    i64 const t = i64(un[j + n]) - borrow - i64(carry);
+    un[j + n] = u32(t);
+    if (t < 0) {
+      u64 c = 0;
+      for (size_t i = 0; i < n; ++i) {
+        u64 const sum = u64(un[i + j]) + vn[i] + c;
+        un[i + j] = u32(sum);
+        c = sum >> 32;
+      }
+      un[j + n] += u32(c);
+    }
+  }
+  Nat r(n);
+  for (size_t i = 0; i < n; ++i) { r[i] = (un[i] >> s) | (s ? u32(u64(un[i + 1]) << (32 - s)) : 0); }
+  trim(r);
+  return r;
+}
+
+Nat doubled(const Nat& a) {
+  Nat r(a.size() + 1);
+  u32 carry = 0;
+  for (size_t i = 0; i < a.size(); ++i) { r[i] = (a[i] << 1) | carry; carry = a[i] >> 31; }
+  r[a.size()] = carry;
+  trim(r);
+  return r;
+}
+
 }  // namespace
 
 vector<u32> stage1Exponent(u64 p, u64 B1) {
@@ -283,6 +347,23 @@ int isProbablePrime(const vector<u32>& w) {
     if (composite) { return 0; }
   }
   return 1;
+}
+
+int dividesMersenne(const vector<u32>& words, u64 p) {
+  constexpr u64 MAX_BITS = u64(1) << 17;
+  Nat g = words;
+  trim(g);
+  if (g.empty()) { return 0; }
+  if (g.size() == 1 && g[0] == 1) { return 1; }
+  if (bitLength(g) > MAX_BITS) { return -1; }
+  int top = 63;
+  while (top >= 0 && !((p >> top) & 1)) { --top; }
+  Nat r{1};                                       // 2^p mod g by left-to-right binary exponentiation: log2(p) squarings
+  for (int b = top; b >= 0; --b) {
+    r = modNat(mul(r, r), g);
+    if ((p >> b) & 1) { r = modNat(doubled(r), g); }
+  }
+  return r.size() == 1 && r[0] == 1 ? 1 : 0;
 }
 
 u64 bitLength(const vector<u32>& words) {

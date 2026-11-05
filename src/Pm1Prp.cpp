@@ -512,12 +512,18 @@ Pm1Prp::Outcome Pm1Prp::verified(u64 k, u64 prp64) {
 }
 
 // The factor of a GCD, logged:  empty when the GCD is 1
-static vector<string> factorOf(const Words& g, int stage) {
+static vector<string> factorOf(const Words& g, int stage, u64 p) {
   if (pm1::isOne(g)) { return {}; }
   string const f = pm1::toDecimal(g);
+  int const divides = pm1::dividesMersenne(g, p);
+  if (divides == 0) {
+    log("P-1 stage %d: the GCD returned %s, which does not divide 2^%" PRIu64 " - 1: a GPU error, not reporting it\n", stage, f.c_str(), p);
+    throw "P-1 GCD result is not a factor";
+  }
   int const prime = pm1::isProbablePrime(g);
-  log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s)\n", stage, f.c_str(), pm1::bitLength(g),
-      prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here");
+  log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s%s)\n", stage, f.c_str(), pm1::bitLength(g),
+      prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here",
+      divides == 1 ? ", divides 2^p-1" : ", not checked against 2^p-1");
   return {f};
 }
 
@@ -550,7 +556,7 @@ Pm1Prp::Outcome Pm1Prp::finish(u64 k, u64 prp64) {
     giveUp("the GCD failed on the GPU ("s + mes + ")", k, prp64);
     return CONTINUE;
   }
-  vector<string> const factors = factorOf(g, 1);
+  vector<string> const factors = factorOf(g, 1, E);
   if (!factors.empty()) {
     report(B1, 0, factors, nErrors);
     save(k, prp64, 2);
@@ -591,7 +597,7 @@ Pm1Prp::Outcome Pm1Prp::afterSave() {
       Words const g = gcd.gcd(r.acc, u32(E));
       log("P-1 stage 2 GCD: %.1f s\n", gcd.lastStats().seconds);
       if (pm1::bitLength(g) >= E) { throw "the accumulator is zero (the GCD is 2^p - 1)"; }
-      factors = factorOf(g, 2);
+      factors = factorOf(g, 2, E);
       if (factors.empty()) { log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2=%" PRIu64 ")\n", B1, B2); }
       doneB2 = B2;
     } else {

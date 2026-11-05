@@ -312,9 +312,16 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
   auto addFactor = [&](const Words& g, int stage) {
     if (pm1::isOne(g)) { return; }
     string const f = pm1::toDecimal(g);
+    // A factor of 2^p - 1 divides it: anything else is a GPU error in the GCD, and is not reported
+    int const divides = pm1::dividesMersenne(g, exponent);
+    if (divides == 0) {
+      log("P-1 stage %d: the GCD returned %s, which does not divide 2^%" PRIu64 " - 1: a GPU error, not reporting it\n", stage, f.c_str(), exponent);
+      throw "P-1 GCD result is not a factor";
+    }
     int const prime = pm1::isProbablePrime(g);
-    log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s)\n", stage, f.c_str(), pm1::bitLength(g),
-        prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here");
+    log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s%s)\n", stage, f.c_str(), pm1::bitLength(g),
+        prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here",
+        divides == 1 ? ", divides 2^p-1" : ", not checked against 2^p-1");
     factors.push_back(f);
   };
 

@@ -86,6 +86,10 @@ bool isOne(const vector<u32>& words);
 // (Miller-Rabin; base 2 tells nothing for a divisor of 2^p - 1, where 2^p = 1), -1 if it has more than 126 bits (not tested).
 int isProbablePrime(const vector<u32>& words);
 
+// Whether the number in words divides 2^p - 1, i.e. 2^p == 1 (mod words): 1 if it does, 0 if not, -1 if it has more than 2^17 bits (not
+// checked).  A factor from the GCD must divide 2^p - 1; this catches a wrong GCD with about log2(p) modular squarings.
+int dividesMersenne(const vector<u32>& words, u64 p);
+
 // Prime95 file name of the P-1 savefile of exponent p (commonc.c, tempFileName):  "m<p>" from 80,000,000 up, an encoded name below.
 string mprimeSaveName(u64 p);
 

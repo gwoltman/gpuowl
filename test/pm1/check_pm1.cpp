@@ -279,6 +279,45 @@ static void testDecimal() {
   gmp_randclear(rs);
 }
 
+// dividesMersenne against GMP (2^p mod g == 1): random odd and even g, true divisors (small factors, products of them, 2^p-1 itself), edge values
+static void testDividesMersenne() {
+  gmp_randstate_t rs;
+  gmp_randinit_default(rs);
+  gmp_randseed_ui(rs, 20261105);
+  auto words = [](const mpz_t z) { vector<u32> w; mpz_t t; mpz_init_set(t, z); while (mpz_sgn(t)) { w.push_back(u32(mpz_get_ui(t))); mpz_fdiv_q_2exp(t, t, 32); } mpz_clear(t); return w; };
+  auto verdict = [&](const mpz_t g, u64 p) { mpz_t r, two; mpz_init(r); mpz_init_set_ui(two, 2); mpz_t e; mpz_init_set_ui(e, p);
+    int ok = mpz_sgn(g) != 0 && (mpz_cmp_ui(g, 1) == 0 || (mpz_powm(r, two, e, g), mpz_cmp_ui(r, 1) == 0)); mpz_clear(r); mpz_clear(two); mpz_clear(e); return ok; };
+  mpz_t g, q, n;
+  mpz_init(g); mpz_init(q); mpz_init(n);
+  int count = 0;
+  for (int iter = 0; iter < 3000; ++iter) {
+    u64 const p = 2 + gmp_urandomm_ui(rs, iter % 3 == 0 ? 100 : 20000);
+    switch (iter % 5) {
+      case 0: mpz_urandomb(g, rs, 1 + gmp_urandomm_ui(rs, 300)); break;                       // random
+      case 1: mpz_urandomb(g, rs, 1 + gmp_urandomm_ui(rs, 40)); mpz_setbit(g, 0); break;     // random odd, small
+      case 2: {                                                                               // a true divisor: a q = 2kp+1 with 2^p == 1 (mod q), or a product of two
+        mpz_set_ui(g, 1);
+        for (int f = 0; f < 1 + iter % 2; ++f) {
+          for (u64 k = 1 + gmp_urandomm_ui(rs, 50), tries = 0; tries < 4000; ++k, ++tries) { mpz_set_ui(q, 2 * k * p + 1); if (verdict(q, p)) { mpz_mul(g, g, q); break; } }
+        }
+        break;
+      }
+      case 3: mpz_set_ui(g, 1); mpz_mul_2exp(g, g, p); mpz_sub_ui(g, g, 1); if (p > 3000) { mpz_set_ui(g, 1); mpz_mul_2exp(g, g, 2000); mpz_sub_ui(g, g, 1); } break;   // 2^p-1 (or 2^2000-1, which does not divide for most p)
+      default: mpz_set_ui(g, iter % 7); break;                                                // 0 .. 6
+    }
+    (void) n;
+    int const want = verdict(g, p);
+    int const got = pm1::dividesMersenne(words(g), p);
+    if (got != want) { gmp_printf("FAIL: dividesMersenne(%Zd, %lu) = %d, GMP %d\n", g, (unsigned long) p, got, want); ++bad; }
+    count += want;
+  }
+  if (count < 100) { printf("FAIL: dividesMersenne test saw only %d divisors\n", count); ++bad; }
+  mpz_t big; mpz_init(big); mpz_setbit(big, 200000);
+  if (pm1::dividesMersenne(words(big), 5) != -1) { printf("FAIL: dividesMersenne must not check numbers above 2^17 bits\n"); ++bad; }
+  mpz_clear(big); mpz_clear(g); mpz_clear(q); mpz_clear(n);
+  gmp_randclear(rs);
+}
+
 int main() {
   testDecimal();
   testChunks();
@@ -287,6 +326,7 @@ int main() {
   testExponent();
   testNames();
   testSaveFile();
+  testDividesMersenne();
   printf(bad ? "%d FAILED\n" : "all P-1 helper checks passed\n", bad);
   return bad != 0;
 }
