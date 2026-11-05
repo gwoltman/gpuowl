@@ -351,9 +351,11 @@ named "config.txt" in the prpll run directory.
                      no factor, stage 2 runs while the PRP test waits.  A factor ends the PRP test.  Only for PRP tests
                      started with it (from iteration 0).  The savefiles are in p1prp-<exponent>.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
-                     takes as many residue-sized buffers (about 30 to 500) as fit in the memory free on the GPU when it
-                     starts less 1 GB (where the free memory can't be queried, 90%% of the GPU's RAM), and with -maxAlloc
-                     in no more than the cap.  The bounds of a Pfactor line are chosen for that memory.
+                     uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more of
+                     the primes) and fit in the memory free on the GPU when it starts less 1 GB (where the free memory
+                     can't be queried, 90%% of the GPU's RAM), and with -maxAlloc in no more than the cap.  It runs with as
+                     few as 6 of them beside the GPU's own, more slowly.  The bounds of a Pfactor line are chosen for that
+                     memory.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune

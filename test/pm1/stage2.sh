@@ -42,18 +42,23 @@ run() {
   (cd "$d" && "$bin" -device "$DEVICE" -log 10000 -noclean "$@" >> out 2>&1)
 }
 
+# planOf <log>:  "D M kWindow" of the last stage 2 plan logged
+planOf() {
+  grep -o 'Stage 2 B1=[0-9]* B2=[0-9]*: D=[0-9]* M=[0-9]* .* windows of [0-9]*' "$1" | tail -1 | sed 's/.*D=\([0-9]*\) M=\([0-9]*\) .* windows of \([0-9]*\).*/\1 \2 \3/'
+}
+
 lastSave() { ls -v "$1/$2-$3/"*."$2" 2>/dev/null | tail -1; }      # <dir> <p1|p2> <p>
 
 # stage2Oracle <dir> <p> <B1> <B2>:  GMP's stage 1 residue equal to prpll's (final p1 savefile), the final stage 2 accumulator (p2
 # savefile) equal to GMP's product for the D prpll used, and GMP's gcd(acc, 2^p-1) in <dir>/gcd2.  Needs -noclean.
 stage2Oracle() {
-  local d=$1 p=$2 B1=$3 B2=$4 D
+  local d=$1 p=$2 B1=$3 B2=$4 D M KW
   "$ORACLE" "$p" "$B1" "$(lastSave "$d" p1 "$p")" > "$d/oracle1" 2>&1
   grep -q "residue EQUAL" "$d/oracle1" || return 1
   "$CHECK" savefile "$p" "$(lastSave "$d" p1 "$p")" "$d/x.bin" > /dev/null || return 1
   "$CHECK" savefile "$p" "$(lastSave "$d" p2 "$p")" "$d/acc.bin" > "$d/oracle2" || return 1
-  D=$(grep -o 'Stage 2 B1=[0-9]* B2=[0-9]*: D=[0-9]*' "$d/out" | tail -1 | sed 's/.*D=//')
-  "$CHECK" acc "$p" "$B1" "$B2" "$D" "$d/x.bin" "$d/acc.bin" >> "$d/oracle2" || return 1
+  read -r D M KW <<< "$(planOf "$d/out")"
+  "$CHECK" acc "$p" "$B1" "$B2" "$D" "$M" "$d/x.bin" "$d/acc.bin" "$KW" >> "$d/oracle2" || return 1
   "$CHECK" gcd "$p" "$d/acc.bin" | cut -d' ' -f2 > "$d/gcd2"
 }
 
@@ -92,7 +97,7 @@ e2e() {
   if [ "$known" = NF ]; then [ "$g" = NF ] || ok=0; else python3 -c "import sys; sys.exit(int('$g') % $known != 0)" || ok=0; fi
   [ -n "$(ls "$d/mp")" ] && ok=0
   if [ $ok = 1 ]; then
-    pass "$name: p=$p B1=$B1 B2=$B2 -> $g (= GMP gcd(acc); known $known), acc = GMP's product ($(grep -o '[0-9]* primes, [0-9]* pairs, [0-9]* multiplications' "$d/oracle2")); $(times "$d")"
+    pass "$name: p=$p B1=$B1 B2=$B2 -> $g (= GMP gcd(acc); known $known), acc = GMP's product ($(grep -o '[0-9]* primes, [0-9]* multiplications ([0-9]* pairs, [0-9]* across sections' "$d/oracle2")); $(times "$d")"
   else
     fail "$name (see $d)"
   fi

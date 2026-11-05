@@ -17,6 +17,7 @@
 #include <cstring>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #ifdef HAVE_PM1PROB
 extern "C" double pm1prob(double takeAwayBits, double factoredUpTo, uint64_t B1, uint64_t B2);
@@ -30,8 +31,8 @@ static void check(bool ok, const char *what) {
 }
 
 static void print(const char* tag, u64 p, double tf, double ts, u64 maxR, const Bounds& b, double ms) {
-  printf("%s p=%" PRIu64 " tf=%g ts=%g maxR=%" PRIu64 ": B1=%" PRIu64 " B2=%" PRIu64 " D=%u  P=%.3f%% (%.3f%% + %.3f%%)  cost %.3f%%  "
-         "saving %.3f%% of a PRP test  [%.0f ms]\n", tag, p, tf, ts, maxR, b.B1, b.B2, b.D, 100 * b.prob.total(), 100 * b.prob.stage1,
+  printf("%s p=%" PRIu64 " tf=%g ts=%g maxN=%" PRIu64 ": B1=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u  P=%.3f%% (%.3f%% + %.3f%%)  cost %.3f%%  "
+         "saving %.3f%% of a PRP test  [%.0f ms]\n", tag, p, tf, ts, maxR, b.B1, b.B2, b.D, b.M, 100 * b.prob.total(), 100 * b.prob.stage1,
          100 * b.prob.stage2, 100 * b.cost / p, 100 * b.savings / p, ms);
 }
 
@@ -40,6 +41,42 @@ static Bounds timedChoice(u64 p, double tf, double ts, u64 maxR, double* ms) {
   Bounds const b = chooseBounds(p, tf, ts, maxR);
   *ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return b;
+}
+
+// The table of pm1::pairedFractionAt (src/Pm1Bounds.cpp), made from Stage2Plan's exact pairing:  for each rho, a range of ~300K primes
+// around the q with (D / phi(D)) / ln q = rho (D = 30 below rho = 0.2, else 210, whose M is smaller than a larger D's for the same L),
+// at least 200 * 2M wide (or as wide as q).  Where the range is too small for a large M (high rho, small q) the fraction stops growing
+// with L:  such a row takes the row above where that is higher.
+static void pairTable() {
+  vector<double> const rhos{0.17, 0.19, 0.21, 0.23, 0.25, 0.27, 0.29, 0.31, 0.34, 0.37, 0.40, 0.45, 0.50};
+  vector<double> const Ls{1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 96, 128};
+  vector<vector<double>> f;
+  for (double rho : rhos) {
+    u32 const D = rho < 0.2 ? 30 : 210;
+    double const lnx = (D == 30 ? 30.0 / 8 : 210.0 / 48) / rho, x = exp(lnx);
+    f.emplace_back();
+    for (double L : Ls) {
+      u32 const M = std::max<u32>(D / 2, u32(L * D / 2));
+      double const width = std::min(x, std::max(3e5 * lnx, 200.0 * M));
+      u64 const B1 = std::max<u64>(1000, u64(x - width / 2)), B2 = u64(x + width / 2);
+      Stage2Plan const plan = planStage2(B1, B2, D, M);
+      f.back().push_back(2.0 * plan.nPairs / plan.nPrimes);
+    }
+    if (f.size() > 1) {
+      for (size_t j = 0; j < Ls.size(); ++j) { f.back()[j] = std::max(f.back()[j], f[f.size() - 2][j]); }
+    }
+  }
+  printf("constexpr double PAIR_RHO[] = {");
+  for (double r : rhos) { printf("%s%.2f", r == rhos[0] ? "" : ", ", r); }
+  printf("};\nconstexpr double PAIR_L[] = {");
+  for (double L : Ls) { printf("%s%g", L == Ls[0] ? "" : ", ", L); }
+  printf("};\nconstexpr double PAIR_F[][%zu] = {\n", Ls.size());
+  for (size_t i = 0; i < rhos.size(); ++i) {
+    printf("  {");
+    for (size_t j = 0; j < Ls.size(); ++j) { printf("%s%.4f", j ? ", " : "", f[i][j]); }
+    printf("},\n");
+  }
+  printf("};\n");
 }
 
 static void testProbability() {
@@ -106,23 +143,30 @@ static void testProbability() {
 }
 
 static void testPairing() {
-  // The estimated paired fraction and the multiplications against Stage2Plan's exact counts
-  struct P { u64 B1, B2; u32 D; } ps[] = {{1000, 200000, 210}, {50000, 1500000, 2310}, {1000000, 30000000, 330}, {1000000, 30000000, 2310},
-                                          {1000000, 30000000, 4620}, {100000, 30000000, 210}, {10000000, 300000000, 2310},
-                                          {300000, 10000000, 1050}, {4370, 540000, 1470}};
+  // The estimated paired fraction and items (stage2Items) against Stage2Plan's exact counts, over D, L = 2M / D and the range
+  struct P { u64 B1, B2; u32 D; double L; } ps[] = {
+    {1000, 200000, 210, 1}, {50000, 1500000, 2310, 1}, {1000000, 30000000, 330, 1}, {1000000, 30000000, 2310, 1},
+    {1000000, 30000000, 4620, 1}, {100000, 30000000, 210, 1}, {10000000, 300000000, 2310, 1}, {300000, 10000000, 1050, 1},
+    {4370, 540000, 1470, 1},
+    {1000000, 30000000, 30, 2}, {1000000, 30000000, 60, 3.7}, {1000000, 30000000, 210, 8}, {1000000, 30000000, 420, 10},
+    {1000000, 30000000, 630, 14}, {1000000, 30000000, 1050, 20}, {1000000, 30000000, 2310, 5}, {1000000, 30000000, 4620, 2.5},
+    {126000, 2790000, 840, 12}, {100000, 4000000, 2310, 30}, {10000000, 300000000, 1050, 16}, {50000000, 1000000000, 2310, 12},
+    {300000000, 4000000000, 30, 6}, {5000, 300000, 210, 40}, {1000, 100000, 90, 1.5}};
+  double worst = 0;
   for (P p : ps) {
-    Stage2Plan const plan = planStage2(p.B1, p.B2, p.D);
+    u32 const M = std::max<u32>(p.D / 2, u32(p.L * p.D / 2));
+    Stage2Plan const plan = planStage2(p.B1, p.B2, p.D, M);
     double const exact = 2.0 * plan.nPairs / plan.nPrimes;
-    double const est = pairedFraction(double(p.B1), double(p.B2), p.D);
-    // stage2Muls adds the duplicated blocks (1/32) and the table build (D) to the loop's multiplications (mulsFrom)
-    double const mulsExact = double(plan.mulsFrom(plan.kBegin)) * (1 + 1.0 / 32) + p.D;
-    double const mulsEst = stage2Muls(double(p.B1), double(p.B2), p.D);
-    char what[200];
-    snprintf(what, sizeof(what), "pairing B1=%" PRIu64 " B2=%" PRIu64 " D=%u: paired %.4f est %.4f, multiplications %.0f est %.0f", p.B1,
-             p.B2, p.D, exact, est, mulsExact, mulsEst);
-    check(fabs(est - exact) < 0.01 && fabs(mulsEst / mulsExact - 1) < 0.01, what);
+    double const est = pairedFraction(double(p.B1), double(p.B2), p.D, M);
+    double const items = stage2Items(double(p.B1), double(p.B2), p.D, M);
+    char what[240];
+    snprintf(what, sizeof(what), "pairing B1=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u (L %.1f): paired %.4f est %.4f, items %" PRIu64 " est %.0f (%+.2f%%)",
+             p.B1, p.B2, p.D, M, 2.0 * M / p.D, exact, est, plan.nNeeded, items, 100 * (items / plan.nNeeded - 1));
+    worst = std::max(worst, fabs(items / plan.nNeeded - 1));
+    check(fabs(est - exact) < 0.015 && fabs(items / plan.nNeeded - 1) < 0.01, what);
     printf("%s\n", what);
   }
+  printf("pairing estimate: worst item count error %.2f%%\n", 100 * worst);
 }
 
 static void testChoice() {
@@ -132,7 +176,7 @@ static void testChoice() {
                                            {60000011, 75, 1}, {110000017, 77, 1}, {110000017, 77, 2}, {332000027, 81, 1}};
   for (C c : cs) {
     Bounds prev{};
-    for (u64 maxR : {0, 23, 24, 48, 240, 480, 960}) {
+    for (u64 maxR : {0, 3, 4, 8, 24, 48, 240, 480, 960, 1300}) {
       Bounds const b = timedChoice(c.p, c.tf, c.ts, maxR, &ms);
       print("choice", c.p, c.tf, c.ts, maxR, b, ms);
       if (b.savings <= 0) {
@@ -147,9 +191,9 @@ static void testChoice() {
       }
       snprintf(what, sizeof(what), "p=%" PRIu64 " maxR=%" PRIu64 ": 11 <= B1 <= B2 <= MAX_B2, D fits (B1=%" PRIu64 " B2=%" PRIu64 " D=%u)", c.p,
                maxR, b.B1, b.B2, b.D);
-      check(b.B1 >= 11 && b.B2 >= b.B1 && b.B2 <= MAX_B2 && (b.D == 0) == (b.B2 == b.B1) && (!b.D || stage2nR(b.D) <= maxR), what);
+      check(b.B1 >= 11 && b.B2 >= b.B1 && b.B2 <= MAX_B2 && (b.D == 0) == (b.B2 == b.B1) && (!b.D || stage2TableSize(b.D, b.M) <= maxR), what);
       snprintf(what, sizeof(what), "p=%" PRIu64 " maxR=%" PRIu64 ": no stage 2 below the smallest table", c.p, maxR);
-      check(maxR >= stage2nR(210) || b.B2 == b.B1, what);
+      check(maxR >= stage2MinTable() || b.B2 == b.B1, what);
       // (Not exactly:  with more memory chooseStage2D can pick a larger D whose table costs more than this model's best D, up to 0.3%
       // of the saving at 41M)
       snprintf(what, sizeof(what), "p=%" PRIu64 " maxR=%" PRIu64 ": more memory, saving not lower (%.0f < %.0f)", c.p, maxR, b.savings,
@@ -189,6 +233,7 @@ static void testChoice() {
 }
 
 int main(int argc, char** argv) {
+  if (argc == 2 && !strcmp(argv[1], "pairtable")) { pairTable(); return 0; }
   if (argc > 1) {
     for (int i = 1; i < argc; ++i) {
       u64 p{}, maxR{}, B1{}, B2{};

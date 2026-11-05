@@ -247,7 +247,7 @@ bool pfactorBounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   bool const haveB1 = !saved.data.empty() && saved.B1;
   pm1::Bounds const b = haveB1 ? pm1::chooseB2(E, task.tfBits, task.testsSaved, saved.B1, maxR)
                                : pm1::chooseBounds(E, task.tfBits, task.testsSaved, maxR);
-  u64 const maxTable = pm1::stage2nR(pm1::stage2Ds().back());
+  constexpr u64 maxTable = 1u << 16;      // "stage 2's largest table":  as many entries as P-1 bounds can use
   if (!haveB1 && b.savings <= 0 && (maxR >= maxTable || pm1::chooseBounds(E, task.tfBits, task.testsSaved, maxTable).savings <= 0)) {
     log("P-1 is not worth its cost for %" PRIu64 " (no factor below 2^%g, %g tests saved): nothing to do\n", E, task.tfBits,
         task.testsSaved);
@@ -259,7 +259,7 @@ bool pfactorBounds(Task& task, GpuCommon shared, const Gpu& gpu) {
       "expected cost %.2f%% of a PRP test, saving %.2f%% of one\n", haveB1 ? " (B1 of the stage 1 savefile)" : "", task.tfBits,
       task.testsSaved, b.B1, b.B2, 100 * b.prob.total(), 100 * b.prob.stage1, 100 * b.cost / double(E), 100 * b.savings / double(E));
   if (b.B2 == b.B1) {
-    bool const noRoom = maxR < pm1::stage2nR(pm1::stage2Ds().front());
+    bool const noRoom = maxR < pm1::stage2MinTable();
     log("P-1 without stage 2 (B2 = B1): %s%s\n", noRoom ? "too little GPU memory for stage 2's smallest table" : "a stage 2 does not pay "
         "for itself here", b.savings <= 0 ? "; stage 1 alone does not pay for itself either, but P-1 with a stage 2 would" : "");
   }

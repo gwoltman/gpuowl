@@ -2,7 +2,7 @@
 
 #pragma once
 
-// P-1 stage 2 on the GPU, paired "n^2" form (see pm1::Stage2Plan):  acc = the product over the needed (k, r) of x^((kD)^2) - x^(r^2)
+// P-1 stage 2 on the GPU, paired "n^2" form (see pm1::Stage2Plan):  acc = the product over the items (k, n) of x^((kD)^2) - x^(n^2)
 // mod 2^E-1, where x is the stage 1 residue.  A factor f of 2^E-1 for which x has prime order q in (B1, B2] divides acc; the caller takes
 // GCD(acc, 2^E-1).
 
@@ -33,12 +33,12 @@ public:
   static FFTConfig configFor(FFTConfig fft, u64 E, bool keepCarry = false);
 
   // Runs stage 2 on its own Gpu, resuming from the savefile in p2-<E>/ when there is one for the same E, B1, B2 and x.  Holds the
-  // device's memory lock (Memlock) while it runs.  D = 0 lets the memory planner choose D.  Stops (STOPPED, with a checkpoint) on a
+  // device's memory lock (Memlock) while it runs.  D = 0 lets the memory planner choose D, M = 0 lets it choose M (for D).  Stops (STOPPED, with a checkpoint) on a
   // stop request or, with -iters <n>, at the first block boundary after n multiplications of this run.  Throws on a GPU error it could
   // not recover from.
   // Without -fft, an FFT whose kernels can't be built is replaced by the next of chooseFFTs; with -fft only the FFTs given are tried,
   // and stage 2 throws when none of them can run.
-  static Stage2Result run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D = 0);
+  static Stage2Result run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D = 0, u32 M = 0);
 
   // One timing of stage 2 multiplications for E on fft (as configFor gives it) with these -use settings (fftUses: the command line wins
   // over them):  us per multiplication as stage 2 counts them (blocks of 120 and their k step), the res64 of the accumulator (equal on
@@ -53,7 +53,7 @@ public:
   };
   static MulTime timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, const vector<KeyVal>& uses, int quick = 7);
 
-  // The number of table buffers a stage 2 of E would have room for, estimated before stage 1 (for the bounds of a Pfactor line):  run()'s
+  // The number of table buffers a stage 2 of E would have room for (pm1::Stage2Plan's table entries), estimated before stage 1 (for the bounds of a Pfactor line):  run()'s
   // memory budget now, with g (the stage 1 Gpu) holding about what stage 2's own Gpu will hold, in buffers of the size of chooseFFTs'
   // first FFT with g's layout.  0 when stage 2 can't run at all.
   static u64 tableCapacity(GpuCommon shared, const Gpu& g, u64 E);
@@ -66,13 +66,13 @@ public:
 
 private:
 
-  // run on one FFT
-  static Stage2Result runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, const FFTConfig& fft,
-                            const vector<KeyVal>& uses);
+  // run on one FFT, with at most maxNCap table buffers
+  static Stage2Result runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, u32 M, const FFTConfig& fft,
+                            const vector<KeyVal>& uses, u64 maxNCap);
 };
 
 #ifdef PRPLL_PM1_FAULTS
-// TEST ONLY, in the fault build (test/pm1/run_stage2.sh):  spec "E,B1,B2,x.bin,acc.bin[,D]" runs stage 2 on x (little-endian u32 words,
+// TEST ONLY, in the fault build (test/pm1/run_stage2.sh):  spec "E,B1,B2,x.bin,acc.bin[,D[,M]]" runs stage 2 on x (little-endian u32 words,
 // nWords(E) of them) and writes the accumulator to acc.bin (nothing when stage 2 declined or stopped).
 void stage2Test(GpuCommon shared, const char* spec);
 // TEST ONLY, fault build:  spec "E,fft[,quick[,rounds]]" logs Stage2::timeMul of fft at E (PRPLL_TIMEMUL_SHAPE=<block>,<table> varies it)

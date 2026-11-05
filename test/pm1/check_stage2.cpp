@@ -2,13 +2,17 @@
 //
 //   check_stage2 random p seed x.bin                 a random residue mod 2^p-1
 //   check_stage2 stage1 p B1 x.bin                   x = 3^E mod 2^p-1, E = 2p * prod over primes q <= B1 of the largest q^e <= B1
-//   check_stage2 acc p B1 B2 D x.bin acc.bin         acc.bin == prod over the (k, r) covering a prime of x^((kD)^2) - x^(r^2) mod 2^p-1?
-//                                                    (the (k, r) set derived here from mpz_nextprime, independently of src/Pm1.cpp)
+//   check_stage2 acc p B1 B2 D M x.bin acc.bin [kW]  acc.bin == prod over the items (k, n) of src/Pm1.cpp's plan of x^((kD)^2) - x^(n^2)
+//                                                    mod 2^p-1, and the items cover every prime of (B1, B2] (primes from mpz_nextprime):
+//                                                    with both, every prime q in (B1, B2] divides the exponent of some factor of acc
 //   check_stage2 factors p B1 B2 x.bin acc.bin f...  for each factor f of 2^p-1:  f | gcd(acc, 2^p-1) exactly when x mod f has order 1
 //                                                    or a prime order in (B1, B2]  (the exact condition, tested with GMP on x mod f)
 //   check_stage2 search p kmax B1 B2                 factors f = 2kp+1 of 2^p-1 with k <= kmax, each with the order of 3^E mod f and
 //                                                    whether stage 1 (B1) or stage 2 (B1, B2) finds it
-//   check_stage2 plan B1 B2 D                        src/Pm1.cpp's planStage2 counts against a count made here
+//   check_stage2 plan B1 B2 D M [kW]                 src/Pm1.cpp's plan against one made here:  the same items (an independent sweep of
+//                                                    the same pairing rule on mpz_nextprime primes), every prime covered, the same counts
+//   check_stage2 match B1 B2 D M [kW]                the plan's pairs against a maximum matching (Hopcroft-Karp) of each window's graph
+//   check_stage2 memplan B1 B2 budgetMB bufferMB     the (D, M) the planner picks for a memory budget (see the code)
 //   check_stage2 savefile p in.p1|in.p2 out.bin      the words of one of prpll's P-1 savefiles (header line, CRC, words) to out.bin,
 //                                                    and its header line
 //   check_stage2 gcd p acc.bin                       gcd(acc, 2^p-1) in decimal ("gcd 1": no factor)
@@ -26,6 +30,9 @@
 #include <mutex>
 #include <thread>
 #include <set>
+#include <deque>
+#include <functional>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -83,18 +90,143 @@ static vector<u64> primesIn(u64 lo, u64 hi) {      // (lo, hi]
 
 static u64 gcd64(u64 a, u64 b) { while (b) { u64 t = a % b; a = b; b = t; } return a; }
 
-// The (k, r) covering the primes of (B1, B2]:  k = nearest multiple index, r = |q - kD|.  Also counts primes and pairs.
-static set<pair<u64, u64>> pairsFor(u64 B1, u64 B2, u64 D, u64* nPrimes, u64* nPairs) {
-  set<pair<u64, u64>> s;
-  *nPrimes = *nPairs = 0;
-  for (u64 q : primesIn(B1, B2)) {
-    u64 const k = (2 * q + D) / (2 * D);        // round(q / D); q/D is never exactly half-integral for a prime q > the primes of D
-    u64 const r = q > k * D ? q - k * D : k * D - q;
-    if (!(r < D / 2 && gcd64(r, D) == 1)) { printf("FAIL: q=%" PRIu64 " gives r=%" PRIu64 "\n", q, r); exit(1); }
-    ++*nPrimes;
-    if (!s.insert({k, r}).second) { ++*nPairs; }
+// An item (k, n):  one accumulator multiplication by x^((kD)^2) - x^(n^2)
+using Item = pair<u64, u64>;
+
+// The items of src/Pm1.cpp's plan, all windows
+static vector<Item> planItems(const pm1::Stage2Plan& plan) {
+  vector<Item> r;
+  pm1::Stage2Window win;
+  for (u64 w = 0; w < plan.nWindows(); ++w) {
+    pm1::planWindow(plan, w, win);
+    for (u64 k = win.kLo; k < win.kHi; ++k) {
+      for (u32 i = 0; i < win.count(k); ++i) { r.push_back({k, plan.ns[win.items(k)[i]]}); }
+    }
   }
-  return s;
+  return r;
+}
+
+// Every prime of (B1, B2] is kD - n or kD + n for some item, and every item is valid (n < M coprime to D, k in the plan's range).
+// Counts the items covering two primes and those with n > D/2.
+// (An item counted with two primes may be a single:  its other prime paired elsewhere.)
+static bool covers(const vector<Item>& items, const vector<u64>& primes, const pm1::Stage2Plan& plan, u64* nTwo, u64* nCross) {
+  set<u64> covered;
+  set<u64> const isPrime(primes.begin(), primes.end());
+  *nTwo = *nCross = 0;
+  bool ok = true;
+  for (auto [k, n] : items) {
+    if (!(n < plan.M && gcd64(n, plan.D) == 1 && k >= plan.kBegin && k < plan.kEnd)) {
+      printf("FAIL: item (%" PRIu64 ", %" PRIu64 ") is not valid\n", k, n);
+      ok = false;
+    }
+    u64 const kD = k * plan.D;
+    int nIn = 0;
+    for (u64 q : {kD + n, kD >= n ? kD - n : n - kD}) {
+      if (isPrime.count(q)) { covered.insert(q); ++nIn; }
+    }
+    *nTwo += nIn == 2;
+    *nCross += nIn == 2 && n > plan.D / 2;
+    if (!nIn) { printf("FAIL: item (%" PRIu64 ", %" PRIu64 ") covers no prime\n", k, n); ok = false; }
+  }
+  if (covered.size() != primes.size()) {
+    for (u64 q : primes) {
+      if (!covered.count(q)) { printf("FAIL: prime %" PRIu64 " is not covered\n", q); ok = false; break; }
+    }
+  }
+  return ok;
+}
+
+// The windows of the plan, made here:  window w holds the primes q with round(q / D) in [kBegin + w kW, kBegin + (w + 1) kW)
+static u64 windowOfPrime(const pm1::Stage2Plan& plan, u64 q) { return ((q + plan.D / 2) / plan.D - plan.kBegin) / plan.kWindow; }
+
+// The pairing rule again, on its own (not src/Pm1.cpp's code):  per window and class pair {c, 2D - c}, a two-pointer sweep of the sorted
+// list in which a prime takes the oldest unpaired prime of the other class closer than 2M; pending primes that fall out of reach are
+// singles at round(q / D)
+static vector<Item> itemsHere(const pm1::Stage2Plan& plan, const vector<u64>& primes) {
+  u64 const D = plan.D, M = plan.M;
+  map<pair<u64, u64>, vector<u64>> groups;     // (window, class pair) -> primes, increasing
+  for (u64 q : primes) {
+    u64 const c = q % (2 * D);
+    groups[{windowOfPrime(plan, q), std::min(c, 2 * D - c)}].push_back(q);
+  }
+  vector<Item> r;
+  auto single = [&](u64 q) {
+    u64 const k = (2 * q + D) / (2 * D);
+    r.push_back({k, q > k * D ? q - k * D : k * D - q});
+  };
+  for (auto& [key, list] : groups) {
+    std::deque<u64> wait;
+    for (u64 q : list) {
+      while (!wait.empty() && q - wait.front() >= 2 * M) { single(wait.front()); wait.pop_front(); }
+      if (!wait.empty() && (wait.front() + q) % (2 * D) == 0) {
+        r.push_back({(wait.front() + q) / (2 * D), (q - wait.front()) / 2});
+        wait.pop_front();
+      } else {
+        wait.push_back(q);
+      }
+    }
+    for (u64 q : wait) { single(q); }
+  }
+  return r;
+}
+
+// Maximum bipartite matching (Hopcroft-Karp) of the pairing graph:  vertices = primes, an edge between primes of one window with
+// q1 + q2 = 0 mod 2D and |q1 - q2| < 2M (left = q mod 2D < D)
+static u64 maxMatching(const pm1::Stage2Plan& plan, const vector<u64>& primes) {
+  u64 const D = plan.D, M = plan.M;
+  vector<u64> left, right;
+  for (u64 q : primes) { (q % (2 * D) < D ? left : right).push_back(q); }
+  map<u64, vector<u32>> rightByClass;      // class -> indices into right (increasing q)
+  for (u32 j = 0; j < right.size(); ++j) { rightByClass[right[j] % (2 * D)].push_back(j); }
+  vector<vector<u32>> adj(left.size());
+  for (u32 i = 0; i < left.size(); ++i) {
+    u64 const q = left[i];
+    auto it = rightByClass.find((2 * D - q % (2 * D)) % (2 * D));
+    if (it == rightByClass.end()) { continue; }
+    for (u32 j : it->second) {
+      u64 const q2 = right[j];
+      if ((q > q2 ? q - q2 : q2 - q) < 2 * M && windowOfPrime(plan, q) == windowOfPrime(plan, q2)) { adj[i].push_back(j); }
+    }
+  }
+  u32 const NIL = u32(-1);
+  vector<u32> matchL(left.size(), NIL), matchR(right.size(), NIL), dist(left.size());
+  auto bfs = [&]() {
+    std::deque<u32> qu;
+    bool found = false;
+    for (u32 i = 0; i < left.size(); ++i) {
+      if (matchL[i] == NIL) { dist[i] = 0; qu.push_back(i); } else { dist[i] = NIL; }
+    }
+    while (!qu.empty()) {
+      u32 const i = qu.front(); qu.pop_front();
+      for (u32 j : adj[i]) {
+        u32 const i2 = matchR[j];
+        if (i2 == NIL) { found = true; } else if (dist[i2] == NIL) { dist[i2] = dist[i] + 1; qu.push_back(i2); }
+      }
+    }
+    return found;
+  };
+  std::function<bool(u32)> dfs = [&](u32 i) {
+    for (u32 j : adj[i]) {
+      u32 const i2 = matchR[j];
+      if (i2 == NIL || (dist[i2] == dist[i] + 1 && dfs(i2))) { matchL[i] = j; matchR[j] = i; return true; }
+    }
+    dist[i] = NIL;
+    return false;
+  };
+  u64 size = 0;
+  while (bfs()) {
+    for (u32 i = 0; i < left.size(); ++i) { if (matchL[i] == NIL && dfs(i)) { ++size; } }
+  }
+  return size;
+}
+
+// B1 B2 D M from argv[at..at+3], kWindow from argv[kwAt] if kwAt < argc
+static pm1::Stage2Plan makePlan(int argc, char** argv, int at, int kwAt) {
+  u64 const B1 = strtoull(argv[at], 0, 10), B2 = strtoull(argv[at + 1], 0, 10);
+  u32 const D = u32(strtoul(argv[at + 2], 0, 10)), M = u32(strtoul(argv[at + 3], 0, 10));
+  u64 const kW = kwAt < argc ? strtoull(argv[kwAt], 0, 10) : 0;
+  if (!(D % 2 == 0 && pm1::stage2DFits(D, B1) && B1 < B2 && M >= D / 2)) { fprintf(stderr, "bad plan parameters\n"); exit(2); }
+  return pm1::planStage2(B1, B2, D, M, kW);
 }
 
 // The prime order of a mod f if it is a prime in (lo, hi], 1 if a = 1, else 0.
@@ -147,42 +279,82 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  if (cmd == "acc" && argc == 8) {
-    u64 const p = strtoull(argv[2], 0, 10), B1 = strtoull(argv[3], 0, 10), B2 = strtoull(argv[4], 0, 10), D = strtoull(argv[5], 0, 10);
+  if (cmd == "acc" && (argc == 9 || argc == 10)) {
+    u64 const p = strtoull(argv[2], 0, 10);
+    pm1::Stage2Plan const plan = makePlan(argc, argv, 3, 9);
+    u64 const D = plan.D;
     mersenne(N, p);
-    readWords(x, argv[6], p);
-    readWords(a, argv[7], p);
-    u64 nPrimes, nPairs;
-    auto const pairs = pairsFor(B1, B2, D, &nPrimes, &nPairs);
-    // x^(r^2) for each r used, x^((kD)^2) for each k used
+    readWords(x, argv[7], p);
+    readWords(a, argv[8], p);
+    vector<Item> const items = planItems(plan);
+    vector<u64> const primes = primesIn(plan.B1, plan.B2);
+    u64 nTwo, nCross;
+    bool const cover = covers(items, primes, plan, &nTwo, &nCross);
+    // x^(n^2) for each n used, and x^((kD)^2) for each k from the first item's to the last's:  by second differences in exact GMP
+    // arithmetic (x^((n+2)^2) = x^(n^2) x^(4n+4);  x^(((k+1)D)^2) = x^((kD)^2) x^((2k+1)D^2)), each product reduced mod 2^p - 1
+    auto modN = [&](mpz_t z) {           // z mod 2^p - 1 for 0 <= z < 2^(2p):  (z mod 2^p) + (z >> p), then once more
+      for (int i = 0; i < 2; ++i) {
+        mpz_tdiv_q_2exp(t, z, p);
+        mpz_tdiv_r_2exp(z, z, p);
+        mpz_add(z, z, t);
+      }
+      if (mpz_cmp(z, N) >= 0) { mpz_sub(z, z, N); }
+    };
+    auto mulN = [&](mpz_t z, const mpz_t y) { mpz_mul(z, z, y); modN(z); };
     map<u64, vector<u64>> byK;
-    set<u64> rs;
-    for (auto [k, r] : pairs) { byK[k].push_back(r); rs.insert(r); }
-    map<u64, mpz_t*> xr;
-    for (u64 r : rs) {
-      mpz_t* v = new mpz_t[1];
-      mpz_init(*v);
-      mpz_set_ui(e, r * r);
-      mpz_powm(*v, x, e, N);
-      xr[r] = v;
+    set<u64> ns;
+    for (auto [k, n] : items) { byK[k].push_back(n); ns.insert(n); }
+    map<u64, mpz_t*> xn;
+    if (!ns.empty()) {
+      mpz_t r, s8, sq;                   // r = x^(n^2), sq = x^(4n+4), s8 = x^8
+      mpz_inits(r, s8, sq, nullptr);
+      mpz_mod(r, x, N);
+      mpz_powm_ui(s8, x, 8, N);
+      mpz_set(sq, s8);
+      for (u64 n = 1; n <= *ns.rbegin(); n += 2) {
+        if (ns.count(n)) {
+          mpz_t* v = new mpz_t[1];
+          mpz_init_set(*v, r);
+          xn[n] = v;
+        }
+        mulN(r, sq);
+        mulN(sq, s8);
+      }
+      mpz_clears(r, s8, sq, nullptr);
     }
-    mpz_t acc, xk;
+    mpz_t acc, xk, ck, gk;
     mpz_init_set_ui(acc, 1);
-    mpz_init(xk);
-    for (auto& [k, list] : byK) {
-      mpz_set_ui(e, k * D);
+    mpz_inits(xk, ck, gk, nullptr);
+    if (!byK.empty()) {
+      u64 const k0 = byK.begin()->first;
+      mpz_set_ui(e, k0 * D);
       mpz_mul(e, e, e);
-      mpz_powm(xk, x, e, N);
-      for (u64 r : list) {
-        mpz_sub(t, xk, *xr[r]);
-        mpz_mul(acc, acc, t);
-        mpz_mod(acc, acc, N);
+      mpz_powm(xk, x, e, N);             // x^((k0 D)^2)
+      mpz_set_ui(e, (2 * k0 + 1) * D);
+      mpz_mul_ui(e, e, D);
+      mpz_powm(ck, x, e, N);             // x^((2 k0 + 1) D^2)
+      mpz_set_ui(e, 2 * D * D);
+      mpz_powm(gk, x, e, N);             // x^(2 D^2)
+      for (u64 k = k0; k <= byK.rbegin()->first; ++k) {
+        if (auto it = byK.find(k); it != byK.end()) {
+          for (u64 n : it->second) {
+            mpz_sub(t, xk, *xn[n]);
+            if (mpz_sgn(t) < 0) { mpz_add(t, t, N); }
+            mulN(acc, t);
+          }
+        }
+        mulN(xk, ck);
+        mulN(ck, gk);
       }
     }
     mpz_mod(a, a, N);
-    bool const ok = mpz_cmp(acc, a) == 0;
-    printf("%s acc p=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%" PRIu64 ": %" PRIu64 " primes, %" PRIu64 " pairs, %zu multiplications\n",
-           ok ? "OK" : "FAIL", p, B1, B2, D, nPrimes, nPairs, pairs.size());
+    bool const ok = mpz_cmp(acc, a) == 0 && cover;
+    u64 const nSingle = items.size() - (primes.size() - items.size());
+    u64 const nZero = byK.count(0) ? byK[0].size() : 0;
+    printf("%s acc p=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%" PRIu64 " M=%u (table %u): %zu primes, %zu multiplications (%" PRIu64
+           " pairs, %" PRIu64 " across sections, %" PRIu64 " singles, %" PRIu64 " at k=0)%s\n", ok ? "OK" : "FAIL", p, plan.B1, plan.B2, D,
+           plan.M, plan.nTable(), primes.size(), items.size(), primes.size() - items.size(), plan.nCross, nSingle, nZero,
+           cover ? "" : " NOT COVERED");
     return ok ? 0 : 1;
   }
 
@@ -314,35 +486,34 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  if (cmd == "memplan" && argc == 6) {
-    // memplan B1 B2 budgetMB bufferMB:  the D the memory planner picks (src/Pm1.cpp chooseStage2D, 5 buffers besides the table) and
-    // its multiplication count
-    u64 const B1 = strtoull(argv[2], 0, 10), B2 = strtoull(argv[3], 0, 10);
-    double const budget = strtod(argv[4], 0), buf = strtod(argv[5], 0);
-    u64 const maxR = budget > buf * 6 ? u64(budget / buf) - 5 : 0;
-    u32 const D = pm1::chooseStage2D(B1, B2, maxR);
-    if (!D) { printf("declined (%" PRIu64 " buffers)\n", maxR); return 0; }
-    pm1::Stage2Plan const plan = pm1::planStage2(B1, B2, D);
-    printf("D=%u nR=%zu (%.1f GB) muls=%" PRIu64 " (primes %" PRIu64 ", k steps %" PRIu64 ", table ~%u)\n", D, plan.rs.size(),
-           (plan.rs.size() + 5) * buf / 1024, plan.nNeeded + 2 * (plan.kEnd - plan.kBegin), plan.nNeeded, 2 * (plan.kEnd - plan.kBegin), D / 2);
-    return 0;
+  if (cmd == "plan" && (argc == 6 || argc == 7)) {
+    pm1::Stage2Plan const plan = makePlan(argc, argv, 2, 6);
+    vector<Item> mine = planItems(plan), here = itemsHere(plan, primesIn(plan.B1, plan.B2));
+    vector<u64> const primes = primesIn(plan.B1, plan.B2);
+    u64 nTwo, nCross;
+    bool const cover = covers(mine, primes, plan, &nTwo, &nCross);
+    std::ranges::sort(mine);
+    std::ranges::sort(here);
+    bool const same = mine == here;
+    // Singles have n < D/2:  the items with n > D/2 are the pairs across sections
+    u64 const across = std::ranges::count_if(here, [&](const Item& it) { return it.second > plan.D / 2; });
+    bool const counts = plan.nPrimes == primes.size() && plan.nNeeded == mine.size() && plan.nPairs == primes.size() - here.size() &&
+                        plan.nCross == across && plan.nNeeded + plan.nPairs == plan.nPrimes;
+    bool const ok = cover && same && counts;
+    printf("%s plan B1=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u (table %u, %" PRIu64 " windows of %" PRIu64 " k): %zu primes, %" PRIu64
+           " pairs (%.1f%% paired, %" PRIu64 " across sections), %zu multiplications + %" PRIu64 " k steps%s%s%s\n", ok ? "OK" : "FAIL",
+           plan.B1, plan.B2, plan.D, plan.M, plan.nTable(), plan.nWindows(), plan.kWindow, primes.size(), plan.nPairs,
+           primes.size() ? 200.0 * plan.nPairs / primes.size() : 0.0, plan.nCross, mine.size(), 2 * (plan.kEnd - plan.kBegin),
+           cover ? "" : " NOT COVERED", same ? "" : " ITEMS DIFFER", counts ? "" : " COUNTS DIFFER");
+    return ok ? 0 : 1;
   }
 
-  if (cmd == "plan" && argc == 5) {
-    u64 const B1 = strtoull(argv[2], 0, 10), B2 = strtoull(argv[3], 0, 10), D = strtoull(argv[4], 0, 10);
-    u64 nPrimes, nPairs;
-    auto const pairs = pairsFor(B1, B2, D, &nPrimes, &nPairs);
-    pm1::Stage2Plan const plan = pm1::planStage2(B1, B2, u32(D));
-    u64 nBits = 0;
-    bool same = true;
-    for (u64 k = plan.kBegin; k < plan.kEnd; ++k) {
-      for (u32 i = 0; i < plan.rs.size(); ++i) {
-        if (plan.needed(k, i)) { ++nBits; same = same && pairs.count({k, plan.rs[i]}); }
-      }
-    }
-    bool const ok = same && nBits == pairs.size() && plan.nNeeded == pairs.size() && plan.nPrimes == nPrimes && plan.nPairs == nPairs;
-    printf("%s plan B1=%" PRIu64 " B2=%" PRIu64 " D=%" PRIu64 ": %" PRIu64 " primes, %" PRIu64 " pairs (%.1f%% paired), %zu multiplications + %" PRIu64
-           " k steps\n", ok ? "OK" : "FAIL", B1, B2, D, nPrimes, nPairs, 200.0 * nPairs / nPrimes, pairs.size(), 2 * (plan.kEnd - plan.kBegin));
+  if (cmd == "match" && (argc == 6 || argc == 7)) {
+    pm1::Stage2Plan const plan = makePlan(argc, argv, 2, 6);
+    u64 const best = maxMatching(plan, primesIn(plan.B1, plan.B2));
+    bool const ok = best == plan.nPairs;
+    printf("%s match B1=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u: plan %" PRIu64 " pairs, maximum matching %" PRIu64 "\n", ok ? "OK" : "FAIL",
+           plan.B1, plan.B2, plan.D, plan.M, plan.nPairs, best);
     return ok ? 0 : 1;
   }
 

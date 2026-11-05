@@ -99,37 +99,71 @@ string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2);
 // Appends a line to <dir>/worktodo.add in one write.
 void appendMprimeWork(const fs::path& dir, const string& line);
 
-// ---- Stage 2 (paired, "n^2" form) ----
-// Each prime q in (B1, B2] is q = kD - r or q = kD + r with k = round(q / D), 0 < r < D/2 and gcd(r, D) = 1.  Since
-// (kD)^2 - r^2 = (kD - r)(kD + r), one accumulator multiplication by x^((kD)^2) - x^(r^2) covers both kD - r and kD + r.
-// The plan marks the (k, r) that cover at least one prime.
+// ---- Stage 2 (paired "n^2" form, with a table of n^2 for every odd n < M coprime to D) ----
+// The table holds B_n = x^(n^2) for the n in S = {n < M : gcd(n, D) = 1} (D even, so every n in S is odd), and the run steps
+// A_k = x^((kD)^2).  Since (kD)^2 - n^2 = (kD - n)(kD + n), one accumulator multiplication by A_k - B_n ("an item (k, n)") covers both
+// kD - n and kD + n.  For M = D/2 this is the old plan:  every prime q has exactly one (k, n), k = round(q / D).  A larger M lets a
+// prime pair with any prime of the opposite class mod 2D at a distance below 2M:  two primes q1 > q2 share an item exactly when
+//   q1 + q2 = 0 (mod 2D)  and  q1 - q2 < 2M      (then k = (q1 + q2) / 2D and n = (q1 - q2) / 2, and n is in S: gcd(n, D) =
+//                                                  gcd(q1 - kD, D) = 1 as q1 is a prime above every prime of D)
+// so the n of a pair may be above D/2:  its two primes are in different D-sections ((k + s)D + r and (k - s)D - r for n = sD + r).
+// A prime without a partner is a "single":  item (round(q / D), |q - round(q / D) D|), whose n < D/2 is in S as M >= D/2.
+//
+// Pairing (planWindow):  the primes q with q = c or q = -c (mod 2D) form a "class pair"; a pair joins the two classes of one class pair.
+// Each class pair is a bipartite graph whose edges join the primes of opposite classes at a distance below 2M, i.e. each prime's
+// neighbours are an interval of the other class:  matching a new prime with the oldest pending prime of the other class that is still
+// in reach (and making a pending prime a single once it is out of reach of every later prime) is a maximum matching (the
+// earliest-deadline rule for convex bipartite graphs), so it gives the fewest items.  The sweep runs on windows of kWindow k's,
+// independently of each other, so that any window's items can be made again (resume, rollback) without the windows before it; a pair is
+// never formed across two windows (window edges cost under 0.1% of the pairs:  a window is at least 512 * 2M wide).
 struct Stage2Plan {
-  u64 B1{}, B2{};
-  u32 D{};
-  vector<u32> rs;              // the r values: odd, coprime to D, below D/2, increasing
-  u64 kBegin{}, kEnd{};        // the k with a needed pair are in [kBegin, kEnd)
-  vector<u64> bits;            // bit (k - kBegin) * rs.size() + i is set when (k, rs[i]) is needed
-  u64 nPrimes{};               // primes in (B1, B2]
-  u64 nPairs{};                // needed (k, r) whose kD - r and kD + r are both primes in (B1, B2]
-  u64 nNeeded{};               // needed (k, r):  one accumulator multiplication each
+  static constexpr u32 VERSION = 2;    // of the pairing:  a savefile of another version is not resumed (version 1 is M = D/2:  the same)
 
-  [[nodiscard]] bool needed(u64 k, u32 i) const {
-    u64 const pos = (k - kBegin) * rs.size() + i;
-    return (bits[pos / 64] >> (pos % 64)) & 1;
-  }
-  [[nodiscard]] u32 neededIn(u64 k) const;         // the number of needed (k, r) for this k
-  // Multiplications to do from block k (with the A/C step of 2 multiplications per k), not counting the table set-up
-  [[nodiscard]] u64 mulsFrom(u64 k) const;
+  u64 B1{}, B2{};
+  u32 D{}, M{};
+  vector<u32> ns;              // S, increasing
+  vector<u32> indexOf;         // odd n < M -> its position in ns (at (n - 1) / 2), or u32(-1) when gcd(n, D) > 1
+  u64 kBegin{}, kEnd{};        // every item has its k in [kBegin, kEnd)
+  u64 kWindow{};               // k per window
+  vector<u32> windowNeeded;    // the items of each window
+  u64 nPrimes{};               // primes in (B1, B2]
+  u64 nPairs{};                // items that cover two primes of (B1, B2]
+  u64 nNeeded{};               // items (accumulator multiplications):  nPrimes - nPairs
+  u64 nCross{};                // pairs with n > D/2 (their primes are in different D-sections)
+  u64 nZero{};                 // items with k = 0 (A_0 = 1)
+
+  [[nodiscard]] u64 nWindows() const { return windowNeeded.size(); }
+  [[nodiscard]] u64 windowOf(u64 k) const { return (k - kBegin) / kWindow; }
+  [[nodiscard]] u32 nTable() const { return u32(ns.size()); }
 };
 
-// The even, 11-smooth D for which stage 2 is planned, with the count of their r values (phi(D) / 2)
+// The items of one window:  for k in [kLo, kHi) the table indices start[k - kLo] .. start[k - kLo + 1] - 1 of idx
+struct Stage2Window {
+  u64 w = u64(-1);
+  u64 kLo{}, kHi{};
+  vector<u32> start;
+  vector<u32> idx;
+  // Optional counts of planWindow
+  u64 nPrimes{}, nPairs{}, nCross{}, nZero{};
+
+  [[nodiscard]] u32 count(u64 k) const { return start[k - kLo + 1] - start[k - kLo]; }
+  [[nodiscard]] const u32* items(u64 k) const { return idx.data() + start[k - kLo]; }
+};
+
+// The items of window w of the plan (deterministic:  depends on B1, B2, D, M and kWindow only)
+void planWindow(const Stage2Plan& plan, u64 w, Stage2Window& out);
+
+// The D for which stage 2 is planned (even, 11-smooth); D can run when every prime factor of D is at most B1 (the stage 1 exponent holds
+// them, and a prime of (B1, B2] dividing D could not be covered)
 const vector<u32>& stage2Ds();
-u32 stage2nR(u32 D);
+bool stage2DFits(u32 D, u64 B1);
+// |S| for (D, M);  phi(D) / 2 for M = D/2
+u32 stage2TableSize(u32 D, u32 M);
+// The largest M >= D/2 with stage2TableSize(D, M) <= n (M is then just above an element of S, or D/2), 0 if none
+u32 stage2MaxM(u32 D, u64 n);
 
-// The D (from stage2Ds) with the least estimated cost among those that need at most maxR r buffers, or 0 if none fits.
-u32 chooseStage2D(u64 B1, u64 B2, u64 maxR);
-
-// Requires 11 <= B1 < B2 < 2^32 and D from stage2Ds().
-Stage2Plan planStage2(u64 B1, u64 B2, u32 D);
+// Requires B1 >= 3, B1 < B2 <= 2^32 - 8192, D even and stage2DFits, D/2 <= M.  kWindow = 0:  the default (at least 2^22 / D, and
+// at least 512 * 2M / D).  Sieves (B1, B2] once (one pass of planWindow over every window).
+Stage2Plan planStage2(u64 B1, u64 B2, u32 D, u32 M, u64 kWindow = 0);
 
 }

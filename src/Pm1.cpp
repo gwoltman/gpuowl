@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <mutex>
 
 namespace pm1 {
 
@@ -397,7 +399,10 @@ void appendMprimeWork(const fs::path& dir, const string& line) {
 // ---- Stage 2 plan ----
 
 const vector<u32>& stage2Ds() {
-  static const vector<u32> Ds{210, 330, 420, 462, 630, 770, 840, 1050, 1260, 1470, 2310, 4620};
+  // Multiples of 30, 210 and 2310 (the most primes per D, as D / phi(D) is the density of the primes in the classes coprime to D), and
+  // 330, 462:  small D for a small table (phi(30) / 2 = 4 entries), large D for few k steps
+  static const vector<u32> Ds{30, 60, 90, 120, 150, 180, 210, 330, 420, 462, 630, 660, 840, 990, 1050, 1260, 1470, 1680, 1890, 2310,
+                              2520, 3150, 4620, 6930, 9240};
   return Ds;
 }
 
@@ -406,75 +411,147 @@ static u32 gcd32(u32 a, u32 b) {
   return a;
 }
 
-u32 stage2nR(u32 D) {
-  u32 n = 0;
-  for (u32 r = 1; r < D / 2; r += 2) { n += gcd32(r, D) == 1; }
-  return n;
-}
-
-u32 chooseStage2D(u64 B1, u64 B2, u64 maxR) {
-  // The table costs about D/2 multiplications to build (2 per odd r below D/2), the k steps 2 per k, i.e. 2 (B2 - B1) / D.  The number
-  // of needed (k, r) hardly depends on D.
-  u32 best = 0;
-  double bestCost = 0;
-  for (u32 D : stage2Ds()) {
-    if (stage2nR(D) > maxR) { continue; }
-    double const cost = D / 2.0 + 2.0 * double(B2 - B1) / D;
-    if (!best || cost < bestCost) { best = D; bestCost = cost; }
+bool stage2DFits(u32 D, u64 B1) {
+  u32 d = D;
+  for (u32 q = 2; q <= d; ++q) {
+    if (d % q == 0) {
+      if (q > B1) { return false; }
+      while (d % q == 0) { d /= q; }
+    }
   }
-  return best;
+  return true;
 }
 
-u32 Stage2Plan::neededIn(u64 k) const {
-  u32 n = 0;
-  for (u32 i = 0; i < rs.size(); ++i) { n += needed(k, i); }
-  return n;
+// The residues in [1, D) coprime to D, increasing (kept:  the bounds model asks for the same few D many times)
+static const vector<u32>& coprimeResidues(u32 D) {
+  static std::mutex mutex;
+  static std::map<u32, vector<u32>> cache;
+  std::lock_guard lock{mutex};
+  auto it = cache.find(D);
+  if (it == cache.end()) {
+    vector<u32> rs;
+    for (u32 r = 1; r < D; ++r) { if (gcd32(r, D) == 1) { rs.push_back(r); } }
+    it = cache.emplace(D, std::move(rs)).first;
+  }
+  return it->second;
 }
 
-u64 Stage2Plan::mulsFrom(u64 k) const {
-  u64 n = 0;
-  for (; k < kEnd; ++k) { n += neededIn(k) + 2; }
-  return n;
+u32 stage2TableSize(u32 D, u32 M) {
+  const vector<u32>& rs = coprimeResidues(D);
+  return u32((M / D) * rs.size() + (std::lower_bound(rs.begin(), rs.end(), M % D) - rs.begin()));
 }
 
-Stage2Plan planStage2(u64 B1, u64 B2, u32 D) {
-  assert(B1 >= 11 && B1 < B2 && B2 < (u64(1) << 32));
-  assert(std::ranges::find(stage2Ds(), D) != stage2Ds().end());
+u32 stage2MaxM(u32 D, u64 n) {
+  const vector<u32>& rs = coprimeResidues(D);
+  if (n < rs.size() / 2) { return 0; }
+  // e = the n-th element of S (1-based); M = e + 1 holds exactly the first n, and so does every M up to the next element:  e + 1 is the
+  // canonical one (at least D/2, which holds the phi(D) / 2 elements below D/2)
+  u64 const e = (n - 1) / rs.size() * D + rs[(n - 1) % rs.size()];
+  return u32(std::min<u64>(std::max<u64>(e + 1, D / 2), u64(1) << 31));
+}
+
+namespace {
+
+// Pending primes of one class pair:  all of one class (the invariant of the sweep), oldest first
+struct Pending {
+  vector<u32> q;
+  u32 head = 0;
+  bool empty() const { return head == q.size(); }
+  u32 front() const { return q[head]; }
+  void pop() { if (++head == q.size()) { q.clear(); head = 0; } }
+  void push(u32 x) { q.push_back(x); }
+};
+
+}
+
+void planWindow(const Stage2Plan& plan, u64 w, Stage2Window& out) {
+  u64 const D = plan.D, M = plan.M, twoD = 2 * D;
+  out.w = w;
+  out.kLo = plan.kBegin + w * plan.kWindow;
+  out.kHi = std::min(plan.kEnd, out.kLo + plan.kWindow);
+  out.nPrimes = out.nPairs = out.nCross = out.nZero = 0;
+  u64 const nK = out.kHi - out.kLo;
+
+  // The primes q with round(q / D) in [kLo, kHi):  q in [kLo D - D/2, kHi D - D/2).  The two primes of a pair are in one window, so
+  // is their midpoint kD:  every item of the window has its k in [kLo, kHi).
+  u64 const lo = std::max(plan.B1 + 1, out.kLo * D >= D / 2 ? out.kLo * D - D / 2 : 0);
+  u64 const hi = std::min(plan.B2, out.kHi * D - D / 2 - 1);
+
+  vector<u64> items;      // (k - kLo) << 32 | table index
+  vector<Pending> pending(D);
+  auto const single = [&](u64 q) {
+    u64 const k = (q + D / 2) / D;
+    u64 const n = q > k * D ? q - k * D : k * D - q;
+    assert(n < D / 2 && n < M && plan.indexOf[(n - 1) / 2] != u32(-1) && k >= out.kLo && k < out.kHi);
+    out.nZero += k == 0;
+    items.push_back(((k - out.kLo) << 32) | plan.indexOf[(n - 1) / 2]);
+  };
+  forEachPrime(lo, hi, [&](u64 q) {
+    ++out.nPrimes;
+    u32 const c = u32(q % twoD);
+    Pending& p = pending[std::min(c, u32(twoD - c))];
+    while (!p.empty() && p.front() + 2 * M <= q) {      // out of reach of q and of every later prime:  a single
+      single(p.front());
+      p.pop();
+    }
+    if (!p.empty() && p.front() % twoD != c) {
+      u64 const q2 = p.front();
+      p.pop();
+      u64 const k = (q + q2) / twoD;
+      u64 const n = (q - q2) / 2;
+      assert((q + q2) % twoD == 0 && n < M && plan.indexOf[(n - 1) / 2] != u32(-1) && k >= out.kLo && k < out.kHi);
+      ++out.nPairs;
+      out.nCross += n > D / 2;
+      items.push_back(((k - out.kLo) << 32) | plan.indexOf[(n - 1) / 2]);
+    } else {
+      p.push(u32(q));
+    }
+  });
+  for (Pending& p : pending) {
+    for (; !p.empty(); p.pop()) { single(p.front()); }
+  }
+
+  // By k (counting sort; within a k, in the order found)
+  out.start.assign(nK + 1, 0);
+  for (u64 it : items) { ++out.start[(it >> 32) + 1]; }
+  for (u64 i = 0; i < nK; ++i) { out.start[i + 1] += out.start[i]; }
+  out.idx.resize(items.size());
+  vector<u32> pos(out.start.begin(), out.start.end() - 1);
+  for (u64 it : items) { out.idx[pos[it >> 32]++] = u32(it); }
+}
+
+Stage2Plan planStage2(u64 B1, u64 B2, u32 D, u32 M, u64 kWindow) {
+  assert(D % 2 == 0 && stage2DFits(D, B1) && B1 < B2 && B2 <= (u64(1) << 32) - 8192 && M >= D / 2);
 
   Stage2Plan plan;
   plan.B1 = B1;
   plan.B2 = B2;
   plan.D = D;
-  vector<u32> index(D / 2, u32(-1));        // r -> its position in rs
-  for (u32 r = 1; r < D / 2; r += 2) {
-    if (gcd32(r, D) == 1) {
-      index[r] = u32(plan.rs.size());
-      plan.rs.push_back(r);
+  plan.M = M;
+  plan.indexOf.assign((M + 1) / 2, u32(-1));
+  for (u32 n = 1; n < M; n += 2) {
+    if (gcd32(n % D, D) == 1) {
+      plan.indexOf[(n - 1) / 2] = u32(plan.ns.size());
+      plan.ns.push_back(n);
     }
   }
-  u64 const nR = plan.rs.size();
 
-  // k = round(q / D) = (q + D/2) / D for the primes q in (B1, B2]
+  // k = round(q / D) of the primes q in (B1, B2]:  the singles' k; a pair's k is its midpoint / D, between its primes'
   plan.kBegin = (B1 + 1 + D / 2) / D;
   plan.kEnd = (B2 + D / 2) / D + 1;
-  plan.bits.assign(((plan.kEnd - plan.kBegin) * nR + 63) / 64, 0);
-
-  forEachPrime(B1 + 1, B2, [&](u64 q) {
-    u64 const k = (q + D / 2) / D;
-    u64 const kD = k * D;
-    u32 const r = u32(q > kD ? q - kD : kD - q);
-    assert(r < D / 2 && index[r] != u32(-1) && k >= plan.kBegin && k < plan.kEnd);
-    u64 const pos = (k - plan.kBegin) * nR + index[r];
-    u64& word = plan.bits[pos / 64];
-    u64 const bit = u64(1) << (pos % 64);
-    ++plan.nPrimes;
-    if (word & bit) {
-      ++plan.nPairs;         // the second prime of a pair
-    } else {
-      word |= bit;
-      ++plan.nNeeded;
-    }
-  });
+  plan.kWindow = kWindow ? kWindow : std::max<u64>(((u64(1) << 22) + D - 1) / D, 512 * ((2 * u64(M) + D - 1) / D));
+  u64 const nWindows = (plan.kEnd - plan.kBegin + plan.kWindow - 1) / plan.kWindow;
+  Stage2Window win;
+  for (u64 w = 0; w < nWindows; ++w) {
+    planWindow(plan, w, win);
+    plan.windowNeeded.push_back(u32(win.idx.size()));
+    plan.nPrimes += win.nPrimes;
+    plan.nPairs += win.nPairs;
+    plan.nNeeded += win.idx.size();
+    plan.nCross += win.nCross;
+    plan.nZero += win.nZero;
+  }
+  assert(plan.nNeeded + plan.nPairs == plan.nPrimes);
   return plan;
 }
 

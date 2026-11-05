@@ -55,25 +55,81 @@ to mprime when `-mprimeDir` is given, and otherwise the run stops with an error.
 
 ## Stage 2
 
-Stage 2 is the paired "n^2" form of the old gpuowl:
-- It multiplies an accumulator by x^((kD)^2) - x^(r^2) for each needed (k, r). Because (kD)^2 - r^2 = (kD - r)(kD + r), one
-  multiplication covers both kD - r and kD + r when both are primes in (B1, B2].
-- About 25-40% of the primes are paired this way. The rest cost one multiplication each.
-- The table holds x^(r^2) for r < D/2 coprime to D. D runs from 210 (24 table buffers) to 4620 (480).
-- The difference A_k - B_r is taken inside the tail multiplication kernel.
+Stage 2 is the paired "n^2" form of the old gpuowl, with a larger table and primes paired across D-sections:
+- The table holds B_n = x^(n^2) for every n < M coprime to D (D even, so every such n is odd). The run steps A_k = x^((kD)^2).
+- Each multiplication of the accumulator by A_k - B_n is an "item". Because (kD)^2 - n^2 = (kD - n)(kD + n), one item covers both
+  kD - n and kD + n.
+- Two primes q1 > q2 share an item exactly when q1 + q2 = 0 (mod 2D) and q1 - q2 < 2M; then k = (q1 + q2) / 2D and n = (q1 - q2) / 2.
+  With n > D/2 the two primes are in different D-sections. A prime without a partner is a single, with k = round(q/D) and n < D/2.
+- With M = D/2 (L = 2M/D = 1) this is the old plan, where each prime has exactly one possible partner. Each larger L gives each prime
+  about one more candidate partner.
+- **Pairing.** The primes of a class pair {c, -c mod 2D} form a bipartite graph in which each prime's possible partners are an interval
+  of the other class. Matching each prime with the oldest pending prime of the other class that is still within 2M is therefore a
+  maximum matching, so the plan has the fewest items for its table. The tests check it against Hopcroft-Karp.
+- The pairing runs on windows of at least 2^22 integers (and at least 512 * 2M). Each window is planned on its own, so a resume or a
+  rollback rebuilds the items of one window, and the host keeps only one window's items (at most a few MB) at a time. The cost is under
+  0.1% of the pairs.
+- The plan needs no floating point and depends only on B1, B2, D and M. It takes about 9 s at B2 = 1e9 (48M primes) and 32 s at 4e9.
+- Every prime factor of D must be at most B1: those primes are in the stage 1 exponent, and a prime of (B1, B2] that divided D could
+  not be covered. D is a multiple of 30, 210 or 2310 (or 330, 462), from 30 to 9240, so stage 2 needs B1 >= 5.
+- The difference A_k - B_n is taken inside the tail multiplication kernel.
 - One multiplication costs about 1.1-1.2 PRP iterations (XTX).
 - The run ends with gcd(acc, 2^p - 1) on the GPU.
 
+**Costs**, in multiplications by A_k - B_n (XTX, 41M, measured):
+- one item: 1;
+- one k step (A_{k+1} = C_k A_k goes straight to its transform; C_{k+1} = C_k G; the ends of the block's carry chain): 2.5;
+- the table: 2.9 per odd n < M (two multiplications and a transform) plus 0.8 per entry.
+
+**Choice of D and M.** Stage 2 takes the D and M with the least estimated cost for its memory and B2. The pairing estimate comes from a
+table made from exact plans; it is within 0.7% of the exact item counts (check_bounds). The log shows the chosen D and M, the pairs
+(and how many are across sections), the multiplications, the estimated cost, and what the old plan would have cost. For example, at
+B1 = 250, B2 = 30M (1.86M primes):
+
+| table entries | D | M (L) | primes paired | of them across sections | items | k steps | est. cost | vs. old plan |
+|---|---|---|---|---|---|---|---|---|
+| 4 | 30 | 15 (1) | 24.1% | 0 | 1634115 | 999993 | 4.26M | (no room) |
+| 8 | 60 | 30 (1) | 23.5% | 0 | 1639126 | 499997 | 2.98M | (no room) |
+| 24 | 210 | 105 (1) | 27.1% | 0 | 1606305 | 142857 | 2.03M | (no room) |
+| 100 | 420 | 438 (2.1) | 43.9% | 211128 | 1449814 | 71429 | 1.68M | -6% |
+| 240 | 420 | 1050 (5) | 66.4% | 492120 | 1241392 | 71429 | 1.47M | -15% |
+| 485 | 420 | 2120 (10.1) | 81.1% | 676288 | 1104310 | 71429 | 1.33M | -20% |
+| 1000 | 630 | 4374 (13.9) | 86.1% | 738242 | 1058458 | 47620 | 1.22M | -26% |
+| 1545 | 840 | 6758 (16.1) | 87.9% | 762750 | 1041078 | 35715 | 1.18M | -29% |
+| 1450 (measured run) | 630 | 6342 (20.1) | 90.4% | 794978 | 1017968 | 47620 | 1.19M | -29% |
+
+The old plan (b3807834) took at most 480 table entries (D = 4620) and needed 24 + 5 buffers at least; "vs. old plan" compares the
+estimated costs with the same number of buffers (with 100 the old plan takes D = 840, with 240 D = 1470, from 485 on D = 4620: 1.66M,
+1592318 multiplications, 30.0% paired).
+Measured on the XTX at p = 41000017 (`-fft 1:1K:2:256`, 15 MB buffers, 2 runs each): stage 2 took 305 s with the old plan
+(D = 4620) and 247 s with this one in the same memory (D = 420, M = 2154, 493 table buffers, 1244767 multiplications, 81.4% of the
+primes paired): 19% less. Both found the same factor. With all of the GPU's memory (22.7 GB, buffers
+counted at 16 MB) it took 214-219 s (D = 630, M = 6342, 1450 table buffers, 1113208 multiplications, 90.4% of the primes paired): 28%
+less than the old plan.
+
+**Compared with mprime's pairing.** The quoted pairing figures of mprime's relative-prime sets (L sets) are about 33% (2 sets), 61%
+(3), 70% (4), 77% (5), 82.5% (6), 87% (7), 91% (8), 96% (10), 98.2% (12) and 99.6% (20). PRPLL's maximum matching pairs, at
+B2 around 10M (D = 210), 43% (L = 2), 53% (3), 61% (4), 66% (5), 71% (6), 77% (8), 81% (10), 84% (12), 88% (16), 90% (20), 94% (32).
+Its figures are higher at L = 2 and lower from L = 3 on. The difference was not resolved: mprime's figures are for its own benchmark
+bounds, and mprime also relocates primes (see [Not implemented](#not-implemented)), which gives each prime more partners. The table
+of mprime's one-sided sets (n = r + sD, r < D/2) pairs the same as PRPLL's all-n < M table at equal size (within 0.1%), but needs
+twice the range of n to build.
+
 **Checks.** No Gerbicz-style check exists for a product like this, so stage 2 uses these checks instead:
-- The table is built twice and its checksums are verified again at every checkpoint.
-- The last table entry and A_k are checked against a direct exponentiation.
+- Each table entry is transformed twice and the two checksums compared. The table checksums are verified again at every checkpoint.
+- The last table entry is checked against a direct exponentiation. Every value of the build feeds into it, so this also covers the
+  multiplications of the build.
+- A_k is checked against a direct exponentiation at every checkpoint.
 - acc must be nonzero.
-- The round-off error (ROE) of every carry is checked.
+- The round-off error (ROE) of the carries is checked.
 - One block in 32, chosen at random, is computed twice and the results compared.
 
-A failed check goes back to the last checkpoint. Checkpoints are written to `p2-<p>/`, at least every 10 minutes.
+A failed check goes back to the last checkpoint. Checkpoints are written to `p2-<p>/`, at least every 10 minutes. A checkpoint holds
+B1, B2, the residue's res64, D, M and the pairing's version. A version 1 checkpoint (no M) is the plan with M = D/2, so it is resumed
+as such.
 
-**Memory and `-maxAlloc`.** Stage 2 takes as many big buffers as its memory budget allows: D's table plus 5 more.
+**Memory and `-maxAlloc`.** Stage 2 needs, beyond the stage 2 GPU's own buffers, its table, two more big buffers (A_k and G, in
+transformed form) and two residue buffers. The table size is the one with the least estimated cost that fits the budget.
 - The budget is the free GPU memory when stage 2 starts, less 1 GB.
 - Where the free memory can't be queried (OpenCL without `CL_DEVICE_GLOBAL_FREE_MEMORY_AMD`, e.g. Nvidia's OpenCL or PoCL), it is
   90% of the GPU's RAM, less what PRPLL holds and 256 MB.
@@ -81,7 +137,29 @@ A failed check goes back to the last checkpoint. Checkpoints are written to `p2-
 - Without `-maxAlloc` there is no cap, and PRP's default allocation limit is raised by the budget while stage 2 runs.
 - Only one stage 2 runs per device at a time. A lock file `memlock-<device uid or index>` in the work directory enforces this, so
   two PRPLL processes on one GPU must share a directory for the lock to work.
-- Below 24 + 5 buffers, stage 2 declines.
+- Each buffer is counted at its size rounded up to 2 MB (GPU memory pages; see the memory test below for why).
+- **Memory test.** Before the table is built, a pattern is copied into every table buffer and read back. A buffer that does not hold
+  it, or a table entry that is wrong in two builds in a row, makes stage 2 plan again with a smaller table. On the XTX, a table that
+  overfilled the GPU (1547 buffers of 15 MB counted at 15 MB, 24.2 GB counted at 2 MB pages, with 23.7 GB reported free) gave one wrong
+  entry, the same one in every build, when the buffers were first written by the table build. Touched by the memory test first, the same
+  table held its values but ran 15% slower. Tables of 41 MB buffers held up to 22.2 GB. 2 MB pages fit these results, but so does a fixed
+  shortfall of about 1 GB beyond the headroom; which it is was not settled (a full-memory run on an FFT whose buffers are a multiple of
+  2 MB would tell). The memory test protects the results either way, not the speed.
+- The smallest table has 4 entries (D = 30), so stage 2 runs with 6 big buffers and 2 residue buffers beyond the GPU's own. With a
+  small table the k steps dominate, so it is slower:
+
+| exponent (stage 2 FFT) | big buffer | residue buffer | stage 2 GPU's own | stage 2 at least (4 entries, D = 30) |
+|---|---|---|---|---|
+| 41000017 (1:1K:2:256) | 15 MB | 8 MB | 0.08 GB | 106 MB |
+| 110000017 (1:256:11:512) | 41 MB | 22 MB | 0.20 GB | 0.29 GB |
+| 3321928097 (1:2K:11:2K, estimated) | 1.29 GB | 0.69 GB | about 6.4 GB | 9.1 GB |
+
+- At 110000017 (XTX, B1 = 250, B2 = 30M) the old plan declines below a cap of about 1.6 GB. This stage 2 ran at caps of 0.8 GB
+  (D = 30, 5 entries: 3.6M multiplications, about 39 minutes at 648 us each), 1.5 GB (D = 150, 22 entries: 2.03M, about 21 minutes),
+  2 GB (D = 210, 35 entries: 1.82M against the old plan's 1.89M) and 4 GB (D = 420, 85 entries: 1.63M against 1.70M).
+- At 3321928097 (estimated from the buffer sizes, not run): stage 2 needs about 6.4 + 9.1 GB, i.e. `-maxAlloc` of at least 16 GB and a
+  GPU with about 17 GB free. A 24 GB GPU has room for about 9 table entries there (D = 30 or 60), a 16 GB GPU none. The GPU's own
+  6.4 GB is scaled from 110000017's 0.20 GB (3 big and 3 residue buffers and a little more).
 
 **When stage 2 declines** (too little memory, or no FFT that can run it):
 - With `-mprimeDir`, the stage 1 residue goes to mprime (next section).
@@ -137,16 +215,15 @@ The bounds maximise the expected saving, in PRP iterations of p:
 
 **Costs** (measured on the RX 7900 XTX):
 - Stage 1: 1.006 PRP iterations per bit of E, plus the Gerbicz check.
-- Stage 2: 1.15 PRP iterations per multiplication. The multiplications counted are:
-  - one per needed (k, r), from an estimate of the paired fraction (D/phi(D)) / ln q, within 1% of the planner's exact counts;
-  - two per k;
-  - the table (built twice);
-  - the duplicated blocks.
+- Stage 2: 1.15 PRP iterations per multiplication by A_k - B_n, for the plan stage 2 would choose (D and M) and its estimated cost in
+  those multiplications (see [Stage 2](#stage-2)): the items, 2.5 per k step, the table, and the duplicated blocks. The paired fraction
+  comes from a table of exact plans (`check_bounds pairtable`, real primes) by the density of the primes in the classes coprime to D,
+  (D / phi(D)) / ln q, and L; it is within 0.7% of the exact item counts (24 cases from L = 1 to 40, B2 from 1e5 to 4e9).
 - Each GCD: 10000 + 0.0023 p iterations.
 
-**Memory.** D is the one stage 2 would choose for the memory it would have. This is estimated at the start of the assignment from
+**Memory.** The plan is the one stage 2 would choose for the memory it would have. This is estimated at the start of the assignment from
 the free memory with the stage 1 FFT's buffers allocated, and the buffer size of stage 2's first FFT.
-- If the memory can't hold the smallest table, B2 = B1 (stage 1 only), and the log says so. Stage 1 then runs even when it does not
+- If the memory can't hold the smallest table (4 entries, D = 30), B2 = B1 (stage 1 only), and the log says so. Stage 1 then runs even when it does not
   pay for itself alone, as long as P-1 with a stage 2 would.
 - If no bounds save anything even with stage 2's largest table, the line is removed without a result (as Prime95 does). This happens,
   for example, with `testsSaved = 0`, or at small exponents, where the GPU GCD is a large share of the cost.
@@ -156,23 +233,26 @@ in the P-1 savefile (`p1-<p>/`, header version 2), so a resume keeps them. A ver
 
 **Compared with mprime 31.07.** mprime's bounds come from its own `Pfactor=` run.
 - *Small memory:* about 35 temporaries (Memory = 450, 650, 900, 1700, 1700 and 2000 MB, from the top row down). With fewer than 40
-  temporaries, mprime costs only its pairing stage 2. PRPLL's bounds are given for room for 30 table buffers (D = 210).
+  temporaries, mprime costs only its pairing stage 2. PRPLL's bounds are given for room for 30 table buffers (the planner takes D = 210,
+  M = 132).
 - *16 GB:* mprime costs its polynomial stage 2 too. PRPLL's bounds are given for room for 1300 table buffers, as on a 24 GB GPU at
-  41M.
+  41M (D = 630, M = 5688, L = 18: about 86% of the primes paired).
 
 | p | tfBits | testsSaved | mprime, small memory | PRPLL, 30 buffers | mprime, 16 GB | PRPLL, 1300 buffers |
 |---|---|---|---|---|---|---|
-| 30000001 | 72 | 1 | B1=95000 B2=1840000, 2.12% | B1=97100 B2=1950000, 2.16% | B1=178000 B2=43830000, 4.45% | B1=101000 B2=2350000, 2.28% |
-| 41000017 | 74 | 1 | B1=123000 B2=2400000, 1.97% | B1=123000 B2=2480000, 1.99% | B1=210000 B2=36635000, 3.79% | B1=126000 B2=2790000, 2.06% |
-| 60000011 | 75 | 1 | B1=185000 B2=3930000, 2.27% | B1=186000 B2=4060000, 2.29% | B1=288000 B2=40275000, 3.87% | B1=194000 B2=4940000, 2.41% |
-| 110000017 | 77 | 1 | B1=336000 B2=7955000, 2.58% | B1=343000 B2=8250000, 2.61% | B1=472000 B2=42865000, 3.76% | B1=357000 B2=10100000, 2.74% |
-| 110000017 | 77 | 2 | B1=720000 B2=19825000, 3.48% | B1=745000 B2=21100000, 3.54% | B1=960000 B2=98345000, 4.78% | B1=774000 B2=25800000, 3.69% |
-| 332000027 | 81 | 1 | B1=947000 B2=21700000, 2.86% | B1=1010000 B2=28000000, 3.04% | B1=1116000 B2=47045000, 3.40% | B1=1040000 B2=34300000, 3.17% |
+| 30000001 | 72 | 1 | B1=95000 B2=1840000, 2.12% | B1=96600 B2=1910000, 2.15% | B1=178000 B2=43830000, 4.45% | B1=110000 B2=3520000, 2.54% |
+| 41000017 | 74 | 1 | B1=123000 B2=2400000, 1.97% | B1=123000 B2=2430000, 1.98% | B1=210000 B2=36635000, 3.79% | B1=140000 B2=4490000, 2.34% |
+| 60000011 | 75 | 1 | B1=185000 B2=3930000, 2.27% | B1=185000 B2=3970000, 2.27% | B1=288000 B2=40275000, 3.87% | B1=210000 B2=7280000, 2.66% |
+| 110000017 | 77 | 1 | B1=336000 B2=7955000, 2.58% | B1=342000 B2=8060000, 2.59% | B1=472000 B2=42865000, 3.76% | B1=384000 B2=14700000, 2.99% |
+| 110000017 | 77 | 2 | B1=720000 B2=19825000, 3.48% | B1=741000 B2=20500000, 3.51% | B1=960000 B2=98345000, 4.78% | B1=825000 B2=37100000, 3.98% |
+| 332000027 | 81 | 1 | B1=947000 B2=21700000, 2.86% | B1=1000000 B2=27300000, 3.02% | B1=1116000 B2=47045000, 3.40% | B1=1120000 B2=49500000, 3.43% |
 
-- **Against mprime's pairing stage 2**, which costs about what PRPLL's does, the bounds are close: B1 within 1.00-1.07x and B2
-  within 1.03-1.29x of mprime's.
-- **Against mprime's polynomial stage 2**, PRPLL's B2 is 1.4-19 times lower: 19x at 30M, 1.4x at 332M. mprime's polynomial stage 2
-  covers a prime far more cheaply than a paired stage 2 can, and PRPLL has no polynomial stage 2.
+- **Against mprime's pairing stage 2**, which costs about what PRPLL's does, the bounds are close: B1 within 1.00-1.06x and B2
+  within 1.01-1.26x of mprime's.
+- **Against mprime's polynomial stage 2**, PRPLL's B2 is still lower at the smaller exponents: 12x at 30M, 8x at 41M, 2.9x at 110M.
+  At 332M PRPLL's B2 (49.5M) and chance of a factor (3.43%) are at mprime's (47.0M, 3.40%). mprime's polynomial stage 2 covers a
+  prime far more cheaply than a paired stage 2 can, and PRPLL has no polynomial stage 2. The larger table of this stage 2 raised
+  PRPLL's chance of a factor with 1300 buffers from 2.06% to 2.34% at 41M and from 2.74% to 2.99% at 110M (tests saved 1).
 - **At p = 5000011** (tf 66), mprime runs P-1 (B1 = 28000-39000) but PRPLL's model says it does not pay. The two GPU GCDs cost
   about 0.9% of a PRP test there.
 - **Probability:** at mprime's own bounds, PRPLL's model gives mprime's printed chance of a factor to within 1% (relative) in
@@ -205,8 +285,10 @@ buffer, kernel or savefile, and the PRP loop does the same work per iteration as
 
 ## Not implemented
 
-- **Polynomial (FFT) stage 2** as in mprime (Montgomery-Silverman, Montgomery-Kruppa), and prime pairing beyond the natural kD +- r
-  pairs. B2 is limited to 2^32 - 8192.
+- **Polynomial (FFT) stage 2** as in mprime (Montgomery-Silverman, Montgomery-Kruppa). B2 is limited to 2^32 - 8192.
+- **Relocation** of the primes below B2/m (m a prime not dividing D) to their multiples q*m, which mprime uses to shorten the range of
+  D-sections and give the pairing more partners.
+- **The table chosen for its pairs:** n with small prime factors outside D pair more often (Hardy-Littlewood); the table is all n < M.
 - **CPU fallbacks:** no CPU GCD or bignum fallback, by design.
 - **Unused line fields:** the known factors and `B2_start` of the worktodo lines.
 - **Factor splitting:** a composite GCD is not split into its factors.

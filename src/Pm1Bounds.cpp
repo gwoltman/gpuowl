@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <array>
 
 namespace pm1 {
 
@@ -211,11 +212,23 @@ double pSecondStage(double alpha, double beta) {
 constexpr double STAGE1_PER_BIT = 1.006;
 constexpr u32 STAGE1_CHECKS = 20;          // Gpu::pm1Stage1:  Gerbicz L = sqrt(bits / 20), about 2 / L more
 
-// One stage 2 multiplication (tailMulDelta, the fused A_k - B_r) against one PRP iteration on the same FFT, XTX at p = 30M
+// One stage 2 multiplication (tailMulDelta, the fused A_k - B_n) against one PRP iteration on the same FFT, XTX at p = 30M
 // (stage2-design.md, "Fused"): 3161 1M 191.2 / 171 us, 323161 1M 257.4 / 225, FP64 1664K 344.1 / 313:  1.12, 1.14, 1.10.  At 41M:  3161
 // 1:1K:2:256 191.4 us/mul against stage 1's 174.4 us/iteration (1.10);  M61 3:256:14:256 225.4 us/mul against stage 1's ~185 (1.22).
 // (The subLow path these replaced cost 1.3-1.5.)
 constexpr double STAGE2_PER_MUL = 1.15;
+
+// Stage2.cpp, in stage 2 multiplications (the accumulator multiplication by A_k - B_n is 1), XTX at p = 41M on 1:1K:2:256 (180 us per
+// multiplication; stage2-design.md "Stage 2 v2"):
+// - a k step:  A_{k+1} (straight to Low), C_{k+1} and the two ends of the block's carryFused chain, 450 us (Stage2::timeMul with 1, 2,
+//   16 and 120 multiplications per k:  a linear fit; b3807834's step with two words-and-Low products was 3.4, 610 us);
+// - an odd step of the table build (two multiplications and a forward transform), 0.52 ms, and a table entry (two forward transforms and
+//   their sums), 0.14 ms (fit of the build times of 4 tables of 24 to 1247 entries);
+// - the set-up:  A_k, C_k, G by exponentiation, and the check of the last table entry.
+constexpr double K_STEP = 2.5;
+constexpr double TABLE_ODD = 2.9;
+constexpr double TABLE_ENTRY = 0.8;
+constexpr double SETUP = 400;
 constexpr double STAGE2_DUP = 1.0 / 32;    // Stage2:  one block in 32 is computed twice
 
 // The GPU GCD (Gcd.cpp, quadratic), XTX:  0.59 s at 1M bits, 2.04 s at 10M, 17.6 s at 41M, 85.4 s at 100M; PRP (default FFT, -iters
@@ -238,24 +251,26 @@ double primesBetween(double a, double b) {
   return sum * h / 3;
 }
 
-// The multiplications of Stage2:  one per needed (k, r) (a prime, or a pair of primes kD -+ r), two per k step, the table built twice (D
-// multiplications), and the duplicated blocks
-double needed(double B1, double B2, u32 D) {
-  // A prime q = kD - r is paired when its partner q' = kD + r (or kD - r) is a prime too.  q' is coprime to D (as q is) and, averaged
-  // over k, has no other bias, so it is prime with probability (D / phi(D)) / ln q:  the needed (k, r) are the primes less half the paired
-  // ones.
-  double const c = D / (2.0 * stage2nR(D));
-  if (B2 <= B1) { return 0; }
-  constexpr int N = 64;
-  double const u0 = log(B1), u1 = log(B2), h = (u1 - u0) / N;
-  double sum = 0;
-  for (int i = 0; i <= N; ++i) {
-    double const u = u0 + i * h;
-    double const paired = std::min(1.0, c / u);
-    sum += (i == 0 || i == N ? 1 : (i % 2 ? 4 : 2)) * exp(u) / u * (1 - paired / 2);
-  }
-  return sum * h / 3;
-}
+// pairedFractionAt:  check_bounds pairtable (the exact pairing of Stage2Plan on ~300K primes per point)
+constexpr double PAIR_RHO[] = {0.17, 0.19, 0.21, 0.23, 0.25, 0.27, 0.29, 0.31, 0.34, 0.37, 0.40, 0.45, 0.50};
+constexpr double PAIR_L[] = {1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 96, 128};
+constexpr double PAIR_F[][21] = {
+  {0.1757, 0.2063, 0.2368, 0.2655, 0.2962, 0.3196, 0.3854, 0.4592, 0.5159, 0.5654, 0.6388, 0.6915, 0.7300, 0.7859, 0.8238, 0.8506, 0.8861, 0.9241, 0.9435, 0.9633, 0.9731},
+  {0.1959, 0.2285, 0.2616, 0.2921, 0.3247, 0.3496, 0.4185, 0.4952, 0.5524, 0.6013, 0.6741, 0.7234, 0.7603, 0.8128, 0.8469, 0.8711, 0.9033, 0.9367, 0.9536, 0.9701, 0.9779},
+  {0.2102, 0.2395, 0.2748, 0.3143, 0.3500, 0.4001, 0.4480, 0.5226, 0.5797, 0.6267, 0.6948, 0.7429, 0.7787, 0.8275, 0.8591, 0.8820, 0.9110, 0.9414, 0.9573, 0.9721, 0.9795},
+  {0.2284, 0.2589, 0.2957, 0.3380, 0.3756, 0.4264, 0.4775, 0.5528, 0.6099, 0.6550, 0.7215, 0.7676, 0.8008, 0.8464, 0.8760, 0.8959, 0.9223, 0.9495, 0.9631, 0.9764, 0.9828},
+  {0.2478, 0.2797, 0.3185, 0.3630, 0.4023, 0.4534, 0.5048, 0.5801, 0.6372, 0.6816, 0.7449, 0.7887, 0.8207, 0.8640, 0.8910, 0.9100, 0.9340, 0.9573, 0.9697, 0.9814, 0.9868},
+  {0.2682, 0.3017, 0.3421, 0.3888, 0.4294, 0.4803, 0.5321, 0.6068, 0.6623, 0.7058, 0.7673, 0.8076, 0.8373, 0.8760, 0.9016, 0.9191, 0.9407, 0.9630, 0.9741, 0.9842, 0.9884},
+  {0.2901, 0.3249, 0.3659, 0.4139, 0.4553, 0.5065, 0.5591, 0.6322, 0.6860, 0.7281, 0.7867, 0.8258, 0.8540, 0.8910, 0.9149, 0.9304, 0.9506, 0.9692, 0.9783, 0.9870, 0.9905},
+  {0.3081, 0.3432, 0.3856, 0.4339, 0.4776, 0.5281, 0.5819, 0.6545, 0.7073, 0.7465, 0.8018, 0.8388, 0.8651, 0.8997, 0.9212, 0.9364, 0.9551, 0.9729, 0.9809, 0.9874, 0.9905},
+  {0.3410, 0.3785, 0.4213, 0.4723, 0.5141, 0.5686, 0.6203, 0.6932, 0.7428, 0.7806, 0.8321, 0.8657, 0.8894, 0.9204, 0.9399, 0.9526, 0.9662, 0.9784, 0.9821, 0.9874, 0.9905},
+  {0.3664, 0.4016, 0.4472, 0.5006, 0.5454, 0.5973, 0.6474, 0.7151, 0.7649, 0.8013, 0.8454, 0.8769, 0.8957, 0.9227, 0.9417, 0.9541, 0.9662, 0.9784, 0.9821, 0.9874, 0.9905},
+  {0.4110, 0.4518, 0.4980, 0.5434, 0.5845, 0.6319, 0.6808, 0.7479, 0.7945, 0.8275, 0.8675, 0.8989, 0.9125, 0.9354, 0.9439, 0.9541, 0.9662, 0.9784, 0.9821, 0.9874, 0.9905},
+  {0.4505, 0.4831, 0.5239, 0.5704, 0.6263, 0.6694, 0.7113, 0.7753, 0.8149, 0.8428, 0.8824, 0.8999, 0.9162, 0.9354, 0.9439, 0.9541, 0.9662, 0.9784, 0.9821, 0.9874, 0.9905},
+  {0.5041, 0.5372, 0.5840, 0.6364, 0.6887, 0.7163, 0.7466, 0.7769, 0.8149, 0.8428, 0.8824, 0.8999, 0.9162, 0.9354, 0.9439, 0.9541, 0.9662, 0.9784, 0.9821, 0.9874, 0.9905},
+};
+
+double phiRatio(u32 D) { return double(D) / (2.0 * stage2TableSize(D, D / 2)); }    // D / phi(D)
 
 } // namespace
 
@@ -327,34 +342,116 @@ double stage1Cost(double B1) {
 
 double gcdCost(double exponent) { return GCD_FIXED + exponent * GCD_PER_BIT; }
 
-double pairedFraction(double B1, double B2, u32 D) {
-  double const n = primesBetween(B1, B2);
-  return n > 0 ? 2 * (1 - needed(B1, B2, D) / n) : 0;
+double pairedFractionAt(double rho, double L) {
+  constexpr int NR = sizeof(PAIR_RHO) / sizeof(PAIR_RHO[0]), NL = sizeof(PAIR_L) / sizeof(PAIR_L[0]);
+  static const auto lnL = [] {
+    std::array<double, NL> a{};
+    for (int k = 0; k < NL; ++k) { a[k] = log(PAIR_L[k]); }
+    return a;
+  }();
+  // Bilinear in (rho, ln L), clamped to the table
+  auto const at = [](const double* xs, int n, double x, int* i) {
+    if (x <= xs[0]) { *i = 0; return 0.0; }
+    if (x >= xs[n - 1]) { *i = n - 2; return 1.0; }
+    int const j = int(std::upper_bound(xs, xs + n, x) - xs) - 1;
+    *i = j;
+    return (x - xs[j]) / (xs[j + 1] - xs[j]);
+  };
+  int i = 0, j = 0;
+  double const fr = at(PAIR_RHO, NR, rho, &i);
+  double const fl = at(lnL.data(), NL, log(std::max(1.0, L)), &j);
+  double const f0 = PAIR_F[i][j] * (1 - fl) + PAIR_F[i][j + 1] * fl;
+  double const f1 = PAIR_F[i + 1][j] * (1 - fl) + PAIR_F[i + 1][j + 1] * fl;
+  double f = f0 * (1 - fr) + f1 * fr;
+  // Below the table's rho (q beyond ~2^32 for D = 30) the fraction falls with rho:  at L = 1 it is rho itself
+  if (rho < PAIR_RHO[0]) { f *= rho / PAIR_RHO[0]; }
+  return std::clamp(f, 0.0, 1.0);
 }
 
-double stage2Muls(double B1, double B2, u32 D) {
+double stage2Items(double B1, double B2, u32 D, u32 M) {
+  // A prime pairs with the fraction pairedFractionAt(rho(q), L) of the time; a pair is one item for two primes
   if (B2 <= B1) { return 0; }
-  return (needed(B1, B2, D) + 2 * (B2 - B1) / D) * (1 + STAGE2_DUP) + D;
+  double const c = phiRatio(D), L = 2.0 * M / D;
+  constexpr int N = 16;
+  double const u0 = log(B1), u1 = log(B2), h = (u1 - u0) / N;
+  double sum = 0;
+  for (int i = 0; i <= N; ++i) {
+    double const u = u0 + i * h;
+    sum += (i == 0 || i == N ? 1 : (i % 2 ? 4 : 2)) * exp(u) / u * (1 - pairedFractionAt(c / u, L) / 2);
+  }
+  return sum * h / 3;
 }
 
-double stage2Cost(double B1, double B2, u32 D) { return stage2Muls(B1, B2, D) * STAGE2_PER_MUL; }
+double pairedFraction(double B1, double B2, u32 D, u32 M) {
+  double const n = primesBetween(B1, B2);
+  return n > 0 ? 2 * (1 - stage2Items(B1, B2, D, M) / n) : 0;
+}
 
-Bounds evaluateBounds(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 B2, u64 maxR) {
+Stage2Choice stage2Estimate(u64 B1, u64 B2, u32 D, u32 M) {
+  Stage2Choice c{.D = D, .M = M, .tableSize = stage2TableSize(D, M)};
+  c.items = stage2Items(double(B1), double(B2), D, M);
+  c.kSteps = double(B2 - B1) / D + 1;
+  c.tableSteps = double((M + 1) / 2);
+  c.cost = (c.items + K_STEP * c.kSteps) * (1 + STAGE2_DUP) + TABLE_ODD * c.tableSteps + TABLE_ENTRY * c.tableSize + SETUP;
+  return c;
+}
+
+Stage2Choice chooseStage2(u64 B1, u64 B2, u64 maxN, u32 onlyD) {
+  Stage2Choice best{};
+  if (B2 <= B1) { return best; }
+  double const nPrimes = primesBetween(double(B1), double(B2));
+  for (u32 D : onlyD ? vector<u32>{onlyD} : stage2Ds()) {
+    if (D % 2 || !stage2DFits(D, B1)) { continue; }
+    u32 const Mmax = stage2MaxM(D, maxN);
+    if (!Mmax) { continue; }
+    // A lower bound of any M's cost (every pair is one item for two primes, the k steps, the smallest table) against the best so far
+    double const kSteps = double(B2 - B1) / D + 1;
+    if (best.D && (nPrimes / 2 + K_STEP * kSteps) * (1 + STAGE2_DUP) + TABLE_ODD * (D / 4) >= best.cost) { continue; }
+    // M from D/2 by steps of sqrt(2) up to the memory's M; no use beyond the range (a pair is at most B2 - B1 apart) or 2^24
+    u32 const top = u32(std::min<u64>({Mmax, std::max<u64>(D / 2, (B2 - B1) / 2 + 1), u64(1) << 24}));
+    for (double m = D / 2.0; ; m *= M_SQRT2) {
+      u32 const M = u32(std::min(m, double(top)));
+      Stage2Choice const c = stage2Estimate(B1, B2, D, M);
+      if (!best.D || c.cost < best.cost) { best = c; }
+      if (M >= top) { break; }
+    }
+  }
+  // The best D's M by steps of 2^(1/8) around the best of the coarse steps
+  if (best.D) {
+    u32 const D = best.D, M0 = best.M;
+    u32 const top = u32(std::min<u64>({stage2MaxM(D, maxN), std::max<u64>(D / 2, (B2 - B1) / 2 + 1), u64(1) << 24}));
+    for (int i = -3; i <= 3; ++i) {
+      u32 const M = u32(std::clamp(M0 * exp2(i / 8.0), D / 2.0, double(top)));
+      Stage2Choice const c = stage2Estimate(B1, B2, D, M);
+      if (c.cost < best.cost) { best = c; }
+    }
+  }
+  return best;
+}
+
+double stage2Cost(u64 B1, u64 B2, u64 maxN) {
+  Stage2Choice const c = chooseStage2(B1, B2, maxN);
+  return c.D ? c.cost * STAGE2_PER_MUL : 0;
+}
+
+u64 stage2MinTable() { return stage2TableSize(30, 15); }
+
+Bounds evaluateBounds(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 B2, u64 maxN) {
   assert(B1 >= 2);
   B2 = std::max(B1, B2);
-  u32 const D = B2 > B1 ? chooseStage2D(B1, B2, maxR) : 0;
-  if (!D) { B2 = B1; }
+  Stage2Choice const s2 = B2 > B1 ? chooseStage2(B1, B2, maxN) : Stage2Choice{};
+  if (!s2.D) { B2 = B1; }
   FactorProb const prob = factorProbability(double(exponent), tfBits, double(B1), double(B2));
   double cost = stage1Cost(double(B1)) + gcdCost(double(exponent));
   // Stage 2 runs only when stage 1 found no factor
-  if (D) { cost += (1 - prob.stage1) * (stage2Cost(double(B1), double(B2), D) + gcdCost(double(exponent))); }
+  if (s2.D) { cost += (1 - prob.stage1) * (s2.cost * STAGE2_PER_MUL + gcdCost(double(exponent))); }
   double const savings = prob.total() * testsSaved * double(exponent) - cost;
-  return {.B1 = B1, .B2 = B2, .D = D, .prob = prob, .cost = cost, .savings = savings};
+  return {.B1 = B1, .B2 = B2, .D = s2.D, .M = s2.M, .prob = prob, .cost = cost, .savings = savings};
 }
 
 namespace {
 
-constexpr u64 MIN_B1 = 11;     // Stage2::run
+constexpr u64 MIN_B1 = 11;     // the least B1 the bounds take (Stage2::run takes B1 >= 5, for D = 30)
 
 // x to 3 significant digits
 u64 round3(double x) {
@@ -380,18 +477,18 @@ double goldenMax(double lo, double hi, F&& f, int steps) {
 }
 
 // The best B2 for B1:  B2 = B1 (no stage 2), or B2 = B1 * ratio on a grid in log(ratio) up to MAX_B2, refined around the best grid point
-Bounds bestB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxR) {
-  Bounds best = evaluateBounds(exponent, tfBits, testsSaved, B1, B1, maxR);
-  if (maxR < stage2nR(stage2Ds().front()) || B1 >= MAX_B2) { return best; }
+Bounds bestB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN) {
+  Bounds best = evaluateBounds(exponent, tfBits, testsSaved, B1, B1, maxN);
+  if (maxN < stage2MinTable() || B1 >= MAX_B2) { return best; }
   constexpr double STEP = 1.2, MAX_RATIO = 10000;
   double const top = std::min(double(B1) * MAX_RATIO, double(MAX_B2));
   double bestX = 0;
   for (double x = log(double(B1) * 1.5); x <= log(top) + 1e-9; x += log(STEP)) {
-    Bounds const b = evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(x)), maxR);
+    Bounds const b = evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(x)), maxN);
     if (b.savings > best.savings) { best = b; bestX = x; }
   }
   if (!bestX) { return best; }
-  auto const at = [&](double x) { return evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(std::min(x, log(top)))), maxR); };
+  auto const at = [&](double x) { return evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(std::min(x, log(top)))), maxN); };
   double const x = goldenMax(bestX - log(STEP), std::min(bestX + log(STEP), log(top)), [&](double x) { return at(x).savings; }, 16);
   if (Bounds const b = at(x); b.savings > best.savings) { best = b; }
   return best;
@@ -399,27 +496,27 @@ Bounds bestB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxR) 
 
 } // namespace
 
-Bounds chooseB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxR) {
-  Bounds const b = bestB2(exponent, tfBits, testsSaved, std::max(B1, MIN_B1), maxR);
-  return evaluateBounds(exponent, tfBits, testsSaved, b.B1, b.B2 > b.B1 ? std::max(b.B1, round3(double(b.B2))) : b.B1, maxR);
+Bounds chooseB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN) {
+  Bounds const b = bestB2(exponent, tfBits, testsSaved, std::max(B1, MIN_B1), maxN);
+  return evaluateBounds(exponent, tfBits, testsSaved, b.B1, b.B2 > b.B1 ? std::max(b.B1, round3(double(b.B2))) : b.B1, maxN);
 }
 
-Bounds chooseBounds(u64 exponent, double tfBits, double testsSaved, u64 maxR) {
+Bounds chooseBounds(u64 exponent, double tfBits, double testsSaved, u64 maxN) {
   // B1 on a grid in log(B1) from p / 100000 to p / 10 (as mprime's search, which starts at p / 3300 and goes up), each with its best B2
   constexpr double STEP = 1.25;
   double const lo = std::max(double(MIN_B1), exponent / 1e5), hi = std::max(lo * 2, exponent / 10.0);
   Bounds best{};
   double bestX = 0;
   for (double x = log(lo); x <= log(hi) + 1e-9; x += log(STEP)) {
-    Bounds const b = bestB2(exponent, tfBits, testsSaved, u64(exp(x)), maxR);
+    Bounds const b = bestB2(exponent, tfBits, testsSaved, u64(exp(x)), maxN);
     if (!best.B1 || b.savings > best.savings) { best = b; bestX = x; }
   }
-  auto const at = [&](double x) { return bestB2(exponent, tfBits, testsSaved, std::max(MIN_B1, u64(exp(x))), maxR); };
+  auto const at = [&](double x) { return bestB2(exponent, tfBits, testsSaved, std::max(MIN_B1, u64(exp(x))), maxN); };
   double const x = goldenMax(bestX - log(STEP), bestX + log(STEP), [&](double x) { return at(x).savings; }, 12);
   if (Bounds const b = at(x); b.savings > best.savings) { best = b; }
 
   // Rounded (as mprime rounds its bounds), then the B2 of the rounded B1
-  return chooseB2(exponent, tfBits, testsSaved, std::max(MIN_B1, round3(double(best.B1))), maxR);
+  return chooseB2(exponent, tfBits, testsSaved, std::max(MIN_B1, round3(double(best.B1))), maxN);
 }
 
 }

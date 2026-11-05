@@ -59,7 +59,7 @@ struct P1State {
 };
 
 // P-1 stage 2 in progress: the accumulator after the k below `k` (see pm1::Stage2Plan).  x64 is the res64 of the stage 1 residue it
-// started from.
+// started from; D, M and plan (the pairing's version) define the plan.  A version 1 savefile (b3807834, no M) has M = D/2 and plan 1.
 struct P2State {
   static const constexpr char* KIND = "p2";
 
@@ -67,6 +67,8 @@ struct P2State {
   u64 k;
   u64 B1, B2;
   u32 D;
+  u32 M;
+  u32 plan;
   u64 x64;
   u64 nMul;
   vector<u32> acc;

@@ -1,20 +1,26 @@
 // Copyright (C) Mihai Preda and George Woltman
 
-// P-1 stage 2, paired "n^2" form, as the old gpuowl doP2 (removed in 2f5ea959) on the current transforms.
+// P-1 stage 2, paired "n^2" form, as the old gpuowl doP2 (removed in 2f5ea959) on the current transforms, with the table and the pairing
+// of pm1::Stage2Plan (a table of x^(n^2) for every odd n < M coprime to D, primes paired across D-sections).
 //
-// Every value is kept in words and, when it is an operand, also in "Low" form:  fully forward transformed (fftP, fftMidIn, fftHin),
-// the form tailMulLow takes as its second operand.
-//   B_r = x^(r^2), the table:  r odd, coprime to D, below D/2;  built by second differences, x^((r+2)^2) = x^(r^2) * x^(4r+4).
-//   A_k = x^((kD)^2), C_k = x^((2k+1) D^2), G = x^(2 D^2):  A_{k+1} = A_k * C_k, C_{k+1} = C_k * G.
-//   For each needed (k, r):  acc *= A_k - B_r, the difference taken in the transform domain by the tail kernel itself (tailMulDelta,
-//   pm1tailmul.cl), the multiplication chained through carryFused as the PRP squarings are.
-// Checks (no Gerbicz-type check exists for a product of unrelated factors; see stage2-design.md):  sums of the table buffers (built
-// twice, re-verified at each checkpoint), the last table entry and A_k against Gpu::exponentiate, acc != 0, ROE of every carry, and
-// one randomly chosen block in DUP_ONE_IN computed twice and compared.  A failed check goes back to the last checkpoint.
+// Values are kept in words and, when they are an operand, in "Low" form:  fully forward transformed (fftP, fftMidIn, fftHin), the form
+// tailMulLow takes as its second operand.
+//   B_n = x^(n^2), the table:  built by second differences over the odd n, x^((n+2)^2) = x^(n^2) * x^(4n+4), x^(4n+8) = x^(4n+4) * x^8.
+//   A_k = x^((kD)^2) (Low only), C_k = x^((2k+1) D^2) (words), G = x^(2 D^2) (Low):  A_{k+1} = C_k * A_k, C_{k+1} = C_k * G.  Two
+//   products per k are the least for a quadratic exponent without an inverse (x^-1, as the V_n of mprime's Lucas form needs); A_{k+1}
+//   goes from the product's carry straight to Low (fftMidIn, fftHin), with no words and no Low copy of C.
+//   For each item (k, n):  acc *= A_k - B_n, the difference taken in the transform domain by the tail kernel itself (tailMulDelta,
+//   pm1tailmul.cl), the multiplications of one k chained through carryFused as the PRP squarings are.
+// Checks (no Gerbicz-type check exists for a product of unrelated factors; see stage2-design.md):  each table entry is transformed
+// twice and the sums compared, the last entry of the second-difference chain is checked against Gpu::exponentiate (an error anywhere in
+// the chain carries on to it), the table sums are verified again at each checkpoint, A_k against Gpu::exponentiate, acc != 0, ROE of
+// the carries, and one randomly chosen block in DUP_ONE_IN computed twice and compared.  A failed check goes back to the last
+// checkpoint.
 
 #include "Stage2.h"
 #include "Gpu.h"
 #include "Pm1.h"
+#include "Pm1Bounds.h"
 #include "Gcd.h"
 #include "Memlock.h"
 #include "KernelCompiler.h"
@@ -47,9 +53,16 @@ constexpr double LOG_SECS = 60;
 constexpr u32 DUP_ONE_IN = 32;            // one block in this many (at random) is computed twice
 constexpr u32 ROE_FIRST = 16;             // ROE is sampled in the first blocks of a run and then in one block in ROE_ONE_IN
 constexpr u32 ROE_ONE_IN = 8;
-constexpr u32 EXTRA_BUFS = 5;             // big buffers besides the table:  A, C, G and S (table build) in Low form, one spare
+constexpr u32 EXTRA_BUFS = 2;             // big buffers besides the table:  A and G in Low form (A also the table build's scratch)
+constexpr u32 WORD_BUFS = 2;              // residue (word) buffers besides the Gpu's own:  acc and a scratch (C and the dup acc are in
+                                          // the Gpu's bufData and bufCheck, which stage 2 does not otherwise use)
 constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // kept back when the free memory is not known, and under a -maxAlloc cap
 constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
+// Buffers are counted at their size rounded up to this (GPU memory pages).  XTX, ROCm:  tables of 15 MiB buffers stopped holding their
+// values a little beyond what 16 MiB each would fill, and 41.25 MiB ones held up to 22.2 GiB:  consistent with 2 MiB pages, but also
+// with a fixed overhead of about 1 GiB beyond the headroom; not settled (stage2-design.md "Stage 2 v2")
+constexpr size_t ALLOC_GRANULE = size_t(2) << 20;
+size_t allocBytes(size_t bytes) { return (bytes + ALLOC_GRANULE - 1) / ALLOC_GRANULE * ALLOC_GRANULE; }
 constexpr float MAX_ROE = 0.4f;
 constexpr int MAX_RETRIES = 3;
 // The untuned FFT candidates are timed (Stage2::timeMul) before a stage 2 with at least this many primes, about B2 = 8M:  about a second
@@ -71,19 +84,26 @@ string formatETA(double secs) {
 
 }
 
+// Thrown by Stage2::runOn when the GPU could not hold its table:  run again with at most maxN table buffers
+struct TableTooLarge { u64 maxN; };
+
 // The work of one stage 2 on one Gpu.  A friend of Gpu:  it drives the transform kernels directly.
 class Stage2Run {
   Gpu& g;
   const pm1::Stage2Plan& plan;
   const vector<u32>& x;
-  u32 const nR;
+  u32 const nT;                    // table entries
   size_t const bufSize;            // doubles
   size_t const wordSize;           // Words of a residue buffer
 
-  vector<Buffer<double>> table;    // B_r, Low
+  vector<Buffer<double>> table;    // B_n, Low
   vector<u64> tableSums;
-  Buffer<double> lowA, lowC, lowG, lowS;
-  Buffer<Word> wX, wA, wC, wS, wR, acc, accDup;
+  Buffer<double> lowA, lowG;
+  Buffer<Word> wA, acc;            // wA:  scratch (the table build's x^(n^2), words of the long carry)
+  Buffer<Word>& wC;                // C_k:  the Gpu's bufData
+  Buffer<Word>& accDup;            // the acc of a duplicated block, and the scratch wS:  the Gpu's bufCheck
+  Buffer<Word>& wS;
+  pm1::Stage2Window win;           // the items of the current window
 
   // ROE of every carry since the table was built:  the count, max, and sums for the mean and sd
   double roeN = 0, roeMax = 0, roeSum = 0, roeSum2 = 0;
@@ -110,9 +130,10 @@ class Stage2Run {
     g.carryB(io);
   }
 
+  // The sum of the buffer as the kernels' Word (WordSize bytes, signed), all of it
   u64 sumOf(Buffer<double>& buf) {
     g.bufSumOut.zero();
-    g.sum64(g.bufSumOut, u32(bufSize), reinterpret_cast<Buffer<Word>&>(buf));
+    g.sum64(g.bufSumOut, u32(bufSize * sizeof(double) / g.fft.WordSize), reinterpret_cast<Buffer<Word>&>(buf));
     return g.bufSumOut.read()[0];
   }
 
@@ -147,21 +168,24 @@ public:
     return size_t(TOTAL_DATA_SIZE(g.fft, g.WIDTH, g.fft.shape.middle, g.SMALL_H, g.in_place, g.pad_size));
   }
 
+  // Bytes of a residue (word) buffer
+  static size_t wordBytes(const Gpu& g) { return size_t(g.N) * g.fft.WordSize; }
+
   // The same for another FFT with g's layout settings (INPLACE, PAD)
   static size_t bufDoubles(const Gpu& g, const FFTConfig& fft) {
     return size_t(TOTAL_DATA_SIZE(fft, fft.shape.width, fft.shape.middle, fft.shape.height, g.in_place, g.pad_size));
   }
 
   Stage2Run(Gpu& g, const pm1::Stage2Plan& plan, const vector<u32>& x) :
-    g{g}, plan{plan}, x{x}, nR{u32(plan.rs.size())},
+    g{g}, plan{plan}, x{x}, nT{plan.nTable()},
     bufSize{bufDoubles(g)},
     wordSize{g.N * g.fft.WordSize / sizeof(Word)},
-    lowA{big("p2A")}, lowC{big("p2C")}, lowG{big("p2G")}, lowS{big("p2S")},
-    wX{words("p2x")}, wA{words("p2wA")}, wC{words("p2wC")}, wS{words("p2wS")}, wR{words("p2wR")},
-    acc{words("p2acc")}, accDup{words("p2accDup")}
+    lowA{big("p2A")}, lowG{big("p2G")},
+    wA{words("p2wA")}, acc{words("p2acc")},
+    wC{g.bufData}, accDup{g.bufCheck}, wS{g.bufCheck}
   {
-    table.reserve(nR);
-    for (u32 i = 0; i < nR; ++i) { table.push_back(big("p2B")); }
+    table.reserve(nT);
+    for (u32 i = 0; i < nT; ++i) { table.push_back(big("p2B")); }
     g.wantROE = ROE_SAMPLES;
   }
 
@@ -170,46 +194,88 @@ public:
   // in ROE_ONE_IN.
   static constexpr u32 ROE_SAMPLES = 50'000;
   void sampleROE(bool on) { g.wantROE = on ? ROE_SAMPLES : 0; }
-  bool roeFull() const { return g.roePos + 2 * plan.rs.size() + 16 >= ROE_SAMPLES; }
+  // Before a block of n multiplications (and the k step):  whether the ROE samples must be read first
+  bool roeFull(u32 n) const { return g.roePos + n + 16 >= ROE_SAMPLES; }
 
-  // Builds the table B_r = x^(r^2) and its sums.  Returns false if the check of the last entry failed.
-  bool buildTable(bool keepSums) {
-    if (keepSums) { tableSums.clear(); }
-    // R = x^(r^2), S = x^(4r+4), lowG temporarily = x^8 (Low)
-    g.writeIn(wR, x);
+  // Builds the table B_n = x^(n^2) and its sums.  Each entry is transformed twice and the two sums compared (a fault in a transform that
+  // feeds no later value); the chain's own values all feed the last entry, which is checked against Gpu::exponentiate.  Returns nT when
+  // every check passed, else the index of the entry whose two transforms differed (nT + 1:  the last entry is wrong).
+  u32 buildTable() {
+    tableSums.clear();
+    // R = x^(n^2) in wA, S = x^(4n+4) in wS (its Low in lowA), lowG temporarily = x^8 (Low)
+    g.writeIn(wA, x);
     power(wS, 8);
     toLow(lowG, wS);
     u32 i = 0;
-    u32 const last = plan.rs.back();
-    for (u32 r = 1; ; r += 2) {
-      if (i < nR && plan.rs[i] == r) {
-        toLow(table[i], wR);
+    u32 const last = plan.ns.back();
+    for (u32 n = 1; ; n += 2) {
+      if (i < nT && plan.ns[i] == n) {
+        toLow(table[i], wA);
+#ifdef PRPLL_PM1_FAULTS
+        if (i == faultEntry("build") && i) { table[i] << table[0]; }     // TEST ONLY:  this entry wrong in every build
+#endif
         u64 const sum = sumOf(table[i]);
-        if (keepSums) {
-          tableSums.push_back(sum);
-        } else if (sum != tableSums[i]) {
-          log("EE stage 2: table entry %u (r = %u) differs between two builds\n", i, r);
-          return false;
+        toLow(lowA, wA);
+        if (sumOf(lowA) != sum) {
+          log("EE stage 2: table entry %u (n = %u) differs between two transforms\n", i, n);
+          return i;
         }
+        tableSums.push_back(sum);
         ++i;
       }
-      if (r == last) { break; }
-      toLow(lowS, wS);
-      mulLow(wR, lowS);            // x^((r+2)^2)
-      mulLow(wS, lowG);            // x^(4(r+2)+4)
+      if (n == last) { break; }
+      toLow(lowA, wS);
+      mulLow(wA, lowA);            // x^((n+2)^2)
+      mulLow(wS, lowG);            // x^(4(n+2)+4)
     }
     power(wS, u64(last) * last);
-    if (read(wR) != read(wS)) {
-      log("EE stage 2: table entry r = %u differs from x^(r^2)\n", last);
-      return false;
+    if (read(wA) != read(wS)) {
+      log("EE stage 2: table entry n = %u differs from x^(n^2)\n", last);
+      return nT + 1;
     }
-    return true;
+    return nT;
   }
 
+  // Copies a pattern into every table buffer (from lowA, written once from the host) and then reads each one's sum back:  the index of the
+  // first buffer that does not hold the pattern, or nT.  On the XTX (ROCm) a table that overfilled the memory gave a wrong entry when its
+  // buffers were first written by the table build; touched by this test first, the same table held its values (but ran 15% slower).
+  u32 memoryTest() {
+    vector<double> pattern(bufSize);
+    for (size_t j = 0; j < bufSize; ++j) {
+      u64 const v = (u64(j) + 1) * 0x9E3779B97F4A7C15ull;
+      memcpy(&pattern[j], &v, sizeof(v));
+    }
+    // sumOf's sum:  of signed WordSize-byte values
+    u64 expected = 0;
+    const char* bytes = reinterpret_cast<const char*>(pattern.data());
+    for (size_t j = 0; j < bufSize * sizeof(double); j += g.fft.WordSize) {
+      if (g.fft.WordSize == 4) { i32 w; memcpy(&w, bytes + j, 4); expected += u64(i64(w)); }
+      else { i64 w; memcpy(&w, bytes + j, 8); expected += u64(w); }
+    }
+    lowA.write(pattern);
+    for (u32 i = 0; i < nT; ++i) { table[i] << lowA; }
+#ifdef PRPLL_PM1_FAULTS
+    // TEST ONLY:  PRPLL_STAGE2_FAULT=memtest,<i> fails buffer i (once per process)
+    static bool memFaultDone = false;
+    if (u32 const f = faultEntry("memtest"); f < nT && !memFaultDone) { memFaultDone = true; return f; }
+#endif
+    for (u32 i = 0; i < nT; ++i) { if (sumOf(table[i]) != expected) { return i; } }
+    return nT;
+  }
+
+#ifdef PRPLL_PM1_FAULTS
+  // TEST ONLY (fault build):  the <i> of PRPLL_STAGE2_FAULT=<kind>,<i> when kind matches, else u32(-1)
+  static u32 faultEntry(const char* kind) {
+    const char* f = getenv("PRPLL_STAGE2_FAULT");
+    if (!f || !strchr(f, ',') || string(f, strchr(f, ',')) != kind) { return u32(-1); }
+    return u32(stoul(strchr(f, ',') + 1));
+  }
+#endif
+
   bool tableOK() {
-    for (u32 i = 0; i < nR; ++i) {
+    for (u32 i = 0; i < nT; ++i) {
       if (sumOf(table[i]) != tableSums[i]) {
-        log("EE stage 2: table entry %u (r = %u) changed in memory\n", i, plan.rs[i]);
+        log("EE stage 2: table entry %u (n = %u) changed in memory\n", i, plan.ns[i]);
         return false;
       }
     }
@@ -222,13 +288,15 @@ public:
     power(wA, k * D * k * D);
     toLow(lowA, wA);
     power(wC, (2 * k + 1) * D * D);
-    toLow(lowC, wC);
     power(wS, 2 * D * D);
     toLow(lowG, wS);
   }
 
+  // A_k (held in Low form only) against x^((kD)^2):  1 * A_k gives its words
   bool aOK(u64 k) {
     u64 const kD = k * plan.D;
+    g.writeIn(wA, makeWords(g.E, 1));
+    mulLow(wA, lowA);
     power(wS, kD * kD);
     return read(wS) == read(wA);
   }
@@ -236,11 +304,10 @@ public:
   void setAcc(const vector<u32>& w) { g.writeIn(acc, w); }
   vector<u32> getAcc() { return read(acc); }
 
-  // The table indices of the needed r of block k
-  vector<u32> neededOf(u64 k) const {
-    vector<u32> ret;
-    for (u32 i = 0; i < nR; ++i) { if (plan.needed(k, i)) { ret.push_back(i); } }
-    return ret;
+  // The table indices of the items of block k
+  vector<u32> neededOf(u64 k) {
+    if (win.w != plan.windowOf(k)) { pm1::planWindow(plan, plan.windowOf(k), win); }
+    return vector<u32>(win.items(k), win.items(k) + win.count(k));
   }
 
   // a *= A_k - B_r for the table entries `idx`, as a chain through carryFused.  Returns the number of multiplications.
@@ -262,24 +329,23 @@ public:
     return total;
   }
 
-  // A_k, C_k -> A_{k+1}, C_{k+1}
+  // A_k, C_k -> A_{k+1}, C_{k+1}.  A_{k+1} = C_k * A_k from the carry straight to Low (exponentiate's fftP, fftMidIn, fftHin with the
+  // carry in place of fftP; the long carry goes through wA), then C_{k+1} = C_k * G.
   void stepK() {
-    mulLow(wA, lowC);
-    toLow(lowA, wA);
+    g.fftP(g.buf1, wC);
+    g.fftMidIn(g.buf1);
+    g.tailMulLow(g.buf1, lowA);
+    g.fftMidOut(g.buf1);
+    g.doCarry(g.buf1, wA);
+    g.fftMidIn(g.buf1);
+    g.fftHin(lowA, g.buf1);
+    g.replay();
     mulLow(wC, lowG);
-    toLow(lowC, wC);
-  }
-
-  // The kernels of stepK on scratch buffers (A and C unchanged), for timeMul's warm-up
-  void stepKWarm() {
-    wS << wA;
-    mulLow(wS, lowC);
-    toLow(lowS, wS);
   }
 
   // The block computed a second time from accBefore (in accDup) and compared with acc
-  bool dupOK(u64 k) {
-    block(neededOf(k), accDup);
+  bool dupOK(const vector<u32>& idx) {
+    block(idx, accDup);
     return g.isEqual(acc, accDup);
   }
 
@@ -333,14 +399,13 @@ public:
 
 #ifdef PRPLL_PM1_FAULTS
   // TEST ONLY (PRPLL_STAGE2_FAULT, fault build):  simulated faults
-  void corruptTable() { table[0] << table[nR - 1]; }
-  void corruptA() { wA << wC; }
+  void corruptTable() { table[0] << table[nT - 1]; }
+  void corruptA() { lowA << lowG; }
   void corruptAcc() { acc << wA; }
   void corruptTableLast() { faultTable = true; }
   void corruptAccOnce() { acc << wA; }
   bool faultTable = false;
 #endif
-  u32 blockMain(u64 k) { return block(neededOf(k), acc); }
   u32 blockOn(const vector<u32>& idx) { return block(idx, acc); }
   u32 blockOnDup(const vector<u32>& idx) { return block(idx, accDup); }
 
@@ -399,35 +464,39 @@ Stage2::MulTime Stage2::timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, c
   auto gpu = Gpu::make(E, shared, fft, {}, false, uses);
   Gpu& g = *gpu;
 
-  // A fixed pseudo-random x (a stage 1 residue looks random), the r of D = 2310 for the table and a k as in a real stage 2, so that every
-  // FFT computes the same accumulator for E
+  // A fixed pseudo-random x (a stage 1 residue looks random), the first TABLE n of D = 2310 for the table and a k as in a real stage 2,
+  // so that every FFT computes the same accumulator for E
   vector<u32> x(nWords(E));
   std::mt19937 rng{u32(E)};
   for (u32& w : x) { w = rng(); }
   if (E % 32) { x.back() &= (1u << (E % 32)) - 1; }
-  pm1::Stage2Plan plan = pm1::planStage2(1000, 2000, TABLE <= 240 ? 2310 : 4620);
-  plan.rs.resize(TABLE);
+  pm1::Stage2Plan plan;
+  plan.D = 2310;
+  plan.M = pm1::stage2MaxM(plan.D, TABLE);
+  for (u32 n = 1; plan.ns.size() < TABLE; n += 2) { if (std::gcd(n, plan.D) == 1) { plan.ns.push_back(n); } }
   Stage2Run s2{g, plan, x};
-  if (!s2.buildTable(true)) { return {std::numeric_limits<double>::infinity()}; }
-  s2.startK(433);
+  if (s2.buildTable() != TABLE) { return {std::numeric_limits<double>::infinity()}; }
   s2.setAcc(x);
   vector<u32> idx(BLOCK);
   for (u32 i = 0; i < BLOCK; ++i) { idx[i] = i % TABLE; }
 
   // Warm-up blocks for WARMUP_SECS, without ROE as the timed blocks (stage 2 samples it in 1 block in 8):  the first builds the kernels
   // the timed blocks use (a build inside the timed window cost 15-35% of a 600-multiplication timing on the XTX), and a GPU that idled
-  // while the kernels compiled takes a while to reach its clocks.  They run on the spare accumulator and do not step k, so that the
-  // result does not depend on their number.  Then the timed blocks, and one block with ROE.
+  // while the kernels compiled takes a while to reach its clocks.  They run on the spare accumulator, and A and C are set again after
+  // them, so that the result does not depend on their number.  Then the timed blocks, and one block with ROE.
   constexpr double WARMUP_SECS = 0.25;
+  s2.startK(433);
   s2.roeReset();
   s2.sampleROE(false);
   s2.saveAccForDup();
   for (Timer warm; ; ) {
     s2.blockOnDup(idx);
-    s2.stepKWarm();
+    s2.stepK();
     s2.finish();
     if (warm.at() >= WARMUP_SECS) { break; }
   }
+  s2.startK(433);
+  s2.finish();
   Timer timer;
   for (u32 b = 0; b < nBlocks; ++b) {
     s2.blockOn(idx);
@@ -521,10 +590,10 @@ void Stage2::rankUntuned(GpuCommon shared, u64 E, vector<Pm1Fft>& ffts) {
   ffts = std::move(ranked);
 }
 
-Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D) {
+Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, u32 M) {
   const Args& args = *shared.args;
-  if (B1 < 11 || B2 <= B1 || B2 > (u64(1) << 32) - 8192) {
-    return {.status = Stage2Result::DECLINED, .why = "stage 2 needs 11 <= B1 < B2 < 2^32 - 8192"};
+  if (B1 < 5 || B2 <= B1 || B2 > (u64(1) << 32) - 8192) {
+    return {.status = Stage2Result::DECLINED, .why = "stage 2 needs 5 <= B1 < B2 < 2^32 - 8192"};
   }
   if (x.size() != nWords(E) || isZero(x)) {
     return {.status = Stage2Result::DECLINED, .why = "bad stage 1 residue"};
@@ -564,7 +633,14 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
       }
 #endif
       log("Stage 2 FFT %s (%s)\n", ffts[i].fft.spec().c_str(), ffts[i].sourceName());
-      return runOn(shared, E, B1, B2, x, D, ffts[i].fft, ffts[i].uses);
+      // A table the GPU could not hold (runOn throws TableTooLarge):  again with a smaller one
+      for (u64 maxN = u64(-1); ; ) {
+        try {
+          return runOn(shared, E, B1, B2, x, D, M, ffts[i].fft, ffts[i].uses, maxN);
+        } catch (const TableTooLarge& t) {
+          maxN = t.maxN;
+        }
+      }
     } catch (const string& mes) {
       if (!isBuildFailure(mes)) { throw; }
       err = mes;
@@ -587,15 +663,16 @@ namespace {
 // The stage 2 memory budget
 struct Budget {
   double bytes;   // can be negative
-  u64 maxR;       // the table buffers it leaves room for (0: none)
+  u64 maxN;       // the table buffers it leaves room for (0: none)
 };
 
-// Memory for stage 2 on the device of `shared`:  the table and EXTRA_BUFS more big buffers of bufBytes.  The budget is the memory free
+// Memory for stage 2 on the device of `shared`:  the table and EXTRA_BUFS more big buffers of bufBytes, and WORD_BUFS residue buffers of
+// wordBytes.  The budget is the memory free
 // on the device now (after the stage 2 Gpu's own buffers) less HEADROOM_BYTES; where the free memory can't be queried (OpenCL without
 // CL_DEVICE_GLOBAL_FREE_MEMORY_AMD, e.g. Nvidia's or PoCL), 90% of the device RAM less what prpll holds and RESERVE_BYTES.  -maxAlloc,
 // when given, caps it (less what prpll holds and RESERVE_BYTES).  Without -maxAlloc there is no cap:  AllocTrac's default limit (for
 // PRP) is raised by the budget, for this device only, while stage 2 runs.
-Budget memoryBudget(GpuCommon shared, size_t bufBytes, const char* what) {
+Budget memoryBudget(GpuCommon shared, size_t bufBytes, size_t wordBytes, const char* what) {
   const Args& args = *shared.args;
   cl_device_id const dev = shared.context->deviceId();
   double const GB = double(1u << 30);
@@ -625,8 +702,9 @@ Budget memoryBudget(GpuCommon shared, size_t bufBytes, const char* what) {
              RESERVE_BYTES / GB);
   }
   log("Stage 2 memory%s: %s, %s => budget %.2f GB\n", what, memNote, capNote, std::max(0.0, budget) / GB);
-  u64 const maxR = budget > double(bufBytes) * (EXTRA_BUFS + 1) ? u64(budget / bufBytes) - EXTRA_BUFS : 0;
-  return {budget, maxR};
+  double const forTable = budget - double(WORD_BUFS) * wordBytes;
+  u64 const maxN = forTable > double(bufBytes) * (EXTRA_BUFS + 1) ? u64(forTable / bufBytes) - EXTRA_BUFS : 0;
+  return {budget, maxN};
 }
 
 } // namespace
@@ -638,15 +716,16 @@ u64 Stage2::tableCapacity(GpuCommon shared, const Gpu& g, u64 E) {
   } catch (const char*) {
     return 0;
   }
-  size_t const bufBytes = Stage2Run::bufDoubles(g, ffts.front().fft) * sizeof(double);
-  u64 const maxR = memoryBudget(shared, bufBytes, " (estimate for the bounds)").maxR;
+  size_t const bufBytes = allocBytes(Stage2Run::bufDoubles(g, ffts.front().fft) * sizeof(double));
+  size_t const wordBytes = allocBytes(size_t(ffts.front().fft.size()) * ffts.front().fft.WordSize);
+  u64 const maxN = memoryBudget(shared, bufBytes, wordBytes, " (estimate for the bounds)").maxN;
   log("Stage 2 estimate: %s, buffers of %.0f MB, room for %" PRIu64 " table buffers\n", ffts.front().fft.spec().c_str(),
-      bufBytes / double(1u << 20), maxR);
-  return maxR;
+      bufBytes / double(1u << 20), maxN);
+  return maxN;
 }
 
-Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, const FFTConfig& fft,
-                           const vector<KeyVal>& uses) {
+Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, u32 M, const FFTConfig& fft,
+                           const vector<KeyVal>& uses, u64 maxNCap) {
   const Args& args = *shared.args;
   auto gpuPtr = Gpu::make(E, shared, fft, {}, true, uses);
   Gpu& g = *gpuPtr;
@@ -659,37 +738,85 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
     log("Stage 2 savefile is for B1=%" PRIu64 " B2=%" PRIu64 " x=%016" PRIx64 ", not this stage 2: starting over\n", saved.B1, saved.B2, saved.x64);
   }
 
-  size_t const bufBytes = Stage2Run::bufDoubles(g) * sizeof(double);
-  auto const [budget, maxR] = memoryBudget(shared, bufBytes, "");
-  if (resume && !D && pm1::stage2nR(saved.D) <= maxR) { D = saved.D; }
-  if (resume && D != saved.D) {
-    log("Stage 2 savefile is for D=%u, which does not fit now (or another D was asked for): starting over\n", saved.D);
-    resume = false;
+  size_t const bufBytes = allocBytes(Stage2Run::bufDoubles(g) * sizeof(double));
+  size_t const wordBytes = allocBytes(Stage2Run::wordBytes(g));
+  auto const [budget, maxNFree] = memoryBudget(shared, bufBytes, wordBytes, "");
+  u64 const maxN = std::min(maxNFree, maxNCap);
+  if (maxN < maxNFree) { log("Stage 2 table limited to %" PRIu64 " buffers (the GPU could not hold a larger one)\n", maxN); }
+  // The savefile's plan is resumed when its table still fits (a version 1 savefile is the plan with M = D/2) and no other D or M was asked
+  // for
+  if (resume) {
+    bool const samePlan = saved.plan == pm1::Stage2Plan::VERSION || (saved.plan == 1 && saved.M == saved.D / 2);
+    bool const fits = saved.D % 2 == 0 && saved.M >= saved.D / 2 && pm1::stage2DFits(saved.D, B1) &&
+                      pm1::stage2TableSize(saved.D, saved.M) <= maxN;
+    if (samePlan && fits && (!D || D == saved.D) && (!M || M == saved.M)) {
+      D = saved.D;
+      M = saved.M;
+    } else {
+      log("Stage 2 savefile is for D=%u M=%u (plan version %u), which %s: starting over\n", saved.D, saved.M, saved.plan,
+          !samePlan ? "is another pairing" : !fits ? "does not fit now" : "is not the D or M asked for");
+      resume = false;
+    }
   }
   if (!saved.acc.empty() && !resume) {
-    // The savefiles of another stage 2 (other bounds, residue or D) would be loaded again before this run's own:  remove them
+    // The savefiles of another stage 2 (other bounds, residue or plan) would be loaded again before this run's own:  remove them
     saverPtr.reset();
     Saver<P2State>::clear(E);
     saverPtr = std::make_unique<Saver<P2State>>(E, 1000, 4);
   }
   Saver<P2State>& saver = *saverPtr;
-  if (!D) { D = pm1::chooseStage2D(B1, B2, maxR); }
-  if (!D || pm1::stage2nR(D) > maxR) {
-    char why[256];
-    snprintf(why, sizeof(why), "%.1f GB of GPU memory allow %" PRIu64 " buffers of %.0f MB, stage 2 needs at least %u + %u",
-             std::max(0.0, budget) / double(1u << 30), maxR + (maxR ? EXTRA_BUFS : 0), bufBytes / double(1u << 20), pm1::stage2nR(210), EXTRA_BUFS);
+  if (!M) {
+    pm1::Stage2Choice const c = pm1::chooseStage2(B1, B2, maxN, D);
+    D = c.D;
+    M = c.M;
+  }
+  if (!D || !pm1::stage2DFits(D, B1) || M < D / 2 || pm1::stage2TableSize(D, M) > maxN) {
+    char why[320];
+    int const n = snprintf(why, sizeof(why), "%.2f GB of GPU memory allow %" PRIu64 " buffers of %.1f MB (and %u of %.1f MB), stage 2 needs "
+                           "at least %" PRIu64 " + %u", std::max(0.0, budget) / double(1u << 30), maxN + (maxN ? EXTRA_BUFS : 0),
+                           bufBytes / double(1u << 20), WORD_BUFS, wordBytes / double(1u << 20), pm1::stage2MinTable(), EXTRA_BUFS);
+    if (D && !pm1::stage2DFits(D, B1)) {
+      snprintf(why + n, sizeof(why) - n, "; D=%u has a prime factor above B1", D);
+    } else if (D && M) {
+      snprintf(why + n, sizeof(why) - n, "; the table asked for (D=%u M=%u) has %u entries", D, M, M >= D / 2 ? pm1::stage2TableSize(D, M) : 0);
+    }
     log("Stage 2 declined: %s\n", why);
     return {.status = Stage2Result::DECLINED, .why = why};
   }
 
   Timer timer;
-  pm1::Stage2Plan const plan = pm1::planStage2(B1, B2, D);
-  u32 const nR = plan.rs.size();
-  u64 const mulsTotal = plan.mulsFrom(plan.kBegin);
-  log("Stage 2 B1=%" PRIu64 " B2=%" PRIu64 ": D=%u, %u table buffers of %.0f MB, k %" PRIu64 "..%" PRIu64 ", %" PRIu64 " primes, %" PRIu64
-      " pairs (%.1f%% of the primes paired), %" PRIu64 " multiplications (%" PRIu64 " for the primes, %" PRIu64 " for the k steps); plan %.1fs\n",
-      B1, B2, D, nR, bufBytes / double(1u << 20), plan.kBegin, plan.kEnd - 1, plan.nPrimes, plan.nPairs,
-      plan.nPrimes ? 200.0 * plan.nPairs / plan.nPrimes : 0.0, mulsTotal, plan.nNeeded, 2 * (plan.kEnd - plan.kBegin), timer.reset());
+  u64 kWindow = 0;     // the plan's default
+#ifdef PRPLL_PM1_FAULTS
+  // TEST ONLY (fault build):  PRPLL_STAGE2_KWINDOW=<k per window> makes the pairing windows small (pairs are never formed across them)
+  if (const char* kw = getenv("PRPLL_STAGE2_KWINDOW")) { kWindow = stoull(kw); }
+#endif
+  pm1::Stage2Plan const plan = pm1::planStage2(B1, B2, D, M, kWindow);
+  u32 const nT = plan.nTable();
+  u64 const nK = plan.kEnd - plan.kBegin;
+  u64 const mulsTotal = plan.nNeeded + 2 * nK;
+  double const planSecs = timer.reset();
+  pm1::Stage2Choice const est = pm1::stage2Estimate(B1, B2, D, M);
+  // The plan b3807834 made (M = D/2, the D of 210 ... 4620 with the least D/2 + 2 (B2 - B1) / D that fits, 24 + 5 buffers at least):
+  // its multiplications as the model estimates them
+  u32 oldD = 0;
+  for (u32 d : {210, 330, 420, 462, 630, 770, 840, 1050, 1260, 1470, 2310, 4620}) {
+    if (pm1::stage2TableSize(d, d / 2) + 5 > maxN + EXTRA_BUFS) { continue; }
+    if (!oldD || d / 2.0 + 2.0 * double(B2 - B1) / d < oldD / 2.0 + 2.0 * double(B2 - B1) / oldD) { oldD = d; }
+  }
+  char oldNote[160] = "the old plan (M = D/2, 24 + 5 buffers) would not fit";
+  if (oldD) {
+    // Its k step cost 3.4 multiplications and its table was built twice (Pm1Bounds.cpp)
+    double const items = pm1::stage2Items(double(B1), double(B2), oldD, oldD / 2), nKOld = double(B2 - B1) / oldD;
+    snprintf(oldNote, sizeof(oldNote), "the old plan would be D=%u: ~%.0f multiplications, est. cost %.0f", oldD, items + 2 * nKOld,
+             (items + 3.4 * nKOld) * (1 + 1.0 / 32) + 2 * (oldD / 4 * 2.9 + 0.8 * pm1::stage2TableSize(oldD, oldD / 2)));
+  }
+  log("Stage 2 B1=%" PRIu64 " B2=%" PRIu64 ": D=%u M=%u (L=%.2f), %u table buffers + %u of %.0f MB, k %" PRIu64 "..%" PRIu64
+      " (%" PRIu64 " windows of %" PRIu64 "), %" PRIu64 " primes, %" PRIu64 " pairs (%.1f%% of the primes paired, %" PRIu64
+      " across sections), %" PRIu64 " multiplications (%" PRIu64 " for the primes, %" PRIu64 " for the k steps); est. cost %.0f (%.0f for "
+      "the primes); %s; plan %.1fs\n",
+      B1, B2, D, M, 2.0 * M / D, nT, EXTRA_BUFS, bufBytes / double(1u << 20), plan.kBegin, plan.kEnd - 1, plan.nWindows(), plan.kWindow,
+      plan.nPrimes, plan.nPairs, plan.nPrimes ? 200.0 * plan.nPairs / plan.nPrimes : 0.0, plan.nCross, mulsTotal, plan.nNeeded, 2 * nK,
+      est.cost, est.items, oldNote, planSecs);
 
   // Without a -maxAlloc cap, AllocTrac's default limit must not refuse the planned buffers:  this device's limit is raised by the budget
   // (which the device's free memory bounds) while stage 2 runs
@@ -705,8 +832,17 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
   }
   Stage2Run& s2 = *s2Ptr;
 
-  P2State state = resume ? saved : P2State{.exponent = E, .k = plan.kBegin, .B1 = B1, .B2 = B2, .D = D, .x64 = x64, .nMul = 0,
-                                           .acc = makeWords(E, 1), .elapsed = 0};
+  // Buffers the GPU can't hold:  a smaller table (from the start, as another plan).  The margin keeps clear of the buffers just below.
+  auto const shrink = [&](u32 bad) {
+    u64 const n = bad > std::max(8u, bad / 50) ? bad - std::max(8u, bad / 50) : 0;
+    log("EE stage 2: table buffer %u of %u does not hold its values: planning again with at most %" PRIu64 " table buffers\n", bad, nT, n);
+    throw TableTooLarge{n};
+  };
+  if (u32 const bad = s2.memoryTest(); bad < nT) { shrink(bad); }
+
+  P2State state = resume ? saved : P2State{.exponent = E, .k = plan.kBegin, .B1 = B1, .B2 = B2, .D = D, .M = M,
+                                           .plan = pm1::Stage2Plan::VERSION, .x64 = x64, .nMul = 0, .acc = makeWords(E, 1), .elapsed = 0};
+  state.plan = pm1::Stage2Plan::VERSION;
   if (resume) { log("Stage 2 resuming at k=%" PRIu64 " (%" PRIu64 " multiplications done)\n", state.k, state.nMul); }
 
   std::mt19937_64 rng{std::random_device{}()};
@@ -725,12 +861,16 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
   u64 const mulsBefore = state.nMul;     // -iters counts the multiplications of this run
   Signal signal;
   int retries = 0;
+  u32 lastBadEntry = u32(-1);
 
   while (true) {
-    // (Re)start from `state`, the last verified point
-    bool ok = s2.buildTable(true) && s2.buildTable(false);
+    // (Re)start from `state`, the last verified point.  The same table entry wrong in two builds in a row:  the GPU can't hold it.
+    u32 const built = s2.buildTable();
+    if (built < nT && built == lastBadEntry) { shrink(built); }
+    lastBadEntry = built < nT ? built : u32(-1);
+    bool ok = built == nT;
     if (ok) {
-      log("Stage 2 table of %u built and checked in %.1fs\n", nR, timer.reset());
+      log("Stage 2 table of %u built and checked in %.2fs\n", nT, timer.reset());
       s2.startK(state.k);
       s2.setAcc(state.acc);
       s2.roeReset();      // drop the ROE of the set-up
@@ -755,7 +895,8 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
         if (!s2.tableOK()) { ok = false; break; }
         if (!s2.aOK(k)) { log("EE stage 2: A_k differs from x^((kD)^2) at k=%" PRIu64 "\n", k); ok = false; break; }
         double const elapsed = elapsedAtStart + sinceCheckpoint.at();
-        state = P2State{.exponent = E, .k = k, .B1 = B1, .B2 = B2, .D = D, .x64 = x64, .nMul = nMul, .acc = a, .elapsed = elapsed};
+        state = P2State{.exponent = E, .k = k, .B1 = B1, .B2 = B2, .D = D, .M = M, .plan = pm1::Stage2Plan::VERSION, .x64 = x64,
+                        .nMul = nMul, .acc = a, .elapsed = elapsed};
         saver.save(state);
         elapsedAtStart = elapsed;
         sinceCheckpoint.reset();
@@ -782,20 +923,22 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
 #else
       bool const dup = rng() % DUP_ONE_IN == 0;
 #endif
-      s2.sampleROE(k - state.k < ROE_FIRST || rng() % ROE_ONE_IN == 0);
+      vector<u32> const items = s2.neededOf(k);
+      u32 const nCarries = u32(items.size()) * (dup ? 2 : 1) + 2;
+      if (s2.roeFull(nCarries) && !s2.roeCheck()) { log("EE stage 2: ROE %.3f\n", s2.maxROE()); ok = false; break; }
+      s2.sampleROE((k - state.k < ROE_FIRST || rng() % ROE_ONE_IN == 0) && !s2.roeFull(nCarries));
       if (dup) { s2.saveAccForDup(); }
-      nMul += s2.blockMain(k) + 2;
+      nMul += s2.blockOn(items) + 2;
 #ifdef PRPLL_PM1_FAULTS
       if (fault && kind == "acc") { s2.corruptAcc(); }
 #endif
-      if (dup && !s2.dupOK(k)) { log("EE stage 2: block k=%" PRIu64 " gave two different results\n", k); ok = false; break; }
+      if (dup && !s2.dupOK(items)) { log("EE stage 2: block k=%" PRIu64 " gave two different results\n", k); ok = false; break; }
       s2.stepK();
 #ifdef PRPLL_PM1_FAULTS
       if (fault && kind == "table") { s2.corruptTable(); }
       if (fault && kind == "A") { s2.corruptA(); }
 #endif
       ++k;
-      if (s2.roeFull() && !s2.roeCheck()) { log("EE stage 2: ROE %.3f\n", s2.maxROE()); ok = false; break; }
 
       if (sinceLog.at() > LOG_SECS) {
         s2.finish();
@@ -851,13 +994,14 @@ void stage2Test(GpuCommon shared, const char* spec) {
     if (!comma) { break; }
     spec = comma + 1;
   }
-  if (f.size() < 5) { throw "PRPLL_STAGE2_TEST=E,B1,B2,x.bin,acc.bin[,D]"; }
+  if (f.size() < 5) { throw "PRPLL_STAGE2_TEST=E,B1,B2,x.bin,acc.bin[,D[,M]]"; }
   u64 const E = stoull(f[0]), B1 = stoull(f[1]), B2 = stoull(f[2]);
   u32 const D = f.size() > 5 ? u32(stoul(f[5])) : 0;
+  u32 const M = f.size() > 6 ? u32(stoul(f[6])) : 0;
 
   vector<u32> const x = File::openReadThrow(f[3]).read<u32>(nWords(E));
   LogContext const pushContext(std::to_string(E));
-  Stage2Result const r = Stage2::run(shared, E, B1, B2, x, D);
+  Stage2Result const r = Stage2::run(shared, E, B1, B2, x, D, M);
   log("stage2Test: %s, %" PRIu64 " multiplications\n", r.status == Stage2Result::DONE ? "done" : r.status == Stage2Result::STOPPED ? "stopped" : r.why.c_str(), r.nMul);
   if (r.status == Stage2Result::DONE) {
     File fo = File::openWrite(f[4]);
