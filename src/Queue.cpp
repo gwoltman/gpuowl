@@ -72,8 +72,8 @@ void Queue::readSync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo) {
   events.synced();
 }
 
-void Queue::readAsync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo) {
-  add(read(get(), {}, false, buf, size, out, hasEvents), tInfo);
+void Queue::readAsync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo, size_t start) {
+  add(read(get(), {}, false, buf, size, out, hasEvents, start), tInfo);
 }
 
 void Queue::copyBuf(cl_mem src, cl_mem dst, size_t size, TimeInfo* tInfo) {

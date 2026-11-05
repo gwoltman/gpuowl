@@ -41,6 +41,7 @@ struct PRPResult {
   u32 nErrors = 0;
   fs::path proofPath;
   std::string res2048;
+  u64 shiftCount = 0;     // -shift: the shift at iteration 0 of the run that reached the result (0: no shift)
   bool pm1Factor{};     // the P-1 inside the PRP test found a factor (its result line is written):  the PRP test stopped
 };
 
@@ -268,6 +269,18 @@ private:
   // The ROE positions originating from multiplications (as opposed to squarings).
   vector<u32> mulRoePos;
 
+  // Residue shift (-shift, PRP and CERT).  The GPU holds the residue times 2^dataShift(k) mod 2^E - 1 after iteration k, where
+  // dataShift(k) = shift0 * 2^k mod E: a squaring doubles the shift, the PRP multiply by 3 keeps it.  shift0 == 0 is "no shift".
+  // Everything that leaves the GPU (logged residues, savefiles, proof residues, the result) is unshifted on the host, at the
+  // isPrimePRP / isCERT call sites; readData() and dataResidue() return the raw GPU value (proofs and -tune rely on that).
+  // A PRP load starts a new shift segment at shiftK0, see loadPRP().
+  u64 shift0{};
+  u64 shiftK0{};
+  // E divides 2^blockSize - 1: then a shifted check can't shift the data (see checkShift), so the check is left unshifted and
+  // writeState() and doCheck() multiply by 3 * 2^b instead of 3, with bufShiftMul == 2^b, b = dataShift(shiftK0).
+  bool shiftMul{};
+  std::unique_ptr<Buffer<Word>> bufShiftMul;
+
   // Auxilliary big buffers
   Buffer<double> buf1;
   Buffer<double> buf2;
@@ -336,7 +349,15 @@ private:
   
   void exponentiate(Buffer<Word>& bufInOut, u64 exp);
 
-  void writeState(u64 k, const vector<u32>& check, u32 blockSize);
+  // shifted: the check was rotated for a shifted PRP segment, so bufData must be regenerated from it also at k == 0
+  void writeState(u64 k, const vector<u32>& check, u32 blockSize, bool shifted = false);
+
+  u64 initialShift();
+  u64 nextShift(u64 shift);
+  [[nodiscard]] u64 dataShift(u64 k) const;
+  [[nodiscard]] u64 checkShift(u64 k, u32 blockSize) const;
+  void startShiftSegment(u64 k, u32 blockSize);
+  u64 unshiftedDataResidue(u64 k);
 
   // does either carrryFused() or the expanded version depending on useLongCarry
   void doCarry(Buffer<double>& in, Buffer<Word>& wordBuf);
@@ -389,6 +410,7 @@ public:
   CERTResult isCERT(const Task& task);
   // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
   PM1Result pm1Stage1(const Task& task, Gcd& gcd);
+  [[nodiscard]] u64 shiftCount() const { return shift0; }   // -shift of the last isPrimePRP / isCERT, see PRPResult::shiftCount
 
   double timePRP(int quick = 7);
 

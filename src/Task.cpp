@@ -174,7 +174,8 @@ void writeResult(u32 instance, u64 E, const char *workType, const string &status
 
 }
 
-void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool isPrime, u64 res64, const string& res2048, u32 nErrors, const fs::path& proofPath) const {
+void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool isPrime, u64 res64, const string& res2048, u32 nErrors, const fs::path& proofPath,
+                          u64 shiftCount) const {
   vector<string> fields{json("res64", hex(res64)),
                         json("res2048", res2048),
                         json("residue-type", 1),
@@ -182,6 +183,9 @@ void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool is
                         json("fft-type", ffttype(fft)),
                         json("fft-length", fft.size())
   };
+
+  // As Prime95 does, a PRP result has a shift count only when it is not zero
+  if (shiftCount) { fields.push_back(json("shift-count", shiftCount)); }
 
   // "proof":{"version":1, "power":6, "hashsize":64, "md5":"0123456789ABCDEF"}, 
   if (!proofPath.empty()) {
@@ -298,6 +302,12 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   const Args& args = *shared.args;
   task.B1 = task.B2 = 0;
   if (args.value("PRPPM1", 1) == 0) { return; }
+  // The P-1 multiplies the PRP's own residues into its accumulator:  it needs them unshifted.  A shifted test is normally a double check,
+  // whose P-1 is done.
+  if (args.shift || args.shiftRandom) {
+    if (!task.line.empty() || useValue(args, "PRPPM1_B1")) { log("P-1 in the PRP test: not with -shift: no P-1\n"); }
+    return;
+  }
   if (u64 const b1 = useValue(args, "PRPPM1_B1")) {
     u64 const b2 = useValue(args, "PRPPM1_B2");
     if (b1 < 2 || (b2 && b2 <= b1) || b2 >= pm1::MAX_B2) {
@@ -376,6 +386,7 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
 void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<Gpu> gpu) {
   const Args& args = *shared.args;
   fs::path const& dir = args.mprimeDir;
+  if (args.shift || args.shiftRandom) { log("-shift is not supported for P-1: running without a shift\n"); }
   if (pfactor && !B1 && !pfactorBounds(*this, shared, *gpu)) {
     Worktodo::deleteTask(*this, instance);
     return;
@@ -467,7 +478,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
   }
 }
 
-void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings) const {
+void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings, u64 shiftCount) const {
   string const hexhash = hex(hash[3]) + hex(hash[2]) + hex(hash[1]) + hex(hash[0]);
   vector<string> fields{json("worktype", "Cert"),
                         json("exponent", exponent),
@@ -475,7 +486,7 @@ void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array 
                         json("squarings", squarings),
                         json("fft-type", ffttype(fft)),
                         json("fft-length", fft.size()),
-                        json("shift-count", 0),
+                        json("shift-count", shiftCount),
                         json("error-code", "00000000"), // I don't know the meaning of this
   };
   fields += tailFields(AID, args);
@@ -574,7 +585,7 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
         writeResultPM1(fft, *shared.args, instance, b1, b2, factors, nErr, 0, true);
       };
       prpPm1Bounds(*this, shared, *gpu);
-      auto [tmpIsPrime, res64, nErrors, proofPath, res2048, pm1Factor] = gpu->isPrimePRP(*this, pm1Report);
+      auto [tmpIsPrime, res64, nErrors, proofPath, res2048, shiftCount, pm1Factor] = gpu->isPrimePRP(*this, pm1Report);
       if (pm1Factor) {
         log("%" PRIu64 " has a factor: the PRP test is not needed\n", exponent);
         Worktodo::deleteTask(*this, instance);
@@ -582,7 +593,7 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
         return;
       }
       isPrime = tmpIsPrime;
-      writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath);
+      writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath, shiftCount);
     } else { // LL
       // The Jacobi check, on by default:  its GCD kernels are built only when it runs
       unique_ptr<Gcd> gcd;
@@ -623,7 +634,7 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
     executePM1(shared, instance, fft, std::move(gpu));
   } else if (kind == CERT) {
     CERTResult const r = gpu->isCERT(*this);
-    writeResultCERT(fft, *shared.args, instance, r.hash, squarings);
+    writeResultCERT(fft, *shared.args, instance, r.hash, squarings, gpu->shiftCount());
     if (r.checked && r.nErrors) { log("CERT had %u Gerbicz check failures, all redone\n", r.nErrors); }
     Worktodo::deleteTask(*this, instance);
   } else {

@@ -81,3 +81,20 @@ prime is extremely small for large Mersenne candidates.
 
 The PRP test is very similar computationally to LL: PRP iterates f(x) = x^2 modulo M(p) starting from 3. If after p iterations the result is 9 modulo M(p), then M(p) is probably prime, otherwise M(p) is certainly not prime. The cost
 of PRP is exactly the same as LL.
+
+### Shift (`-shift`)
+With `-shift <N>` (or `-shift random`) a PRP test or a CERT computes on x * 2^s modulo M(p) instead of x, as Prime95 and Mlucas
+do with their "shift count". Multiplying by 2^s is a rotation of the p-bit residue, so it costs nothing in the FFT: a squaring
+doubles the shift (s becomes 2s mod p) and the PRP multiply by 3 keeps it, so PRPLL only tracks s on the host. Two runs of the
+same test with different shifts then put different data through the GPU, while every residue that leaves the GPU is rotated
+back: the logged res64, savefiles, proof residues, the final res64 and res2048 are exactly those of an unshifted run (so
+savefiles stay compatible with PRPLL builds without `-shift`, and the proof is the same). The results line gets
+"shift-count", the shift at iteration 0.
+
+`<N>` is the shift at iteration 0; a run resumed from a savefile continues with the shift it would have had there. `random`
+draws a new shift whenever the test starts or reloads. A shifted PRP rebuilds its data from the error check on every start
+(blockSize squarings, as a resume does), and retries a failed Gerbicz check with a new shift (doubled, or redrawn), so the
+retry does not repeat the same computation. The error check holds with the shift: the check is shifted by a = s / (2^blockSize - 1)
+mod p, and for the rare exponents where p divides 2^blockSize - 1 PRPLL keeps the check unshifted and multiplies by 3 * 2^s
+instead of 3. LL tests ignore `-shift`, and a shifted PRP test gets no P-1 inside it (that needs the unshifted residues).
+The default is 0, no shift, which runs exactly as before.

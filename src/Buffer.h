@@ -83,6 +83,12 @@ public:
     queue->readAsync(get(), readSize * sizeof(T), out.data(), tInfo);
   }
 
+  // async read of count elements from element offset
+  void readAsync(T* out, size_t offset, size_t count) const {
+    assert(count && offset + count <= size);
+    queue->readAsync(get(), count * sizeof(T), out, tInfo, offset * sizeof(T));
+  }
+
   void write(const vector<T>& vect) { queue->write(get(), vect, tInfo); }
 
   void zero(size_t sizeOrFull = 0) {

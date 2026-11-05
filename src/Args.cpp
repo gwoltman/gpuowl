@@ -338,6 +338,13 @@ named "config.txt" in the prpll run directory.
                      low powers, or a value above the maximum power to skip it entirely.
 -iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit; P-1 stage 2 stops after about <N>
                      multiplications.
+-shift <N>|random  : PRP and CERT: compute on the residue times 2^<N> (mod 2^E-1), a "shift count" as in Prime95 and
+                     Mlucas, so that two runs of the same test put different data through the GPU. Logged residues,
+                     savefiles, proofs and results are unshifted and identical to a run without -shift; the results
+                     line gets "shift-count". <N> is the shift at iteration 0; "random" draws a new shift on every
+                     start and every reload. With a shift, the retry after a failed Gerbicz check uses a new shift.
+                     Default 0, no shift. Ignored for LL tests and P-1 (Pminus1=, Pfactor=). A PRP test with a shift
+                     gets no P-1 inside it.
 -mprimeDir <dir>   : P-1 (Pminus1= and Pfactor= lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)
                      and stage 1 found no factor, stage 2 and its GCD.  When stage 2 can't run here (too little GPU memory,
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
@@ -351,6 +358,7 @@ P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2
                      too little, or -maxAlloc too low, there is no P-1) until the PRP passes iteration 1.44 * B1.  Then
                      the P-1 result is written ("integrated":true) and stage 2 runs while the PRP test waits.  A factor
                      ends the PRP test.  Only for PRP tests started with it; a restart keeps the bounds (p1prp-<p>).
+                     A test with -shift gets no P-1 (a shifted test is normally a double check).
 -pm1TestsSaved <x> : the primality tests a factor saves, for the bounds of the P-1 inside PRP tests (default 1.02: the PRP
                      test plus its proof and the certificate).  Pfactor= lines use their own field.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
@@ -688,6 +696,18 @@ void Args::parse(const string& line) {
       said = true;
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
+    else if (key == "-shift") {
+      const char* const e = s.data() + s.size();
+      if (s == "random") {
+        shiftRandom = true;
+        shift = 0;
+      } else if (auto const r = from_chars(s.data(), e, shift); !s.empty() && r.ec == errc{} && r.ptr == e) {
+        shiftRandom = false;
+      } else {
+        log("-shift expects a shift count <N> or 'random' (found '%s')\n", s.c_str());
+        throw "-shift <N>|random";
+      }
+    }
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
     else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
     else if (key == "-smallest") { smallest = true; }
