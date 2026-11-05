@@ -413,13 +413,24 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // carryFused's workgroup is G_W * WMUL threads, which must not exceed the device's maximum workgroup size.  WMUL must be at
   // least 1, and must divide BIG_HEIGHT as carryFused is launched with BIG_HEIGHT / WMUL + 1 workgroups.
   {
-    u32 const shufl_bytes_w = config.contains("SHUFL_BYTES_W") ? atoi(config["SHUFL_BYTES_W"].c_str()) : 8;
+    u32 shufl_bytes_w = config.contains("SHUFL_BYTES_W") ? atoi(config["SHUFL_BYTES_W"].c_str()) : 8;
     u32 const lds_limit = u32(std::min<u64>(32768, getLocalMemSize(id)));
     u32 const big_h = fft.shape.height * fft.shape.middle;
-    if (fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) {
-      log("SHUFL_BYTES_W=%u needs %u bytes of local memory at width %u, the device has %u\n",
-          shufl_bytes_w, fft.shape.width * shufl_bytes_w, fft.shape.width, u32(getLocalMemSize(id)));
-      throw "SHUFL_BYTES_W too large";
+    // SHUFL_BYTES_W is global (config.txt, where -tune saves the value that won on its default shape), but the LDS use is
+    // width * SHUFL_BYTES_W, so a value that suits a narrow width can be too big for a wide one (16 at width 4096 needs 64KB).
+    // Use the largest value that fits for this FFT, as WMUL is adjusted below.
+    if (u32 const requested_bytes = shufl_bytes_w; fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) {
+      while (shufl_bytes_w > 4 && fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) { shufl_bytes_w /= 2; }
+      if (fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) {
+        log("SHUFL_BYTES_W=%u needs %u bytes of local memory at width %u, the device has %u\n",
+            shufl_bytes_w, fft.shape.width * shufl_bytes_w, fft.shape.width, u32(getLocalMemSize(id)));
+        throw "SHUFL_BYTES_W too large";
+      }
+      config["SHUFL_BYTES_W"] = to_string(shufl_bytes_w);
+      if (doLog) {
+        log("SHUFL_BYTES_W=%u needs %u bytes of local memory at width %u, the device has %u.  Changing to SHUFL_BYTES_W=%u\n",
+            requested_bytes, fft.shape.width * requested_bytes, fft.shape.width, u32(getLocalMemSize(id)), shufl_bytes_w);
+      }
     }
     // A line narrower than a wavefront (radix 8 at WIDTH 256 is 32 threads) leaves part of every wavefront idle with WMUL=1, and the
     // global WMUL in config.txt is chosen for wider FFTs.  So on 64-lane AMD wavefronts carryFused uses WMUL = WAVEFRONT / G_W.
