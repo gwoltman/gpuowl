@@ -2523,17 +2523,18 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   // NOTE: assumes that if doLL is set, it will always be set
   bool graph_recording = false;
   Graph *graph = NULL;
-  if (use_graphs && (&out == &bufData || &out == &bufAux) && &in == &out && leadIn == LEAD_WIDTH && leadOut == LEAD_WIDTH && !doMul3) {
-    // We have one graph for ROE and one for no-ROE and one for bufData and one for bufAux
+  if (use_graphs && (&out == &bufData || &out == &bufAux) && &in == &out && leadIn == LEAD_WIDTH && leadOut == LEAD_WIDTH) {
+    // We have one graph for ROE and one for no-ROE, one for bufData and one for bufAux, one with and one without mul3 (carryFusedMul:
+    // P-1 stage 1 squarings at a set bit of the exponent; PRP's mul3 squaring ends a block with LEAD_NONE and is never graphed)
     bool roe = (roePos < wantROE);
     bool srcData = (&out == &bufData);
-    graph = &graph_square[2 * roe + srcData];
+    graph = &graph_square[4 * doMul3 + 2 * roe + srcData];
     // Execute an already recorded graph
     if (graph->isRecorded()) {
       graph->launch(&queue);
       queue.incSquareCount();
-      // Keep the host's sample counts in step with the kernels' (carryFused below): the GPU records a sample on every launch
-      if (roe) { roePos++; } else { updateCarryPos(1 << 0); }   // WARNING: If we ever graph Gpu::Mul, we'll need to also maintain mulRoePos vector.
+      // Keep the host's sample counts in step with the kernels' (carryFused/carryFusedMul below): the GPU records a sample on every launch
+      if (roe) { roePos++; } else { updateCarryPos(doMul3 ? 1 << 1 : 1 << 0); }   // WARNING: If we ever graph Gpu::Mul, we'll need to also maintain mulRoePos vector.
       return;
     }
     // Otherwise, record a new graph

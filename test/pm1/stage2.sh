@@ -6,7 +6,8 @@
 # oracle; prpll links neither.
 #
 #   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|all]      (default all)
-# Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), PRPLL (default
+# Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), SIGINT_DELAY (seconds from the
+#               stage 2 table to the SIGINT of the resume test, default 3), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built here with -DPRPLL_PM1_FAULTS if missing).
 
 set -u
@@ -110,12 +111,17 @@ factor_tests() {
   e2e s2-1000099 1000099 50000 150000 1872347344039
   e2e s2-nf 400033 1000 50000 NF
   e2e s2-inplace 400381 500 3000 671839319 -use INPLACE=1
-  # The default P-1 FFT is an NTT type (here M61); an explicit -fft of another supported type (FP64) is used by both stages
+  # An explicit -fft of a type stage 2 supports (FP64) is used by both stages
   e2e s2-fp64 400381 500 3000 671839319 -fft 256:1:256
   local d=$WORK/s2-fp64
   if [ "$(grep -c 'FFT: 128K 256:1:256:' "$d/out")" = 2 ]; then pass "s2-fp64: -fft 256:1:256 (FP64) used by stage 1 and stage 2"; else fail "s2-fp64: FFT (see $d)"; fi
   d=$WORK/s2-400381
-  if [ "$(grep -c 'FFT: 128K 3:256:1:256:' "$d/out")" = 2 ]; then pass "default P-1 FFT: 3:256:1:256 (M61, first in the untuned order) for both stages"; else fail "default P-1 FFT (see $d)"; fi
+  # Untuned:  stage 1 takes PRP's choice (the smallest FFT, FP64 first at equal size), stage 2 its own order (M61 first)
+  if [ "$(grep -o 'FFT: 128K [^ ]*' "$d/out" | cut -d' ' -f3 | tr '\n' ' ')" = "256:1:256:101 3:256:1:256:101 " ]; then
+    pass "default P-1 FFTs: stage 1 256:1:256 (PRP's untuned choice), stage 2 3:256:1:256 (M61, first in stage 2's untuned order)"
+  else
+    fail "default P-1 FFTs (see $d)"
+  fi
 }
 
 decline_tests() {
@@ -181,7 +187,7 @@ resume_tests() {
   local pid=$!
   # (the log file, not out:  stdout into a file is block-buffered)
   until grep -q "Stage 2 table of" "$d/gpuowl-0.log" 2>/dev/null || ! kill -0 $pid 2>/dev/null; do sleep 0.2; done
-  sleep 3
+  sleep "${SIGINT_DELAY:-3}"      # a fast GPU finishes this stage 2 in about 2 s:  SIGINT_DELAY=0.3 there
   kill -INT $pid; wait $pid
   run "$d" "$PRPLL"
   if grep -q "Stage 2 stopped at k=" "$d/out" && grep -q "Stage 2 resuming at k=" "$d/out" && stage2Oracle "$d" $p $B1 $B2 \
@@ -299,7 +305,7 @@ tunefile_tests() {
   setup "$d" $p $B1 $B2
   echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=3" > "$d/tune-pm1.txt"
   run "$d" "$PRPLL"
-  check "$d" "tune-pm1.txt line" 3:256:1:256:101 4:256:1:256:202 tune-pm1.txt "4:256:1:256:202: tune.txt sets TAIL_KERNELS=3"
+  check "$d" "tune-pm1.txt line" 256:1:256:101 4:256:1:256:202 tune-pm1.txt "4:256:1:256:202: tune.txt sets TAIL_KERNELS=3"
 
   d=$WORK/tf-prp
   setup "$d" $p $B1 $B2
@@ -318,7 +324,7 @@ tunefile_tests() {
   setup "$d" $p $B1 $B2
   echo "  100.0 4:256:1:256:202 # 0, TAIL_KERNELS=3" > "$d/tune-pm1.txt"
   run "$d" "$PRPLL" -use TAIL_KERNELS=0
-  check "$d" "command line over the tune-pm1.txt line" 3:256:1:256:101 4:256:1:256:202 tune-pm1.txt \
+  check "$d" "command line over the tune-pm1.txt line" 256:1:256:101 4:256:1:256:202 tune-pm1.txt \
     "tune.txt TAIL_KERNELS=3 overridden by command line TAIL_KERNELS=0"
 
   # an -fft's settings:  stage 2 from its tune-pm1.txt line, stage 1 from its tune.txt line; and the same -fft without a tune-pm1.txt

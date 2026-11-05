@@ -262,7 +262,7 @@ private:
   vector<Buffer<double> *> recorded_kernel_args;
 
   bool use_graphs;
-  Graph graph_square[4];
+  Graph graph_square[8];
 
   const int NUM_CACHE_GROUPS = 3;
   void splitQueue();

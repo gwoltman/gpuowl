@@ -426,6 +426,19 @@ vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spe
 
   log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);
 
+  vector<FFTConfig> candidates = untunedFits(args, E);
+  if (!candidates.empty()) { return candidates; }
+
+  log("No FFT found for %" PRIu64 "\n", E);
+  throw "No FFT";
+}
+
+vector<FFTConfig> FFTConfig::untunedFits(const Args& args, u64 E) {
+  auto const tooSmall = [&](const FFTConfig& fft) { return fft.maxExp() * args.fftOverdrive < E; };
+  auto const tooLarge = [&](const FFTConfig& fft) { return E / float(fft.size()) < fft.minBpw(); };
+  auto const fits = [&](const FFTConfig& fft) { return !tooSmall(fft) && !tooLarge(fft); };
+  bool const fp64 = hasFP64(getDevice(args.device));
+
   // Untuned:  the smallest FFT of any type that can handle E, FP64 then M31+M61 then the others at equal size.  The FP32 hybrids are
   // often the smallest (e.g. FP32+M31+M61 2M against M31+M61 2.25M) and usually the fastest on consumer GPUs, but some OpenCL compilers
   // can't build the FP32 code, so the smallest fitting FFT of up to six types is returned in this order:  Task::execute moves on to the next when
@@ -444,10 +457,7 @@ vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spe
     }
     if (candidates.size() == 6) { break; }     // enough fallbacks
   }
-  if (!candidates.empty()) { return candidates; }
-
-  log("No FFT found for %" PRIu64 "\n", E);
-  throw "No FFT";
+  return candidates;
 }
 
 
@@ -508,7 +518,20 @@ vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, bool stage2) {
     }
   }
 
-  // Untuned:  the smallest fitting shape of each type, in a fixed order of types:  the NTT types without FP64 first (in the order of
+  // Untuned stage 1:  PRP's untuned choice (FFTConfig::untunedFits, the smallest fitting FFTs), since stage 1 is Gerbicz-checked as PRP
+  // is.  XTX, p = 41000017:  896K 4:256:7:256 at ~170 us/iteration against the stage 2 order's FFT61 1.75M at ~193.
+  if (!stage2) {
+    for (const FFTConfig& fft : FFTConfig::untunedFits(args, E)) {
+      if (fits(fft) && !has(fft)) { ret.push_back({fft, {}, Pm1Fft::UNTUNED}); }
+    }
+    if (ret.empty()) {
+      log("No FFT can run P-1 stage 1 of %" PRIu64 "\n", E);
+      throw "No FFT";
+    }
+    return ret;
+  }
+
+  // Untuned stage 2:  the smallest fitting shape of each type, in a fixed order of types:  the NTT types without FP64 first (in the order of
   // their stage 2 speed on gfx1100 at p = 30M with the fused tail), then the FP64 types.  The speed order of the types changes with the
   // size and the GPU, so stage 2 times these candidates before it chooses (Stage2::run).
   vector<FFTShape> shapes = FFTShape::allShapes(0, u32(-1), true);

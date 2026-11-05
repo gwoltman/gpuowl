@@ -105,6 +105,8 @@ public:
   // The same choice as a list:  one FFT for an -fft spec or a tune.txt line, else the untuned candidates in order of preference
   // (Task::execute tries the next when a GPU can't be built for one).  Throws "No FFT" if none can handle E.
   static vector<FFTConfig> bestFits(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
+  // bestFits' untuned list (no -fft, no tune.txt line):  the smallest fitting FFT of up to six types, FP64 then M31+M61 first at equal size
+  static vector<FFTConfig> untunedFits(const Args& args, u64 E);
 
   // An NTT and no FP64 part:  M61, FP32+M31, FP32+M61, M31+M61, FP32+M31+M61
   [[nodiscard]] static bool nttType(enum FFT_TYPES t) {
@@ -156,6 +158,6 @@ struct Pm1Fft {
 // - Otherwise, for stage 2, the fastest fitting tune-pm1.txt line (-tune pm1:  timed stage 2 multiplications, any type); then the
 //   fastest fitting tune.txt line (PRP's tuned choice, any type); then the untuned candidates:  the smallest fitting shape of each
 //   type with an NTT and no FP64 (61, 3231, 3261, 3161, 323161), then the FP64 types (64, 6431).  Stage 2 ranks the untuned candidates
-//   by a quick timing of each (Stage2::run); stage 1 takes them in this order.  M31 and FP32 alone are not offered (stage 2 does not
-//   support them).
+//   by a quick timing of each (Stage2::run).  M31 and FP32 alone are not offered (stage 2 does not support them).  Untuned stage 1 takes
+//   PRP's untuned list (FFTConfig::untunedFits) instead:  it is Gerbicz-checked as PRP is.
 vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, bool stage2 = false);

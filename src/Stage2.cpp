@@ -53,7 +53,8 @@ constexpr double LOG_SECS = 60;
 constexpr u32 DUP_ONE_IN = 32;            // one block in this many (at random) is computed twice
 constexpr u32 ROE_FIRST = 16;             // ROE is sampled in the first blocks of a run and then in one block in ROE_ONE_IN
 constexpr u32 ROE_ONE_IN = 8;
-constexpr u32 EXTRA_BUFS = 2;             // big buffers besides the table:  A and G in Low form (A also the table build's scratch)
+constexpr u32 EXTRA_BUFS = 3;             // big buffers besides the table:  A and G in Low form (A also the table build's scratch), C in
+                                          // the fftMidIn state
 constexpr u32 WORD_BUFS = 2;              // residue (word) buffers besides the Gpu's own:  acc and a scratch (C and the dup acc are in
                                           // the Gpu's bufData and bufCheck, which stage 2 does not otherwise use)
 constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // kept back when the free memory is not known, and under a -maxAlloc cap
@@ -99,8 +100,9 @@ class Stage2Run {
   vector<Buffer<double>> table;    // B_n, Low
   vector<u64> tableSums;
   Buffer<double> lowA, lowG;
+  Buffer<double> midC;             // C_k in the fftMidIn state (the tail kernels' first operand)
   Buffer<Word> wA, acc;            // wA:  scratch (the table build's x^(n^2), words of the long carry)
-  Buffer<Word>& wC;                // C_k:  the Gpu's bufData
+  Buffer<Word>& wC;                // C_k's words (startK, the long carry):  the Gpu's bufData
   Buffer<Word>& accDup;            // the acc of a duplicated block, and the scratch wS:  the Gpu's bufCheck
   Buffer<Word>& wS;
   pm1::Stage2Window win;           // the items of the current window
@@ -116,6 +118,13 @@ class Stage2Run {
     g.fftP(g.buf1, in);
     g.fftMidIn(g.buf1);
     g.fftHin(out, g.buf1);
+    g.replay();
+  }
+
+  // out := in, forward transformed to the fftMidIn state (the tail kernels' first operand)
+  void toMidIn(Buffer<double>& out, Buffer<Word>& in) {
+    g.fftP(out, in);               // in place to out, else to buf3, which fftMidIn reads
+    g.fftMidIn(out);
     g.replay();
   }
 
@@ -180,7 +189,7 @@ public:
     g{g}, plan{plan}, x{x}, nT{plan.nTable()},
     bufSize{bufDoubles(g)},
     wordSize{g.N * g.fft.WordSize / sizeof(Word)},
-    lowA{big("p2A")}, lowG{big("p2G")},
+    lowA{big("p2A")}, lowG{big("p2G")}, midC{big("p2C")},
     wA{words("p2wA")}, acc{words("p2acc")},
     wC{g.bufData}, accDup{g.bufCheck}, wS{g.bufCheck}
   {
@@ -197,25 +206,34 @@ public:
   // Before a block of n multiplications (and the k step):  whether the ROE samples must be read first
   bool roeFull(u32 n) const { return g.roePos + n + 16 >= ROE_SAMPLES; }
 
-  // Builds the table B_n = x^(n^2) and its sums.  Each entry is transformed twice and the two sums compared (a fault in a transform that
-  // feeds no later value); the chain's own values all feed the last entry, which is checked against Gpu::exponentiate.  Returns nT when
-  // every check passed, else the index of the entry whose two transforms differed (nT + 1:  the last entry is wrong).
+  // Builds the table B_n = x^(n^2) and its sums:  R_n = x^(n^2) in Low form (the table entry, or lowA for an odd n not in the table) and
+  // S_n = x^(4n+4) in midC, R_{n+2} = S_n * R_n and S_{n+2} = S_n * x^8 as stepK's two products (stepC), the last R to words.  Every
+  // entry but the last feeds the chain, and the chain feeds the last entry, which is checked against Gpu::exponentiate; each entry is
+  // also transformed a second time into lowA (fftHin from the same state, or from words) and the two sums compared:  a buffer that does
+  // not hold what was written (stage 2 then plans a smaller table) and the last entry's own transform.  (The sums cover whole buffers:
+  // the parts a transform does not write hold memoryTest's pattern in the table and in lowA alike.)  Returns nT when every
+  // check passed, else the index of the entry whose two transforms differed (nT + 1:  the last entry is wrong).
   u32 buildTable() {
     tableSums.clear();
-    // R = x^(n^2) in wA, S = x^(4n+4) in wS (its Low in lowA), lowG temporarily = x^8 (Low)
-    g.writeIn(wA, x);
     power(wS, 8);
-    toLow(lowG, wS);
-    u32 i = 0;
+    toLow(lowG, wS);               // lowG temporarily x^8 (startK sets G)
+    toMidIn(midC, wS);             // S_1 = x^8
+    g.writeIn(wA, x);              // R_1 = x
     u32 const last = plan.ns.back();
-    for (u32 n = 1; ; n += 2) {
-      if (i < nT && plan.ns[i] == n) {
-        toLow(table[i], wA);
+    Buffer<double>* r = nullptr;   // R_n, Low
+    for (u32 n = 1, i = 0; ; n += 2) {
+      bool const entry = i < nT && plan.ns[i] == n;
+      Buffer<double>& low = entry ? table[i] : lowA;
+      if (n == 1 || n == last) {   // from words (x, and the last product's)
+        toLow(low, wA);
+        if (entry) { toLow(lowA, wA); }
+      }
+      r = &low;
+      if (entry) {
 #ifdef PRPLL_PM1_FAULTS
         if (i == faultEntry("build") && i) { table[i] << table[0]; }     // TEST ONLY:  this entry wrong in every build
 #endif
         u64 const sum = sumOf(table[i]);
-        toLow(lowA, wA);
         if (sumOf(lowA) != sum) {
           log("EE stage 2: table entry %u (n = %u) differs between two transforms\n", i, n);
           return i;
@@ -224,9 +242,12 @@ public:
         ++i;
       }
       if (n == last) { break; }
-      toLow(lowA, wS);
-      mulLow(wA, lowA);            // x^((n+2)^2)
-      mulLow(wS, lowG);            // x^(4(n+2)+4)
+      if (n + 2 == last) {
+        stepC(*r, nullptr, nullptr, &wA);                  // R_last's words
+      } else {
+        bool const nextEntry = i < nT && plan.ns[i] == n + 2;
+        stepC(*r, nextEntry ? &table[i] : &lowA, &lowG, nullptr, nextEntry);
+      }
     }
     power(wS, u64(last) * last);
     if (read(wA) != read(wS)) {
@@ -288,6 +309,7 @@ public:
     power(wA, k * D * k * D);
     toLow(lowA, wA);
     power(wC, (2 * k + 1) * D * D);
+    toMidIn(midC, wC);
     power(wS, 2 * D * D);
     toLow(lowG, wS);
   }
@@ -310,38 +332,73 @@ public:
     return vector<u32>(win.items(k), win.items(k) + win.count(k));
   }
 
-  // a *= A_k - B_r for the table entries `idx`, as a chain through carryFused.  Returns the number of multiplications.
-  u32 block(const vector<u32>& idx, Buffer<Word>& a) {
+  // a *= A_k - B_r for the table entries `idx`, as a chain through carryFused.  The chain starts from a's words or, fromParked, from the
+  // fftMidIn state of the previous block's chain, left in buf1 (stepK does not use buf1); park:  it ends so, leaving a's words stale,
+  // else it ends in a's words.  A block without items does nothing (it can't be parked into or out of).  Returns the multiplications.
+  u32 block(const vector<u32>& idx, Buffer<Word>& a, bool fromParked = false, bool park = false) {
     u32 const total = idx.size();
-    for (u32 n = 0; n < total; ++n) {
-      if (n == 0) { g.fftP(g.buf1, a); }
+    assert(total || (!fromParked && !park));
+    if (total && !fromParked) {
+      g.fftP(g.buf1, a);
       g.fftMidIn(g.buf1);
+    }
+    for (u32 n = 0; n < total; ++n) {
       g.tailMulDelta(g.buf1, lowA, table[idx[n]]);
       g.fftMidOut(g.buf1);
-      if (n + 1 == total) {
+      if (n + 1 == total && !park) {
         g.fftW(g.buf3, g.buf1);
         g.carryA(a, g.buf3);
         g.carryB(a);
       } else {
         g.doCarry(g.buf1, a);
+        g.fftMidIn(g.buf1);
       }
     }
+    if (park) { g.replay(); }
     return total;
   }
 
-  // A_k, C_k -> A_{k+1}, C_{k+1}.  A_{k+1} = C_k * A_k from the carry straight to Low (exponentiate's fftP, fftMidIn, fftHin with the
-  // carry in place of fftP; the long carry goes through wA), then C_{k+1} = C_k * G.
-  void stepK() {
-    g.fftP(g.buf1, wC);
-    g.fftMidIn(g.buf1);
-    g.tailMulLow(g.buf1, lowA);
-    g.fftMidOut(g.buf1);
-    g.doCarry(g.buf1, wA);
-    g.fftMidIn(g.buf1);
-    g.fftHin(lowA, g.buf1);
+  // The two products of a step from C's fftMidIn state (midC), with no words:  out := C * low from the carry straight to Low
+  // (exponentiate's fftP, fftMidIn, fftHin with the carry in place of fftP; the long carry goes through wA), then C := C * mul from the
+  // carry back to the fftMidIn state in midC.  Out of place (INPLACE=0) the first tail leaves midC as it was; in place the first product
+  // works on a copy in buf2 (free between the Gpu's own operations).  buf1 is not used:  it may hold the parked accumulator chain
+  // (block).  toWords:  the first product to these words instead (no out), and no second product (mul null).  check:  out a second time
+  // into lowA (buildTable; low, which may be lowA, has been read by then).
+  void stepC(Buffer<double>& low, Buffer<double>* out, Buffer<double>* mul, Buffer<Word>* toWords = nullptr, bool check = false) {
     g.replay();
-    mulLow(wC, lowG);
+    Buffer<double>& t = g.buf2;
+    if (g.in_place) {
+      t << midC;
+      g.tailMulLow(t, low);
+    } else {
+      g.tailMulLow(midC, low);     // into buf3, which fftMidOut reads
+    }
+    g.fftMidOut(t);
+    if (toWords) {
+      g.fftW(g.buf3, t);
+      g.carryA(*toWords, g.buf3);
+      g.carryB(*toWords);
+    } else {
+      g.doCarry(t, wA);
+      g.fftMidIn(t);
+      g.fftHin(*out, t);
+      g.replay();
+      if (check) {
+        g.fftHin(lowA, t);
+        g.replay();
+      }
+    }
+    if (mul) {
+      g.tailMulLow(midC, *mul);
+      g.fftMidOut(midC);
+      g.doCarry(midC, wC);
+      g.fftMidIn(midC);
+      g.replay();
+    }
   }
+
+  // A_k, C_k -> A_{k+1} = C_k * A_k (Low only), C_{k+1} = C_k * G (fftMidIn state)
+  void stepK() { stepC(lowA, &lowA, &lowG); }
 
   // The block computed a second time from accBefore (in accDup) and compared with acc
   bool dupOK(const vector<u32>& idx) {
@@ -400,13 +457,13 @@ public:
 #ifdef PRPLL_PM1_FAULTS
   // TEST ONLY (PRPLL_STAGE2_FAULT, fault build):  simulated faults
   void corruptTable() { table[0] << table[nT - 1]; }
-  void corruptA() { lowA << lowG; }
+  void corruptA() { toLow(lowA, acc); }      // a wrong A_k written by a transform (a buffer copy would also replace its unwritten padding)
   void corruptAcc() { acc << wA; }
   void corruptTableLast() { faultTable = true; }
   void corruptAccOnce() { acc << wA; }
   bool faultTable = false;
 #endif
-  u32 blockOn(const vector<u32>& idx) { return block(idx, acc); }
+  u32 blockOn(const vector<u32>& idx, bool fromParked = false, bool park = false) { return block(idx, acc, fromParked, park); }
   u32 blockOnDup(const vector<u32>& idx) { return block(idx, accDup); }
 
   void finish() { g.queue.finish(); }
@@ -475,7 +532,9 @@ Stage2::MulTime Stage2::timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, c
   plan.M = pm1::stage2MaxM(plan.D, TABLE);
   for (u32 n = 1; plan.ns.size() < TABLE; n += 2) { if (std::gcd(n, plan.D) == 1) { plan.ns.push_back(n); } }
   Stage2Run s2{g, plan, x};
-  if (s2.buildTable() != TABLE) { return {std::numeric_limits<double>::infinity()}; }
+  // The memory test first, as in stage 2:  it fills the parts of the buffers that no transform writes, which the table check's sums
+  // cover (fresh buffers can hold anything there:  XTX, 6431 timed after other FFTs, "table entry 0 differs between two transforms")
+  if (s2.memoryTest() != TABLE || s2.buildTable() != TABLE) { return {std::numeric_limits<double>::infinity()}; }
   s2.setAcc(x);
   vector<u32> idx(BLOCK);
   for (u32 i = 0; i < BLOCK; ++i) { idx[i] = i % TABLE; }
@@ -499,7 +558,7 @@ Stage2::MulTime Stage2::timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, c
   s2.finish();
   Timer timer;
   for (u32 b = 0; b < nBlocks; ++b) {
-    s2.blockOn(idx);
+    s2.blockOn(idx, b > 0, b + 1 < nBlocks);      // parked between blocks, as in stage 2
     s2.stepK();
     if (Signal::stopRequested()) { throw "stop requested"; }
   }
@@ -884,10 +943,21 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
     u64 nMul = state.nMul;
     auto const usPerMul = [&]() { return sinceStart.at() * 1e6 / double(std::max<u64>(1, nMul - mulsAtStart)); };
 
+    // Whether block kk is computed twice, drawn a block ahead (a duplicated block starts from acc's words)
+    auto const drawDup = [&]([[maybe_unused]] u64 kk) {
+#ifdef PRPLL_PM1_FAULTS
+      if (faultKind == "acc" && kk == faultK) { return true; }
+#endif
+      return rng() % DUP_ONE_IN == 0;
+    };
+    bool parked = false;      // acc's chain is parked in buf1 (block), its words stale:  no checkpoint before a block ends in words
+    bool dup = drawDup(k);
+    vector<u32> items = k < plan.kEnd ? s2.neededOf(k) : vector<u32>{};
+
     while (ok) {
       bool const atEnd = k >= plan.kEnd;
       bool const stop = !atEnd && (signal.stopRequested() || (args.iters && nMul - mulsBefore >= u64(args.iters)));
-      if (atEnd || stop || sinceCheckpoint.at() > CHECKPOINT_SECS) {
+      if (!parked && (atEnd || stop || sinceCheckpoint.at() > CHECKPOINT_SECS)) {
         // Checkpoint:  every long-lived value verified before the accumulator is saved
         vector<u32> a = s2.getAcc();
         if (isZero(a)) { log("EE stage 2: the accumulator is zero\n"); ok = false; break; }
@@ -919,16 +989,19 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
       bool const fault = !faultKind.empty() && k == faultK;
       string const kind = faultKind;
       if (fault) { faultKind.clear(); }        // once
-      bool const dup = rng() % DUP_ONE_IN == 0 || (fault && kind == "acc");
-#else
-      bool const dup = rng() % DUP_ONE_IN == 0;
 #endif
-      vector<u32> const items = s2.neededOf(k);
       u32 const nCarries = u32(items.size()) * (dup ? 2 : 1) + 2;
       if (s2.roeFull(nCarries) && !s2.roeCheck()) { log("EE stage 2: ROE %.3f\n", s2.maxROE()); ok = false; break; }
       s2.sampleROE((k - state.k < ROE_FIRST || rng() % ROE_ONE_IN == 0) && !s2.roeFull(nCarries));
       if (dup) { s2.saveAccForDup(); }
-      nMul += s2.blockOn(items) + 2;
+      // This block parks its chain for the next one (no words, no fftP, and the k step runs beside it) when the next block has items, is
+      // not duplicated, and nothing needs acc's words before it:  no checkpoint due, no stop, not the end
+      vector<u32> nextItems = k + 1 < plan.kEnd ? s2.neededOf(k + 1) : vector<u32>{};
+      bool const dupNext = drawDup(k + 1);
+      bool const itersDone = args.iters && nMul + items.size() + 2 - mulsBefore >= u64(args.iters);
+      bool const park = !dup && !items.empty() && !nextItems.empty() && !dupNext && !itersDone && !signal.stopRequested() &&
+                        sinceCheckpoint.at() <= CHECKPOINT_SECS;
+      nMul += s2.blockOn(items, parked, park) + 2;
 #ifdef PRPLL_PM1_FAULTS
       if (fault && kind == "acc") { s2.corruptAcc(); }
 #endif
@@ -939,6 +1012,9 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
       if (fault && kind == "A") { s2.corruptA(); }
 #endif
       ++k;
+      parked = park;
+      items = std::move(nextItems);
+      dup = dupNext;
 
       if (sinceLog.at() > LOG_SECS) {
         s2.finish();

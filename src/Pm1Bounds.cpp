@@ -220,14 +220,16 @@ constexpr double STAGE2_PER_MUL = 1.15;
 
 // Stage2.cpp, in stage 2 multiplications (the accumulator multiplication by A_k - B_n is 1), XTX at p = 41M on 1:1K:2:256 (180 us per
 // multiplication; stage2-design.md "Stage 2 v2"):
-// - a k step:  A_{k+1} (straight to Low), C_{k+1} and the two ends of the block's carryFused chain, 450 us (Stage2::timeMul with 1, 2,
-//   16 and 120 multiplications per k:  a linear fit; b3807834's step with two words-and-Low products was 3.4, 610 us);
-// - an odd step of the table build (two multiplications and a forward transform), 0.52 ms, and a table entry (two forward transforms and
-//   their sums), 0.14 ms (fit of the build times of 4 tables of 24 to 1247 entries);
+// - a k step:  A_{k+1} (straight to Low) and C_{k+1} (back to the fftMidIn state), both from C_k's fftMidIn state, with the block's
+//   carryFused chain kept in transform form across it:  373 us = 2.0 (Stage2::timeMul with 1, 2, 16 and 120 multiplications per k, 2
+//   rounds:  a linear fit; with C in words and the chain ending in words each k (83ab8d1e) 477 us = 2.6, b3807834's step 3.4);
+// - the table build:  0.464 ms per odd n = 2.5 at D = 630 (fit of the build times of 4 tables of 91 to 1000 entries, M = 400 to 4374;
+//   83ab8d1e's build, with words, 0.607 ms = 3.3 = its 2.9 + 0.8 * 0.457 entries per odd n), split as an odd step = the same two
+//   products as a k step (2.0) and a table entry (a second fftHin and two sums read back) the rest, 1.1;
 // - the set-up:  A_k, C_k, G by exponentiation, and the check of the last table entry.
-constexpr double K_STEP = 2.5;
-constexpr double TABLE_ODD = 2.9;
-constexpr double TABLE_ENTRY = 0.8;
+constexpr double K_STEP = 2.0;
+constexpr double TABLE_ODD = 2.0;
+constexpr double TABLE_ENTRY = 1.1;
 constexpr double SETUP = 400;
 constexpr double STAGE2_DUP = 1.0 / 32;    // Stage2:  one block in 32 is computed twice
 

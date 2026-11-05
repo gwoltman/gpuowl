@@ -5,10 +5,20 @@
 #   make MPRIME_SRC=~/mprime   also compare the mprime save file names with Prime95's own tempFileName (commonc.c)
 #   make check_gcd   build the GCD checker; it links prpll's objects, so build prpll first (make in the top directory).
 #                    Run it from a scratch directory (it creates prpll's default folders): check_gcd -device N [-skew K] [-time p,...]
+#   make CUDA=1 check_gcd   the same against the CUDA build (make CUDA=1 in the top directory first, objects in build-cuda)
 
 SRC = ../../src
 OBJS = $(SRC)/Pm1.cpp $(SRC)/CycleFile.cpp $(SRC)/fs.cpp $(SRC)/File.cpp $(SRC)/log.cpp $(SRC)/common.cpp $(SRC)/timeutil.cpp
+CUDA = 0
+ifeq ($(CUDA), 1)
+BIN = ../../build-cuda
+GPU_FLAGS = -DCUDA_BACKEND -I$(SRC)/cuda -I/usr/local/cuda/include
+GPU_LIBS = -L/usr/local/cuda/lib64 -lnvrtc -lcuda -lpthread
+else
 BIN = ../../build-release
+GPU_FLAGS =
+GPU_LIBS = -lOpenCL -lpthread
+endif
 PRPLL_OBJS = $(filter-out $(BIN)/main.o,$(wildcard $(BIN)/*.o))
 
 check: check_pm1
@@ -24,7 +34,7 @@ p1flip: p1flip.cpp $(OBJS)
 	g++ -std=c++20 -O2 -Wall -Wextra -I$(SRC) -o $@ p1flip.cpp $(OBJS)
 
 check_gcd: check_gcd.cpp $(PRPLL_OBJS) $(SRC)/Gcd.h
-	g++ -std=c++20 -O2 -flto -Wall -Wextra -I$(SRC) -o $@ check_gcd.cpp $(PRPLL_OBJS) -lgmp -lOpenCL -lpthread
+	g++ -std=c++20 -O2 -flto -Wall -Wextra $(GPU_FLAGS) -I$(SRC) -o $@ check_gcd.cpp $(PRPLL_OBJS) -lgmp $(GPU_LIBS)
 
 # Stage 2 oracle (see check_stage2.cpp and run_stage2.sh)
 check_stage2: check_stage2.cpp $(OBJS) $(SRC)/Pm1.h

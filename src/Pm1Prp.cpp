@@ -417,7 +417,6 @@ void Pm1Prp::chainStep(Chain& c, u32 v, bool withX) {
 // The fold of the segment that ends at the PRP check of iteration k (see Pm1Prp.h), into out.  False when a check fails.
 bool Pm1Prp::fold(u64 k, Words& out) {
   u32 const V = (1u << L) - 1;
-  auto bv = [&](u32 v) { return Val{bucket[v], !touched[v]}; };
 
   // From the top:  r = prod_{v' >= v} B[v'], x = prod_{v >= 1} r_v = prod B[v]^v;  then r = T
   Chain top{&temp[0], &temp[4], &temp[1]};
