@@ -4,6 +4,8 @@
 //   check_gcd [-device N] [-skew K] [-sizes p1,p2,...] [-seed S] [-quick]
 // -sizes: the exponents p (N = 2^p - 1) of the general cases (default: a set of small and medium ones)
 // -skew K: build the kernels with -DSKEW=K (non-canonical digits on purpose, see gcd.cl); every run must then report skew events
+// -time p1,...: timed random cases (gcdMinus1, gcd and Jacobi; only gcdMinus1 with -gcdonly)
+// -applytime n1,...: microseconds per apply step (124 divsteps) at n digits, random digits
 
 #include "Gcd.h"
 #include "Gpu.h"
@@ -89,8 +91,10 @@ struct Checker {
     mpz_clear(N);
   }
 
+  bool gcdOnly = false;      // -gcdonly:  the timings run gcdMinus1 only (stage 1's test)
   void both(const char* what, const mpz_t x, u32 p) {
     checkGcd(what, x, p);
+    if (gcdOnly) { return; }
     checkGcd(what, x, p, 0);
     checkJacobi(what, x, p);
   }
@@ -307,6 +311,8 @@ int main(int argc, char** argv) {
   vector<u32> timed, edges, gates, leaves, jumps;
   u32 hgcd = 0, leafNb = 0, fftDigits = 0;
   bool mulCheck = false;
+  vector<u32> applyLimits;
+  bool gcdOnlyArg = false;
   for (int i = 1; i < argc; ++i) {
     string a = argv[i];
     if (a == "-device") { device = atoi(argv[++i]); }
@@ -317,6 +323,8 @@ int main(int argc, char** argv) {
     else if (a == "-leafnb") { leafNb = atoi(argv[++i]); }
     else if (a == "-fftdigits") { fftDigits = atoi(argv[++i]); }
     else if (a == "-mul") { mulCheck = true; }
+    else if (a == "-gcdonly") { gcdOnlyArg = true; }
+    else if (a == "-applytime") { for (char* s = strtok(argv[++i], ","); s; s = strtok(nullptr, ",")) { applyLimits.push_back(strtoul(s, nullptr, 10)); } sizes.clear(); }
     else if (a == "-sizes" || a == "-time" || a == "-edges" || a == "-gate" || a == "-leaf" || a == "-jump") {
       vector<u32>& v = a == "-sizes" ? sizes : a == "-time" ? timed : a == "-edges" ? edges : a == "-gate" ? gates : a == "-leaf" ? leaves : jumps;
       v.clear();
@@ -334,6 +342,7 @@ int main(int argc, char** argv) {
   GpuCommon shared{&context, &args, &bufCache, &background};
   Gcd gcd{shared, skew};
   Checker c{gcd, skew};
+  c.gcdOnly = gcdOnlyArg;
   gmp_randstate_t rs;
   gmp_randinit_mt(rs);
   gmp_randseed_ui(rs, seed);
@@ -348,6 +357,11 @@ int main(int argc, char** argv) {
     }
     c.fails += !ok;
     printf("mul: %s\n", ok ? "ok" : "FAILED");
+  }
+  for (u32 lim : applyLimits) {
+    double g1 = gcd.applyTime(lim, 2048, false), j1 = gcd.applyTime(lim, 2048, true);
+    printf("applytime limit=%u digits (%.1fM bits): gcd %.2f us/step, jacobi %.2f us/step\n", lim, lim * 62e-6, g1, j1);
+    fflush(stdout);
   }
   for (u32 nb : jumps) {
     bool ok = true;

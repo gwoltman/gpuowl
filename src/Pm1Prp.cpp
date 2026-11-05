@@ -386,26 +386,49 @@ bool Pm1Prp::same(Buffer<Word>& a, Buffer<Word>& b) {
   return !x.empty() && x == y;
 }
 
+// One step of a running product of the fold:  r *= B[v], then x *= r (withX).  x *= r leaves the transform of r in buf1 (LEAD_MIDDLE),
+// so the next r *= B[v'] is done as spare := B[v'] * r from that transform (r and spare then trade places):  one forward transform
+// less per step than r *= B[v'] with r transformed again.
+void Pm1Prp::chainStep(Chain& c, u32 v, bool withX) {
+  if (touched[v]) {
+    if (c.rOne) {
+      *c.r << bucket[v];
+      c.rOne = false;
+    } else if (c.live) {
+      *c.spare << bucket[v];
+      gpu.modMul(*c.spare, *c.r, Gpu::LEAD_MIDDLE);
+      std::swap(c.r, c.spare);
+    } else {
+      gpu.modMul(*c.r, bucket[v]);
+    }
+    c.live = false;
+  }
+  if (withX && !c.rOne) {
+    if (c.xOne) {
+      *c.x << *c.r;
+      c.xOne = false;
+    } else {
+      gpu.modMul(*c.x, *c.r, c.live ? Gpu::LEAD_MIDDLE : Gpu::LEAD_NONE);
+      c.live = true;
+    }
+  }
+}
+
 // The fold of the segment that ends at the PRP check of iteration k (see Pm1Prp.h), into out.  False when a check fails.
 bool Pm1Prp::fold(u64 k, Words& out) {
   u32 const V = (1u << L) - 1;
   auto bv = [&](u32 v) { return Val{bucket[v], !touched[v]}; };
 
   // From the top:  r = prod_{v' >= v} B[v'], x = prod_{v >= 1} r_v = prod B[v]^v;  then r = T
-  Val r{temp[0]}, x{temp[1]};
-  for (u32 v = V; v >= 1; --v) {
-    mulInto(r, bv(v));
-    mulInto(x, r);
-  }
-  mulInto(r, bv(0));
+  Chain top{&temp[0], &temp[4], &temp[1]};
+  for (u32 v = V; v >= 1; --v) { chainStep(top, v, true); }
+  chainStep(top, 0, false);
 
   // From the bottom:  r2 = prod_{v' <= v} B[v'], x2 = prod_{v < V} r2_v = prod B[v]^(V - v);  then r2 = T
-  Val r2{temp[2]}, x2{temp[3]};
-  for (u32 v = 0; v < V; ++v) {
-    mulInto(r2, bv(v));
-    mulInto(x2, r2);
-  }
-  mulInto(r2, bv(V));
+  Chain bottom{&temp[2], &temp[5], &temp[3]};
+  for (u32 v = 0; v < V; ++v) { chainStep(bottom, v, true); }
+  chainStep(bottom, V, false);
+  Val r{*top.r, top.rOne}, x{*top.x, top.xOne}, r2{*bottom.r, bottom.rOne}, x2{*bottom.x, bottom.xOne};
 
 #ifdef PRPLL_PM1_FAULTS
   if (faultAt(k, "fold") && !x.one) {
@@ -422,12 +445,12 @@ bool Pm1Prp::fold(u64 k, Words& out) {
     return false;
   }
 
-  // x * x2 * T = T^(2^L)
-  Val z{temp[4]};
+  // x * x2 * T = T^(2^L)  (the chains' spare buffers are free now)
+  Val z{*top.spare};
   mulInto(z, x);
   mulInto(z, x2);
   mulInto(z, r);
-  Buffer<Word>& tPow = temp[5];
+  Buffer<Word>& tPow = *bottom.spare;
   tPow << r.buf;
   gpu.squareLoop(tPow, 0, L);
   if (z.one || !same(z.buf, tPow)) {
@@ -440,16 +463,16 @@ bool Pm1Prp::fold(u64 k, Words& out) {
   assert(end > k && end - k <= L);
   Val lhs{tPow, false};
   mulInto(lhs, Val{*u0, false});
-  Buffer<Word>& uEnd = temp[2];
+  Buffer<Word>& uEnd = r2.buf;
   uEnd << gpu.bufData;
   gpu.squareLoop(uEnd, 0, end - k);
   Val rhs{uEnd, false};
   mulInto(rhs, r);
   if (!X.empty()) {
-    Buffer<Word>& xp = temp[4];
+    Buffer<Word>& xp = z.buf;
     gpu.writeIn(xp, X);
     mulInto(lhs, Val{xp, false});
-    Buffer<Word>& xPow = temp[3];
+    Buffer<Word>& xPow = x2.buf;
     xPow << xp;
     gpu.squareLoop(xPow, 0, L);
     mulInto(rhs, Val{xPow, false});

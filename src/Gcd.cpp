@@ -24,6 +24,10 @@ static u32 roundUp(u32 n, u32 m) { return (n + m - 1) / m * m; }
 
 // The number of work-groups of GW for n work-items (Kernel::setKernelsToExecute counts groups)
 static u32 groups(u32 n) { return std::max((n + GW - 1) / GW, 1u); }
+// apply's groups:  GW - 3 new digits per group (the groups overlap by three), for the digit sums at [0, limit + 3)
+static u32 applyGroups(u32 limit) { return (limit + 3 + GW - 4) / (GW - 3); }
+// The divsteps of a step (apply)
+static constexpr u32 STEP = 124;
 
 // The state of one run: (f, g) in two pairs of digit buffers and two matrix buffers, used alternately.
 struct Gcd::Run {
@@ -37,7 +41,7 @@ struct Gcd::Run {
   Run(Queue* q, u32 n) :
     n{n},
     limit{},
-    f{{nullptr, q, n}, {nullptr, q, n}}, g{{nullptr, q, n}, {nullptr, q, n}}, mat{{nullptr, q, 8}, {nullptr, q, 8}},
+    f{{nullptr, q, n}, {nullptr, q, n}}, g{{nullptr, q, n}, {nullptr, q, n}}, mat{{nullptr, q, 16}, {nullptr, q, 16}},
     lens{nullptr, q, 2}, flag{nullptr, q, 1}, skewCount{nullptr, q, 1}, out{nullptr, q, 8} {}
 
   Buffer<i64>& F() { return f[cur]; }
@@ -103,7 +107,7 @@ void Gcd::run(Run& r, const Words& x, i64 sub, u32 p, bool jacobi) {
   auto const [delta, jac] = halfGcdDigits ? halfGcd(r, jacobi) : std::pair<i64, i64>{1, 0};
   (jacobi ? kInitJ : kInit)(r.F(), r.G(), r.mat[r.cur], delta, jac);
 
-  u64 const maxSteps = (u64(p) * (jacobi ? 64 : 3) + 4000) / 62;
+  u64 const maxSteps = (u64(p) * (jacobi ? 64 : 3) + 4000) / STEP;
   u64 steps = 0;
   for (;;) {
     r.lens.zero();
@@ -130,7 +134,7 @@ void Gcd::run(Run& r, const Words& x, i64 sub, u32 p, bool jacobi) {
     }
     if (done) { break; }
     if (steps >= maxSteps) {
-      log("GCD: no end after %" PRIu64 " divsteps (p %u)\n", steps * 62, p);
+      log("GCD: no end after %" PRIu64 " divsteps (p %u)\n", steps * STEP, p);
       throw std::runtime_error("GCD: no end");
     }
 
@@ -138,7 +142,7 @@ void Gcd::run(Run& r, const Words& x, i64 sub, u32 p, bool jacobi) {
     u32 const batch = std::clamp(r.limit, 32u, 1024u);
     for (int k = 0; k < 2; ++k) {
       int const from = r.cur ^ k, to = from ^ 1;
-      kApplyX[k].setKernelsToExecute(groups(r.limit + 2));
+      kApplyX[k].setKernelsToExecute(applyGroups(r.limit));
       kApplyX[k].setFixedArgs(1, r.f[from], r.g[from], r.f[to], r.g[to], r.mat[from], r.mat[to], r.skewCount);
     }
     for (u32 i = 0; i < batch; ++i) {
@@ -148,7 +152,7 @@ void Gcd::run(Run& r, const Words& x, i64 sub, u32 p, bool jacobi) {
     steps += batch;
   }
 
-  stats.divsteps += steps * 62;
+  stats.divsteps += steps * STEP;
   stats.skewEvents = skew ? r.skewCount.read(1)[0] : 0;
   stats.seconds = timer.at();
 }
@@ -214,6 +218,33 @@ vector<i64> Gcd::leafMatrix(const vector<i64>& f, const vector<i64>& g, u32 nb, 
   ret.push_back(m[4]);
   ret.push_back(m[5]);
   return ret;
+}
+
+double Gcd::applyTime(u32 limit, u32 steps, bool jacobi) {
+  Run r{&queue, roundUp(limit + 4, GW)};
+  vector<i64> f(r.n, 0), g(r.n, 0);
+  u64 s = 0x9E3779B97F4A7C15ull;
+  for (u32 j = 0; j < limit; ++j) {
+    s = s * 6364136223846793005ull + 1442695040888963407ull; f[j] = i64(s) >> 3;
+    s = s * 6364136223846793005ull + 1442695040888963407ull; g[j] = i64(s) >> 3;
+  }
+  f[0] |= 1;
+  if (jacobi) { f[limit - 1] = std::abs(f[limit - 1]) | 1; g[limit - 1] = std::abs(g[limit - 1]) | 1; }
+  r.f[0].write(f); r.g[0].write(g); r.f[1].zero(); r.g[1].zero();
+  r.limit = limit;
+  Kernel* kApplyX = jacobi ? kApplyJ : kApply;
+  (jacobi ? kInitJ : kInit)(r.F(), r.G(), r.mat[r.cur], i64(1), i64(0));
+  for (int k = 0; k < 2; ++k) {
+    int const from = r.cur ^ k, to = from ^ 1;
+    kApplyX[k].setKernelsToExecute(applyGroups(r.limit));
+    kApplyX[k].setFixedArgs(1, r.f[from], r.g[from], r.f[to], r.g[to], r.mat[from], r.mat[to], r.skewCount);
+  }
+  for (u32 i = 0; i < 64; ++i) { kApplyX[i & 1](r.limit); }
+  queue.finish();
+  Timer timer;
+  for (u32 i = 0; i < steps; ++i) { kApplyX[i & 1](r.limit); }
+  queue.finish();
+  return timer.at() * 1e6 / steps;
 }
 
 // ---- The subquadratic GCD (Bernstein-Yang jump divsteps): see spike-gcd/halfgcd-design.md ----

@@ -223,8 +223,8 @@ static void testChoice() {
   check(chooseBounds(110000017, 77, 0, 480).savings <= 0, "testsSaved = 0: no saving");
   check(chooseBounds(110000017, 99, 0.01, 480).savings <= 0, "tfBits 99, testsSaved 0.01: no saving");
   // Stage 1 alone not paying while a stage 2 would (prpll then runs stage 1 alone, Task.cpp)
-  check(chooseBounds(30000001, 72, 1, 0).savings <= 0 && chooseBounds(30000001, 72, 1, 480).savings > 0,
-        "30M tf 72: only stage 1 + stage 2 pays");
+  check(chooseBounds(30000001, 75, 1, 0).savings <= 0 && chooseBounds(30000001, 75, 1, 480).savings > 0,
+        "30M tf 75: only stage 1 + stage 2 pays");
 
   // chooseB2 for a fixed B1 (a version 1 savefile)
   Bounds const b2 = chooseB2(110000017, 77, 1, 1000000, 480);

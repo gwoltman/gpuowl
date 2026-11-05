@@ -35,7 +35,7 @@ public:
   int jacobi(const Words& x, u32 p);
 
   struct Stats {
-    u64 divsteps;       // of the last call, a multiple of 62 (it can overshoot the end by a few readback batches)
+    u64 divsteps;       // of the last call, a multiple of 124 (it can overshoot the end by a few readback batches)
     u64 skewEvents;     // the -DSKEW events (non-canonical digits made) of the last call, 0 without skew
     double seconds;
   };
@@ -51,6 +51,9 @@ public:
   u32 halfGcdDigits = 0;      // 0: quadratic only; else the subquadratic GCD runs while f or g has more digits than this
 
   vector<i64> leafMatrix(const vector<i64>& f, const vector<i64>& g, u32 nb, i64 delta, bool jacobi, double* seconds = nullptr);
+
+  // For tests:  microseconds per apply step on random digits held at `limit` digits, over `steps` launches
+  double applyTime(u32 limit, u32 steps, bool jacobi);
 
 private:
   GpuCommon shared;

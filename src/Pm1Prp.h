@@ -113,6 +113,9 @@ private:
   void startSegment(u64 at);
   u32 windowAt(u64 w) const;
   void mulInto(Val& a, const Val& b);
+  // A running product of the fold:  r and x (1 while rOne / xOne), spare a free buffer, live:  buf1 holds r's transform
+  struct Chain { Buffer<Word>* r; Buffer<Word>* spare; Buffer<Word>* x; bool rOne = true, xOne = true, live = false; };
+  void chainStep(Chain& c, u32 v, bool withX);
   bool same(Buffer<Word>& a, Buffer<Word>& b);
   bool fold(u64 k, Words& out);
   Outcome finish(u64 k, u64 prp64);

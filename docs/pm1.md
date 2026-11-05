@@ -49,8 +49,8 @@ exponent chunk that sub-block consumes, checksum 1 is the running product u_0 * 
 - It checks the final residue: the symbol must be +1.
 - Each check costs about as much as one GCD, so it is off by default.
 
-**GCD.** After stage 1, PRPLL computes gcd(x - 1, 2^p - 1) on the GPU. This is a quadratic GCD; on the XTX it takes 2 s at 10M
-bits, 17.6 s at 41M and 85 s at 100M. A factor ends the assignment. There is no CPU GCD: if the GPU GCD can't run, the residue goes
+**GCD.** After stage 1, PRPLL computes gcd(x - 1, 2^p - 1) on the GPU. This is a quadratic GCD; on the XTX it takes 1.3 s at 10M
+bits, 10 s at 41M and 51 s at 100M. A factor ends the assignment. There is no CPU GCD: if the GPU GCD can't run, the residue goes
 to mprime when `-mprimeDir` is given, and otherwise the run stops with an error.
 
 ## Stage 2
@@ -219,7 +219,7 @@ The bounds maximise the expected saving, in PRP iterations of p:
   those multiplications (see [Stage 2](#stage-2)): the items, 2.5 per k step, the table, and the duplicated blocks. The paired fraction
   comes from a table of exact plans (`check_bounds pairtable`, real primes) by the density of the primes in the classes coprime to D,
   (D / phi(D)) / ln q, and L; it is within 0.7% of the exact item counts (24 cases from L = 1 to 40, B2 from 1e5 to 4e9).
-- Each GCD: 10000 + 0.0023 p iterations.
+- Each GCD: 5000 + 0.00125 p iterations.
 
 **Memory.** The plan is the one stage 2 would choose for the memory it would have. This is estimated at the start of the assignment from
 the free memory with the stage 1 FFT's buffers allocated, and the buffer size of stage 2's first FFT.
@@ -254,7 +254,7 @@ in the P-1 savefile (`p1-<p>/`, header version 2), so a resume keeps them. A ver
   prime far more cheaply than a paired stage 2 can, and PRPLL has no polynomial stage 2. The larger table of this stage 2 raised
   PRPLL's chance of a factor with 1300 buffers from 2.06% to 2.34% at 41M and from 2.74% to 2.99% at 110M (tests saved 1).
 - **At p = 5000011** (tf 66), mprime runs P-1 (B1 = 28000-39000) but PRPLL's model says it does not pay. The two GPU GCDs cost
-  about 0.9% of a PRP test there.
+  about 0.45% of a PRP test there (the saving is -0.02%).
 - **Probability:** at mprime's own bounds, PRPLL's model gives mprime's printed chance of a factor to within 1% (relative) in
   every case above.
 
@@ -267,7 +267,7 @@ buffer, kernel or savefile, and the PRP loop does the same work per iteration as
   residue is multiplied into one of 2^L buckets chosen by the L bits of E at that point (one multiplication per L squarings). The
   buckets are combined when the PRP passes the last set bit of E, at iteration about 1.44 * B1.
 - **Cost** (7900 XTX, measured): about 13.5% of a stand-alone stage 1 (35 s over a 250 s PRP at 40M with B1 = 1M; 86 s over 515 s at
-  100M), plus the GCD (17 s at 40M, 87 s at 100M). As a share of a full 100M PRP test (about 9.9 h) that is 0.5%, 1.4% and 2.6% for
+  100M), plus the GCD (10 s at 40M, 51 s at 100M). As a share of a full 100M PRP test (about 9.9 h) that is 0.4%, 1.35% and 2.6% for
   B1 = 1M, 5M and 10M (the 5M and 10M figures are extrapolated), against running stage 1 on its own first.
 - **Memory:** 2^L residue buffers, L chosen (about 8 to 11) from the memory free on the GPU less 1 GB; `-maxAlloc` caps it.
 - **Checks:** the PRP's Gerbicz check covers the squarings. The accumulator has its own exact check at every fold, a Gerbicz-style

@@ -231,11 +231,11 @@ constexpr double TABLE_ENTRY = 0.8;
 constexpr double SETUP = 400;
 constexpr double STAGE2_DUP = 1.0 / 32;    // Stage2:  one block in 32 is computed twice
 
-// The GPU GCD (Gcd.cpp, quadratic), XTX:  0.59 s at 1M bits, 2.04 s at 10M, 17.6 s at 41M, 85.4 s at 100M; PRP (default FFT, -iters
-// 20000) 45.4 us/iteration at 1M, 69.0 at 10M, 165.7 at 41M:  13K, 30K and 106K iterations, and 170-210K at 100M (400-500 us, PRP at
-// 100M-136M).  A fixed part (the launches of small GCDs) and about 0.0023 iterations per bit.
-constexpr double GCD_FIXED = 10000;
-constexpr double GCD_PER_BIT = 0.0023;
+// The GPU GCD (Gcd.cpp, quadratic, 124 divsteps per launch), XTX:  1.26 s at 10M bits, 10.1 s at 41M, 51.2 s at 100M; PRP (default
+// FFT, -iters 20000) 69.0 us/iteration at 10M, 165.7 at 41M, 400-500 at 100M-136M:  18K, 61K and 102-128K iterations.  A fixed part
+// (the launches of small GCDs) and about 0.00125 iterations per bit (17.5K, 56K and 130K).
+constexpr double GCD_FIXED = 5000;
+constexpr double GCD_PER_BIT = 0.00125;
 
 // The number of primes in (a, b], by the logarithmic integral
 double primesBetween(double a, double b) {

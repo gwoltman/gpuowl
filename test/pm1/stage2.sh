@@ -435,12 +435,12 @@ pfactor_tests() {
   else
     fail "pf-nomem (see $d)"
   fi
-  # No memory, and stage 1 alone does not pay at M1000099 TF 50 (while P-1 with a stage 2 would):  stage 1 alone runs all the same
+  # No memory, and stage 1 alone does not pay at M1000099 TF 53 (while P-1 with a stage 2 would):  stage 1 alone runs all the same
   d=$WORK/pf-nomem-neg
-  psetup "$d" 1000099 50 1
+  psetup "$d" 1000099 53 1
   run "$d" "$PRPLL" "${TINY[@]}"
   read -r B1 B2 <<< "$(chosen "$d")"
-  if [ -n "$B1" ] && [ "$B1" = "$B2" ] && modelOK "$d" 1000099 50 1 && grep -q "stage 1 alone does not pay for itself either" "$d/out" \
+  if [ -n "$B1" ] && [ "$B1" = "$B2" ] && modelOK "$d" 1000099 53 1 && grep -q "stage 1 alone does not pay for itself either" "$d/out" \
      && grep -q '"exponent":1000099, "worktype":"P-1", "b1":'"$B1"', "fft-length"' "$d/results-0.txt" && [ ! -s "$d/worktodo-0.txt" ]; then
     pass "pf-nomem-neg: no stage 2 room, stage 1 alone not paying -> still run with B1=B2=$B1 (= check_bounds), result b1 only"
   else
