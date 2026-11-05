@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cmath>
 #include <array>
+#include <numbers>
 
 namespace pm1 {
 
@@ -337,7 +338,7 @@ FactorProb factorProbability(double exponent, double tfBits, double B1, double B
 }
 
 double stage1Cost(double B1) {
-  double const bits = B1 / M_LN2;
+  double const bits = B1 / std::numbers::ln2;
   double const L = std::clamp(sqrt(bits / STAGE1_CHECKS), 2.0, 3000.0);
   return bits * STAGE1_PER_BIT * (1 + 2 / L);
 }
@@ -411,7 +412,7 @@ Stage2Choice chooseStage2(u64 B1, u64 B2, u64 maxN, u32 onlyD) {
     if (best.D && (nPrimes / 2 + K_STEP * kSteps) * (1 + STAGE2_DUP) + TABLE_ODD * (D / 4) >= best.cost) { continue; }
     // M from D/2 by steps of sqrt(2) up to the memory's M; no use beyond the range (a pair is at most B2 - B1 apart) or 2^24
     u32 const top = u32(std::min<u64>({Mmax, std::max<u64>(D / 2, (B2 - B1) / 2 + 1), u64(1) << 24}));
-    for (double m = D / 2.0; ; m *= M_SQRT2) {
+    for (double m = D / 2.0; ; m *= std::numbers::sqrt2) {
       u32 const M = u32(std::min(m, double(top)));
       Stage2Choice const c = stage2Estimate(B1, B2, D, M);
       if (!best.D || c.cost < best.cost) { best = c; }

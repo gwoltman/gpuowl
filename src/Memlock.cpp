@@ -1,19 +1,26 @@
 // Copyright (C) Mihai Preda and George Woltman
 
-#include "Memlock.h"
-#include "Signal.h"
-#include "log.h"
-
-#include <chrono>
-#include <thread>
-
+// <windows.h> comes first:  included after common.h's "using namespace std", its 'byte' clashes with std::byte
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
 #endif
+
+#include "Memlock.h"
+#include "Signal.h"
+#include "log.h"
+
+#include <chrono>
+#include <thread>
 
 namespace {
 

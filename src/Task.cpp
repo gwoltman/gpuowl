@@ -281,7 +281,11 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     return;
   }
   Gcd gcd{shared};
-  auto [x, nErrors, nJacobi] = gpu->pm1Stage1(*this, gcd);
+  // Named members rather than a structured binding:  clang before 16 cannot capture a structured binding in the lambdas below
+  PM1Result const stage1 = gpu->pm1Stage1(*this, gcd);
+  const vector<u32>& x = stage1.x;
+  u32 const nErrors = stage1.nErrors;
+  u32 const nJacobi = stage1.nJacobi;
   gpu.reset();    // the stage 1 buffers are not needed any more
 
   // x = 1 makes the GCD 2^p - 1:  no information (and not a correct stage 1 for any p that can run here)

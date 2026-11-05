@@ -363,7 +363,8 @@ named "config.txt" in the prpll run directory.
 -time              : collect and print a per-kernel GPU timing profile
 -log <N>           : log progress and checkpoint every <N> iterations (positive multiple of 1000; default 20000)
 
--use <define>      : comma separated list of defines for configuring openCL code, such as:
+)"   // split in two:  MSVC rejects a string literal longer than 16380 characters (error C2026)
+R"(-use <define>      : comma separated list of defines for configuring openCL code, such as:
   -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
                      may not work on Nvidia GPUs.  It is ignored on RDNA and on MI200 and later
                      AMD GPUs, where the faster barrier gives wrong results.
