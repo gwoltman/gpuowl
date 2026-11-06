@@ -1220,7 +1220,7 @@ void Tune::tune() {
       for (u32 const value : values) {
         if (value != current_value && string(key) == "SHUFL_BYTES_W" && !ldsKeepsPadding(value, args->value("WMUL", 2))) { continue; }
         args->flags[key] = to_string(value);
-        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        double const cost = timeOption(exponent, fft, quick);
         log("Time for %12s using %s=%u is %6.1f\n", fft.spec().c_str(), key, value, cost);
         if (value == current_value) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_value = value; }
