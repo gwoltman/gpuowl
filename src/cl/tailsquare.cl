@@ -12,7 +12,7 @@
 // If L2 striping, process lines output by fftMiddleIn.  fftMiddleIn outputs 16 * MIDDLE tailSquare lines.
 u32 get_line_number(u32 base) {
 #if PFA
-  return pfaTailLine(get_group_id(0), SINGLE_KERNEL);
+  return pfaTailLine(get_group_id(0) + base, SINGLE_KERNEL);
 #endif
   u32 g = get_group_id(0);
 #if !SINGLE_KERNEL
@@ -41,7 +41,7 @@ u32 get_line_number(u32 base) {
   half_size = MIDDLE / 2;                // For base_hi, round odd middles up.
   return g % half_size * WIDTH + base_hi + g / half_size;
 #else
-  return g;
+  return g + base;                 // base: the first group of a split launch (TAIL_SPLIT, see Gpu::replay_one)
 #endif
 }
 
@@ -174,7 +174,7 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   T2 u[NH], v[NH];
 
 #if PFA
-  u32 line1 = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line1 = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0) + base) : pfaFpTailLine(get_group_id(0) + base);
   u32 line2 = line1 ? pfaFpTailPartner(line1) : PFA_TW / 2;
 #else
   u32 line1 = get_line_number(base);
@@ -282,7 +282,7 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   T2 u[NH];
 
 #if PFA
-  u32 line_u = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line_u = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0) + base) : pfaFpTailLine(get_group_id(0) + base);
   u32 line_v = line_u ? pfaFpTailPartner(line_u) : PFA_TW / 2;
 #else
   u32 line_u = get_line_number(base);
@@ -496,7 +496,7 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   F2 u[NH], v[NH];
 
 #if PFA
-  u32 line1 = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line1 = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0) + base) : pfaFpTailLine(get_group_id(0) + base);
   u32 line2 = line1 ? pfaFpTailPartner(line1) : PFA_TW / 2;
 #else
   u32 line1 = get_line_number(base);
@@ -600,7 +600,7 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
   F2 u[NH];
 
 #if PFA
-  u32 line_u = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0)) : pfaFpTailLine(get_group_id(0));
+  u32 line_u = SINGLE_KERNEL ? pfaFpTailLineAll(get_group_id(0) + base) : pfaFpTailLine(get_group_id(0) + base);
   u32 line_v = line_u ? pfaFpTailPartner(line_u) : PFA_TW / 2;
 #else
   u32 line_u = get_line_number(base);

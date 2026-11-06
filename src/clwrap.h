@@ -118,7 +118,7 @@ void flush( cl_queue q);
 void finish(cl_queue q);
 
 EventHolder run(cl_queue queue, cl_kernel kernel, size_t groupSizeX, size_t workSizeX, size_t workSizeY,
-                vector<cl_event>&& waits, const string &name, bool genEvent);
+                vector<cl_event>&& waits, const string &name, bool genEvent, size_t offsetX = 0);
 
 EventHolder read(cl_queue queue, vector<cl_event>&& waits,
                  bool blocking, cl_mem buf, size_t size, void *data, bool genEvent);
