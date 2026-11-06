@@ -2408,6 +2408,11 @@ void Gpu::exponentiate(Buffer<Word>& bufInOut, u64 exp) {
     fftP(buf1, bufInOut);
     fftMidIn(buf1);
     fftHin(buf2, buf1); // save fully FFTed "base" to buf2
+    // With L2_STRIPING the first tailSquare below must not be replayed with this fftHin:  the striped replay runs fftHin one stripe
+    // group at a time, and an earlier group's tail kernel writes, in place, lines that a later group's fftHin still has to read
+    // (odd MIDDLE: line 0's partner H/2 is in the WIDTH/2 stripe; MULTI_Q: the 3*WIDTH/4 stripe, paired with WIDTH/4), so buf2
+    // would get some lines already squared
+    if (l2_striping) { replay(); }
     bool midInAlreadyDone = true;
 
     int p = 63;
