@@ -351,4 +351,5 @@ bool clIsGraphSupported(cl_device_id);
 int clGraphBeginRecording(cl_command_queue);
 int clGraphEndRecording(cl_command_queue, cl_graph*);
 int clGraphLaunch(cl_graph);
+int clGraphRepeat(cl_graph, unsigned, cl_graph*);
 int clReleaseGraph(cl_graph);

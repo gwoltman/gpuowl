@@ -80,8 +80,18 @@ void checkGpuCanRun(u64 exponent, GpuCommon shared, FFTConfig fft, bool candidat
 // fftUses are the FFT's tune.txt settings (see Gpu::make).
 double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<KeyVal>& config, int quick = 7, u32* usedWmul = nullptr,
                   const vector<KeyVal>& fftUses = {}) {
+  int const requestedExponent = shared.args->value("TUNE_EXP", 0);
+  if (requestedExponent > 0) {
+    if ((u64)requestedExponent > fft.maxExp()) return numeric_limits<double>::infinity();
+    exponent = requestedExponent;
+    static bool logged = false;
+    if (!logged) { log("TUNE_EXP: measuring at exponent %llu\n", (unsigned long long)exponent); logged = true; }
+  }
   if (Signal::stopRequested()) { throw "stop requested"; }
   try {
+#ifdef CUDA_BACKEND
+    cudaResetL2ForTune();
+#endif
     auto gpu = Gpu::make(exponent, shared, fft, config, false, fftUses);
     if (usedWmul) { *usedWmul = gpu->effectiveWmul(); }
     double const cost = gpu->timePRP(quick);
@@ -289,6 +299,7 @@ void Tune::tune() {
 
   bool tune_config = true;
   bool regs_only = false;
+  retune = Args::retuneKeys("short").value();   // -tune adds FFTs with the short retune, -tune regs=<val> chooses
   bool variants_only = false;
   double fine_pct = 0;                          // -tune fine: FFTs within this percent of earning a tune.txt entry get their register limits tuned
   bool time_FFTs = false;
@@ -342,11 +353,12 @@ void Tune::tune() {
       if (keyVal.front() == "fp6431") time_FFT6431 = stoi(keyVal.back());
       if (keyVal.front() == "fp32") time_FP32 = stoi(keyVal.back());
       if (keyVal.front() == "fine") fine_pct = stod(keyVal.back());
-      if (keyVal.front() == "tk") tkOption = keyVal.back() == "auto" ? -1 : stoi(keyVal.back());
+      if (keyVal.front() == "regs") { regs_only = true; retune = Args::retuneKeys(keyVal.back()).value(); }
     }
   }
   quick = std::max(quick, 1);
   quick = std::min(quick, 10);
+  inplaceOnly = time_inplace_only;
 
   // A GPU slows down for minutes as it heats up (clock boost, then the fan and the power limit catch up), and every option is timed
   // once, one after the other:  timed cold, the first options look faster than the later ones.  So run the GPU until it is hot.
@@ -359,7 +371,7 @@ void Tune::tune() {
     while (timer.at() < warmup_secs) { timeConfig(exponent, shared, fft, {}, quick); }
   }
 
-  // Only (re)tune the register limits of the existing tune.txt entries -- those of the -fft shapes, if given, and those used for the
+  // Only retune the settings of the existing tune.txt entries -- those of the -fft shapes, if given, and those used for the
   // exponents between minexp and maxexp, if either is given
   if (regs_only) {
     regTune(quick, args->fftSpec.empty() ? vector<FFTShape>{} : shapes, nullptr,
@@ -1168,24 +1180,49 @@ void Tune::tune() {
       args->flags["L1CUDA"] = to_string(best_l1cuda);
     }
 
-    // Find best GRAPHS setting.  Require a clear advantage to override the default GRAPHS setting.  GRAPHS=1 will use less CPU time.
+    // Find best GRAPHS and GRAPH_BATCH settings, together: GRAPH_BATCH (squarings per graph launch) only applies to GRAPHS=1.  Require a
+    // clear advantage to override the default GRAPHS setting.  GRAPHS=1 will use less CPU time.
     if (true) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_graphs = 0;
-      u32 current_graphs = args->value("GRAPHS", 1);
+      u32 best_graphs = 0, best_batch = 1;
+      u32 const current_graphs = args->value("GRAPHS", 1);
+      u32 const current_batch = current_graphs ? args->value("GRAPH_BATCH", 1) : 1;
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 graphs : {0, 1}) {
+      for (auto [graphs, batch] : initializer_list<pair<u32, u32>>{{0, 1}, {1, 1}, {1, 4}, {1, 16}, {1, 64}, {1, 128}, {1, 256}}) {
         args->flags["GRAPHS"] = to_string(graphs);
+        args->flags["GRAPH_BATCH"] = to_string(batch);
         double cost = timeConfig(exponent, shared, fft, {}, quick);
-        log("Time for %12s using GRAPHS=%u is %6.1f\n", fft.spec().c_str(), graphs, cost);
-        if (graphs == current_graphs) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_graphs = graphs; }
+        log("Time for %12s using GRAPHS=%u, GRAPH_BATCH=%u is %6.1f\n", fft.spec().c_str(), graphs, batch, cost);
+        if (graphs == current_graphs && batch == current_batch) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_graphs = graphs; best_batch = batch; }
       }
-      log("Best GRAPHS is %u.  Default GRAPHS is 1.\n", best_graphs);
-      configsUpdate(current_cost, best_cost, 0.003, "GRAPHS", best_graphs, newConfigKeyVals, suggestedConfigKeyVals);
+      log("Best GRAPHS is %u, GRAPH_BATCH %u.  Default GRAPHS is 1, GRAPH_BATCH 1.\n", best_graphs, best_batch);
+      if (best_graphs != current_graphs) configsUpdate(current_cost, best_cost, 0.003, "GRAPHS", best_graphs, newConfigKeyVals, suggestedConfigKeyVals);
+      if (best_batch != current_batch) configsUpdate(current_cost, best_cost, 0.003, "GRAPH_BATCH", best_batch, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["GRAPHS"] = to_string(best_graphs);
+      args->flags["GRAPH_BATCH"] = to_string(best_batch);
+    }
+
+    // Find best PDL setting (programmatic dependent launch, sm_90 and up), after GRAPHS: it changes how the kernels of a graph start
+    if (getNvidiaComputeCapability(shared.context->deviceId()) >= 900) {
+      FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
+      u64 exponent = primes.prevPrime(fft.maxExp());
+      u32 best_pdl = 0;
+      u32 const current_pdl = args->value("PDL", 0);
+      double best_cost = -1.0;
+      double current_cost = -1.0;
+      for (u32 pdl : {0, 1}) {
+        args->flags["PDL"] = to_string(pdl);
+        double cost = timeConfig(exponent, shared, fft, {}, quick);
+        log("Time for %12s using PDL=%u is %6.1f\n", fft.spec().c_str(), pdl, cost);
+        if (pdl == current_pdl) current_cost = cost;
+        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_pdl = pdl; }
+      }
+      log("Best PDL is %u.  Default PDL is 0.\n", best_pdl);
+      configsUpdate(current_cost, best_cost, 0.003, "PDL", best_pdl, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["PDL"] = to_string(best_pdl);
     }
 
 #endif
@@ -1213,26 +1250,6 @@ void Tune::tune() {
         log("Best TAIL_KERNELS is %u (but best may be %u when running two workers on one GPU).  Default TAIL_KERNELS is 2.\n", best_tail_kernels, best_tail_kernels + 1);
       configsUpdate(current_cost, best_cost, 0.000, "TAIL_KERNELS", best_tail_kernels, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
-    }
-
-    // Find best BIGLIT setting
-    if (false && time_FFTs) {        // Deprecated
-      FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
-      u64 const exponent = primes.prevPrime(fft.maxExp());
-      u32 best_biglit = 0;
-      u32 const current_biglit = args->value("BIGLIT", 1);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 const biglit : {0, 1}) {
-        args->flags["BIGLIT"] = to_string(biglit);
-        double const cost = timeConfig(exponent, shared, fft, {}, quick);
-        log("Time for %12s using BIGLIT=%u is %6.1f\n", fft.spec().c_str(), biglit, cost);
-        if (biglit == current_biglit) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_biglit = biglit; }
-      }
-      log("Best BIGLIT is %u.  Default BIGLIT is 1.  The BIGLIT=0 option will probably be deprecated.\n", best_biglit);
-      configsUpdate(current_cost, best_cost, 0.003, "BIGLIT", best_biglit, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["BIGLIT"] = to_string(best_biglit);
     }
 
     // Output new settings to config.txt
@@ -1445,7 +1462,7 @@ skip_some_WH_variants = 2;   // should default be 1??
         // has to earn the entry with them.
         if (fine_pct > 0 && std::isfinite(cost) && TuneEntry{cost * (1 - fine_pct / 100), fft, {}}.willUpdate(results)) {
           log("~ %6.1f %12s %9" PRIu64 " is within %g%% of a tune.txt entry: tuning its register limits\n", cost, fft.spec().c_str(), fft.maxExp(), fine_pct);
-          entry = regTuneEntry(entry, quick, sm);
+          entry = retuneEntry(entry, quick, sm);
         }
         bool const isUseful = std::isfinite(entry.cost) && entry.update(results);
         log("%c %6.1f %12s %9" PRIu64 "\n", isUseful ? '*' : ' ', entry.cost, fft.spec().c_str(), fft.maxExp());
@@ -1602,6 +1619,9 @@ void Tune::regTune(int quick, const vector<FFTShape>& onlyShapes, const set<stri
   log("Tuning register usage of %stune.txt entries.  Per SIMD: %d VGPRs (allocated by %d), %d waves; %d bytes LDS per CU.\n",
       onlySpecs ? "new " : "", sm.vgprs, sm.granule, sm.maxWaves, sm.ldsPerCU);
 #endif
+  string keys;
+  for (const string& k : retune) { keys += (keys.empty() ? "" : ", ") + k; }
+  log("Retuning %s\n", keys.c_str());
 
   vector<TuneEntry> done;
   for (u32 i = 0; i < entries.size(); ++i) {
@@ -1611,7 +1631,7 @@ void Tune::regTune(int quick, const vector<FFTShape>& onlyShapes, const set<stri
     bool const selected = (onlyShapes.empty() || std::ranges::any_of(onlyShapes, [&](const FFTShape& s) { return s.spec() == e.fft.shape.spec(); }))
                           && (!onlySpecs || onlySpecs->contains(e.fft.spec()))
                           && e.fft.maxExp() >= minExp && lowestExp <= maxExp;
-    done.push_back(selected ? regTuneEntry(e, quick, sm) : e);
+    done.push_back(selected ? retuneEntry(e, quick, sm) : e);
 
     // Rewrite tune.txt after each entry: the entries done so far, and the rest as they were
     vector<TuneEntry> results;
@@ -1779,9 +1799,121 @@ string regValueName(int v, bool amd) {
 
 } // namespace
 
+// The settings selected by retune, in the order they depend on each other.  First those that change the kernels whose register limits
+// are tuned: INPLACE (the tiles apply to its in-place transforms), NTT_WEIGHT_TABLE, TILE64 and TILE32 (the in-place middle kernels'
+// threads per block), each timed with the compiler's default registers.  Then the register limits with WMUL and TAIL_KERNELS
+// (regTuneEntry), also when one of the first changed: the line's limits were tuned for the old kernels.  Then, CUDA, L2PERSIST with the
+// final registers.  A setting not selected keeps its value on the line.  A setting is written to the line only where it differs from
+// what the FFT gets without it (config.txt or the default), so that a later change of the default reaches the line.
+TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) {
+  Args* args = shared.args;
+  int const requestedExponent = args->value("TUNE_EXP", 0);
+  if (requestedExponent > 0 && (u64)requestedExponent > e.fft.maxExp()) { return e; }
+  u64 const exponent = primes.prevPrime(e.fft.maxExp());      // timeConfig measures at TUNE_EXP, if given
+  string const spec = e.fft.spec();
+  TuneEntry out = e;
+
+  auto lineValue = [&](const string& key) -> optional<int> {
+    for (const KeyVal& kv : out.uses) { if (kv.first == key) { return atoi(kv.second.c_str()); } }
+    return {};
+  };
+  auto setOnLine = [&](const string& key, int value, int without) {
+    std::erase_if(out.uses, [&](const KeyVal& kv) { return kv.first == key; });
+    if (value != without) { out.uses.emplace_back(key, to_string(value)); }
+  };
+  // The line's settings other than key
+  auto usesBut = [&](const string& key) {
+    vector<KeyVal> uses;
+    for (const KeyVal& kv : out.uses) { if (kv.first != key) { uses.push_back(kv); } }
+    return uses;
+  };
+
+  // A new value of a setting that changes the kernels has to be faster by 0.3%: it costs the line's register limits
+  bool kernelsChanged = false;
+  auto search = [&](const string& key, int builtIn, const vector<int>& values) {
+    if (!retune.contains(key)) { return; }
+    int const without = args->value(key, builtIn);
+    int const current = lineValue(key).value_or(without);
+    vector<KeyVal> const uses = usesBut(key);
+    double currentCost = numeric_limits<double>::infinity(), bestCost = currentCost;
+    int best = current;
+    string times;
+    for (int v : values) {
+      double const cost = timeConfig(exponent, shared, e.fft, {{"NOREG", "1"}, {key, to_string(v)}}, quick, nullptr, uses);
+      char buf[48];
+      snprintf(buf, sizeof(buf), "%s%d: %.1f", times.empty() ? "" : ", ", v, cost);
+      times += buf;
+      if (v == current) { currentCost = cost; }
+      if (cost < bestCost) { bestCost = cost; best = v; }
+    }
+    if (best != current && std::isfinite(currentCost) && bestCost > 0.997 * currentCost) { best = current; }
+    log("%-18s %s %s us/iter (default registers): %s=%d%s\n", spec.c_str(), key.c_str(), times.c_str(), key.c_str(), best,
+        best != current ? ", changed" : "");
+    if (best != current) { kernelsChanged = true; }
+    setOnLine(key, best, without);
+  };
+
+  log("\n");
+  TuneEntry const original = e;
+  int const defaultInPlace = isNvidiaGpu(shared.context->deviceId()) ? 1 : 0;     // as clDefines
+  search("INPLACE", defaultInPlace, inplaceOnly ? vector{1, 2} : vector{0, 1, 2});
+  bool const inPlace = lineValue("INPLACE").value_or(args->value("INPLACE", defaultInPlace)) != 0;
+  if (!inPlace) { std::erase_if(out.uses, [](const KeyVal& kv) { return kv.first == "TILE64" || kv.first == "TILE32"; }); }
+  if (e.fft.NTT_GF31 || e.fft.NTT_GF61) { search("NTT_WEIGHT_TABLE", 0, {0, 1, 2, 3}); }
+  if (inPlace && (e.fft.FFT_FP64 || e.fft.NTT_GF61)) { search("TILE64", 8, {8, 16}); }     // the defaults as base.cl
+  if (inPlace && (e.fft.FFT_FP32 || e.fft.NTT_GF31)) { search("TILE32", 16, {8, 16}); }
+
+  bool const regs = retune.contains("REGS") || retune.contains("WMUL") || retune.contains("TAIL_KERNELS");
+  if (kernelsChanged) {
+    // The new kernels won with the compiler's default registers, which flatters a setting that saves registers (on a TITAN V
+    // NTT_WEIGHT_TABLE=1 was 7% faster so, but no faster once the limits were tuned).  So the new kernels with their own register
+    // limits have to beat the old ones with theirs: the line's, or retuned if the register limits are selected.
+    TuneEntry const changed = regTuneEntry(out, quick, sm);
+    TuneEntry kept = original;
+    if (regs) {
+      kept = regTuneEntry(original, quick, sm);
+    } else {
+      kept.cost = timeConfig(exponent, shared, e.fft, {}, quick, nullptr, original.uses);
+    }
+    bool const change = std::isfinite(changed.cost) && !(kept.cost <= changed.cost);
+    log("%-18s %.1f us/iter with the new settings, %.1f with the old: %s\n", spec.c_str(), changed.cost, kept.cost,
+        change ? "changed" : "kept");
+    out = change ? changed : kept;
+  } else if (regs) {
+    out = regTuneEntry(out, quick, sm);
+  }
+
+#ifdef CUDA_BACKEND
+  // L2PERSIST is a bitmask of buffers; only 0 and 1 (the main data buffer) are tried.  The difference is small, so each is timed twice
+  // (ABBA order) and the line's value is kept unless the other is faster by 0.3%.
+  if (retune.contains("L2PERSIST") && sm.maxPersistingL2 > 0) {
+    int const without = args->value("L2PERSIST", 0);
+    int const current = lineValue("L2PERSIST").value_or(without);
+    vector<KeyVal> const uses = usesBut("L2PERSIST");
+    auto timeL2 = [&](int v) { return timeConfig(exponent, shared, e.fft, {{"L2PERSIST", to_string(v)}}, quick, nullptr, uses); };
+    double const a1 = timeL2(0), b1 = timeL2(1), b2 = timeL2(1), a2 = timeL2(0);
+    double const off = (a1 + a2) / 2, on = (b1 + b2) / 2;
+    int best = on < off ? 1 : 0;
+    if (current == 0 || current == 1) {
+      double const cur = current ? on : off, other = current ? off : on;
+      if (!(other < 0.997 * cur)) { best = current; }
+    }
+    double const bestCost = best ? on : off;
+    log("%-18s L2PERSIST 0: %.1f, 1: %.1f us/iter: L2PERSIST=%d\n", spec.c_str(), off, on, best);
+    if (std::isfinite(bestCost)) {
+      setOnLine("L2PERSIST", best, without);
+      out.cost = bestCost;
+    }
+  }
+#endif
+  return out;
+}
+
 TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm, bool tailOnly, const map<string, int>* fwdOcc, int fwdDir) {
   Args* args = shared.args;
-  u64 const exponent = primes.prevPrime(e.fft.maxExp());
+  int const requestedExponent = args->value("TUNE_EXP", 0);
+  if (requestedExponent > 0 && (u64)requestedExponent > e.fft.maxExp()) return e;
+  u64 const exponent = requestedExponent > 0 ? (u64)requestedExponent : primes.prevPrime(e.fft.maxExp());
   string const spec = e.fft.spec();
 
 #ifdef CUDA_BACKEND
@@ -1796,7 +1928,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm,
   map<string, string> fixed;
   for (const KeyVal& kv : e.uses) {
     if (!Args::isRegisterKey(kv.first)) {
-      if (amd || tailOnly || kv.first != "WMUL") { uses.push_back(kv); }
+      if (amd || tailOnly || kv.first != "WMUL" || !retune.contains("WMUL")) { uses.push_back(kv); }
     } else if (tailOnly && !kv.first.starts_with("REGTS")) {
       fixed[kv.first] = kv.second;
     }
@@ -1914,7 +2046,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm,
   int wmul1Blocks = 0;
   double wmul1Us = 0;
   size_t const cf = std::ranges::find_if(searches, [](const KernelSearch& k) { return k.base.key.starts_with("REGCF"); }) - searches.begin();
-  if (!amd && !tailOnly && wmul == 2 && cf < searches.size()) {
+  if (!amd && !tailOnly && retune.contains("WMUL") && wmul == 2 && cf < searches.size()) {
     const KernelSearch& k = searches[cf];
     int const lbcf = k.bestBlocks();
     wmul1Blocks = 2 * lbcf + 1;
@@ -2060,7 +2192,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm,
   // rest of the tune, for this FFT type, a choice is no longer tried once it has lost to the entry's choice by more than 5% twice, or four
   // times, without ever winning (on a Radeon VII 11 and 13 cost 60-70%), or once it has lost to its sibling (3 vs 13) twice without ever
   // beating it.
-  if (tkOption == 0) { return out; }
+  if (!retune.contains("TAIL_KERNELS")) { return out; }
   int const tk0 = [&] { for (const KeyVal& kv : out.uses) { if (kv.first == "TAIL_KERNELS") { return atoi(kv.second.c_str()); } } return args->value("TAIL_KERNELS", 2); }();
   int const one = tk0 % 10 < 2 ? 0 : 2;                 // the one-kernel choice of this width
   auto recOf = [&](int tk) -> TailAltRecord& { return tailAltResults[to_string(int(e.fft.shape.fft_type)) + ':' + to_string(tk)]; };
@@ -2096,9 +2228,7 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm,
   };
   auto siblings = [&](int winner, int loser) { ++recOf(winner).beatSibling; ++recOf(loser).lostToSibling; };
 
-  if (tkOption > 0) {
-    if (tkOption != tk0) { consider(timeAs(out, tkOption), tkOption); }
-  } else if (tk0 == one) {
+  if (tk0 == one) {
     // One kernel now: two kernels, at the tail kernels' occupancy and one or two more.  The register search runs without the extra queue
     // (1 or 3): with it, the profiled times of the overlapping tail kernels are inflated.  Its result is the timing of 1 or 3; 11 or 13
     // is then timed once with the same register limits.

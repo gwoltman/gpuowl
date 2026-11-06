@@ -27,6 +27,7 @@
 
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <bit>
 #include <ranges>
 #include <utility>
 
@@ -89,7 +90,69 @@ float invWeightM132(u32 N, u64 E, u32 H, u32 line, u32 col, u32 rep) {
   return float(expm1(M_LN2 * - (double)(extra(N, E, kAt(H, line, col) + rep)) / N));
 }
 
-Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
+// NTT_WEIGHT_TABLE: carryFused's weight shifts and flags, one u32 per pair of words at line * W + column, laid out as weight.cl
+// describes.  mode 3 appends a second table for the second (forward weight) loop.  The FP32 wrap flags and, without PFA, the
+// big-word flags repeat the kernels' own frac_bits arithmetic, so the table gives exactly what the kernels would compute.
+vector<u32> nttWeightTable(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaOpenCL, int mode) {
+  u32 const N = 2u * W * H;
+  u32 const groupWidth = W / nW;
+  bool const has31 = fft.NTT_GF31, has61 = fft.NTT_GF61, wraps = fft.FFT_FP32;
+  u32 const R = fft.shape.isPfa() ? fft.shape.pfaRadix() : 1;
+  u32 const BH = H / R, L = W * BH, rem = u32(E % N);
+  auto inverse = [](u32 a, u32 q) { for (u32 x = 1; x < q; ++x) { if (u64(a) * x % q == 1) { return x; } } throw "NTT weight inverse missing"; };
+  u32 const linv = R == 1 ? 0 : inverse(L % R, R), r31 = inverse(N % 31, 31), r61 = inverse(N % 61, 61);
+  u32 const e = std::countr_zero(N / R) + 1;    // carryFused's log2_NWORDS + 1
+  auto ceilPart = [&](u32 word) { u64 v = u64(word) * rem; return v / N + (v % N != 0); };
+  auto rotation = [&](u32 word, u32 q, u32 inv) { return u32((ceilPart(word) % q + q - u64(word % q) * (rem % q) * inv % q) % q); };
+  auto adjust = [](u32 v, u32 q) { return v > q ? v - q : v; };     // adjust_m31/m61_weight_shift
+
+  // FRAC_BPW_HI / FRAC_BPW_LO and fracBits as in clDefines and weight.cl
+  u64 const bpw = (u64((u64(E % N) << 32) / N) << 32) + (((u64(E % N) << 32) % N) << 32) / N - 1;
+  u32 const hi = u32(bpw >> 32), lo = u32(bpw);
+  bool const pow2 = !(N & (N - 1));
+  auto fracBits = [&](u32 i) { return pow2 ? i * (hi + 1) - 1 : i * hi + u32((u64(i) * lo) >> 32) - 1; };
+
+  vector<u32> table(mode == 3 ? N : N / 2);
+  for (u32 line = 0; line < H; ++line) {
+    for (u32 x = 0; x < W; ++x) {
+      u32 const a = x * BH + line % BH;
+      u32 const pair = R == 1 ? x * H + line : a + L * ((line % R + R - a % R) * linv % R);
+      u32 const word = 2 * pair;
+      bool big0, big1, wrap = false, wrap1 = false;
+      if (R == 1) {
+        // carryFused's frac_bits for its i-th pair, then the tests of its two weight loops
+        u32 const lowMe = x % groupWidth, i = x / groupWidth;
+        u32 const frac = fracBits((lowMe * H + line) * 2) + 0xFFFFFFFF + i * (hi + fracBits(groupWidth * H * 2 - 1));
+        u32 const base = fracBits(lowMe * H * 2) +
+                         (nvidiaOpenCL ? fracBits(line % 64 * 2) + fracBits(line / 64 * 64 * 2) : fracBits(line * 2));
+        big0 = frac + hi <= hi;
+        big1 = frac + hi >= -hi;
+        if (wraps) { wrap = frac > base; wrap1 = frac + hi > hi; }
+      } else {
+        big0 = ceilPart(word + 1) > ceilPart(word);
+        big1 = ceilPart(word + 2) > ceilPart(word + 1);
+        if (wraps) { wrap = fracBits(word) > fracBits(2 * x * BH); wrap1 = fracBits(word) + hi > hi; }    // pfaWeightsOf's tests
+      }
+      // Shifts as shr amounts: the inverse weight (with log2_NWORDS + 1) in the first loop, the weight in the second
+      u32 const k31[2] = {has31 ? rotation(word, 31, r31) : 0, has31 ? rotation(word + 1, 31, r31) : 0};
+      u32 const k61[2] = {has61 ? rotation(word, 61, r61) : 0, has61 ? rotation(word + 1, 61, r61) : 0};
+      u32 inv31[2], fwd31[2], inv61[2], fwd61[2];
+      for (u32 w = 0; w < 2; ++w) {
+        inv31[w] = has31 ? adjust(k31[w] + e, 31) : 0; fwd31[w] = has31 ? 31 - k31[w] : 0;
+        inv61[w] = has61 ? adjust(k61[w] + e, 61) : 0; fwd61[w] = has61 ? 61 - k61[w] : 0;
+      }
+      u32 const flags = (u32(big0) << 10) | (u32(wrap) << 12) | (u32(wrap1) << 13);
+      u32 first = inv31[0] | (inv31[1] << 5) | flags | (u32(big1) << 11) | (inv61[0] << 14) | (inv61[1] << 26);
+      if (mode != 3 && !has61) { first |= (fwd31[0] << 14) | (fwd31[1] << 27); }
+      if (mode != 3 && !has31) { first |= (fwd61[0] << 20) | fwd61[1]; }
+      table[line * W + x] = first;
+      if (mode == 3) { table[N / 2 + line * W + x] = fwd31[0] | (fwd31[1] << 5) | flags | (fwd61[0] << 14) | (fwd61[1] << 26); }
+    }
+  }
+  return table;
+}
+
+Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu, int nttTable) {
   u32 const N = 2u * W * H;
   u32 const groupWidth = W / nW;
 
@@ -195,6 +258,21 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu) {
     memcpy((double *) weightsConstIF.data(), weightsConstIF32.data(), weightsConstIF32.size() * sizeof(float));
   }
 
+  // The NTT weight table goes after the FP weights (carryFused finds it there, see weight.cl).  The NTT-only types take bufWeights
+  // as an argument even without the table, which needs a non-empty buffer.
+  if (nttTable && (fft.NTT_GF31 || fft.NTT_GF61)) {
+#ifdef CUDA_BACKEND
+    bool const nvidiaOpenCL = false;
+#else
+    bool const nvidiaOpenCL = nvidiaGpu;
+#endif
+    vector<u32> const table = nttWeightTable(fft, E, W, H, nW, nvidiaOpenCL, nttTable);
+    size_t const start = weightsIF.size();
+    weightsIF.resize(start + (table.size() + 1) / 2);
+    memcpy(weightsIF.data() + start, table.data(), table.size() * sizeof(u32));
+  }
+  if (weightsIF.empty()) { weightsIF.push_back(0); }
+
   return Weights{.weightsConstIF=weightsConstIF, .weightsIF=weightsIF};
 }
 
@@ -295,6 +373,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // OpenCL build can say that they do nothing instead of silently ignoring them.
   initializer_list<string> const cudaOnlyKeys = {
                               "GRAPHS",
+                              "GRAPH_BATCH",            // CUDA, GRAPHS=1: squarings per graph launch (1-256), set by -tune
                               "L1CUDA",
                               "L2PERSIST",              // CUDA: bitmask of buffers to mark for persisting L2 (1=buf1, 2=trig, 4=carryShuttle)
                               "L2PERSISTPCT",           // CUDA: % (0-100) of device's max persisting L2 cache size to reserve, default 100
@@ -304,6 +383,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                             };
   // These keys may be undocumented in help because they are either deprecated, experimental, or developer-only.
   initializer_list<string> const hiddenKeys = {
+                              "NTT_WEIGHT_TABLE",       // NTT types: carryFused's weight shifts from a table, 1-3 (see base.cl), set by -tune
+                              "TILE64","TILE32",        // INPLACE: transpose tile size 8 or 16 for FP64 and GF61 / FP32 and GF31 (see base.cl), set by -tune
+                              "TUNE_EXP",               // Developer: -tune times every FFT at this exponent (those that handle it)
                               "BIGLIT",                 // Deprecated
                               "ENABLE_SUBBARRIER",      // Experimental, nVidia: LDSbar syncs only its sub-workgroup, 1 = each, 2 = four in pairs (see base.cl)
                               "NONTEMPORAL",            // Deprecated
@@ -498,6 +580,11 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     log("L2_STRIPING does not support a non-power-of-two MIDDLE.  Changing to L2_STRIPING=0.\n");
     config["L2_STRIPING"] = to_string(0);
   }
+  // L2_STRIPING's stripes are 16 columns wide (see fftmiddlein.cl)
+  if (configValue("L2_STRIPING", 0) && (configValue("TILE64", 8) != 16 || configValue("TILE32", 16) != 16)) {
+    if (doLog) { log("L2_STRIPING needs 16x16 in-place tiles.  Changing to TILE64=16 and TILE32=16.\n"); }
+    config["TILE64"] = config["TILE32"] = to_string(16);
+  }
 
 
   // L2_STRIPING is not allowed if INPLACE=0.  Maximum L2_STRIPING is WIDTH/64 if MULTI_Q=0 and WIDTH/128 if MULTI_Q=1.
@@ -538,7 +625,13 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // The register limits are applied per kernel (numRegisters), not as defines: as defines they would change every kernel's
   // compile options, and so its kernel cache entry, whenever one kernel's limit changed.
   // Nor can the radix keys be defines (a macro name cannot start with a digit); the .cl code sees NW and NH.
-  std::erase_if(config, [](const auto& kv) { return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || kv.first == "SMEM_SPILL"; });
+  // Keys that only the host reads (and deprecated keys that nothing reads) are not defines either, so that changing them does not
+  // recompile the kernels.  PTX_VERSION stays: the CUDA build reads it back from the build options (see clwrap_cuda.cpp).
+  initializer_list<string> const hostOnlyKeys = {"GRAPHS", "GRAPH_BATCH", "L1CUDA", "L2PERSIST", "L2PERSISTPCT", "SLEEP_WAIT",
+                                                 "SMEM_SPILL", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
+  std::erase_if(config, [&](const auto& kv) {
+    return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || isInList(kv.first, hostOnlyKeys);
+  });
   string defines = toDefine(config);
   if (doLog) { log("config: %s\n", defines.c_str()); }
 
@@ -1161,7 +1254,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   bufTrigM{shared.bufCache->middleTrig(&args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
   bufTrigW{shared.bufCache->smallTrig(&args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
 
-  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(shared.context->deviceId()))},
+  weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(shared.context->deviceId()), args.value("NTT_WEIGHT_TABLE", 0))},
   bufConstWeights{shared.context, std::move(weights.weightsConstIF)},
   bufWeights{shared.context,      std::move(weights.weightsIF)},
 
@@ -1280,6 +1373,11 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     }
     for (Kernel* k : {&kCarryFusedROE, &kCarryFusedMulROE}) { k->setFixedArgs(6, bufROE); }
     for (Kernel* k : {&kCarryFused, &kCarryFusedMul, &kCarryFusedLL}) { k->setFixedArgs(6, bufStatsCarry); }
+  }
+
+  // The NTT-only types' carryFused takes the NTT weight table as an argument (the FP hybrids find it in their FP weights)
+  if (!fft.FFT_FP64 && !fft.FFT_FP32) {
+    for (Kernel* k : {&kCarryFused, &kCarryFusedROE, &kCarryFusedMul, &kCarryFusedMulROE, &kCarryFusedLL}) { k->setFixedArgs(7, bufWeights); }
   }
 
   carryB.setFixedArgs(1, bufCarry);
@@ -2900,6 +2998,7 @@ tuple<bool, u64, RoeInfo, RoeInfo> Gpu::measureROE(bool  /*quick*/) {
 
 double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest) to 10 (quickest, shortest)
   u32 blockSize{}, iters{}, warmup{};
+  u32 const graphBatch = std::clamp(args.value("GRAPH_BATCH", 1), 1, 256);
 
   if (quick == 10)     iters =   400, blockSize = 200;
   else if (quick == 9) iters =   600, blockSize = 300;
@@ -2941,6 +3040,13 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   }
   queue.finish();
   if (Signal::stopRequested()) { throw "stop requested"; }
+  // Time the same serial graph batches used by PRP. Graph construction is a
+  // one-time setup cost, like kernel compilation, so prepare before the timer.
+  bool const batch = graphBatch > 1 && use_graphs && !useLongCarry && !args.profile &&
+                     !(statsBits & 1) && graph_square[1].isRecorded();
+  if (batch) {
+    for (u32 n = graphBatch; n > 1; n /= 2) graph_square[1].prepareRepeated(n);
+  }
   // Per-kernel times (with profiling, as -tune regs uses) count only the timed iterations: the warmup holds each kernel's first launch,
   // whose one-time costs would otherwise add several percent to a short timing
   profile.reset();
@@ -2949,6 +3055,17 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   queue.setSquareTime(0);     // Busy wait on nVidia to get the most accurate timings while tuning
   while (true) {
     while (k % blockSize < blockSize-1) {
+      if (batch && leadIn == LEAD_WIDTH) {
+        u32 count = graphBatch;
+        u32 const remaining = blockSize - 1 - k % blockSize;
+        while (count > remaining) { count /= 2; }
+        if (count > 1) {
+          graph_square[1].launchRepeated(&queue, count);
+          queue.incSquareCount(count);
+          k += count;
+          continue;
+        }
+      }
       square(bufData, bufData, leadIn, leadOut);
       leadIn = leadOut;
       ++k;
@@ -3050,6 +3167,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   assert(checkStep % blockSize == 0);
 
   const u64 startK = k;
+  u32 const graphBatch = std::clamp(args.value("GRAPH_BATCH", 1), 1, 256);
   IterationTimer iterationTimer{k};
 
   wantROE = 0; // skip the initial iterations
@@ -3058,6 +3176,22 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     assert(k < kEndEnd);
 
     if (!wantROE && k - startK > 30) { wantROE = args.logROE ? ROE_SIZE : 2'000; }
+
+    // Batch only unsampled, already-captured squarings on bufData, stopping strictly before the next block/check/log, proof residue,
+    // final residue or -iters boundary, which keeps its single-iteration path.  Halving the batch to fit bounds the graph cache
+    // to GRAPH_BATCH, GRAPH_BATCH / 2, ... squarings.
+    u64 boundary = std::min({roundUp(k + 1, blockSize), persistK, kEnd});
+    if (args.iters) { boundary = std::min(boundary, startK + args.iters); }
+    u32 repeat = graphBatch;
+    while (repeat > 1 && k + repeat >= boundary) { repeat /= 2; }
+    if (repeat > 1 && use_graphs && !useLongCarry && !args.profile &&
+        leadIn == LEAD_WIDTH && !skipNextCheckUpdate && wantROE && roePos >= wantROE &&
+        !(statsBits & 1) && graph_square[1].isRecorded() && !Signal::stopRequested() && k % blockSize) {
+      graph_square[1].launchRepeated(&queue, repeat);
+      queue.incSquareCount(repeat);
+      k += repeat;
+      continue;
+    }
 
     if (skipNextCheckUpdate) {
       skipNextCheckUpdate = false;

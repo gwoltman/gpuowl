@@ -511,11 +511,13 @@ typedef constant const float2* TABLE_RESTRICT ConstBigTabFP32;
 typedef constant const double2* TABLE_RESTRICT BigTab;
 #endif
 typedef constant const float2* TABLE_RESTRICT BigTabFP32;
+typedef constant const u32* TABLE_RESTRICT NttWtTab;     // NTT_WEIGHT_TABLE, which the FP hybrids append to their BigTab
 #else
 #if !NO_FP64
 typedef global const double2* TABLE_RESTRICT BigTab;
 #endif
 typedef global const float2* TABLE_RESTRICT BigTabFP32;
+typedef global const u32* TABLE_RESTRICT NttWtTab;
 #endif
 
 //
@@ -1181,3 +1183,28 @@ void dependentLaunchWait() {
 #endif
 }
 
+// carryFused of the NTT types (all but FFT64 and FFT32) reads its weight shifts and big-word flags from a table (see weight.cl):
+// 1 = one table of NWORDS / 2 entries kept in registers between the two weight loops, 2 = the same table reloaded for the second
+// loop, 3 = a second table of NWORDS / 2 entries for the second loop.
+#ifndef NTT_WEIGHT_TABLE
+#define NTT_WEIGHT_TABLE 0
+#endif
+#if NTT_WEIGHT_TABLE < 0 || NTT_WEIGHT_TABLE > 3
+#error NTT_WEIGHT_TABLE must be 0, 1, 2 or 3
+#endif
+
+// With INPLACE the middle kernels transpose TILE x TILE tiles, and the in-place memory layout (see middle.cl) is built from them.
+// The layout is shared by element size, so one tile serves both data types of a size: TILE64 is FP64's and GF61's, TILE32
+// FP32's and GF31's.
+#ifndef TILE64
+#define TILE64 8                // 8 was faster than 16 on TITAN V, RTX 5080 and Radeon VII, TILE32 16 was faster on the 5080
+#endif
+#ifndef TILE32
+#define TILE32 16
+#endif
+#if (TILE64 != 8 && TILE64 != 16) || (TILE32 != 8 && TILE32 != 16)
+#error TILE64 and TILE32 must be 8 or 16
+#endif
+#if (TILE64 != 16 || TILE32 != 16) && L2_STRIPING
+#error L2_STRIPING needs 16x16 tiles (-use TILE64=16)
+#endif

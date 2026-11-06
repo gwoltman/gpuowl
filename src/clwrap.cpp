@@ -653,5 +653,6 @@ bool clIsGraphSupported(cl_device_id) { return 0; }
 int clGraphBeginRecording(cl_command_queue) { return CL_INVALID_VALUE; }
 int clGraphEndRecording(cl_command_queue, cl_graph*) { return CL_INVALID_VALUE; }
 int clGraphLaunch(cl_graph) { return CL_INVALID_VALUE; }
+int clGraphRepeat(cl_graph, unsigned, cl_graph*) { return CL_INVALID_VALUE; }
 int clReleaseGraph(cl_graph) { return CL_INVALID_VALUE; }
 #endif

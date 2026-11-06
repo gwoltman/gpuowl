@@ -28,6 +28,9 @@ public:
   // An exponent as a whole number or with a K, M or G suffix (thousand, million, billion), e.g. 150000000, 150M or 142.5M.  Nothing
   // if not one, or if it is not a whole number.
   static std::optional<u64> parseExponent(const std::string& s);
+  // The settings of a tune.txt line that -tune regs=<val> (re)tunes: short (also an empty val), long, or KEY+KEY+...  REGS stands for
+  // the register limits.  Nothing if not understood.
+  static std::optional<std::set<std::string>> retuneKeys(const std::string& val);
 
   explicit Args(bool silent = false) : silent{silent} {}
 

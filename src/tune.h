@@ -37,9 +37,10 @@ private:
   // without a queue of their own.
   struct TailAltRecord { int wins = 0, losses = 0, badLosses = 0, beatSibling = 0, lostToSibling = 0; };
   std::map<std::string, TailAltRecord> tailAltResults;
-  // -tune tk=: 0 (the default, until there is more data from users' GPUs) never tries the other TAIL_KERNELS choices, auto (-1) tries them,
-  // N > 0 only times TAIL_KERNELS=N
-  int tkOption = 0;
+  // The settings of a tune.txt line that retuneEntry (re)tunes, see Args::retuneKeys: -tune regs=<val>, short for the FFTs -tune adds
+  std::set<std::string> retune;
+  // -tune inplace (the default on nVidia): only in-place FFTs, so retuneEntry tries INPLACE 1 and 2, not 0
+  bool inplaceOnly = false;
 
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
@@ -55,6 +56,10 @@ private:
   TuneEntry regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm, bool tailOnly = false,
                          const std::map<std::string, int>* fwdOcc = nullptr, int fwdDir = 0);
 
+  // Retune the settings of one tune.txt entry that retune selects: first those that change the kernels (INPLACE, NTT_WEIGHT_TABLE,
+  // TILE64, TILE32), then the register limits with WMUL and TAIL_KERNELS (regTuneEntry), then (CUDA) L2PERSIST.  Returns the new entry.
+  TuneEntry retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm);
+
 public:
   Tune(GpuCommon shared) : shared{shared} {}
 
@@ -66,7 +71,7 @@ public:
 
   void carryTune();
 
-  // Find the best register limits (REGxxxx settings) for each tune.txt entry, or only those of onlyShapes if not empty,
+  // Retune the settings that retune selects (retuneEntry: register limits and more) of each tune.txt entry, or only those of onlyShapes if not empty,
   // and only those of onlySpecs (FFTConfig specs) if given
   void regTune(int quick, const vector<FFTShape>& onlyShapes, const std::set<std::string>* onlySpecs = nullptr,
                u64 minExp = 0, u64 maxExp = UINT64_MAX / 2);

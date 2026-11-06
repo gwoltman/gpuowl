@@ -32,3 +32,8 @@ you need to fix your OpenCL installation first.
 
 3. run "prpll -tune", to tune various PRPLL options for your GPU.
 
+   -tune writes settings for all FFTs to config.txt and the best FFTs, each with settings of its own, to tune.txt.
+   After a new PRPLL release or a new GPU driver, "prpll -tune regs" retunes the tune.txt settings (register limits,
+   weight table, in-place tile sizes, WMUL, and on CUDA L2 persistence).  "prpll -tune regs=long" also tries INPLACE
+   and TAIL_KERNELS for each FFT.  To retune only some FFTs, add -fft <spec>, or a range: -tune regs,exp=140M-142M.
+

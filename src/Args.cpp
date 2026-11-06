@@ -124,6 +124,23 @@ std::optional<u64> Args::parseExponent(const string& s) {
   return n;
 }
 
+std::optional<std::set<string>> Args::retuneKeys(const string& val) {
+  std::set<string> const shortKeys{"NTT_WEIGHT_TABLE", "TILE64", "TILE32", "REGS", "WMUL", "L2PERSIST"};
+  if (val.empty() || val == "short") { return shortKeys; }
+  if (val == "long") {
+    std::set<string> keys = shortKeys;
+    keys.insert({"INPLACE", "TAIL_KERNELS"});
+    return keys;
+  }
+  std::set<string> const known{"INPLACE", "NTT_WEIGHT_TABLE", "TILE64", "TILE32", "REGS", "WMUL", "TAIL_KERNELS", "L2PERSIST"};
+  std::set<string> keys;
+  for (const string& k : split(val, '+')) {
+    if (!known.contains(k)) { return {}; }
+    keys.insert(k);
+  }
+  return keys;
+}
+
 // Checks the comma separated -tune options up front: Tune::tune() silently skips anything it does not recognise,
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
@@ -140,10 +157,10 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    if (pos != string::npos && key == "tk") {
-      string const val = s.substr(pos + 1);
-      if (val != "auto" && val != "0" && val != "1" && val != "2" && val != "3" && val != "11" && val != "13") {
-        log("-tune tk expects auto, 0 (off) or a TAIL_KERNELS value: 1, 2, 3, 11 or 13 (found '%s')\n", val.c_str());
+    if (pos != string::npos && key == "regs") {
+      if (!Args::retuneKeys(s.substr(pos + 1))) {
+        log("-tune regs expects short, long or settings joined by '+' from INPLACE, NTT_WEIGHT_TABLE, TILE64, TILE32, REGS, WMUL,"
+            " TAIL_KERNELS and L2PERSIST (found '%s')\n", s.substr(pos + 1).c_str());
         throw "-tune option value";
       }
       continue;
@@ -171,7 +188,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, tk=<val>, quick=<val>, warmup=<secs>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -366,19 +383,17 @@ named "config.txt" in the prpll run directory.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
                          warmup=<secs> - Run the GPU this long before the first timing, so that it is timed hot, as it will run.  Default 300;
                                         0 skips it.
-                         regs         - (CUDA, AMD) Only tune the register limits of the FFTs already in tune.txt (of the -fft <spec> shapes,
-                                        if given, and of the entries used for exponents from minexp to maxexp, if either is given).
-                                        -tune does this after timing the FFTs.  Rerun it after a new CUDA driver/toolkit or
-                                        PRPLL version.  The best limits are added to each tune.txt line as REGxxxx=<val> settings.
+                         regs         - (CUDA, AMD) Only retune the settings of the FFTs already in tune.txt (of the -fft <spec> shapes,
+                                        if given, and of the entries used for exponents from minexp to maxexp, if either is given):
+                                        the weight table and in-place tile sizes, the register limits and WMUL, and (CUDA) L2
+                                        persistence.  -tune does this for the FFTs it adds.  Rerun it after a new CUDA driver/toolkit
+                                        or PRPLL version.  The settings are added to each tune.txt line, e.g. REGxxxx=<val>.
+                         regs=long    - Like regs, and also INPLACE and TAIL_KERNELS.  Takes longer.  regs=short is the same as regs.
                          variants     - Time all the other variants of FFT shapes already in tune.txt.  Only FFTs with an FP64
                                         part (FP64 and FP64+M31) have variants.  More accurate variants extend an entry's
                                         max exponent a bit.  Variants that earn a tune.txt entry then get their register usage tuned (CUDA, AMD).
                                         Only variants with a max exponent from minexp to maxexp (if given) are timed.  Warning: this
                                         can take a long time, so a narrow minexp/maxexp range is recommended.
-                         tk=<val>     - (CUDA, AMD) tk=auto: the register tuning of a tune.txt entry also tries the other TAIL_KERNELS
-                                        choices of its width (one kernel vs. two kernels, two kernels with or without a queue of
-                                        their own).  tk=<N> only times TAIL_KERNELS=N, with the entry's register limits.  tk=0
-                                        (the default) tries neither.
                          fine         - (CUDA, AMD) Time FFTs as -tune does, but an FFT within 2%% of earning a tune.txt entry gets its register
                                         limits tuned, and is added if it then earns the entry.  config.txt settings are not tuned.
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.

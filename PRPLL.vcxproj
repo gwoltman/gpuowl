@@ -204,6 +204,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="('$(Configuration)'=='CUDA-Debug' Or '$(Configuration)'=='CUDA-Release') And '$(StaticCUDA)'=='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>NVPTXCOMPILER=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <Link>
       <AdditionalDependencies>cuda.lib;nvrtc_static.lib;nvrtc-builtins_static.lib;nvptxcompiler_static.lib;User32.lib;Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>

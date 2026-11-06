@@ -10,6 +10,7 @@
 
 #include <deque>
 #include <vector>
+#include <map>
 
 class Args;
 class TimeInfo;
@@ -60,7 +61,11 @@ public:
 
   void beginRecording(void) { graphRecording = true; CHECK1(clGraphBeginRecording(get())); }
   void endRecording(cl_graph *graph) { graphRecording = false; CHECK1(clGraphEndRecording(get(), graph)); }
-  void playRecording(cl_graph graph) { CHECK1(clGraphLaunch(graph)); add(EventHolder{}, NULL); }
+  void playRecording(cl_graph graph, unsigned count = 1) {
+    CHECK1(clGraphLaunch(graph));
+    // Keep the existing queue-drain cadence in units of squarings.
+    for (unsigned i = 0; i < count; ++i) add(EventHolder{}, NULL);
+  }
 
 private:                            // This replaces the "call queue->finish every 400 squarings" code in Gpu.cpp.  Solves the busy wait on nVidia GPUs.
   int MAX_QUEUE_COUNT;              // Queue size before a marker will be enqueued.  Typically, 100 to 1000 squarings.
@@ -84,15 +89,28 @@ class Graph {
 
 public:
   Graph() : graph{} {}
-  ~Graph() { if (graph) release(graph); }
+  ~Graph() { for (auto& item : repeated) release(item.second); if (graph) release(graph); }
 
   bool isSupported(cl_device_id id) { return clIsGraphSupported(id); }
   void beginRecording(Queue *q) { q->beginRecording(); }
   void endRecording(Queue *q) { q->endRecording(&graph); }
   bool isRecorded() { return graph != NULL; }
   void launch(Queue *q) { q->playRecording(graph); }
+  cl_graph prepareRepeated(unsigned count) {
+    auto it = repeated.find(count);
+    if (it == repeated.end()) {
+      cl_graph g = nullptr;
+      CHECK1(clGraphRepeat(graph, count, &g));
+      it = repeated.emplace(count, g).first;
+    }
+    return it->second;
+  }
+  void launchRepeated(Queue *q, unsigned count) {
+    q->playRecording(prepareRepeated(count), count);
+  }
 
 private:
   cl_graph graph;
+  std::map<unsigned, cl_graph> repeated;
 };
 

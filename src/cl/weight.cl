@@ -226,20 +226,80 @@ u32 adjust_m61_weight_shift (u32 weight_shift) {
 
 #endif
 
+/**************************************************************************/
+/*      NTT_WEIGHT_TABLE: carryFused's per-pair weight shifts and flags   */
+/**************************************************************************/
+
+// genWeights builds one u32 per pair of words, at line * WIDTH + column (column lowMe + i * G_W, so adjacent lanes read adjacent
+// words).  The FP hybrids keep it after their FP weights in THREAD_WEIGHTS, the others get it as an argument.  The entry for the
+// first (inverse weight) loop holds:
+//   bits  0-4,  5-9    GF31 inverse weight shifts of the pair's two words, as shr amounts with log2_NWORDS + 1 included
+//   bits 14-19, 26-31  the same for GF61 (the top field needs no mask, the bottom one no shift)
+//   bits 10, 11        the big-word flags of the two words
+//   bits 12, 13        the FP32 hybrids' weight wrap flags: frac_bits > base_frac_bits and frac_bits + FRAC_BPW_HI > FRAC_BPW_HI
+//                      (with PFA pfaWeightsOf's two tests)
+// The second (forward weight) loop's shr amounts are, with NTT_WEIGHT_TABLE == 3, in a second table of entries laid out the same way
+// (flags included).  Otherwise the one-NTT types keep them in the spare bits (GF31: bits 14-18 and 27-31, GF61: bits 20-25 and 0-5),
+// and with both GF31 and GF61, which leave too few spare bits, they are derived: a word's two shr amounts add up to
+// log2_NWORDS + 1 mod q.
+#define NTW_BIG0  (1u << 10)
+#define NTW_BIG1  (1u << 11)
+#define NTW_WRAP  (1u << 12)
+#define NTW_WRAP1 (1u << 13)
+
+u32 ntwField(u32 e, u32 pos, u32 n) { return pos + n == 32 ? e >> pos : (e >> pos) & ((1u << n) - 1); }
+
+// The first loop's entry for pair i
+u32 ntwLoad1(NttWtTab tab, u32 idx, u32 i) { return tab[idx + i * G_W]; }
+
+// The second loop's entry for pair i.  With NTT_WEIGHT_TABLE == 2 the caller hides idx from the optimizer so that this is a reload.
+// With 1 the first loop's entry was kept; it is hidden too, so that the compiler decodes it again instead of keeping its fields.
+u32 ntwLoad2(NttWtTab tab, u32 idx, u32 i, u32 kept) {
+  if (NTT_WEIGHT_TABLE == 3) { return tab[BIG_HEIGHT * WIDTH + idx + i * G_W]; }
+  if (NTT_WEIGHT_TABLE == 2) { return tab[idx + i * G_W]; }
+  OPAQUE(kept);
+  return kept;
+}
+
+#if NTT_GF31
+u32 ntwShr31(u32 e, u32 word) { return word ? ntwField(e, 5, 5) : ntwField(e, 0, 5); }
+
+// The second loop's weight shift as the shl amount the kernels use (shl(x, k) is shr(x, 31 - k), which the compiler folds)
+u32 ntwShl31(u32 e, u32 word, u32 log2_nwords_plus1) {
+  if (NTT_WEIGHT_TABLE == 3) { return 31 - ntwShr31(e, word); }
+  if (!NTT_GF61) { return 31 - (word ? ntwField(e, 27, 5) : ntwField(e, 14, 5)); }
+  return optional_mod(ntwShr31(e, word) + 31 - log2_nwords_plus1, 31);
+}
+#endif
+
+#if NTT_GF61
+u32 ntwShr61(u32 e, u32 word) { return word ? ntwField(e, 26, 6) : ntwField(e, 14, 6); }
+
+u32 ntwShl61(u32 e, u32 word, u32 log2_nwords_plus1) {
+  if (NTT_WEIGHT_TABLE == 3) { return 61 - ntwShr61(e, word); }
+  if (!NTT_GF31) { return 61 - (word ? ntwField(e, 0, 6) : ntwField(e, 20, 6)); }
+  return optional_mod(ntwShr61(e, word) + 61 - log2_nwords_plus1, 61);
+}
+#endif
+
 #if PFA
 #if FFT_FP32
 // x the column, b = g % PFA_BH and r the row of the pair at column x of line g (see pfaPair)
+// The wrap flags are the two tests below, or taken from NTT_WEIGHT_TABLE (see pfaWeightsIW)
+void pfaWeightsOfW(u32 x, u32 b, u32 r, BigTabFP32 THREAD_WEIGHTS, bool wrap, bool wrap1, F2 *w0, F2 *w1) {
+  F2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));
+  w = U2(optionalDouble(w.x, wrap), optionalHalve(w.y, wrap));
+  *w0 = w;
+  *w1 = U2(optionalDouble(fancyMul(w.x, IWEIGHT_STEP), wrap1), optionalHalve(fancyMul(w.y, WEIGHT_STEP), wrap1));
+}
 void pfaWeightsOf(u32 x, u32 b, u32 r, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
   u32 q = x * PFA_BH + b;
   // fracBits(k) is (1 - extra(k) / NWORDS) * 2^32 - 1 (wrapping), so the extras wrap exactly when the frac bits do not, and the second
   // word's extra wraps exactly when its frac bits do not (the test the non-PFA code uses).  No 64-bit % NWORDS.
   u32 fp = fracBits(2 * (q + PFA_L * r));
   bool wrap = fp > fracBits(2 * x * PFA_BH);                 // extra(2p) < extra(2 * x * PFA_BH)
-  F2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));
-  w = U2(optionalDouble(w.x, wrap), optionalHalve(w.y, wrap));
   bool wrap1 = fp + FRAC_BPW_HI > FRAC_BPW_HI;               // extra(2p) + STEP >= NWORDS
-  *w0 = w;
-  *w1 = U2(optionalDouble(fancyMul(w.x, IWEIGHT_STEP), wrap1), optionalHalve(fancyMul(w.y, WEIGHT_STEP), wrap1));
+  pfaWeightsOfW(x, b, r, THREAD_WEIGHTS, wrap, wrap1, w0, w1);
 }
 void pfaWeights(u32 x, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
   u32 b = g % PFA_BH;
@@ -247,6 +307,9 @@ void pfaWeights(u32 x, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
 }
 void pfaWeightsI(u32 lowMe, u32 i, u32 g, BigTabFP32 THREAD_WEIGHTS, F2 *w0, F2 *w1) {
   pfaWeightsOf(lowMe + i * G_W, g % PFA_BH, pfaRowI(pfaRow0(lowMe, g), i), THREAD_WEIGHTS, w0, w1);
+}
+void pfaWeightsIW(u32 lowMe, u32 i, u32 g, BigTabFP32 THREAD_WEIGHTS, bool wrap, bool wrap1, F2 *w0, F2 *w1) {
+  pfaWeightsOfW(lowMe + i * G_W, g % PFA_BH, pfaRowI(pfaRow0(lowMe, g), i), THREAD_WEIGHTS, wrap, wrap1, w0, w1);
 }
 #endif
 

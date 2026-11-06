@@ -325,7 +325,7 @@ void map_striping_group_id(u32 base_lo, u32 g, u32 *startx, u32 *starty) {
 
 #if FFT_FP64
 
-KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE64*TILE64)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   T2 u[MIDDLE];
 
@@ -334,18 +334,18 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / TILE64;
+  u32 startx = g % N * TILE64;
+  u32 starty = g / N * TILE64;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / TILE64;
+  u32 starty = g % N * TILE64;
+  u32 startx = g / N * TILE64;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE64;
+  u32 y = starty + me / TILE64;
 
   dependentLaunchWait();   // Previous kernel was tailSquareFP64 that launched dependents before writing FP64 data
 
@@ -372,7 +372,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local T2 lds[256];
+  local T2 lds[(TILE64*TILE64)];
   middleShuffle(lds, u);
 
   writeMiddleOutLine(out, u, y, x);
@@ -387,7 +387,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if FFT_FP32
 
-KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE32*TILE32)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   F2 u[MIDDLE];
 
@@ -400,18 +400,18 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / TILE32;
+  u32 startx = g % N * TILE32;
+  u32 starty = g / N * TILE32;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / TILE32;
+  u32 starty = g % N * TILE32;
+  u32 startx = g / N * TILE32;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE32;
+  u32 y = starty + me / TILE32;
 
   dependentLaunchWait();   // Previous kernel was tailSquareFP32 that launched dependents before writing FP64 data
 
@@ -435,7 +435,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local F2 lds[256];
+  local F2 lds[(TILE32*TILE32)];
   middleShuffle(lds, u);
 
   writeMiddleOutLine(outF2, u, y, x);
@@ -450,7 +450,7 @@ KERNEL_CAP(256) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF31
 
-KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE32*TILE32)) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF31 u[MIDDLE];
 
@@ -463,18 +463,18 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / TILE32;
+  u32 startx = g % N * TILE32;
+  u32 starty = g / N * TILE32;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / TILE32;
+  u32 starty = g % N * TILE32;
+  u32 startx = g / N * TILE32;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE32;
+  u32 y = starty + me / TILE32;
 
   dependentLaunchWait();   // Previous kernel was tailSquareGF31 that launched dependents before writing GF31 data
 
@@ -495,7 +495,7 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryFused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF31 lds[256];
+  local GF31 lds[(TILE32*TILE32)];
   middleShuffle(lds, u);
 
   writeMiddleOutLine(out31, u, y, x);
@@ -510,7 +510,7 @@ KERNEL_CAP(256) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF61
 
-KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE64*TILE64)) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF61 u[MIDDLE];
 
@@ -523,18 +523,18 @@ KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = SMALL_HEIGHT / TILE64;
+  u32 startx = g % N * TILE64;
+  u32 starty = g / N * TILE64;
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = WIDTH / TILE64;
+  u32 starty = g % N * TILE64;
+  u32 startx = g / N * TILE64;
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE64;
+  u32 y = starty + me / TILE64;
 
   dependentLaunchWait();   // Previous kernel was tailSquareGF61 that launched dependents before writing GF61 data
 
@@ -558,7 +558,7 @@ KERNEL_CAP(256) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be carryfused which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF61 lds[256];
+  local GF61 lds[(TILE64*TILE64)];
   middleShuffle(lds, u);
 
   writeMiddleOutLine(out61, u, y, x);

@@ -314,7 +314,7 @@ void map_striping_group_id(u32 base_lo, u32 g, u32 *startx, u32 *starty) {
 
 #if FFT_FP64
 
-KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE64*TILE64)) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   T2 u[MIDDLE];
 
@@ -322,22 +322,22 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
 #if L2_STRIPING
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16
+  u32 zerohack = (MIDDLE >= TILE64) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=TILE64
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = SMALL_HEIGHT / TILE64;
+  u32 starty = g % N * TILE64;
+  u32 startx = g / N * TILE64;
   u32 zerohack = g / 131072;                       // A super tiny benefit (much smaller than margin of error) on TitanV
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16
+  u32 N = WIDTH / TILE64;
+  u32 startx = g % N * TILE64;
+  u32 starty = g / N * TILE64;
+  u32 zerohack = (MIDDLE >= TILE64) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=TILE64
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE64;
+  u32 y = starty + me / TILE64;
 
 #if FFT_TYPE == FFT64
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP64 data
@@ -358,7 +358,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareFP64 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local T2 lds[256];
+  local T2 lds[(TILE64*TILE64)];
   middleShuffle(lds, u);
 
   writeMiddleInLine(in + zerohack, u, y, x);
@@ -373,7 +373,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if FFT_FP32
 
-KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE32*TILE32)) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   F2 u[MIDDLE];
 
@@ -387,20 +387,20 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = SMALL_HEIGHT / TILE32;
+  u32 starty = g % N * TILE32;
+  u32 startx = g / N * TILE32;
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16 (for FP64, FP32 untimed)
+  u32 N = WIDTH / TILE32;
+  u32 startx = g % N * TILE32;
+  u32 starty = g / N * TILE32;
+  u32 zerohack = (MIDDLE >= TILE32) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=TILE32 (for FP64, FP32 untimed)
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE32;
+  u32 y = starty + me / TILE32;
 
 #if FFT_TYPE == FFT32
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing FP32 data
@@ -421,7 +421,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareFP32 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local F2 lds[256];
+  local F2 lds[(TILE32*TILE32)];
   middleShuffle(lds, u);
 
   writeMiddleInLine(inF2 + zerohack, u, y, x);
@@ -436,7 +436,7 @@ KERNEL_CAP(256) fftMiddleIn(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF31
 
-KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE32*TILE32)) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF31 u[MIDDLE];
 
@@ -450,20 +450,20 @@ KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
+  u32 N = SMALL_HEIGHT / TILE32;
+  u32 starty = g % N * TILE32;
+  u32 startx = g / N * TILE32;
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
-  u32 zerohack = (MIDDLE >= 16) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=16 (for FP64, GF31 untimed)
+  u32 N = WIDTH / TILE32;
+  u32 startx = g % N * TILE32;
+  u32 starty = g / N * TILE32;
+  u32 zerohack = (MIDDLE >= TILE32) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=TILE32 (for FP64, GF31 untimed)
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE32;
+  u32 y = starty + me / TILE32;
 
 #if FFT_TYPE == FFT31
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
@@ -484,7 +484,7 @@ KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareGF31 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF31 lds[256];
+  local GF31 lds[(TILE32*TILE32)];
   middleShuffle(lds, u);
 
   writeMiddleInLine(in31 + zerohack, u, y, x);
@@ -499,7 +499,7 @@ KERNEL_CAP(256) fftMiddleInGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF61
 
-KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE64*TILE64)) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF61 u[MIDDLE];
 
@@ -513,20 +513,20 @@ KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = g / 131072;                       // Keeps the write addresses from being CSE'd with the read addresses (at MIDDLE=16 that spills on RDNA3)
 #elif INPLACE == 1                                 // nVidia friendly padding
-  u32 N = SMALL_HEIGHT / 16;
-  u32 starty = g % N * 16;
-  u32 startx = g / N * 16;
-  u32 zerohack = (AMDGPU && MIDDLE >= 16) ? g / 131072 : 0;  // Keeps the write addresses from being CSE'd with the read addresses (that spills on RDNA3)
+  u32 N = SMALL_HEIGHT / TILE64;
+  u32 starty = g % N * TILE64;
+  u32 startx = g / N * TILE64;
+  u32 zerohack = (AMDGPU && MIDDLE >= TILE64) ? g / 131072 : 0;  // Keeps the write addresses from being CSE'd with the read addresses (that spills on RDNA3)
 #else                                              // AMD friendly padding, vary x fast?  I've no explanation for why that would be better
-  u32 N = WIDTH / 16;
-  u32 startx = g % N * 16;
-  u32 starty = g / N * 16;
+  u32 N = WIDTH / TILE64;
+  u32 startx = g % N * TILE64;
+  u32 starty = g / N * TILE64;
   u32 zerohack = g / 131072;                       // Keeps the write addresses from being CSE'd with the read addresses (at MIDDLE=16 that spills on RDNA3)
 #endif
 
   u32 me = get_local_id(0);
-  u32 x = startx + me % 16;
-  u32 y = starty + me / 16;
+  u32 x = startx + me % TILE64;
+  u32 y = starty + me / TILE64;
 
 #if FFT_TYPE == FFT61
   dependentLaunchWait();   // Previous kernel was carryfused that launched dependents before writing GF31 data
@@ -547,7 +547,7 @@ KERNEL_CAP(256) fftMiddleInGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
   dependentLaunch();       // Next kernel will be tailSquareGF61 which must dependentLaunchWait before reading data
 
   // Transpose the x and y values
-  local GF61 lds[256];
+  local GF61 lds[(TILE64*TILE64)];
   middleShuffle(lds, u);
 
   writeMiddleInLine(in61 + zerohack, u, y, x);

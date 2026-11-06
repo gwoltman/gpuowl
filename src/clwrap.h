@@ -193,6 +193,7 @@ void cudaSetL2Persistent(cl_command_queue q, const std::vector<cl_mem>& buffers)
 // Without this call the driver uses its own (usually small) default, which limits how much of an
 // access-policy window's "persisting" hint actually takes effect.
 void cudaSetL2PersistLimit(int pct);
+void cudaResetL2ForTune();
 
 // Limit the registers of one kernel of a built program: maxRegs > 0 is a maximum register count, otherwise minBlocks > 0 is the
 // launch bounds minimum blocks per SM.  smemSpill lets ptxas spill registers to shared memory.  The program's module is rebuilt from
@@ -209,6 +210,7 @@ struct CudaSmLimits {
   int maxBlocksPerSM;
   int sharedPerSM;
   int reservedSharedPerBlock;
+  int maxPersistingL2;          // bytes, 0 if the device has no persisting L2 (before sm_80)
 };
 CudaSmLimits cudaSmLimits();
 #endif

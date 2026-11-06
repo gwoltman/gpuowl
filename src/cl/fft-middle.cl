@@ -381,20 +381,20 @@ void OVERLOAD middleShuffleWrite(global T2 *out, T2 *u, u32 workgroupSize, u32 b
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
 }
 
-// Do an in-place 16x16 transpose during fftMiddleIn/Out
+// Do an in-place TILE64 x TILE64 transpose during fftMiddleIn/Out
 void OVERLOAD middleShuffle(local T2 *lds, T2 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / TILE64;
+  u32 x = me % TILE64;
 
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * TILE64 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * TILE64 + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * TILE64 + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * TILE64 + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * TILE64 + y ^ x];
   }
 }
 
@@ -804,19 +804,19 @@ void OVERLOAD middleShuffleWrite(global F2 *out, F2 *u, u32 workgroupSize, u32 b
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
 }
 
-// Do an in-place 16x16 transpose during fftMiddleIn/Out
+// Do an in-place TILE32 x TILE32 transpose during fftMiddleIn/Out
 void OVERLOAD middleShuffle(local F2 *lds, F2 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / TILE32;
+  u32 x = me % TILE32;
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * TILE32 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * TILE32 + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * TILE32 + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * TILE32 + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * TILE32 + y ^ x];
   }
 }
 
@@ -1170,19 +1170,19 @@ void OVERLOAD middleShuffleWrite(global GF31 *out, GF31 *u, u32 workgroupSize, u
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
 }
 
-// Do an in-place 16x16 transpose during fftMiddleIn/Out
+// Do an in-place TILE32 x TILE32 transpose during fftMiddleIn/Out
 void OVERLOAD middleShuffle(local GF31 *lds, GF31 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / TILE32;
+  u32 x = me % TILE32;
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * TILE32 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * TILE32 + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * TILE32 + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * TILE32 + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * TILE32 + y ^ x];
   }
 }
 
@@ -1460,19 +1460,19 @@ void OVERLOAD middleShuffleWrite(global GF61 *out, GF61 *u, u32 workgroupSize, u
   for (int i = 0; i < MIDDLE; ++i) { out[i * workgroupSize] = u[i]; }
 }
 
-// Do an in-place 16x16 transpose during fftMiddleIn/Out
+// Do an in-place TILE64 x TILE64 transpose during fftMiddleIn/Out
 void OVERLOAD middleShuffle(local GF61 *lds, GF61 *u) {
   u32 me = get_local_id(0);
-  u32 y = me / 16;
-  u32 x = me % 16;
+  u32 y = me / TILE64;
+  u32 x = me % TILE64;
   for (int i = 0; i < MIDDLE; ++i) {
-    lds[x * 16 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * 16 + y] = u[i];"
+    lds[x * TILE64 + y ^ x] = u[i];         // Swizzling with XOR should reduce LDS bank conflicts, formerly "lds[x * TILE64 + y] = u[i];"
     bar();
-    u[i] = lds[y * 16 + x ^ y];         // Formerly "u[i] = lds[me];"
+    u[i] = lds[y * TILE64 + x ^ y];         // Formerly "u[i] = lds[me];"
     if (++i == MIDDLE) break;
-    lds[y * 16 + x ^ y] = u[i];
+    lds[y * TILE64 + x ^ y] = u[i];
     bar();
-    u[i] = lds[x * 16 + y ^ x];
+    u[i] = lds[x * TILE64 + y ^ x];
   }
 }
 
