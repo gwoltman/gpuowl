@@ -42,6 +42,10 @@ private:
   // -tune inplace (the default on nVidia): only in-place FFTs, so retuneEntry tries INPLACE 1 and 2, not 0
   bool inplaceOnly = false;
 
+  int workers = 1;              // -tune workers=N: time -use options with N concurrent workers
+
+  double timeOption(u64 exponent, FFTConfig fft, int quick, u32* usedWmul = nullptr);
+
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
 
