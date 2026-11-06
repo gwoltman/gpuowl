@@ -1,0 +1,332 @@
+// Checks of src/Pm1.cpp: the sieve and the stage 1 exponent against GMP, the mprime save file name against Prime95's tempFileName,
+// the layout and checksum of the save file written for mprime, and the decimal output and primality test of a factor.
+
+#include "Pm1.h"
+
+#include <gmp.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+
+using namespace pm1;
+
+static int bad = 0;
+static void check(bool ok, const char *what) { if (!ok) { printf("FAIL: %s\n", what); ++bad; } }
+
+static vector<u32> toWords(const mpz_t z) {
+  vector<u32> w(mpz_sizeinbase(z, 2) / 32 + 2, 0);
+  size_t count = 0;
+  mpz_export(w.data(), &count, -1, 4, 0, 0, z);
+  w.resize(count);
+  return w;
+}
+
+static void testSieve() {
+  struct R { u64 lo, hi; } ranges[] = {{0, 100}, {2, 2}, {3, 3}, {0, 1000000}, {999983, 1100000}, {2000000 - 5, 2000000 + (1u << 21)},
+                                       {4294967000ull, 4294968000ull}, {10, 11}, {1, 2}, {5, 4}};
+  for (R r : ranges) {
+    vector<u64> a, b;
+    forEachPrime(r.lo, r.hi, [&](u64 q) { a.push_back(q); });
+    mpz_t z;
+    mpz_init_set_ui(z, r.lo ? r.lo - 1 : 0);
+    while (true) { mpz_nextprime(z, z); if (mpz_cmp_ui(z, r.hi) > 0) { break; } b.push_back(mpz_get_ui(z)); }
+    mpz_clear(z);
+    char what[100];
+    snprintf(what, sizeof(what), "primes in [%llu, %llu]", (unsigned long long) r.lo, (unsigned long long) r.hi);
+    check(a == b, what);
+  }
+  u64 n = 0;
+  forEachPrime(0, 10000000, [&](u64) { ++n; });
+  check(n == 664579, "pi(10^7)");
+}
+
+static void testExponent() {
+  struct E { u64 p, B1; } es[] = {{3, 1}, {3, 2}, {7, 10}, {127, 100}, {4423, 1000}, {4423, 3000000}, {86243, 100000}, {9689, 1},
+                                  {1000003, 250000}, {100000007ull, 5000000}, {1257787, 20000000}};
+  for (E e : es) {
+    mpz_t g;
+    mpz_init_set_ui(g, 2 * e.p);          // Prime95's calc_exp: 2n times the largest power <= B1 of every prime <= B1
+    mpz_t q;
+    mpz_init(q);
+    for (mpz_set_ui(q, 2); mpz_cmp_ui(q, e.B1) <= 0; mpz_nextprime(q, q)) {
+      unsigned long v = mpz_get_ui(q), qq = v;
+      while (v <= e.B1 / qq) { v *= qq; }
+      mpz_mul_ui(g, g, v);
+    }
+    vector<u32> got = stage1Exponent(e.p, e.B1);
+    char what[100];
+    snprintf(what, sizeof(what), "exponent p=%llu B1=%llu", (unsigned long long) e.p, (unsigned long long) e.B1);
+    check(got == toWords(g), what);
+    check(bitLength(got) == mpz_sizeinbase(g, 2), "bitLength");
+    u64 const n = bitLength(got);
+    for (u64 i : {u64(0), u64(1), n / 2, n - 1, n, n + 40}) { check(testBit(got, i) == (i < n && mpz_tstbit(g, i)), "testBit"); }
+    mpz_clear(q);
+    mpz_clear(g);
+  }
+}
+
+static void testNames() {
+  // Output of Prime95's tempFileName (commonc.c) for a P-1 savefile of 2^p-1
+  struct N { u64 p; const char *name; } names[] = {
+    {9689, "m0009689"}, {11213, "m0011213"}, {10000019, "mA000019"}, {25000003, "mP000003"}, {35000017, "m0A00017"},
+    {40000003, "m0F00003"}, {61000003, "m00B0003"}, {70000027, "m00K0027"}, {79999999, "m99T9999"}, {80000023, "m80000023"},
+    {82997591, "m82997591"}, {124647911, "m124647911"}, {1257787, "m1257787"}, {61000000, "m00B0000"}, {34999999, "mY999999"},
+    {35000000, "m0A00000"}, {9999999, "m9999999"}};
+  for (N n : names) { check(mprimeSaveName(n.p) == n.name, n.name); }
+#ifdef MPRIME_SRC
+  if (strlen(MPRIME_SRC)) {
+    // Compile the real tempFileName out of Prime95's source and compare (needs the sources named by MPRIME_SRC)
+    string const script = string("awk 'NR>=4300' ") + MPRIME_SRC + "/commonc.c | awk '/^void tempFileName/{f=1} f{print} f&&/^}/{exit}' > savefile-test-ref_body.c";
+    if (system(script.c_str()) == 0) {
+      std::ofstream("savefile-test-ref.c") <<
+        "#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <math.h>\n"
+        "enum { WORK_FACTOR, WORK_ECM, WORK_PMINUS1, WORK_PFACTOR, WORK_PPLUS1, WORK_CERT };\n"
+        "struct work_unit { unsigned long n; int work_type; unsigned skip_curves; long c; double k; char extension[32]; };\n"
+        "#include \"savefile-test-ref_body.c\"\n"
+        "int main(int argc, char** argv) { for (int i = 1; i < argc; ++i) { struct work_unit w = {strtoul(argv[i], 0, 10), WORK_PMINUS1, 0, -1, 1.0, {0}};\n"
+        "  char buf[100]; tempFileName(&w, buf); printf(\"%s\\n\", buf); } }\n";
+      string args;
+      for (u64 p = 1000003; p < 130000000; p += 1377713) { args += " " + to_string(p); }
+      if (system("gcc -w savefile-test-ref.c -o savefile-test-ref -lm") == 0) {
+        FILE *f = popen(("./savefile-test-ref" + args).c_str(), "r");
+        char line[100];
+        u64 p = 1000003;
+        int n = 0;
+        while (f && fgets(line, sizeof(line), f)) { line[strcspn(line, "\n")] = 0; check(mprimeSaveName(p) == line, "name vs Prime95's tempFileName"); p += 1377713; ++n; }
+        if (f) { pclose(f); }
+        printf("compared %d save file names with Prime95's tempFileName\n", n);
+      }
+    }
+    remove("savefile-test-ref_body.c"); remove("savefile-test-ref.c"); remove("savefile-test-ref");
+  }
+#endif
+}
+
+template<typename T> static T rd(const vector<char>& b, size_t off) { T x; memcpy(&x, b.data() + off, sizeof x); return x; }
+
+static void testSaveFile() {
+  fs::path const dir = "savefile-test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  u64 const p = 9689, B1 = 123456789012ull;
+  vector<u32> const x = {0xdeadbeef, 1, 0x80000000u, 0, 0};      // the trailing zero words are dropped
+  writeMprimeStage1(dir, p, B1, x);
+
+  std::ifstream in(dir / mprimeSaveName(p), std::ios::binary);
+  vector<char> b((std::istreambuf_iterator<char>(in)), {});
+  check(rd<u32>(b, 0) == 0x317a394b, "magic");
+  check(rd<u32>(b, 4) == 8, "version");
+  check(rd<double>(b, 8) == 1.0, "K");
+  check(rd<u32>(b, 16) == 2, "b");
+  check(rd<u32>(b, 20) == p, "n");
+  check(rd<i32>(b, 24) == -1, "c");
+  check(!strcmp(&b[28], "S5"), "stage string");
+  check(rd<double>(b, 40) == 1.0, "percent complete");
+  check(b.size() == 52 + 4 + 8 + 8 + 4 + 4 + 3 * 4, "file size");
+
+  size_t o = 52;
+  u32 sum = 0;
+  u32 const state = rd<u32>(b, o); o += 4; sum += state; check(state == 5, "state is done");
+  u64 const bDone = rd<u64>(b, o); o += 8; sum += u32((bDone >> 32) + bDone); check(bDone == B1, "B_done");
+  u64 const cDone = rd<u64>(b, o); o += 8; sum += u32((cDone >> 32) + cDone); check(cDone == B1, "C_done");
+  u32 const haveX = rd<u32>(b, o); o += 4; sum += haveX; check(haveX == 1, "have_x");
+  u32 const len = rd<u32>(b, o); o += 4; sum += len; check(len == 3, "giant length");
+  for (u32 i = 0; i < len; ++i) { u32 const w = rd<u32>(b, o); o += 4; sum += w; check(w == x[i], "giant word"); }
+  sum += len;                                                    // write_giant adds the word count a second time
+  check(o == b.size(), "no trailing bytes");
+  check(rd<u32>(b, 48) == sum, "checksum");
+  check(!fs::exists(dir / (mprimeSaveName(p) + ".new")), "the .new file is renamed away");
+
+  check(mprimePminus1Line("ABCDEF0123456789ABCDEF0123456789", p, B1, 2 * B1) == "Pminus1=ABCDEF0123456789ABCDEF0123456789,1,2,9689,-1,123456789012,246913578024\n", "line with AID");
+  check(mprimePminus1Line("", p, 1000000, 30000000) == "Pminus1=1,2,9689,-1,1000000,30000000\n", "line without AID");
+  check(mprimePminus1Line("N/A", p, 1000000, 30000000) == "Pminus1=1,2,9689,-1,1000000,30000000\n", "line with N/A");
+  appendMprimeWork(dir, mprimePminus1Line("", p, 1000000, 30000000));
+  appendMprimeWork(dir, mprimePminus1Line("", p + 2, 1000000, 30000000));
+  std::ifstream add(dir / "worktodo.add");
+  string const all((std::istreambuf_iterator<char>(add)), {});
+  check(all == "Pminus1=1,2,9689,-1,1000000,30000000\nPminus1=1,2,9691,-1,1000000,30000000\n", "worktodo.add appended");
+
+  bool threw = false;
+  try { writeMprimeStage1(dir, p, B1, {0, 0}); } catch (const char *) { threw = true; }
+  check(threw, "a zero residue is refused");
+  fs::remove_all(dir);
+}
+
+// The Gerbicz check's sum of exponent chunks (addBits) and its high part (shiftRight64), against GMP
+static void testChunks() {
+  vector<u32> const E = stage1Exponent(1000003, 50000);
+  u64 const nBits = bitLength(E);
+  mpz_t e, c, chunk, h;
+  mpz_inits(e, c, chunk, h, nullptr);
+  mpz_import(e, E.size(), -1, 4, 0, 0, E.data());
+  srand(1);
+  for (u32 L : {1u, 2u, 31u, 32u, 33u, 64u, 268u, 3000u}) {
+    vector<u32> acc;
+    mpz_set_ui(c, 0);
+    for (int j = 0; j < 40; ++j) {
+      u64 const lo = u64(rand()) % (nBits - L);
+      addBits(acc, E, lo, L);
+      mpz_tdiv_q_2exp(chunk, e, lo);
+      mpz_tdiv_r_2exp(chunk, chunk, L);
+      mpz_add(c, c, chunk);
+    }
+    mpz_t got;
+    mpz_init(got);
+    mpz_import(got, acc.size(), -1, 4, 0, 0, acc.data());
+    mpz_tdiv_q_2exp(h, c, L);
+    char what[100];
+    snprintf(what, sizeof(what), "sum of 40 chunks of %u bits", L);
+    check(mpz_cmp(got, c) == 0, what);
+    snprintf(what, sizeof(what), "high part of the sum, L = %u", L);
+    check(mpz_fits_ulong_p(h) && shiftRight64(acc, L) == mpz_get_ui(h), what);
+    mpz_clear(got);
+  }
+  mpz_clears(e, c, chunk, h, nullptr);
+}
+
+// The exponent cache:  written once, read back equal, rewritten when damaged
+static void testExponentCache() {
+  fs::path const dir = "exp-cache-test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  vector<u32> const want = stage1Exponent(1000003, 100000);
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: computed");
+  check(fs::exists(dir / "B1-100000.exp"), "exponent cache: file written");
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: read back");
+  {
+    std::fstream f(dir / "B1-100000.exp", std::ios::in | std::ios::out | std::ios::binary);
+    f.seekp(200);
+    f.put('x');
+  }
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: damaged file recomputed");
+  check(stage1ExponentCached(dir, 1000003, 100000) == want, "exponent cache: rewritten");
+  fs::remove_all(dir);
+}
+
+// toDecimal against mpz_get_str, isOne, and isProbablePrime against mpz_probab_prime_p, on random and edge numbers
+static void testDecimal() {
+  gmp_randstate_t rs;
+  gmp_randinit_default(rs);
+  gmp_randseed_ui(rs, 7);
+  mpz_t z, t;
+  mpz_inits(z, t, nullptr);
+  int nDec = 0, nPrime = 0, nUntested = 0;
+  auto one = [&](const char* what) {
+    vector<u32> w = toWords(z);
+    char *want = mpz_get_str(nullptr, 10, z);
+    string const got = toDecimal(w);
+    if (got != want) { printf("FAIL: decimal of %s: %s, GMP %s\n", what, got.size() < 200 ? got.c_str() : "(long)", strlen(want) < 200 ? want : "(long)"); ++bad; }
+    free(want);
+    w.resize(w.size() + 3, 0);      // leading zero words change nothing
+    check(toDecimal(w) == got, "decimal with leading zero words");
+    check(isOne(w) == (mpz_cmp_ui(z, 1) == 0), "isOne");
+    int const prime = isProbablePrime(w);
+    if (mpz_sizeinbase(z, 2) > 126) {
+      check(prime == -1, "isProbablePrime above 126 bits must say 'not tested'");
+      ++nUntested;
+    } else {
+      int const gmp = mpz_probab_prime_p(z, 30);
+      if ((prime == 1) != (gmp > 0)) { gmp_printf("FAIL: isProbablePrime(%Zd) = %d, GMP %d\n", z, prime, gmp); ++bad; }
+      ++nPrime;
+    }
+    ++nDec;
+  };
+  // edges
+  for (u64 v : {0ull, 1ull, 2ull, 3ull, 9ull, 10ull, 999999999ull, 1000000000ull, 1000000001ull, 4294967295ull, 4294967296ull,
+                999999999999999999ull, 1000000000000000000ull, 18446744073709551615ull}) {
+    mpz_set_ui(z, 0);
+    mpz_import(z, 1, -1, 8, 0, 0, &v);
+    one("edge");
+  }
+  for (u32 e : {9u, 18u, 27u, 36u, 81u, 90u, 900u}) {      // 10^e and 10^e - 1, 10^e + 1
+    mpz_ui_pow_ui(z, 10, e); one("10^e");
+    mpz_sub_ui(z, z, 1); one("10^e - 1");
+    mpz_add_ui(z, z, 2); one("10^e + 1");
+  }
+  for (u32 p : {31u, 61u, 89u, 107u, 127u, 521u, 4423u, 100003u}) {      // 2^p - 1 (prime or not), the size of N itself
+    mpz_set_ui(z, 1); mpz_mul_2exp(z, z, p); mpz_sub_ui(z, z, 1);
+    one("2^p - 1");
+  }
+  // known factors of Mersenne numbers (the test cases), products of two of them, and the 40M case's 73-bit gcd and its factors
+  for (const char* s : {"671839319", "132975634327", "1872347344039", "9360000703", "804880060367", "7533677930865802438001",
+                        "89338258289337889", "4611686014132420609" /* (2^31-1)^2 */, "170141183460469231731687303715884105727" /* 2^127-1 */,
+                        "85070591730234615865843651857942052863" /* 2^126 - 1 */, "42535295865117307932921825928971026431" /* prime 2^125 - 1? */}) {
+    mpz_set_str(z, s, 10);
+    one(s);
+  }
+  // random sizes, primes and semiprimes near the 126-bit limit
+  for (int i = 0; i < 3000; ++i) {
+    mpz_urandomb(z, rs, 1 + gmp_urandomm_ui(rs, i < 2000 ? 130 : 5000));
+    one("random");
+  }
+  for (int i = 0; i < 300; ++i) {
+    mpz_urandomb(z, rs, 20 + gmp_urandomm_ui(rs, 50));
+    mpz_nextprime(z, z);
+    if (i % 2) { mpz_urandomb(t, rs, 20 + gmp_urandomm_ui(rs, 36)); mpz_nextprime(t, t); mpz_mul(z, z, t); }
+    one(i % 2 ? "semiprime" : "prime");
+  }
+  // strong pseudoprimes to small bases (3215031751 = 151 * 751 * 28351, to bases 2, 3, 5, 7), Carmichael numbers
+  for (u64 v : {3215031751ull, 561ull, 41041ull, 825265ull, 321197185ull, 2152302898747ull, 3474749660383ull, 341550071728321ull}) {
+    mpz_set_ui(z, 0);
+    mpz_import(z, 1, -1, 8, 0, 0, &v);
+    one("pseudoprime");
+  }
+  printf("decimal: %d numbers, %d primality answers vs GMP, %d above 126 bits\n", nDec, nPrime, nUntested);
+  mpz_clears(z, t, nullptr);
+  gmp_randclear(rs);
+}
+
+// dividesMersenne against GMP (2^p mod g == 1): random odd and even g, true divisors (small factors, products of them, 2^p-1 itself), edge values
+static void testDividesMersenne() {
+  gmp_randstate_t rs;
+  gmp_randinit_default(rs);
+  gmp_randseed_ui(rs, 20261105);
+  auto words = [](const mpz_t z) { vector<u32> w; mpz_t t; mpz_init_set(t, z); while (mpz_sgn(t)) { w.push_back(u32(mpz_get_ui(t))); mpz_fdiv_q_2exp(t, t, 32); } mpz_clear(t); return w; };
+  auto verdict = [&](const mpz_t g, u64 p) { mpz_t r, two; mpz_init(r); mpz_init_set_ui(two, 2); mpz_t e; mpz_init_set_ui(e, p);
+    int ok = mpz_sgn(g) != 0 && (mpz_cmp_ui(g, 1) == 0 || (mpz_powm(r, two, e, g), mpz_cmp_ui(r, 1) == 0)); mpz_clear(r); mpz_clear(two); mpz_clear(e); return ok; };
+  mpz_t g, q, n;
+  mpz_init(g); mpz_init(q); mpz_init(n);
+  int count = 0;
+  for (int iter = 0; iter < 3000; ++iter) {
+    u64 const p = 2 + gmp_urandomm_ui(rs, iter % 3 == 0 ? 100 : 20000);
+    switch (iter % 5) {
+      case 0: mpz_urandomb(g, rs, 1 + gmp_urandomm_ui(rs, 300)); break;                       // random
+      case 1: mpz_urandomb(g, rs, 1 + gmp_urandomm_ui(rs, 40)); mpz_setbit(g, 0); break;     // random odd, small
+      case 2: {                                                                               // a true divisor: a q = 2kp+1 with 2^p == 1 (mod q), or a product of two
+        mpz_set_ui(g, 1);
+        for (int f = 0; f < 1 + iter % 2; ++f) {
+          for (u64 k = 1 + gmp_urandomm_ui(rs, 50), tries = 0; tries < 4000; ++k, ++tries) { mpz_set_ui(q, 2 * k * p + 1); if (verdict(q, p)) { mpz_mul(g, g, q); break; } }
+        }
+        break;
+      }
+      case 3: mpz_set_ui(g, 1); mpz_mul_2exp(g, g, p); mpz_sub_ui(g, g, 1); if (p > 3000) { mpz_set_ui(g, 1); mpz_mul_2exp(g, g, 2000); mpz_sub_ui(g, g, 1); } break;   // 2^p-1 (or 2^2000-1, which does not divide for most p)
+      default: mpz_set_ui(g, iter % 7); break;                                                // 0 .. 6
+    }
+    (void) n;
+    int const want = verdict(g, p);
+    int const got = pm1::dividesMersenne(words(g), p);
+    if (got != want) { gmp_printf("FAIL: dividesMersenne(%Zd, %lu) = %d, GMP %d\n", g, (unsigned long) p, got, want); ++bad; }
+    count += want;
+  }
+  if (count < 100) { printf("FAIL: dividesMersenne test saw only %d divisors\n", count); ++bad; }
+  mpz_t big; mpz_init(big); mpz_setbit(big, 200000);
+  if (pm1::dividesMersenne(words(big), 5) != -1) { printf("FAIL: dividesMersenne must not check numbers above 2^17 bits\n"); ++bad; }
+  mpz_clear(big); mpz_clear(g); mpz_clear(q); mpz_clear(n);
+  gmp_randclear(rs);
+}
+
+int main() {
+  testDecimal();
+  testChunks();
+  testExponentCache();
+  testSieve();
+  testExponent();
+  testNames();
+  testSaveFile();
+  testDividesMersenne();
+  printf(bad ? "%d FAILED\n" : "all P-1 helper checks passed\n", bad);
+  return bad != 0;
+}

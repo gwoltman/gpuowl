@@ -16,6 +16,8 @@
 #include "TrigBufCache.h"
 #include "fs.h"
 #include "Sha3Hash.h"
+#include "Pm1.h"
+#include "Gcd.h"
 
 #include <algorithm>
 #include <limits>
@@ -432,7 +434,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "LOADS","STORES",
                               "WMUL",
                               "MULTI_Q",
-                              "SLEEP_WAIT"
+                              "SLEEP_WAIT",
+                              "PM1_JACOBI"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
       // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)
@@ -628,7 +631,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // Keys that only the host reads (and deprecated keys that nothing reads) are not defines either, so that changing them does not
   // recompile the kernels.  PTX_VERSION stays: the CUDA build reads it back from the build options (see clwrap_cuda.cpp).
   initializer_list<string> const hostOnlyKeys = {"GRAPHS", "GRAPH_BATCH", "L1CUDA", "L2PERSIST", "L2PERSISTPCT", "SLEEP_WAIT",
-                                                 "SMEM_SPILL", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
+                                                 "SMEM_SPILL", "PM1_JACOBI", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
   std::erase_if(config, [&](const auto& kv) {
     return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || isInList(kv.first, hostOnlyKeys);
   });
@@ -1168,6 +1171,13 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
+  K(ktailMulDeltaZero,     "pm1tailmul.cl", "tailMulZero", PFA_FP ? PFA_FP_ZERO_THREADS : SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(KFP) + "-DMUL_LOW=1"),
+  K(ktailMulDelta,         "pm1tailmul.cl", "tailMul",
+                                               PFA_FP2 ? PFA_FP_MAIN_THREADS :
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDOUT)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
@@ -1191,6 +1201,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
+  K(ktailMulDeltaZeroGF31, "pm1tailmul.cl", "tailMulZeroGF31", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K31) + "-DMUL_LOW=1"),
+  K(ktailMulDeltaGF31,     "pm1tailmul.cl", "tailMulGF31",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K31) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
   K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDOUT31)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
@@ -1210,6 +1226,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K61)),                                       // Single-wide tailMul with one kernel
   K(ktailMulLowGF61,       "tailmul.cl", "tailMulGF61",
+                                               !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
+                                               !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
+                                               !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
+                                               hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
+  K(ktailMulDeltaZeroGF61, "pm1tailmul.cl", "tailMulZeroGF61", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K61) + "-DMUL_LOW=1"),
+  K(ktailMulDeltaGF61,     "pm1tailmul.cl", "tailMulGF61",
                                                !tail_single_wide && !tail_single_kernel ? hN / nH - SMALL_H / nH * 2 * PFA_ROWS : // Double-wide tailMul with two kernels
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
@@ -1322,6 +1344,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     ktailMulZero.setFixedArgs(3, bufTrigH);
     ktailMulLowZero.setFixedArgs(3, bufTrigH);
     ktailMulLow.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaZero.setFixedArgs(4, bufTrigH);
+    ktailMulDelta.setFixedArgs(5, bufTrigH);
     ktailMul.setFixedArgs(4, bufTrigH);
     kfftMidOut.setFixedArgs(3, bufTrigM);
     kfftW.setFixedArgs(2, bufTrigW);
@@ -1335,6 +1359,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     ktailMulZeroGF31.setFixedArgs(3, bufTrigH);
     ktailMulLowZeroGF31.setFixedArgs(3, bufTrigH);
     ktailMulLowGF31.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaZeroGF31.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaGF31.setFixedArgs(5, bufTrigH);
     ktailMulGF31.setFixedArgs(4, bufTrigH);
     kfftMidOutGF31.setFixedArgs(3, bufTrigM);
     kfftWGF31.setFixedArgs(2, bufTrigW);
@@ -1348,6 +1374,8 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
     ktailMulZeroGF61.setFixedArgs(3, bufTrigH);
     ktailMulLowZeroGF61.setFixedArgs(3, bufTrigH);
     ktailMulLowGF61.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaZeroGF61.setFixedArgs(4, bufTrigH);
+    ktailMulDeltaGF61.setFixedArgs(5, bufTrigH);
     ktailMulGF61.setFixedArgs(4, bufTrigH);
     kfftMidOutGF61.setFixedArgs(3, bufTrigM);
     kfftWGF61.setFixedArgs(2, bufTrigW);
@@ -1573,7 +1601,7 @@ void Gpu::replay() {
             replay_one(kern, cache_group, arg, &queue, base_hi, stripe_group_size * 16 * fft.shape.middle);
           }
  
-          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW || kern == KTAILMULDELTA) {
             // fftMiddleIn produces 16 * MIDDLE lines in base_lo and base_hi.  tailSquare kernel processes 2 lines linked by Hermetian symmetry.
             // Tail kernels use two dimensions, the X coordinate bumps line number by one, the Y coordinate bumps line number by WIDTH.
             u32 kernelsToExecuteX = stripe_group_size * 16;
@@ -1670,7 +1698,7 @@ void Gpu::replay() {
             replay_one(kern, cache_group, arg, &queue, base_lo, 2 * stripe_group_size * 16 * fft.shape.middle);
           }
  
-          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW || kern == KTAILMULDELTA) {
             // We can now completely process lines from the lower half of the base_lo stripe group (Hermetian mates are mostly in upper half of base_hi stripe group)
             u32 half_size = (fft.shape.middle + 1) / 2;  // For base_lo, round odd middles up.
             u32 stripeGroupLines = stripe_group_size * 16;
@@ -1776,7 +1804,7 @@ void Gpu::replay() {
             replay_one(kern, cache_group, arg, queues[q], base_lo, 2 * stripe_group_size * 16 * fft.shape.middle);
           }
 
-          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW) {
+          else if (kern == KTAILSQUARE || kern == KTAILMUL || kern == KTAILMULLOW || kern == KTAILMULDELTA) {
             // We can now completely process lines from the lower half of the base_lo stripe group (Hermetian mates are mostly in upper half of base_hi stripe group)
             u32 half_size = (fft.shape.middle + 1) / 2;    // For base_lo, round odd middles up.
             u32 stripeGroupLines = stripe_group_size * 16;
@@ -1933,6 +1961,24 @@ void Gpu::replay_one(enum BOTTOM_HALF_KERNELS kern, int cache_group, int arg, Qu
     });
   }
 
+  if (kern == KTAILMULDELTA) {
+    Buffer<double> const *buf = recorded_kernel_args[arg++];
+    Buffer<double> const *a = recorded_kernel_args[arg++];
+    Buffer<double> const *b = recorded_kernel_args[arg++];
+    // If not in place, the output is to the scratch buffer
+    Buffer<double> const *in1 = buf;
+    Buffer<double> const *out = in_place ? buf : &buf3;
+    tailWithZero([&](Queue* tq) {
+      if (cache_group == 1) { ktailMulDelta.setQueue(tq); ktailMulDelta.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulDelta(*out, *in1, *a, *b, base); }
+      if (cache_group == 2) { ktailMulDeltaGF31.setQueue(tq); ktailMulDeltaGF31.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulDeltaGF31(*out, *in1, *a, *b, base); }
+      if (cache_group == 3) { ktailMulDeltaGF61.setQueue(tq); ktailMulDeltaGF61.setKernelsToExecute(kernelsToExecuteX, kernelsToExecuteY); ktailMulDeltaGF61(*out, *in1, *a, *b, base); }
+    }, [&](Queue* zq) {
+      if (cache_group == 1) { ktailMulDeltaZero.setQueue(zq); ktailMulDeltaZero(*out, *in1, *a, *b); }
+      if (cache_group == 2) { ktailMulDeltaZeroGF31.setQueue(zq); ktailMulDeltaZeroGF31(*out, *in1, *a, *b); }
+      if (cache_group == 3) { ktailMulDeltaZeroGF61.setQueue(zq); ktailMulDeltaZeroGF61(*out, *in1, *a, *b); }
+    });
+  }
+
   if (kern == KMIDOUT) {
     Buffer<double> const *buf = recorded_kernel_args[arg++];
     // If not in place, the input is from the scratch buffer
@@ -1957,6 +2003,10 @@ int Gpu::replay_next_arg(enum BOTTOM_HALF_KERNELS kern, int arg) {
 
   if (kern == KMIDIN || kern == KTAILSQUARE || kern == KMIDOUT) {
     return arg + 1;
+  }
+
+  else if (kern == KTAILMULDELTA) {
+    return arg + 3;
   }
 
   else { //if (kern == KFFTHIN || kern == KTAILMUL || kern == KTAILMULLOW || kern == KFFTW) {
@@ -2006,6 +2056,14 @@ void Gpu::tailMulLow(Buffer<double>& buf, Buffer<double>& in2) {
   recorded_kernels.push_back(KTAILMULLOW);
   recorded_kernel_args.push_back(&buf);
   recorded_kernel_args.push_back(&in2);
+}
+
+void Gpu::tailMulDelta(Buffer<double>& buf, Buffer<double>& a, Buffer<double>& b) {
+  // Record this call for later playback
+  recorded_kernels.push_back(KTAILMULDELTA);
+  recorded_kernel_args.push_back(&buf);
+  recorded_kernel_args.push_back(&a);
+  recorded_kernel_args.push_back(&b);
 }
 
 void Gpu::fftMidOut(Buffer<double>& buf) {
@@ -2465,17 +2523,18 @@ void Gpu::square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enu
   // NOTE: assumes that if doLL is set, it will always be set
   bool graph_recording = false;
   Graph *graph = NULL;
-  if (use_graphs && (&out == &bufData || &out == &bufAux) && &in == &out && leadIn == LEAD_WIDTH && leadOut == LEAD_WIDTH && !doMul3) {
-    // We have one graph for ROE and one for no-ROE and one for bufData and one for bufAux
+  if (use_graphs && (&out == &bufData || &out == &bufAux) && &in == &out && leadIn == LEAD_WIDTH && leadOut == LEAD_WIDTH) {
+    // We have one graph for ROE and one for no-ROE, one for bufData and one for bufAux, one with and one without mul3 (carryFusedMul:
+    // P-1 stage 1 squarings at a set bit of the exponent; PRP's mul3 squaring ends a block with LEAD_NONE and is never graphed)
     bool roe = (roePos < wantROE);
     bool srcData = (&out == &bufData);
-    graph = &graph_square[2 * roe + srcData];
+    graph = &graph_square[4 * doMul3 + 2 * roe + srcData];
     // Execute an already recorded graph
     if (graph->isRecorded()) {
       graph->launch(&queue);
       queue.incSquareCount();
-      // Keep the host's sample counts in step with the kernels' (carryFused below): the GPU records a sample on every launch
-      if (roe) { roePos++; } else { updateCarryPos(1 << 0); }   // WARNING: If we ever graph Gpu::Mul, we'll need to also maintain mulRoePos vector.
+      // Keep the host's sample counts in step with the kernels' (carryFused/carryFusedMul below): the GPU records a sample on every launch
+      if (roe) { roePos++; } else { updateCarryPos(doMul3 ? 1 << 1 : 1 << 0); }   // WARNING: If we ever graph Gpu::Mul, we'll need to also maintain mulRoePos vector.
       return;
     }
     // Otherwise, record a new graph
@@ -2847,6 +2906,21 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
   throw "Error on load";
 }
 
+std::optional<PRPState> Gpu::loadPRPAt(u64 k) {
+  std::optional<PRPState> state = getSaver()->loadAt(k);
+  // The start of the test has no savefile
+  if (!state && !k) { state = PRPState{.exponent=E, .k=0, .blockSize=args.blockSize, .res64=3, .check=makeWords(E, 1), .nErrors=0}; }
+  if (!state || !isValidBlockSize(state->blockSize)) { return {}; }
+  writeState(state->k, state->check, state->blockSize);
+  u64 const res = dataResidue();
+  if (res != state->res64) {
+    log("EE %9" PRIu64 " on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", state->k, res, state->res64);
+    return {};
+  }
+  log("OK %9" PRIu64 " on-load: blockSize %d, %016" PRIx64 "\n", state->k, state->blockSize, res);
+  return state;
+}
+
 u32 Gpu::getProofPower(u64 k) {
   u32 const power = ProofSet::effectivePower(E, args.getProofPow(E), k);
 
@@ -3099,8 +3173,13 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   return secsPerIt * 1e6;
 }
 
-PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
+PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm1Report) {
   assert(E == task.exponent);
+  auto pm1FactorResult = [] { PRPResult r{}; r.pm1Factor = true; return r; };
+
+  // -prpPm1:  P-1 stage 1 from this test's squarings (see Pm1Prp.h).  Without it there is nothing:  pm1 stays null.
+  std::unique_ptr<Pm1Prp> pm1;
+  if (args.prpPm1B1) { pm1 = Pm1Prp::make(*this, args.prpPm1B1, args.prpPm1B2, pm1Report); }
 
   // This timer is used to measure total elapsed time to be written to the savefile.
   Timer elapsedTimer;
@@ -3117,12 +3196,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   double elapsedBefore = 0;
 
   {
-    PRPState const state = loadPRP(*getSaver());
+    PRPState const state = pm1 ? pm1->sync(loadPRP(*getSaver())) : loadPRP(*getSaver());
     nErrors = std::max(nErrors, state.nErrors);
     blockSize = state.blockSize;
     k = state.k;
     elapsedBefore = state.elapsed;
   }
+
+  if (pm1 && pm1->foundFactor()) { return pm1FactorResult(); }
 
   assert(blockSize > 0 && logStep % blockSize == 0);
 
@@ -3166,6 +3247,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
   bool skipNextCheckUpdate = false;
 
   u64 persistK = proofSet ? proofSet->next(k) : u64(-1);
+  // The next iteration with work besides the squaring:  a proof residue, or (-prpPm1) a P-1 accumulator step
+  u64 eventK = persistK;
+  bool eventWords = true;     // the event needs the residue in words (bufData), not only its transform (buf1, the fused carry's output)
+  auto nextEvent = [&] {
+    eventK = std::min(persistK, pm1->nextK());
+    eventWords = eventK == persistK || pm1->wantsWords();
+  };
+  if (pm1) { nextEvent(); }
   enum LEAD_TYPE leadIn = LEAD_NONE;
 
   assert(k % blockSize == 0);
@@ -3173,6 +3262,9 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
 
   const u64 startK = k;
   u32 const graphBatch = std::clamp(args.value("GRAPH_BATCH", 1), 1, 256);
+
+  // The first check comes early, at 2 blocks; -prpPm1 also wants one when its last step is done
+  u64 extraCheckK = startK + 2 * blockSize;
   IterationTimer iterationTimer{k};
 
   wantROE = 0; // skip the initial iterations
@@ -3185,7 +3277,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     // Batch only unsampled, already-captured squarings on bufData, stopping strictly before the next block/check/log, proof residue,
     // final residue or -iters boundary, which keeps its single-iteration path.  Halving the batch to fit bounds the graph cache
     // to GRAPH_BATCH, GRAPH_BATCH / 2, ... squarings.
-    u64 boundary = std::min({roundUp(k + 1, blockSize), persistK, kEnd});
+    u64 boundary = std::min({roundUp(k + 1, blockSize), eventK, kEnd});     // eventK: the proof residue, and the P-1 steps of -prpPm1
+    if (extraCheckK > k) { boundary = std::min(boundary, extraCheckK); }
     if (args.iters) { boundary = std::min(boundary, startK + args.iters); }
     u32 repeat = graphBatch;
     while (repeat > 1 && k + repeat >= boundary) { repeat /= 2; }
@@ -3208,30 +3301,43 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
     ++k; // !! early inc
 
     bool const doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
-    bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k - startK == 2 * blockSize);
+    bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k == extraCheckK);
     bool const doLog = k % logStep == 0;
-    enum LEAD_TYPE const leadOut = doCheck || doLog || k == persistK || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     if (doStop) { log("Stopping, please wait..\n"); }
 
     square(bufData, bufData, leadIn, leadOut, false);
     leadIn = leadOut;
 
-    if (k == persistK) {
-      vector<Word> const rawData = readChecked(bufData);
-      if (rawData.empty()) {
-        log("Data error ZERO\n");
-        ++nErrors;
-        goto reload;
-      }
-      (*background)([=, this] {
-        try {
-          ProofSet::save(E, power, k, compactBits(rawData, E));
-        } catch (const FileError&) {
-          proofSaveFailed = true;
+    if (k == eventK) {
+      if (k == persistK) {
+        vector<Word> const rawData = readChecked(bufData);
+        if (rawData.empty()) {
+          log("Data error ZERO\n");
+          ++nErrors;
+          goto reload;
         }
-      });
-      persistK = proofSet->next(k);
+        (*background)([=, this] {
+          try {
+            ProofSet::save(E, power, k, compactBits(rawData, E));
+          } catch (const FileError&) {
+            proofSaveFailed = true;
+          }
+        });
+        persistK = proofSet->next(k);
+      }
+      if (pm1) {
+        if (k == pm1->nextK()) {
+          // The multiplication leaves the residue's transform in buf1, where the next squaring (or check update) starts from
+          if (pm1->step(k, leadOut == LEAD_NONE)) { leadIn = LEAD_MIDDLE; }
+          u64 const c = pm1->checkAt();
+          if (c > k && (extraCheckK <= k || c < extraCheckK)) { extraCheckK = c; }
+        }
+        nextEvent();
+      } else {
+        eventK = persistK;
+      }
     }
 
     if (k == kEnd) {
@@ -3286,6 +3392,19 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
         // lastFailedRes64 = 0;
         skipNextCheckUpdate = true;
 
+        if (pm1) {
+          // The fold uses buf1:  the next squaring starts from bufData
+          leadIn = LEAD_NONE;
+          Pm1Prp::Outcome const outcome = pm1->verified(k, res);
+          if (outcome == Pm1Prp::FACTOR) {
+            doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
+            return pm1FactorResult();
+          }
+          if (outcome == Pm1Prp::RELOAD) { goto reload; }
+          if (u64 const c = pm1->checkAt(); c > k) { extraCheckK = c; }
+          nextEvent();
+        }
+
         if (k < kEnd) {
           (*background)([=, this, rawCheck = std::move(rawCheck)] {
             if (proofSaveFailed) { return; }
@@ -3294,6 +3413,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task) {
         }
 
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
+
+        if (pm1 && pm1->afterSave() == Pm1Prp::FACTOR) { return pm1FactorResult(); }
 
         if (k >= kEndEnd) {
           // The test is complete; nothing after this point may lose the result.  Make sure the final proof residue,
@@ -3497,9 +3618,339 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 }
 
 
+// ---- P-1 stage 1 ----
+
+#ifdef PRPLL_PM1_FAULTS
+// TEST ONLY, compiled in only with -DPRPLL_PM1_FAULTS (make BIN=build-pm1faults CPPFLAGS=-DPRPLL_PM1_FAULTS); a normal build has none
+// of this.  PRPLL_PM1_FAULT="<k>[:<kind>],..." corrupts P-1 stage 1 once per process right after iteration k.  Kinds:  flip (default)
+// flips one bit of x;  square multiplies x by 4, a perfect square, which a Jacobi check cannot see;  check flips one bit of the
+// Gerbicz check product instead of x;  negate replaces the final residue, after its Gerbicz check passed, by 2^p-1 - x, whose Jacobi
+// symbol is the opposite one (k must then be the last iteration).
+namespace {
+struct Pm1Fault { u64 k; string kind; bool fired; };
+
+vector<Pm1Fault>& pm1Faults() {
+  static vector<Pm1Fault> faults = [] {
+    vector<Pm1Fault> v;
+    const char *env = getenv("PRPLL_PM1_FAULT");
+    if (!env) { return v; }
+    for (const string& item : ::split(env, ',')) {
+      auto colon = item.find(':');
+      v.push_back({stoull(item.substr(0, colon)), colon == string::npos ? "flip" : item.substr(colon + 1), false});
+    }
+    return v;
+  }();
+  return faults;
+}
+
+Pm1Fault* pm1FaultAt(u64 k, bool atEnd = false) {
+  for (Pm1Fault& f : pm1Faults()) { if (f.k == k && !f.fired && (f.kind == "negate") == atEnd) { return &f; } }
+  return nullptr;
+}
+
+// x * 4 mod 2^E - 1: rotate the E bits left by two
+Words times4(const Words& x, u64 E) {
+  Words r(x.size(), 0);
+  for (u64 i = 0; i < E; ++i) {
+    if ((x[i / 32] >> (i % 32)) & 1) {
+      u64 const j = (i + 2) % E;
+      r[j / 32] |= u32(1) << (j % 32);
+    }
+  }
+  return r;
+}
+}
+#endif
+
+// Check the P-1 stage 1 block that has just ended (see pm1Stage1).  On entry bufData holds u_m, bufCheck holds P = u_0 * ... * u_{m-1}
+// and u0 holds u_0; C is the sum of the L-bit exponent chunks of the block.  bpow holds 3^(2^bpowL) and is recomputed when L
+// differs.  bufCheck is consumed, bufData is kept.
+bool Gpu::pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buffer<Word>& sum1, u32& bpowL, u32 L, const vector<u32>& C) {
+  u64 const H = pm1::shiftRight64(C, L);
+
+  // alt = u_0 * 3^(H * 2^L)
+  if (H == 0) {
+    alt << u0;
+  } else {
+    if (bpowL != L) {
+      // The first squarings of 3 are tiny values with no rounding error; keep them out of the ROE statistics
+      u32 const saveWantROE = wantROE;
+      wantROE = 0;
+      writeIn(bpow, makeWords(E, 3));
+      squareLoop(bpow, 0, L);
+      wantROE = saveWantROE;
+      bpowL = L;
+    }
+    alt << bpow;
+    expMul(alt, H, u0);
+  }
+
+  // checksum 1 = P * u_m
+  sum1 << bufData;
+  modMul(sum1, bufCheck);
+
+  // checksum 2 = P^(2^L) * 3^Lo * alt.  The bits of Lo = C mod 2^L are the multiplications by 3 of the L squarings.
+  enum LEAD_TYPE leadIn = LEAD_NONE;
+  for (u32 i = L; i-- > 0;) {
+    enum LEAD_TYPE const leadOut = (i == 0 || useLongCarry) ? LEAD_NONE : LEAD_WIDTH;
+    square(bufCheck, bufCheck, leadIn, leadOut, pm1::testBit(C, i));
+    leadIn = leadOut;
+  }
+  modMul(bufCheck, alt);
+
+  if (isEqual(bufCheck, sum1)) { return true; }
+
+  // The word representation of a residue is not unique; compare the values before calling it an error
+  Words const a = readAndCompress(bufCheck);
+  Words const b = readAndCompress(sum1);
+  return !a.empty() && a == b;
+}
+
+// P-1 stage 1:  x = 3^E mod 2^p-1 with E = pm1::stage1Exponent(p, B1), by left-to-right binary exponentiation, one squaring per bit
+// of E (times 3 when the bit is set).  Iteration k (k = 1 .. nBits - 1) takes x = 3^(top k bits of E) to 3^(top k + 1 bits).
+//
+// Every iteration is covered by a Gerbicz-type check, which starts over with every block:
+// a block starting at iteration s with u_0 = x_s is m <= L sub-blocks of L iterations.  With u_j the residue after j sub-blocks and
+// c_j the L-bit chunk of E consumed by sub-block j, u_{j+1} = u_j^(2^L) * 3^c_j, so with P = u_0 * ... * u_{m-1} and C = sum c_j
+//   checksum 1 = P * u_m                      (one multiplication every L iterations, as PRP's check)
+//   checksum 2 = u_0 * P^(2^L) * 3^C          (L squarings once per block)
+// must be equal.  C < m * 2^L, so C = H * 2^L + Lo with H < m:  the bits of Lo ride the L squarings as their multiplications by 3,
+// and 3^(H * 2^L) is a short exponentiation of 3^(2^L), computed once per L.  The cost is about 2/L of stage 1.
+// Unlike PRP's check, this one starts over with every block and x cannot be rebuilt from the check value, so the savefiles hold x
+// and only a verified x is saved; a block that fails goes back to the last savefile.
+//
+// With -use PM1_JACOBI=1 the Jacobi symbol (x | 2^p-1) also checks a savefile when it is loaded (x_k = 3^(the top k bits of E), and
+// (3 | 2^p-1) = -1, so the symbol is -1 exactly when those bits are odd) and the final residue (+1: E is even).  A wrong symbol on
+// load sets the savefile aside as a bad one; at the end it fails the last block as a failed Gerbicz check does.  Off by default:
+// Gerbicz with verified-only saves covers the arithmetic, and a Jacobi symbol costs about as much as a GCD (two minutes at 100M bits).
+PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd) {
+  assert(E == task.exponent);
+  u64 const B1 = task.B1;
+  constexpr u32 CHECKS_PER_RUN = 20;       // rollback exposure: about 5% of stage 1, however long it is
+  constexpr u32 MAX_L = 3000;
+
+  Saver<P1State> saver{E, 1000, args.nSavefiles};
+  vector<u32> const exp = pm1::stage1ExponentCached(saver.dir(), E, B1);
+  u64 const nBits = pm1::bitLength(exp);
+  assert(nBits >= 2);
+
+  // L of a full block, and the L in use: halved after a failed check, grown back over about 30 good blocks
+  u32 const fullL = u32(std::clamp(std::sqrt(double(nBits) / CHECKS_PER_RUN), 2.0, double(MAX_L)));
+  u32 curL = fullL;
+  log("P-1 stage 1 B1=%" PRIu64 ", %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), about %.2f%% overhead\n",
+      B1, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+
+  // Sized as bufData (makeBufVector's buffers are larger when the words are 32-bit), so that they can be copied to and from it
+  u32 const wordBufSize = N * fft.WordSize / sizeof(Word);
+  Buffer<Word> u0{profile.make("pm1U0"), &queue, wordBufSize};
+  Buffer<Word> alt{profile.make("pm1Alt"), &queue, wordBufSize};
+  Buffer<Word> bpow{profile.make("pm1Pow"), &queue, wordBufSize};
+  Buffer<Word> sum1{profile.make("pm1Sum1"), &queue, wordBufSize};
+  u32 bpowL = 0;
+
+  bool const useJacobi = args.value("PM1_JACOBI", 0) > 0;
+  u32 nJacobi = 0;
+  // A savefile this process wrote, or one already checked, needs no Jacobi check when it is loaded again after a failed block
+  bool savesChecked = false;
+  // Whether x_k has the Jacobi symbol it must have, (-1)^(the top k bits of E)
+  auto jacobiOK = [&](const Words& x, u64 k) {
+    int const want = pm1::testBit(exp, nBits - k) ? -1 : 1;
+    Timer timer;
+    int const got = gcd.jacobi(x, u32(E));
+    log("P-1 Jacobi check at %" PRIu64 ": %s (%d, expected %d), %.1f s\n", k, got == want ? "OK" : "FAILED", got, want, timer.at());
+    return got == want;
+  };
+
+  u32 nErrors = 0;
+  int nSeqErrors = 0;
+  u64 lastFailedRes64 = 0;
+  Timer elapsedTimer;
+
+ reload:
+  elapsedTimer.reset();
+  u64 k = 1;
+  double elapsedBefore = 0;
+  for (int nTries = 0; ; ++nTries) {
+    P1State state = saver.load();
+    if (state.data.empty()) {
+      writeIn(bufData, makeWords(E, 3));
+      k = 1;
+      break;
+    }
+    if (state.B1 != B1 || state.nBits != nBits || state.k < 1 || state.k > nBits) {
+      // Stage 1 runs over the bits of E from the top, so a run with another B1 can't be continued
+      log("P-1 savefile is for B1=%" PRIu64 " (%" PRIu64 " / %" PRIu64 "), the assignment has B1=%" PRIu64 "; setting it aside\n",
+          state.B1, state.k, state.nBits, B1);
+      saver.dropMostRecent();
+      nTries = -1;
+      continue;
+    }
+    writeIn(bufData, state.data);
+    u64 const res = dataResidue();
+    if (res == residue(state.data)) {
+      if (useJacobi && !savesChecked) {
+        if (jacobiOK(state.data, state.k)) {
+          savesChecked = true;
+        } else {
+          ++nJacobi;
+          log("EE %9" PRIu64 " P-1 savefile fails the Jacobi check\n", state.k);
+          if (nTries) { throw "P-1 savefile error on load"; }
+          saver.dropMostRecent();
+          continue;
+        }
+      }
+      k = state.k;
+      nErrors = std::max(nErrors, state.nErrors);
+      elapsedBefore = state.elapsed;
+      log("OK %9" PRIu64 " P-1 loaded: %016" PRIx64 "\n", k, res);
+      break;
+    }
+    log("EE %9" PRIu64 " P-1 on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", state.k, res, residue(state.data));
+    if (nTries) { throw "P-1 savefile error on load"; }
+    saver.dropMostRecent();
+  }
+
+  if (k == nBits) {
+    log("P-1 stage 1 already done, B1=%" PRIu64 "\n", B1);
+    return {readData(), nErrors, nJacobi};
+  }
+
+  u64 const startK = k;
+  IterationTimer iterationTimer{k};
+  wantROE = 0; // skip the initial iterations
+  bool stopping = false;
+
+  while (true) {
+    // Plan the block:  m sub-blocks of L iterations; a remainder shorter than L is a block of its own (L = the remainder, m = 1)
+    u64 const left = nBits - k;
+    u32 L = curL;
+    u32 m = 0;
+    if (left >= u64(L) * L) {
+      m = L;
+    } else if (left >= L) {
+      m = u32(left / L);
+    } else {
+      L = u32(left);
+      m = 1;
+    }
+
+    u0 << bufData;
+    bufCheck << bufData;
+    vector<u32> C;
+    enum LEAD_TYPE leadIn = LEAD_NONE;
+
+    for (u32 j = 0; j < m; ++j) {
+      if (j) {
+        modMul(bufCheck, bufData, leadIn);
+        leadIn = LEAD_MIDDLE;
+      }
+
+      for (u32 i = 0; i < L; ++i) {
+        if (!wantROE && k - startK > 30) { wantROE = args.logROE ? ROE_SIZE : 2'000; }
+
+        bool const mul3 = pm1::testBit(exp, nBits - 1 - k);
+        ++k;
+
+        if (i == L - 1 && !stopping && (Signal::stopRequested() || (args.iters && k - startK >= args.iters))) {
+          stopping = true;
+          m = j + 1;     // end the block here
+          log("Stopping, please wait..\n");
+        }
+        bool const blockEnd = i == L - 1 && j == m - 1;
+        bool const doLog = k % args.logStep == 0;
+#ifdef PRPLL_PM1_FAULTS
+        Pm1Fault* const fault = pm1FaultAt(k);
+#else
+        constexpr bool fault = false;
+#endif
+        enum LEAD_TYPE const leadOut = blockEnd || doLog || fault || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+        square(bufData, bufData, leadIn, leadOut, mul3);
+        leadIn = leadOut;
+
+#ifdef PRPLL_PM1_FAULTS
+        if (fault) {
+          fault->fired = true;
+          Buffer<Word>& target = fault->kind == "check" ? bufCheck : bufData;
+          Words x = readAndCompress(target);
+          u64 const before = residue(x);
+          if (fault->kind == "square") { x = times4(x, E); } else { x[3] ^= 1u << 7; }
+          writeIn(target, x);
+          log("TEST FAULT %s at %" PRIu64 ": %016" PRIx64 " -> %016" PRIx64 "\n", fault->kind.c_str(), k, before, bufResidue(target));
+        }
+#endif
+
+        if (doLog && !blockEnd) {
+          float const secsPerIt = iterationTimer.reset(k);
+          queue.setSquareTime((int) (secsPerIt * 1'000'000));
+          log("%s\n", makeLogStr("", k, dataResidue(), secsPerIt, nBits).c_str());
+        }
+      }
+      pm1::addBits(C, exp, nBits - k, L);
+    }
+
+    float const secsPerIt = iterationTimer.reset(k);
+    queue.setSquareTime((int) (secsPerIt * 1'000'000));
+    bool ok = pm1Verify(u0, alt, bpow, sum1, bpowL, L, C);
+    u64 const res = dataResidue();
+    Words data;
+    bool jacobiFailed = false;
+    if (ok) {
+      data = readData();
+      if (data.empty()) { throw "P-1 stage 1 residue is zero"; }
+#ifdef PRPLL_PM1_FAULTS
+      if (Pm1Fault* const fault = pm1FaultAt(k, true)) {
+        fault->fired = true;
+        u64 const before = residue(data);
+        for (u32& w : data) { w = ~w; }
+        if (E % 32) { data.back() &= (u32(1) << (E % 32)) - 1; }
+        log("TEST FAULT negate at %" PRIu64 ": %016" PRIx64 " -> %016" PRIx64 "\n", k, before, residue(data));
+      }
+#endif
+      if (useJacobi && k == nBits && !jacobiOK(data, k)) {
+        ok = false;
+        jacobiFailed = true;
+        ++nJacobi;
+      }
+    }
+
+    if (ok) {
+      nSeqErrors = 0;
+      savesChecked = true;
+      saver.save({.exponent=E, .B1=B1, .B2=task.B2, .k=k, .nBits=nBits, .data=data, .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
+      doBigLog(k, res, true, secsPerIt, nBits, nErrors);
+      iterationTimer.reset(k);
+
+      if (k == nBits) { return {std::move(data), nErrors, nJacobi}; }
+      if (stopping) {
+        queue.finish();
+        throw "stop requested";
+      }
+      curL = std::min(fullL, u32(std::ceil(curL * 1.0234)));    // 30 good blocks double L again
+    } else {
+      if (!jacobiFailed) { ++nErrors; }
+      doBigLog(k, res, false, secsPerIt, nBits, nErrors);
+      log("P-1 %s check failed at %" PRIu64 " (block of %u x %u from %" PRIu64 "), going back to the last verified savefile\n",
+          jacobiFailed ? "Jacobi" : "Gerbicz", k, m, L, k - u64(m) * L);
+      if (++nSeqErrors > 2) {
+        log("%d sequential errors, will stop.\n", nSeqErrors);
+        throw "too many errors";
+      }
+      if (res == lastFailedRes64) {
+        log("Consistent error %016" PRIx64 ", will stop.\n", res);
+        throw "consistent error";
+      }
+      lastFailedRes64 = res;
+      curL = std::max(2u, curL / 2);
+      if (stopping) { throw "stop requested"; }
+      goto reload;
+    }
+  }
+}
+
 void Gpu::clear(bool isPRP) {
   if (isPRP) {
     Saver<PRPState>::clear(E);
+    if (args.prpPm1B1) { Saver<P1PrpState>::clear(E); }
   } else {
     Saver<LLState>::clear(E);
   }

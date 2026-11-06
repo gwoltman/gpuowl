@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <string_view>
+
 #include "clwrap.h"
 
 #include <vector>
@@ -12,6 +14,12 @@
 
 class Args;
 class Context;
+
+// Whether an exception's message says that a kernel could not be built (compile error, missing kernel, workgroup too large):  the
+// errors after which another FFT may still work
+inline bool isBuildFailure(std::string_view mes) {
+  return mes.starts_with("Can't compile") || mes.starts_with("OpenCL kernel ") || mes.starts_with("workgroup size too large");
+}
 
 class KernelCompiler {
   std::string cacheDir;
@@ -27,9 +35,11 @@ class KernelCompiler {
                         // the "important" kernels (see isImportantKernel in KernelCompiler.cpp); -v 11 reports all of them.
 
   std::vector<Program> clSources;
+  std::vector<const char*> clSourceNames;   // the names of clSources
   std::vector<std::pair<std::string, std::string>> files;
 
   u64 contextHash{};
+  std::map<std::string, u64> ownHash;   // the hash of each pm1*.cl file, which is not in contextHash
 
   // -v 10 assembly dump: some kernelNames (e.g. "carryFused", "carry") are compiled several times
   // under this same name with different defines (plain/-DROE=1/-DMUL3=1/...). The args of every
@@ -52,7 +62,9 @@ class KernelCompiler {
 public:
   const cl_device_id deviceId;
 
-  KernelCompiler(const Args& args, const Context* context, const string& clArgs);
+  // gcdBundle: compile the GCD kernels (src/cl/gcd/*.cl, see genbundle.sh) instead of the main ones.  The two bundles hash apart,
+  // so the GCD kernels do not change the keys of the main kernels' cached binaries.
+  KernelCompiler(const Args& args, const Context* context, const string& clArgs, bool gcdBundle = false);
 
   ~KernelCompiler();
   

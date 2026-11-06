@@ -16,6 +16,7 @@
 #include <array>
 #include <map>
 #include <cinttypes>
+#include <optional>
 
 using namespace std;
 
@@ -87,9 +88,11 @@ vector<FFTShape> FFTShape::multiSpec(const string& iniSpec) {
   return ret;
 }
 
-vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo) {
+vector<FFTShape> FFTShape::allShapes(u32 sizeFrom, u32 sizeTo, bool withFp32M31) {
   vector<FFTShape> configs;
-  for (enum FFT_TYPES const type : {FFT64, FFT6431, FFT3161, FFT3261, FFT61, FFT323161}) {
+  vector<FFT_TYPES> types{FFT64, FFT6431, FFT3161, FFT3261, FFT61, FFT323161};
+  if (withFp32M31) { types.push_back(FFT3231); }
+  for (enum FFT_TYPES const type : types) {
     for (u32 const width : {256, 512, 1024, 2048, 4096}) {
       for (u32 const height : {256, 512, 1024, 2048}) {
         for (u32 const middle : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
@@ -423,6 +426,19 @@ vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spe
 
   log("No FFTs found in tune.txt that can handle %" PRIu64 ". Consider tuning with -tune\n", E);
 
+  vector<FFTConfig> candidates = untunedFits(args, E);
+  if (!candidates.empty()) { return candidates; }
+
+  log("No FFT found for %" PRIu64 "\n", E);
+  throw "No FFT";
+}
+
+vector<FFTConfig> FFTConfig::untunedFits(const Args& args, u64 E) {
+  auto const tooSmall = [&](const FFTConfig& fft) { return fft.maxExp() * args.fftOverdrive < E; };
+  auto const tooLarge = [&](const FFTConfig& fft) { return E / float(fft.size()) < fft.minBpw(); };
+  auto const fits = [&](const FFTConfig& fft) { return !tooSmall(fft) && !tooLarge(fft); };
+  bool const fp64 = hasFP64(getDevice(args.device));
+
   // Untuned:  the smallest FFT of any type that can handle E, FP64 then M31+M61 then the others at equal size.  The FP32 hybrids are
   // often the smallest (e.g. FP32+M31+M61 2M against M31+M61 2.25M) and usually the fastest on consumer GPUs, but some OpenCL compilers
   // can't build the FP32 code, so the smallest fitting FFT of up to six types is returned in this order:  Task::execute moves on to the next when
@@ -441,12 +457,103 @@ vector<FFTConfig> FFTConfig::bestFits(const Args& args, u64 E, const string& spe
     }
     if (candidates.size() == 6) { break; }     // enough fallbacks
   }
-  if (!candidates.empty()) { return candidates; }
-
-  log("No FFT found for %" PRIu64 "\n", E);
-  throw "No FFT";
+  return candidates;
 }
 
+
+vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, bool stage2) {
+  double const margin = stage2 ? PM1_TUNE.margin : 0;
+  auto const tooLarge = [&](const FFTConfig& fft) { return E / float(fft.size()) < fft.minBpw(); };
+  // Stage 1 (margin 0) is Gerbicz-checked and may use -od as PRP does; stage 2 has no such check and keeps its margin
+  auto const limit = [&](const FFTConfig& fft) { return margin > 0 ? double(fft.maxExp()) : fft.maxExp() * args.fftOverdrive; };
+  auto const need = [&](const FFTConfig& fft) { return double(E) + margin * fft.size(); };
+  auto const fits = [&](const FFTConfig& fft) { return !tooLarge(fft) && limit(fft) >= need(fft); };
+
+  vector<Pm1Fft> ret;
+  if (!args.fftSpec.empty()) {
+    string why;
+    for (const FFTConfig& fft : specFfts(args.fftSpec)) {
+      if (fits(fft)) {
+        vector<KeyVal> uses;
+        if (!stage2 || !TuneEntry::hasLineFor(args, fft, PM1_TUNE, &uses)) { uses = TuneEntry::usesFor(args, fft); }
+        ret.push_back({fft, uses, Pm1Fft::SPEC});
+      } else {
+        char buf[200];
+        if (tooLarge(fft)) {
+          snprintf(buf, sizeof(buf), "%s%s is too large (%.2f bits per word, at least %.1f)", why.empty() ? "" : "; ", fft.spec().c_str(),
+                   E / double(fft.size()), fft.minBpw());
+        } else {
+          snprintf(buf, sizeof(buf), "%s%s handles up to %.0f, needs %.0f (E + %.1f bits per word)", why.empty() ? "" : "; ",
+                   fft.spec().c_str(), limit(fft), need(fft), margin);
+        }
+        why += buf;
+      }
+    }
+    if (ret.empty()) {
+      log("P-1 %s of %" PRIu64 " can't run on the -fft given, and P-1 does not replace it: %s\n", stage2 ? "stage 2" : "stage 1", E,
+          why.c_str());
+      throw "P-1: the -fft given can't handle the exponent";
+    }
+    return ret;
+  }
+
+  bool const fp64 = hasFP64(getDevice(args.device));
+  auto const has = [&](const FFTConfig& fft) { return std::ranges::any_of(ret, [&](const Pm1Fft& r) { return r.fft.spec() == fft.spec(); }); };
+  if (stage2) {
+    for (const TuneEntry& e : TuneEntry::readTuneFile(args, PM1_TUNE)) {
+      if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) {
+        ret.push_back({e.fft, e.uses, Pm1Fft::PM1_TUNED});
+        break;
+      }
+    }
+  }
+  for (const TuneEntry& e : TuneEntry::readTuneFile(args)) {
+    if (fits(e.fft) && (fp64 || !e.fft.FFT_FP64)) {
+      if (!has(e.fft)) {
+        vector<KeyVal> uses = e.uses;
+        if (stage2) { TuneEntry::hasLineFor(args, e.fft, PM1_TUNE, &uses); }    // stage 2's own settings for this FFT, if it has any
+        ret.push_back({e.fft, uses, Pm1Fft::TUNED});
+      }
+      break;
+    }
+  }
+
+  // Untuned stage 1:  PRP's untuned choice (FFTConfig::untunedFits, the smallest fitting FFTs), since stage 1 is Gerbicz-checked as PRP
+  // is.  XTX, p = 41000017:  896K 4:256:7:256 at ~170 us/iteration against the stage 2 order's FFT61 1.75M at ~193.
+  if (!stage2) {
+    for (const FFTConfig& fft : FFTConfig::untunedFits(args, E)) {
+      if (fits(fft) && !has(fft)) { ret.push_back({fft, {}, Pm1Fft::UNTUNED}); }
+    }
+    if (ret.empty()) {
+      log("No FFT can run P-1 stage 1 of %" PRIu64 "\n", E);
+      throw "No FFT";
+    }
+    return ret;
+  }
+
+  // Untuned stage 2:  the smallest fitting shape of each type, in a fixed order of types:  the NTT types without FP64 first (in the order of
+  // their stage 2 speed on gfx1100 at p = 30M with the fused tail), then the FP64 types.  The speed order of the types changes with the
+  // size and the GPU, so stage 2 times these candidates before it chooses (Stage2::run).
+  vector<FFTShape> shapes = FFTShape::allShapes(0, u32(-1), true);
+  std::ranges::stable_sort(shapes, [](const FFTShape& a, const FFTShape& b) { return a.size() < b.size(); });
+  for (FFT_TYPES const type : {FFT61, FFT3231, FFT3261, FFT3161, FFT323161, FFT64, FFT6431}) {
+    for (const FFTShape& shape : shapes) {
+      if (shape.fft_type != type) { continue; }
+      std::optional<FFTConfig> found;
+      for (u32 const v : {101, 202}) {
+        if (FFTConfig fft{shape, v, CARRY_AUTO}; fits(fft) && (fp64 || !fft.FFT_FP64)) { found = fft; break; }
+      }
+      if (!found) { continue; }
+      if (!has(*found)) { ret.push_back({*found, {}, Pm1Fft::UNTUNED}); }
+      break;
+    }
+  }
+  if (ret.empty()) {
+    log("No FFT can run P-1 %s of %" PRIu64 "\n", stage2 ? "stage 2" : "stage 1", E);
+    throw "No FFT";
+  }
+  return ret;
+}
 
 string numberK(u64 n) {
   u32 const K = 1024;

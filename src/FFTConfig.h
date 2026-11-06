@@ -27,7 +27,8 @@ enum FFT_TYPES {FFT64=0, FFT3161=1, FFT3261=2, FFT61=3, FFT323161=4, FFT3231=50,
 
 class FFTShape {
 public:
-  static std::vector<FFTShape> allShapes(u32 from=0, u32 to = -1);
+  // withFp32M31 adds the FFT3231 shapes (P-1:  pm1Ffts), which the PRP lists leave out
+  static std::vector<FFTShape> allShapes(u32 from=0, u32 to = -1, bool withFp32M31 = false);
 
   static vector<FFTShape> multiSpec(const string& spec);
 
@@ -104,6 +105,13 @@ public:
   // The same choice as a list:  one FFT for an -fft spec or a tune.txt line, else the untuned candidates in order of preference
   // (Task::execute tries the next when a GPU can't be built for one).  Throws "No FFT" if none can handle E.
   static vector<FFTConfig> bestFits(const Args& args, u64 E, const std::string& spec, vector<KeyVal>* uses = nullptr, bool errorChecked = true);
+  // bestFits' untuned list (no -fft, no tune.txt line):  the smallest fitting FFT of up to six types, FP64 then M31+M61 first at equal size
+  static vector<FFTConfig> untunedFits(const Args& args, u64 E);
+
+  // An NTT and no FP64 part:  M61, FP32+M31, FP32+M61, M31+M61, FP32+M31+M61
+  [[nodiscard]] static bool nttType(enum FFT_TYPES t) {
+    return t == FFT61 || t == FFT3231 || t == FFT3261 || t == FFT3161 || t == FFT323161;
+  }
 
   // Which FP and NTT primes are involved in the FFT
   bool FFT_FP64;
@@ -129,3 +137,27 @@ public:
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }
   [[nodiscard]] float maxBpw() const;
 };
+
+// A P-1 FFT choice, its -use settings (from the -fft spec's or the chosen line's tune file) and where the choice came from
+struct Pm1Fft {
+  enum Source {SPEC, PM1_TUNED, TUNED, UNTUNED};
+  FFTConfig fft;
+  vector<KeyVal> uses;
+  Source source = UNTUNED;
+
+  [[nodiscard]] const char* sourceName() const {
+    return source == SPEC ? "-fft" : source == PM1_TUNED ? "tune-pm1.txt" : source == TUNED ? "tune.txt" : "untuned";
+  }
+};
+
+// The FFTs for P-1, in order of preference:  the one place that makes the P-1 choice (stage 1; stage 2 with its 0.5 bits per word of
+// margin, PM1_TUNE, see Stage2::chooseFFTs).  A type is used only if E plus the margin fits its limit, and it is not too large for E.
+// - An -fft spec:  its FFTs that fit, in the spec's order, and nothing else.  If none fits, one log line says why and it throws (the user
+//   may be testing that FFT:  P-1 never substitutes another one).  Stage 2 takes the settings of the FFT's tune-pm1.txt line if it has
+//   one, else those of its tune.txt line.
+// - Otherwise, for stage 2, the fastest fitting tune-pm1.txt line (-tune pm1:  timed stage 2 multiplications, any type); then the
+//   fastest fitting tune.txt line (PRP's tuned choice, any type); then the untuned candidates:  the smallest fitting shape of each
+//   type with an NTT and no FP64 (61, 3231, 3261, 3161, 323161), then the FP64 types (64, 6431).  Stage 2 ranks the untuned candidates
+//   by a quick timing of each (Stage2::run).  M31 and FP32 alone are not offered (stage 2 does not support them).  Untuned stage 1 takes
+//   PRP's untuned list (FFTConfig::untunedFits) instead:  it is Gerbicz-checked as PRP is.
+vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, bool stage2 = false);
