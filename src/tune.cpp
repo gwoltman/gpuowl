@@ -362,7 +362,7 @@ void Tune::tune() {
   u64 max_exponent = 350000000;
   if (!args->fftSpec.empty()) { min_exponent = 0; max_exponent = 1000000000000ull; }
   bool range_given = false;                     // minexp= or maxexp= was given
-  u32 warmup_secs = 300;                        // Seconds the GPU runs before the first timing (warmup=)
+  u32 warmup_secs = 15;                         // Seconds the GPU runs before the first timing (warmup=)
   bool pm1 = false;                             // -tune pm1:  P-1 stage 2 (pm1Tune), tune-pm1.txt only
   bool m61_given = false;
 

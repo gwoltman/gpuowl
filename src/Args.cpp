@@ -424,7 +424,7 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                                         The groups fp32, fp6431, 1k256, m61 and pfa can be set to 2 (e.g. pfa=2) to time only their FFTs.
                                         config.txt settings are then not tuned, and the FFTs already in tune.txt are kept.
                          quick=<val>  - Use higher values for a quicker, potentially less accurate tune.  Val ranges from 1 to 10.  Default 7.
-                         warmup=<secs> - Run the GPU this long before the first timing, so that it is timed hot, as it will run.  Default 300;
+                         warmup=<secs> - Run the GPU this long before the first timing, so that it is timed hot, as it will run.  Default 15;
                                         0 skips it.
                          regs         - (CUDA, AMD) Only retune the settings of the FFTs already in tune.txt (of the -fft <spec> shapes,
                                         if given, and of the entries used for exponents from minexp to maxexp, if either is given):
