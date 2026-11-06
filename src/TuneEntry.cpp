@@ -10,20 +10,20 @@
 #include <optional>
 
 // Returns whether *results* was updated.
-bool TuneEntry::update(vector<TuneEntry>& results) const {
+bool TuneEntry::update(vector<TuneEntry>& results, const TuneFile& tf) const {
   if (!std::isfinite(cost)) { return false; }   // a failed timing (see Gpu::timePRP) must never be recorded
-  u64 const maxExp = fft.maxExp();
+  u64 const maxExp = tf.maxExp(fft);
   [[maybe_unused]] bool didErase = false;
 
   int i{};
   for (i = int(results.size()) - 1; i >= 0 && results[i].cost > cost; --i) {
-    if (results[i].fft.maxExp() <= maxExp) {
+    if (tf.maxExp(results[i].fft) <= maxExp) {
       results.erase(std::next(results.begin(), i));
       didErase = true;
     }
   }
 
-  if (i >= 0 && results[i].fft.maxExp() >= maxExp) {
+  if (i >= 0 && tf.maxExp(results[i].fft) >= maxExp) {
     assert(!didErase);
     return false;
   }
@@ -33,22 +33,22 @@ bool TuneEntry::update(vector<TuneEntry>& results) const {
 }
 
 // Returns whether entry *e* represents an improvement over *results* (i.e. would update the results).
-bool TuneEntry::willUpdate(const vector<TuneEntry>& results) const {
-  u64 const maxExp = fft.maxExp();
+bool TuneEntry::willUpdate(const vector<TuneEntry>& results, const TuneFile& tf) const {
+  u64 const maxExp = tf.maxExp(fft);
   for (const auto& r : results) {
     if (r.cost > cost) {
       break;
-    } if (r.fft.maxExp() >= maxExp) {
+    } if (tf.maxExp(r.fft) >= maxExp) {
       return false;
     }
   }
   return true;
 }
 
-static fs::path tuneFilePath(const Args& args) {
-  fs::path tuneFile = "tune.txt";
+static fs::path tuneFilePath(const Args& args, const TuneFile& tf) {
+  fs::path tuneFile = tf.name;
   if (!fs::exists(tuneFile)) {
-    tuneFile = args.masterDir / "tune.txt";
+    tuneFile = args.masterDir / tf.name;
   }
   return tuneFile;
 }
@@ -77,8 +77,8 @@ static optional<TuneEntry> parseTuneLine(const string& line) {
   return TuneEntry{cost, FFTConfig{specBuf}, std::move(uses)};
 }
 
-vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
-  fs::path const tuneFile = tuneFilePath(args);
+vector<TuneEntry> TuneEntry::readTuneFile(const Args& args, const TuneFile& tf) {
+  fs::path const tuneFile = tuneFilePath(args, tf);
 
   // if (!fs::exists(tuneFile)) { log("Tune file %s not found\n", tuneFile.string().c_str()); }
 
@@ -92,18 +92,18 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
     try {
       optional<TuneEntry> const e = parseTuneLine(line);
       if (!e) {
-        log("tune.txt line '%s' ignored\n", line.c_str());
+        log("%s line '%s' ignored\n", tf.name, line.c_str());
         continue;
       }
       // Insert through update() so the list is a proper cost/maxExp frontier whatever order the file is in.  The file
       // was written sorted, but maxExp comes from the bits-per-word tables of the build that reads it, so rows written
       // by an older build can be out of order or dominated by a cheaper row; those are dropped here.
-      if (!e->update(results) && args.verbose) {
-        log("tune.txt line '%s' ignored, a cheaper FFT covers its exponents\n", rstripNewline(line).c_str());
+      if (!e->update(results, tf) && args.verbose) {
+        log("%s line '%s' ignored, a cheaper FFT covers its exponents\n", tf.name, rstripNewline(line).c_str());
       }
     } catch (const char*) {
       // e.g. a row from an older build whose variant encoding is no longer valid: skip it, keep the other rows
-      log("tune.txt line '%s' ignored\n", rstripNewline(line).c_str());
+      log("%s line '%s' ignored\n", tf.name, rstripNewline(line).c_str());
     }
   }
   if (args.verbose && !results.empty()) { log("Read %u entries from %s\n", u32(results.size()), tuneFile.string().c_str()); }
@@ -112,27 +112,36 @@ vector<TuneEntry> TuneEntry::readTuneFile(const Args& args) {
 
 // The settings of the tune.txt line for exactly this FFT, for an FFT given with -fft.  Unlike readTuneFile() this also looks at
 // lines a cheaper FFT dominates, so that a user can try settings on any FFT by adding them to its tune.txt line.
-vector<KeyVal> TuneEntry::usesFor(const Args& args, const FFTConfig& fft) {
-  File fi = File::openRead(tuneFilePath(args));
-  if (!fi) { return {}; }
+bool TuneEntry::hasLineFor(const Args& args, const FFTConfig& fft, const TuneFile& tf, vector<KeyVal>* uses) {
+  File fi = File::openRead(tuneFilePath(args, tf));
+  if (!fi) { return false; }
   fi.allowUnterminatedLastLine();
 
   string const spec = fft.spec();
   for (const string& line : fi) {
     try {
-      if (optional<TuneEntry> const e = parseTuneLine(line); e && e->fft.spec() == spec) { return e->uses; }
+      if (optional<TuneEntry> const e = parseTuneLine(line); e && e->fft.spec() == spec) {
+        if (uses) { *uses = e->uses; }
+        return true;
+      }
     } catch (const char*) {}
   }
-  return {};
+  return false;
 }
 
-void TuneEntry::writeTuneFile(const vector<TuneEntry>& results) {
+vector<KeyVal> TuneEntry::usesFor(const Args& args, const FFTConfig& fft, const TuneFile& tf) {
+  vector<KeyVal> uses;
+  hasLineFor(args, fft, tf, &uses);
+  return uses;
+}
+
+void TuneEntry::writeTuneFile(const vector<TuneEntry>& results, const TuneFile& tf) {
   // The comments of the tune.txt being replaced, each run of them with the max exponent of the entry that followed it (or none at
   // the end).  A run is written again before the first entry whose max exponent is at least that, so it stays above its entry,
   // or above the entry that took its place.
   vector<pair<string, optional<u64>>> comments;
   {
-    File fi = File::openRead("tune.txt");
+    File fi = File::openRead(tf.name);
     if (fi) {
       fi.allowUnterminatedLastLine();
       string run;
@@ -143,7 +152,7 @@ void TuneEntry::writeTuneFile(const vector<TuneEntry>& results) {
         }
         if (run.empty()) { continue; }
         try {
-          if (optional<TuneEntry> const e = parseTuneLine(line)) { comments.emplace_back(std::move(run), e->fft.maxExp()); run.clear(); }
+          if (optional<TuneEntry> const e = parseTuneLine(line)) { comments.emplace_back(std::move(run), tf.maxExp(e->fft)); run.clear(); }
         } catch (const char*) {}
       }
       if (!run.empty()) { comments.emplace_back(std::move(run), std::nullopt); }
@@ -154,10 +163,10 @@ void TuneEntry::writeTuneFile(const vector<TuneEntry>& results) {
 
   [[maybe_unused]] u64 prevMaxExp{};
   [[maybe_unused]] double prevCost{};
-  CycleFile tune{"tune.txt"};
+  CycleFile tune{tf.name};
   auto c = comments.begin();
   for (const TuneEntry& r : results) {
-    u64 const maxExp = r.fft.maxExp();
+    u64 const maxExp = tf.maxExp(r.fft);
     for (; c != comments.end() && c->second && *c->second <= maxExp; ++c) { tune->printf("%s", c->first.c_str()); }
     assert(r.cost >= prevCost && maxExp > prevMaxExp);
     prevCost = r.cost;

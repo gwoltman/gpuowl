@@ -80,6 +80,17 @@ public:
   void regTune(int quick, const vector<FFTShape>& onlyShapes, const std::set<std::string>* onlySpecs = nullptr,
                u64 minExp = 0, u64 maxExp = UINT64_MAX / 2);
 
+  // -tune pm1:  time P-1 stage 2 multiplications (Stage2::timeMul) on the FFTs of the types stage 2 supports and write the cheapest FFT for
+  // each exponent range, with its stage 2 settings (unless noSettings), to tune-pm1.txt.  Groups as in tune():  0 = skip, 1 = time,
+  // 2 = time only the groups set to 2.  Reads tune.txt and config.txt, writes neither.
+  struct Pm1Options {
+    int quick;
+    u64 minExp, maxExp;
+    bool noSettings, fp64, ntt;
+    u32 fp32, fp6431, m61, k1k256, pfa;
+  };
+  void pm1Tune(const Pm1Options& opt);
+
   // Time the other variants of the FFT shapes in tune.txt (or only onlyShapes) as -tune times a shape, add those that earn an entry,
   // then tune their register usage.  variant0 is whether this device runs variant 0 (BCAST).  Variants with a max exponent outside
   // [minExp, maxExp] are skipped.

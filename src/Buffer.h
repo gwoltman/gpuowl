@@ -30,7 +30,7 @@ private:
   Buffer(cl_context context, TimeInfo *tInfo, Queue* queue, size_t size, unsigned flags, const T* ptr = nullptr)
     : ptr{size == 0 ? nullptr : makeBuf_(context, flags, size * sizeof(T), ptr)}
     , size{size}
-    , allocTrac(size * sizeof(T))
+    , allocTrac(size * sizeof(T), context)
     , queue{queue}
     , tInfo{tInfo}
   {}

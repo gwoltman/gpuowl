@@ -14,6 +14,7 @@
 #include "Profile.h"
 #include "GpuCommon.h"
 #include "FFTConfig.h"
+#include "Pm1Prp.h"
 
 #include <numbers>
 #include <vector>
@@ -27,6 +28,7 @@ class Task;
 
 class Signal;
 class ProofSet;
+class Gcd;
 
 using TrigBuf = Buffer<double2>;
 using TrigPtr = shared_ptr<TrigBuf>;
@@ -39,11 +41,18 @@ struct PRPResult {
   u32 nErrors = 0;
   fs::path proofPath;
   std::string res2048;
+  bool pm1Factor{};     // -prpPm1 found a factor (its result line is written):  the PRP test stopped
 };
 
 struct LLResult {
   bool isPrime;
   u64 res64;
+};
+
+struct PM1Result {
+  vector<u32> x;      // the stage 1 residue 3^E mod 2^p-1 (see pm1::stage1Exponent)
+  u32 nErrors{};      // Gerbicz check failures
+  u32 nJacobi{};      // Jacobi check failures (-use PM1_JACOBI=1) in this process
 };
 
 struct ZAvg {
@@ -85,6 +94,9 @@ struct Weights {
 };
 
 class Gpu {
+  friend class Stage2Run;   // P-1 stage 2 (Stage2.cpp) drives the transform kernels directly
+  friend class Pm1Prp;      // P-1 stage 1 inside the PRP test (-prpPm1)
+
   GpuCommon shared;
   Background* background;
   // Set by the background thread when a proof residue could not be written (see ProofSet::save).  Every
@@ -129,6 +141,8 @@ private:
   Kernel ktailMulLowZero;
   Kernel ktailMul;
   Kernel ktailMulLow;
+  Kernel ktailMulDeltaZero;      // P-1 stage 2:  tailMulLow by the difference of two Low buffers (pm1tailmul.cl)
+  Kernel ktailMulDelta;
   Kernel kfftMidOut;
   Kernel kfftW;
 
@@ -141,6 +155,8 @@ private:
   Kernel ktailMulLowZeroGF31;
   Kernel ktailMulGF31;
   Kernel ktailMulLowGF31;
+  Kernel ktailMulDeltaZeroGF31;
+  Kernel ktailMulDeltaGF31;
   Kernel kfftMidOutGF31;
   Kernel kfftWGF31;
 
@@ -153,6 +169,8 @@ private:
   Kernel ktailMulLowZeroGF61;
   Kernel ktailMulGF61;
   Kernel ktailMulLowGF61;
+  Kernel ktailMulDeltaZeroGF61;
+  Kernel ktailMulDeltaGF61;
   Kernel kfftMidOutGF61;
   Kernel kfftWGF61;
 
@@ -239,12 +257,12 @@ private:
   TimeInfo* timeBufVect;
   ZAvg zAvg;
 
-  enum BOTTOM_HALF_KERNELS {KMIDIN, KFFTHIN, KTAILSQUARE, KTAILMUL, KTAILMULLOW, KMIDOUT, KFFTW};
+  enum BOTTOM_HALF_KERNELS {KMIDIN, KFFTHIN, KTAILSQUARE, KTAILMUL, KTAILMULLOW, KTAILMULDELTA, KMIDOUT, KFFTW};
   vector<enum BOTTOM_HALF_KERNELS> recorded_kernels;
   vector<Buffer<double> *> recorded_kernel_args;
 
   bool use_graphs;
-  Graph graph_square[4];
+  Graph graph_square[8];
 
   const int NUM_CACHE_GROUPS = 3;
   void splitQueue();
@@ -262,6 +280,7 @@ private:
   void tailSquare(Buffer<double>& buf);
   void tailMul(Buffer<double>& buf, Buffer<double>& in2);
   void tailMulLow(Buffer<double>& buf, Buffer<double>& in2);
+  void tailMulDelta(Buffer<double>& buf, Buffer<double>& a, Buffer<double>& b);   // tailMulLow(buf, a - b)
   void fftW(Buffer<double>& out, Buffer<double>& in);
   void carryA(Buffer<double>& out, Buffer<double>& in) { carryA(reinterpret_cast<Buffer<Word>&>(out), in); }
   void carryA(Buffer<Word>& out, Buffer<double>& in);
@@ -311,6 +330,10 @@ private:
   u32 updateCarryPos(u32 bit);
 
   PRPState loadPRP(Saver<PRPState>& saver);
+  std::optional<PRPState> loadPRPAt(u64 k);     // the savefile of iteration k, checked as loadPRP does; none if it isn't there or fails
+
+  // P-1 stage 1 Gerbicz check of a block of L-iteration sub-blocks (see pm1Stage1)
+  bool pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buffer<Word>& sum1, u32& bpowL, u32 L, const vector<u32>& C);
 
   vector<Word> readChecked(Buffer<Word>& buf);
 
@@ -332,9 +355,12 @@ public:
   // The WMUL this Gpu runs with, after clDefines lowered a requested value the FFT or device cannot use
   [[nodiscard]] u32 effectiveWmul() const { return wmul; }
 
-  PRPResult isPrimePRP(const Task& task);
+  // pm1Report writes the result line of the P-1 that -prpPm1 runs inside the PRP test
+  PRPResult isPrimePRP(const Task& task, const Pm1Report& pm1Report = {});
   LLResult isPrimeLL(const Task& task);
   array<u64, 4> isCERT(const Task& task);
+  // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
+  PM1Result pm1Stage1(const Task& task, Gcd& gcd);
 
   double timePRP(int quick = 7);
 

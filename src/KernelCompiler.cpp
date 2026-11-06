@@ -29,6 +29,8 @@ namespace fs = std::filesystem;
 // Implemented in bundle.cpp
 const std::vector<const char*>& getClFileNames();
 const std::vector<const char*>& getClFiles();
+const std::vector<const char*>& getGcdClFileNames();
+const std::vector<const char*>& getGcdClFiles();
 
 static_assert(sizeof(Program) == sizeof(cl_program));
 
@@ -159,13 +161,37 @@ static string narrowLongLongLiterals(const string& s) {
   return regex_replace(s, longLongLiteral, "$1$2L");
 }
 
+// The MULTIPLY_DELTA blocks of a PRP kernel file (each from a line "#if MULTIPLY_DELTA" to the next "#endif", no other directive
+// inside) are compiled only into P-1 kernels (pm1tailmul.cl defines MULTIPLY_DELTA).  The text without them goes into contextHash, so
+// that adding or changing them leaves the cached PRP kernels valid; `removed` collects them, for the pm1 kernels' keys.
+static string withoutDeltaBlocks(const string& src, const string& fileName, string& removed) {
+  string out;
+  bool inBlock = false;
+  for (size_t pos = 0; pos < src.size();) {
+    size_t const nl = src.find('\n', pos);
+    size_t const end = nl == string::npos ? src.size() : nl + 1;
+    string_view const line{src.data() + pos, end - pos};
+    size_t const first = line.find_first_not_of(" \t");
+    bool const directive = first != string_view::npos && line[first] == '#';
+    bool const opens = !inBlock && directive && line.substr(first).starts_with("#if MULTIPLY_DELTA");
+    if (inBlock && directive && !line.substr(first).starts_with("#endif")) {
+      throw std::runtime_error(fileName + ": a MULTIPLY_DELTA block may not contain another directive: " + string(line));
+    }
+    (opens || inBlock ? removed : out) += line;
+    if (opens) { inBlock = true; } else if (inBlock && directive) { inBlock = false; }
+    pos = end;
+  }
+  if (inBlock) { throw std::runtime_error(fileName + ": unterminated MULTIPLY_DELTA block"); }
+  return out;
+}
+
 KernelCompiler::~KernelCompiler() {
 #ifndef CUDA_BACKEND
   if (saveTemps) { removeFiles({}); }   // a last try at the temp files that could not be deleted yet
 #endif
 }
 
-KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs) :
+KernelCompiler::KernelCompiler(const Args& args, const Context* context, const string& clArgs, bool gcdBundle) :
   cacheDir{args.cacheDir.string()},
   context{context->get()},
   linkArgs{},   // no compile-only options here: clLinkProgram accepts only linker options (POCL enforces it)
@@ -218,17 +244,36 @@ KernelCompiler::KernelCompiler(const Args& args, const Context* context, const s
   hasher.update(hw);
   hasher.update(baseArgs);
 
-  auto& clNames = getClFileNames();
-  auto& clFiles = getClFiles();
+  // The GCD bundle starts with the main bundle's first file, the CUDA compatibility header (build() skips it on OpenCL)
+  vector<const char*> clNames = getClFileNames(), clFiles = getClFiles();
+  if (gcdBundle) {
+    clNames.resize(1);
+    clFiles.resize(1);
+    clNames.insert(clNames.end(), getGcdClFileNames().begin(), getGcdClFileNames().end());
+    clFiles.insert(clFiles.end(), getGcdClFiles().begin(), getGcdClFiles().end());
+  }
   assert(clNames.size() == clFiles.size());
+  clSourceNames = clNames;
   int const n = int(clNames.size());
+  string deltaBlocks;    // see withoutDeltaBlocks
   for (int i = 0; i < n; ++i) {
     string const src = noInt128 ? narrowLongLongLiterals(clFiles[i]) : string(clFiles[i]);
     files.emplace_back(clNames[i], src);
     clSources.push_back(loadSource(context->get(), src));
 
+    // The P-1 kernel files (pm1*.cl) are not in the hash of the context, so that adding or changing them leaves the cached PRP
+    // kernels valid:  their text goes into the key of their own kernels instead (see loadAux).  The P-1 kernels use two ways to stay
+    // out of PRP's keys:  stage 2's pm1stage2.cl is in the main bundle under this name rule, since it needs the transform's defines
+    // and base.cl / math.cl;  the GCD kernels (src/cl/gcd, self-contained, no transform defines) are a bundle of their own (gcdBundle).
+    if (string_view(clNames[i]).starts_with("pm1")) {
+      ownHash[clNames[i]] = SHA3::hash(src)[0];
+      continue;
+    }
     hasher.update(clNames[i]);
-    hasher.update(src);
+    hasher.update(withoutDeltaBlocks(src, clNames[i], deltaBlocks));
+  }
+  if (!deltaBlocks.empty()) {
+    for (auto& [name, h] : ownHash) { h = SHA3::hash(h, deltaBlocks)[0]; }
   }
   contextHash = std::move(hasher).finish()[0];
   // log("OpenCL %d files, hash %016" PRIx64 "\n", n, contextHash);
@@ -347,12 +392,12 @@ Program KernelCompiler::build(const string& fileName, const string& extraArgs) c
 
 #ifdef CUDA_BACKEND
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
-                             u32(clSources.size()), (const cl_program*) (clSources.data()), getClFileNames().data(),
+                             u32(clSources.size()), (const cl_program*) (clSources.data()), clSourceNames.data(),
                              nullptr, nullptr);
 #else
   // Skip first file (opencl_compat.cuh) if this is a standard openCL application rather than a CUDA translation
   int err = clCompileProgram(p1.get(), 1, &deviceId, args.c_str(),
-                             u32(clSources.size())-1, (const cl_program*) (clSources.data()+1), getClFileNames().data()+1,
+                             u32(clSources.size())-1, (const cl_program*) (clSources.data()+1), clSourceNames.data()+1,
                              nullptr, nullptr);
 #endif
   if (string const mes = getBuildLog(p1.get(), deviceId); !mes.empty()) { log("%s\n", mes.c_str()); }
@@ -519,7 +564,9 @@ KernelHolder KernelCompiler::loadAux(const string& fileName, const string& kerne
 
   Program program;
   string cacheFile;
-  u64 const key = SHA3::hash(contextHash, fileName, kernelName, compileArgs)[0];
+  auto const own = ownHash.find(fileName);
+  u64 const key = own == ownHash.end() ? SHA3::hash(contextHash, fileName, kernelName, compileArgs)[0]
+                                       : SHA3::hash(contextHash, own->second, fileName, kernelName, compileArgs)[0];
 
   if (useCache) {
     string const f = kernelName + '-' + to_hex(key);

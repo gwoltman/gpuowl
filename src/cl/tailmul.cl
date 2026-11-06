@@ -127,6 +127,10 @@ KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if MUL_LOW
   read(G_H, NH, p, a, memline * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  // P-1 stage 2 (pm1tailmul.cl):  the Low operand is a - b
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
 #else
   readTailFusedLine(a, p, line, me);
@@ -145,6 +149,9 @@ KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
     fft_HEIGHT1(lds, v, smallTrig, w, 1, me);
 #if MUL_LOW
     read(G_H, NH, q, a, memline2 * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+    readSubLow(G_H, NH, q, b, memline2 * SMALL_HEIGHT);
+#endif
 #else
     readTailFusedLine(a, q, line2, me);
     fft_HEIGHT1(lds, q, smallTrig, w, 1, me);
@@ -211,6 +218,10 @@ KERNEL_CAP(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig
 #if MUL_LOW
   read(G_H, NH, p, a, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, a, memline2 * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline1 * SMALL_HEIGHT);
+  readSubLow(G_H, NH, q, b, memline2 * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrig, w, 1, me);
   fft_HEIGHT1(lds, v, smallTrig, w, 1, me);
 #else
@@ -315,6 +326,9 @@ KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
 
 #if MUL_LOW
   read(G_H, NH, p, a, memline * SMALL_HEIGHT, lowMe);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT, lowMe);
+#endif
   fft_HEIGHT1(lds, u, smallTrig, w, 2, lowMe);
 #else
   readTailFusedLine(a, p, line, lowMe);
@@ -443,6 +457,9 @@ KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if MUL_LOW
   read(G_H, NH, p, aF2, memline * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
 #else
   readTailFusedLine(aF2, p, line, me);
@@ -461,6 +478,9 @@ KERNEL(G_H) tailMulZero(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
     fft_HEIGHT1(lds, v, smallTrigF2, 1, me);
 #if MUL_LOW
     read(G_H, NH, q, aF2, memline2 * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+    readSubLow(G_H, NH, q, b, memline2 * SMALL_HEIGHT);
+#endif
 #else
     readTailFusedLine(aF2, q, line2, me);
     fft_HEIGHT1(lds, q, smallTrigF2, 1, me);
@@ -524,6 +544,10 @@ KERNEL_CAP(G_H) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig smallTrig
 #if MUL_LOW
   read(G_H, NH, p, aF2, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, aF2, memline2 * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline1 * SMALL_HEIGHT);
+  readSubLow(G_H, NH, q, b, memline2 * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrigF2, 1, me);
   fft_HEIGHT1(lds, v, smallTrigF2, 1, me);
 #else
@@ -625,6 +649,9 @@ KERNEL_CAP(G_H * 2) tailMul(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
 
 #if MUL_LOW
   read(G_H, NH, p, aF2, memline * SMALL_HEIGHT, lowMe);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT, lowMe);
+#endif
   fft_HEIGHT1(lds, u, smallTrigF2, 2, lowMe);
 #else
   readTailFusedLine(aF2, p, line, lowMe);
@@ -765,6 +792,9 @@ KERNEL(G_H) tailMulZeroGF31(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if MUL_LOW
   read(G_H, NH, p, a31, memline * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrig31, 1, me);
 #else
   readTailFusedLine(a31, p, line, me);
@@ -831,6 +861,10 @@ KERNEL_CAP(G_H) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
 #if MUL_LOW
   read(G_H, NH, p, a31, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, a31, memline2 * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline1 * SMALL_HEIGHT);
+  readSubLow(G_H, NH, q, b, memline2 * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrig31, 1, me);
   fft_HEIGHT1(lds, v, smallTrig31, 1, me);
 #else
@@ -924,6 +958,9 @@ KERNEL_CAP(G_H * 2) tailMulGF31(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig s
 
 #if MUL_LOW
   read(G_H, NH, p, a31, memline * SMALL_HEIGHT, lowMe);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT, lowMe);
+#endif
   fft_HEIGHT1(lds, u, smallTrig31, 2, lowMe);
 #else
   readTailFusedLine(a31, p, line, lowMe);
@@ -1062,6 +1099,9 @@ KERNEL(G_H) tailMulZeroGF61(P(T2) out, CP(T2) in, CP(T2) a, Trig smallTrig) {
 
 #if MUL_LOW
   read(G_H, NH, p, a61, memline * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrig61, 1, me);
 #else
   readTailFusedLine(a61, p, line, me);
@@ -1128,6 +1168,10 @@ KERNEL_CAP(G_H) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig small
 #if MUL_LOW
   read(G_H, NH, p, a61, memline1 * SMALL_HEIGHT);
   read(G_H, NH, q, a61, memline2 * SMALL_HEIGHT);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline1 * SMALL_HEIGHT);
+  readSubLow(G_H, NH, q, b, memline2 * SMALL_HEIGHT);
+#endif
   fft_HEIGHT1(lds, u, smallTrig61, 1, me);
   fft_HEIGHT1(lds, v, smallTrig61, 1, me);
 #else
@@ -1221,6 +1265,9 @@ KERNEL_CAP(G_H * 2) tailMulGF61(P(T2) out, CP(T2) in, CP(T2) a, u32 base, Trig s
 
 #if MUL_LOW
   read(G_H, NH, p, a61, memline * SMALL_HEIGHT, lowMe);
+#if MULTIPLY_DELTA
+  readSubLow(G_H, NH, p, b, memline * SMALL_HEIGHT, lowMe);
+#endif
   fft_HEIGHT1(lds, u, smallTrig61, 2, lowMe);
 #else
   readTailFusedLine(a61, p, line, lowMe);

@@ -144,9 +144,21 @@ std::optional<std::set<string>> Args::retuneKeys(const string& val) {
 // Checks the comma separated -tune options up front: Tune::tune() silently skips anything it does not recognise,
 // so a typo such as "maxexponent=" would otherwise tune the default exponent range for hours without a word.
 static void checkTuneOptions(const string& options) {
-  for (const string& s : split(options, ',')) {
+  // pm1 (P-1 stage 2, tune-pm1.txt) takes the options that choose FFTs, not those of the PRP-only phases
+  vector<string> const all = split(options, ',');
+  if (std::ranges::find(all, "pm1") != all.end()) {
+    for (const string& s : all) {
+      string const key = s.substr(0, s.find('='));
+      if (key == "regs" || key == "variants" || key == "fine" || key == "tk" || key == "inplace" || key == "nofp32") {
+        log("-tune pm1 can't be combined with %s (valid with pm1: noconfig, fp64, ntt, fp32=0, fp6431, 1k256, m61=0, pfa=0, minexp=<val>, "
+            "maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>)\n", s.c_str());
+        throw "-tune option";
+      }
+    }
+  }
+  for (const string& s : all) {
     if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "fp32" || s == "inplace"
-        || s == "1k256" || s == "m61" || s == "pfa") { continue; }
+        || s == "1k256" || s == "m61" || s == "pfa" || s == "pm1") { continue; }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
     bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431" || key == "fp32";
@@ -188,7 +200,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, workers=<N>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, pm1, workers=<N>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -266,6 +278,15 @@ In turn the work files can be supplied through AutoPrimeNet, located at https://
 
 It is also possible to manually add exponents by adding lines of the form "PRP=118063003" to worktodo-<N>.txt
 
+P-1 factoring (see docs/pm1.md):
+  Pminus1=[AID,]1,2,<p>,-1,<B1>,<B2>       : P-1 with the given bounds (B2 <= B1: stage 1 only)
+  Pfactor=[AID,]1,2,<p>,-1,<tf>,<saved>    : P-1 with bounds chosen by prpll for an exponent trial factored to 2^<tf>, where a
+                                             factor saves <saved> primality tests (as in Prime95's Pfactor lines, e.g. 1 or 2).
+                                             The bounds maximise the expected saving for the stage 2 memory this GPU has, are
+                                             logged and kept in the P-1 savefile; with too little memory for stage 2, B2 = B1.  A
+                                             line whose P-1 can't save more than it costs, even with stage 2's largest table, is
+                                             removed without a result.
+
 
 The configuration options listed below can be passed on the command line or can be put in a file
 named "config.txt" in the prpll run directory.
@@ -315,7 +336,26 @@ named "config.txt" in the prpll run directory.
                      is cheap at high proof powers and expensive at low ones; it must also complete in
                      the same run that generated the proof. Use e.g. -autoverify 9 to skip it for the
                      low powers, or a value above the maximum power to skip it entirely.
--iters <N>         : run next PRP test for <N> iterations and exit.
+-iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit; P-1 stage 2 stops after about <N>
+                     multiplications.
+-mprimeDir <dir>   : P-1 (Pminus1= and Pfactor= lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)
+                     and stage 1 found no factor, stage 2 and its GCD.  When stage 2 can't run here (too little GPU memory,
+                     an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
+                     the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
+                     result.  Without it such a line is reported for B1 alone.
+-prpPm1 <B1>[,<B2>]: P-1 with bound B1 inside each PRP test, from the PRP's own squarings (off by default; without it
+                     a PRP test has no extra buffer, kernel or savefile).  Stage 1 then costs about 15%% of a stage 1
+                     run on its own (one multiplication per L squarings), and GPU memory for 2^L residue buffers (L
+                     about 8 to 11, from the memory free on the GPU; -maxAlloc caps it) until the PRP passes iteration
+                     1.44 * B1.  Then the GCD runs, the P-1 result is written ("integrated":true) and, with B2 > B1 and
+                     no factor, stage 2 runs while the PRP test waits.  A factor ends the PRP test.  Only for PRP tests
+                     started with it (from iteration 0).  The savefiles are in p1prp-<exponent>.
+-maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
+                     uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more of
+                     the primes) and fit in the memory free on the GPU when it starts less 1 GB (where the free memory
+                     can't be queried, 90%% of the GPU's RAM), and with -maxAlloc in no more than the cap.  It runs with as
+                     few as 6 of them beside the GPU's own, more slowly.  The bounds of a Pfactor line are chosen for that
+                     memory.
 -save <N>          : specify the number of savefiles to keep (default %u).
 -noclean           : do not delete data after the test is complete.
 -cache             : use binary kernel cache; useful with repeated use of -roeTune and -tune
@@ -323,7 +363,8 @@ named "config.txt" in the prpll run directory.
 -time              : collect and print a per-kernel GPU timing profile
 -log <N>           : log progress and checkpoint every <N> iterations (positive multiple of 1000; default 20000)
 
--use <define>      : comma separated list of defines for configuring openCL code, such as:
+)"   // split in two:  MSVC rejects a string literal longer than 16380 characters (error C2026)
+R"(-use <define>      : comma separated list of defines for configuring openCL code, such as:
   -use FAST_BARRIER: on AMD Radeon VII and older AMD GPUs, use a faster barrier().  This option
                      may not work on Nvidia GPUs.  It is ignored on RDNA and on MI200 and later
                      AMD GPUs, where the faster barrier gives wrong results.
@@ -350,6 +391,8 @@ named "config.txt" in the prpll run directory.
                      1 = Read one trig value and compute the next 3 or 7 (chained multiplies, slightly less accurate).
                      TABMUL_CHAIN31, TABMUL_CHAIN32 and TABMUL_CHAIN61 do the same for the M31, FP32 and M61 parts.
                      TABMUL_CHAIN61=2 reads the trig values plus, for each, the terms its complex multiply would otherwise compute (default on AMD).
+  -use PM1_JACOBI=1: P-1 stage 1: also check a loaded savefile and the final residue with a Jacobi symbol on the GPU (about
+                     as long as the GCD: two minutes at 100M bits).  The Gerbicz check already covers the arithmetic.
   -use 256RADIX8_W, 256RADIX8_H : at a WIDTH (or HEIGHT) of 256 use the radix-8 code (32 threads per line, no
                      variant 0) instead of radix 4.  Faster on Radeon VII, and for FP64 on TitanV; slower for NTTs on TitanV.
 
@@ -399,6 +442,12 @@ named "config.txt" in the prpll run directory.
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
                          workers=<N>  - Time config.txt settings with N workers running concurrently (as with -workers N), scoring their
                                         combined throughput.  FFT timings for tune.txt still use one worker.
+                         pm1          - Time P-1 stage 2 multiplications instead (all the FFT types stage 2 supports; FP64 types as
+                                        above) and write the fastest FFT for each exponent range, with its stage 2 settings (INPLACE,
+                                        TAIL_KERNELS, MULTI_Q, L2_STRIPING), to tune-pm1.txt.  Does not change tune.txt or config.txt.  Stage 2
+                                        uses tune-pm1.txt first, then tune.txt.  With pm1: noconfig skips the settings, m61 is timed
+                                        by default (m61=0 skips it), and minexp/maxexp/exp, quick, warmup, fp64, ntt, fp32=0, fp6431,
+                                        1k256, pfa=0 and -fft work as above; regs, variants, fine, tk and inplace do not apply.
 -device <N>        : select the GPU at position N in the list of devices
 -device <P>:<D>    : select GPU D of OpenCL platform P (GPUs counted per platform)
 -uid    <UID>      : select the GPU with the given UID (on ROCm/AMDGPU, Linux)
@@ -567,7 +616,7 @@ void Args::parse(const string& line) {
         throw("-pool <path> requires an absolute path");
       }
     }
-    else if (key == "-maxAlloc" || key == "-maxalloc") {                // DEPRECATED, was only used for P-1 buffers.  Parsing left in place so previous users do not get an error.
+    else if (key == "-maxAlloc" || key == "-maxalloc") {                // The GPU memory P-1 stage 2 may use for its buffers (AllocTrac)
       if (s.empty()) {                                                  // s.back() below would be undefined
         log("-maxAlloc expects a value, e.g. -maxAlloc 4G\n");
         throw "-maxAlloc <size>";
@@ -595,17 +644,38 @@ void Args::parse(const string& line) {
     else if (key == "-binary") {         // used to load a precompiled kernel binary from a given file.
       log("-binary is deprecated and ignored; use -cache for a persistent kernel cache instead\n");
     }
-    // DEPRECATED: P-1 factoring (and its second-stage mprime interop) was removed along with the GMP
-    // dependency, not for cost (see PR history). These options would silently change what gets tested,
-    // so unlike the no-ops above they must not be swallowed quietly.
+    else if (key == "-mprimeDir") {
+      // Relative to -dir, like every other path (main parses the arguments again once it is in -dir).  Whether it is a directory
+      // is checked when a P-1 assignment starts.
+      if (s.empty()) { throw "-mprimeDir needs a directory"; }
+      mprimeDir = fs::absolute(s).lexically_normal();
+    }
+    // DEPRECATED: the P-1 options of old gpuowl.  The bounds now come from the "Pminus1=" worktodo lines.  These options would
+    // silently change what gets tested, so unlike the no-ops above they must not be swallowed quietly.
     else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2" || key == "-rB2" ||
-             key == "-pm1" || key == "-mprimeDir" || key == "-D") {
-      log("%s: P-1 factoring is no longer supported; remove it from config.txt\n", key.c_str());
-      throw "P-1 no longer supported";
+             key == "-pm1" || key == "-D") {
+      log("%s is no longer supported: P-1 bounds come from \"Pminus1=\" lines in worktodo.txt; remove it from config.txt\n", key.c_str());
+      throw "P-1 option no longer supported";
     }
     else if (key == "-from") {           // used to resume at a specific iteration instead of the latest checkpoint.
       log("-from is no longer supported; PRPLL always resumes from the most recent checkpoint in -dir\n");
       throw "-from no longer supported";
+    }
+    else if (key == "-prpPm1") {
+      // -prpPm1 B1[,B2]
+      vector<string> const v = split(s, ',');
+      try {
+        if (v.empty() || v.size() > 2) { throw std::invalid_argument(s); }
+        prpPm1B1 = stoull(v[0]);
+        prpPm1B2 = v.size() > 1 ? stoull(v[1]) : 0;
+      } catch (const std::logic_error&) {
+        log("-prpPm1 expects <B1>[,<B2>], e.g. -prpPm1 1000000 or -prpPm1 1000000,30000000\n");
+        throw "-prpPm1 <B1>[,<B2>]";
+      }
+      if (prpPm1B1 < 2 || (prpPm1B2 && prpPm1B2 <= prpPm1B1) || prpPm1B2 >= (u64(1) << 32)) {
+        log("-prpPm1 %s: B1 must be at least 2 and B2, when given, above B1 and below 2^32\n", s.c_str());
+        throw "-prpPm1 <B1>[,<B2>]";
+      }
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
