@@ -382,7 +382,9 @@ bool Tune::tunedBeatsStart(FFTConfig fft, u64 exponent, int quick, const std::ma
   double const a = (a1 + a2) / 2, b = (b1 + b2) / 2;
   log("Time for %12s with the settings -tune started with is %6.1f (%.1f, %.1f), with the new settings %6.1f (%.1f, %.1f)\n",
       fft.spec().c_str(), a, a1, a2, b, b1, b2);
-  return b < a;                    // a failed (infinite) timing of the new settings does not beat the start
+  // Some settings are tuned on other FFT shapes (256RADIX8_W/H, LOADS/STORES) and are neutral on this one, so only settings that
+  // are slower than the start by more than the margin are dropped.  A failed (infinite) timing of the new settings is dropped too.
+  return b <= a * (1 + guardPct / 100);
 }
 
 double Tune::timeOptionOnce(u64 exponent, FFTConfig fft, int quick, u32* usedWmul) {
@@ -1420,15 +1422,15 @@ void Tune::tune() {
       args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
     }
 
-    // The settings to be written must beat the settings -tune started with, timed A B B A on the FFT they were tuned on.  One option
-    // that won by noise, or a state of the machine that changed during the run, is then caught instead of written to config.txt.
+    // The settings to be written must not be slower than the settings -tune started with, timed A B B A on the FFT they were tuned on.
+    // Options that won by noise, or a state of the machine that changed during the run, are then caught instead of written to config.txt.
     bool rejectedSettings = false;
     if (guardPct > 0 && !newConfigKeyVals.empty()) {
       auto written = ref.flags;
       for (const auto& [key, value] : newConfigKeyVals) { written[key] = to_string(value); }
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       if (!tunedBeatsStart(fft, primes.prevPrime(fft.maxExp()), quick, written)) {
-        log("The new settings are not faster than the settings -tune started with.  config.txt keeps those.\n");
+        log("The new settings are slower than the settings -tune started with.  config.txt keeps those.\n");
         newConfigKeyVals.clear();
         suggestedConfigKeyVals.clear();
         args->flags = ref.flags;
@@ -1459,7 +1461,7 @@ void Tune::tune() {
       config.write("\n");
     }
     if (rejectedSettings) {
-      config.write("\n# A -tune run found no settings that were faster than the ones it started with.\n");
+      config.write("\n# The settings of a -tune run were slower than the ones it started with, so none were applied.\n");
     }
     if (args->logStep < 100000) {
       config.write("\n# Less frequent save file creation improves throughput.");

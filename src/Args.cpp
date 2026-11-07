@@ -457,8 +457,8 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                                         combined throughput.  FFT timings for tune.txt still use one worker.
                          guard=<pct>  - Timings drift by 20-50%% over minutes (clocks, power limit, other programs), more than most options differ.
                                         Each timing is bracketed by a reference timing and redone if the reference moved by more than <pct>
-                                        percent (default 3), scaled by the reference's drift, and the settings found are only kept if they
-                                        beat the settings -tune started with in a final A B B A comparison.  guard=0 turns this off.
+                                        percent (default 3), scaled by the reference's drift, and the settings found are dropped if they
+                                        are slower than the settings -tune started with in a final A B B A comparison.  guard=0 turns this off.
                          pm1          - Time P-1 stage 2 multiplications instead (all the FFT types stage 2 supports; FP64 types as
                                         above) and write the fastest FFT for each exponent range, with its stage 2 settings (INPLACE,
                                         TAIL_KERNELS, MULTI_Q, L2_STRIPING), to tune-pm1.txt.  Does not change tune.txt or config.txt.  Stage 2
