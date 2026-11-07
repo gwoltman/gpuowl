@@ -188,19 +188,19 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    if (pos != string::npos && (key == "quick" || key == "fine" || key == "warmup" || key == "workers" || isGroup)) {
+    if (pos != string::npos && (key == "quick" || key == "fine" || key == "warmup" || key == "workers" || key == "guard" || isGroup)) {
       string const val = s.substr(pos + 1);
       u64 n = 0;
       auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), n);
       if (val.empty() || ec != std::errc{} || end != val.data() + val.size() || (key == "quick" && (n < 1 || n > 10)) || (isGroup && n > 2)
-          || (key == "fine" && (n < 1 || n > 50)) || (key == "workers" && (n < 1 || n > 4))) {
+          || (key == "fine" && (n < 1 || n > 50)) || (key == "workers" && (n < 1 || n > 4)) || (key == "guard" && n > 50)) {
         log("-tune %s expects %s (found '%s')\n", key.c_str(),
-            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : key == "warmup" ? "a number of seconds" : key == "fine" ? "a percentage from 1 to 50" : "a value from 1 to 4", val.c_str());
+            key == "quick" ? "a value from 1 to 10" : isGroup ? "0, 1 or 2" : key == "warmup" ? "a number of seconds" : key == "fine" ? "a percentage from 1 to 50" : key == "guard" ? "a percentage from 0 to 50" : "a value from 1 to 4", val.c_str());
         throw "-tune option value";
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, pm1, workers=<N>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, guard=<pct>, pm1, workers=<N>\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -442,6 +442,10 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
                          workers=<N>  - Time config.txt settings with N workers running concurrently (as with -workers N), scoring their
                                         combined throughput.  FFT timings for tune.txt still use one worker.
+                         guard=<pct>  - Timings drift by 20-50%% over minutes (clocks, power limit, other programs), more than most options differ.
+                                        Each timing is bracketed by a reference timing and redone if the reference moved by more than <pct>
+                                        percent (default 3), scaled by the reference's drift, and the settings found are only kept if they
+                                        beat the settings -tune started with in a final A B B A comparison.  guard=0 turns this off.
                          pm1          - Time P-1 stage 2 multiplications instead (all the FFT types stage 2 supports; FP64 types as
                                         above) and write the fastest FFT for each exponent range, with its stage 2 settings (INPLACE,
                                         TAIL_KERNELS, MULTI_Q, L2_STRIPING), to tune-pm1.txt.  Does not change tune.txt or config.txt.  Stage 2
