@@ -186,7 +186,16 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
       if (m < 2) m = 2;
 
       // Make up some defaults (should only happen for experimental FFT types (t >= 52)
-      if (w == orig_w && m == orig_m && h == orig_h) {
+      if (w == orig_w && m == orig_m && h == orig_h && (t == FFT31 || t == FFT32)) {
+        // At or below the measured rows of fftbpw.h, which depend only on the size.  FFT31's limit drops by ~0.28 bpw per
+        // doubling.  FFT32's ROE has a floor that grows with the size whatever the bpw: from 768K words no bpw works, so
+        // give the minimum bpw (no exponent fits).
+        double const log2N = log2(double(size()));
+        float const b = t == FFT31 ? float(9.9 - 0.28 * (log2N - 18))
+                      : log2N >= 19.5 ? minBpw() : float(5.45 - (log2N - 17));
+        bpw = {b, b, b, b, b, b};
+        log("BPW info for %s not found, using an estimate of %.2f.\n", s.c_str(), double(b));
+      } else if (w == orig_w && m == orig_m && h == orig_h) {
         bpw = {18.1f, 18.1f, 18.1f, 18.1f, 18.1f, 18.1f};
         log("ERROR: BPW info for %s not found, using default of 18.1.\n", s.c_str());
       }
