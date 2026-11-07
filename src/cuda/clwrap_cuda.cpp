@@ -1676,7 +1676,6 @@ int clGraphRepeat(cl_graph original, unsigned count, cl_graph* result) {
 #endif
   if (r != CUDA_SUCCESS) { delete g; return clResult("clGraphRepeat", r); }
   *result = g;
-  log("CUDA graph batch: %u serial squarings\n", count);
   return CL_SUCCESS;
 }
 
