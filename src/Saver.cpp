@@ -29,6 +29,7 @@ static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%
 // Anticipated next version.
 // Push version number to sync it with PRP.
 static constexpr const char *LL_v13 = "OWL LL 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
+static constexpr const char *LLV_v1 = "OWL LLV 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " time=%lf\n";
 static constexpr const char *P1_v1 = "OWL P1 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
 static constexpr const char *P1_v2 = "OWL P1 2 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
 static constexpr const char *P2_v1 = "OWL P2 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
@@ -220,6 +221,29 @@ void writeState(const File& fo, const LLState& state) {
   fo.writeChecked(state.data);
 }
 
+LLVerifiedState readState(const LLVerifiedState& expected, File fi) {
+  u64 exponent{}, k{};
+  double elapsed{};
+
+  string const header = fi.readLine();
+
+  if (sscanf(header.c_str(), LLV_v1, &exponent, &k, &elapsed) == 3) {
+    checkExponent(exponent, expected.exponent, header);
+    return {.exponent=exponent, .k=k, .data=fi.readChecked<u32>(nWords(exponent)), .elapsed=elapsed};
+  }
+
+  log("Loading verified LL from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
+  throw BadHeaderError{fi.name};
+}
+
+void writeState(const File& fo, const LLVerifiedState& state) {
+  assert(state.data.size() == nWords(state.exponent));
+  if (fo.printf(LLV_v1, state.exponent, state.k, state.elapsed) <= 0) {
+    throw WriteError{fo.name};
+  }
+  fo.writeChecked(state.data);
+}
+
 P1State readState(const P1State& expected, File fi) {
   u64 exponent{}, B1{}, B2{}, k{}, nBits{};
   u32 nErrors{};
@@ -286,6 +310,10 @@ template<> PRPState Saver<PRPState>::initState() {
 }
 
 template<> LLState Saver<LLState>::initState() {
+  return {.exponent=exponent, .k=0, .data=makeWords(exponent, 4), .elapsed=0};
+}
+
+template<> LLVerifiedState Saver<LLVerifiedState>::initState() {
   return {.exponent=exponent, .k=0, .data=makeWords(exponent, 4), .elapsed=0};
 }
 
@@ -460,6 +488,7 @@ void Saver<State>::removeAt(u64 k) const {
 
 template class Saver<PRPState>;
 template class Saver<LLState>;
+template class Saver<LLVerifiedState>;
 template class Saver<CERTState>;
 template class Saver<P1State>;
 template class Saver<P2State>;

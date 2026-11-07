@@ -16,6 +16,7 @@
 #include "KernelCompiler.h"
 #include "Proof.h"
 #include "log.h"
+#include "Signal.h"
 #include "timeutil.h"
 
 #include <cmath>
@@ -197,13 +198,14 @@ void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool is
   writeResult(instance, exponent, "PRP-3", isPrime ? "P" : "C", AID, args, fields);
 }
 
-void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isPrime, u64 res64) const {
-  vector<string> const fields{json("res64", hex(res64)),
+void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isPrime, u64 res64, u32 nJacobi) const {
+  vector<string> fields{json("res64", hex(res64)),
                         json("fft-type", ffttype(fft)),
                         json("fft-length", fft.size()),
                         json("shift-count", 0),
                         json("error-code", "00000000"), // I don't know the meaning of this
   };
+  if (nJacobi) { fields.push_back(json("errors", vector<string>{json("jacobi", nJacobi)})); }
 
   writeResult(instance, exponent, "LL", isPrime ? "P" : "C", AID, args, fields);
 }
@@ -505,9 +507,32 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
       isPrime = tmpIsPrime;
       writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath);
     } else { // LL
-      auto [tmpIsPrime, res64] = gpu->isPrimeLL(*this);
-      isPrime = tmpIsPrime;
-      writeResultLL(fft, *shared.args, instance, isPrime, res64);
+      // The Jacobi check, on by default:  its GCD kernels are built only when it runs
+      unique_ptr<Gcd> gcd;
+      if (shared.args->value("LL_JACOBI", 1) > 0) {
+        // Without them (there is no CPU Jacobi) the test runs unchecked, as before the check existed
+        string error;
+        try {
+#ifdef PRPLL_LL_FAULTS
+          if (const char* f = getenv("PRPLL_LL_JACOBI_FAIL"); f && string(f) == "build") { throw "TEST FAULT: the GCD kernels do not build"s; }
+#endif
+          gcd = make_unique<Gcd>(shared);
+        } catch (const std::exception& e) {
+          if (Signal::stopRequested()) { throw; }
+          error = e.what();
+        } catch (const string& e) {
+          if (Signal::stopRequested()) { throw; }
+          error = e;
+        } catch (const char* e) {
+          if (Signal::stopRequested()) { throw; }
+          error = e;
+        }
+        if (!error.empty()) { log("Warning: the LL Jacobi check can't run on this GPU (%s); the test goes on without it\n", error.c_str()); }
+      }
+      LLResult const r = gpu->isPrimeLL(*this, gcd.get());
+      isPrime = r.isPrime;
+      if (r.nJacobi) { log("LL had %u Jacobi check failures\n", r.nJacobi); }
+      writeResultLL(fft, *shared.args, instance, isPrime, r.res64, r.nJacobi);
     }
 
     Worktodo::deleteTask(*this, instance);

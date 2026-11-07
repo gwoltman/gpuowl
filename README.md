@@ -65,6 +65,11 @@ This is a test that proves whether a Mersenne number is prime or not, but withou
 The Lucas-Lehmer test is very simple to describe: iterate the function f(x)=(x^2 - 2) modulo M(p) starting with the number 4. If
 after p-2 iterations the result is 0, then M(p) is certainly prime, otherwise M(p) is certainly not prime.
 
+PRPLL checks an LL test with a Jacobi symbol: (s - 2 | M(p)) must be -1 at every iteration after the first. The check catches
+about half of all errors: an error is caught at the first check after it, or never, so checking more often does not catch more;
+it only shortens the rollback. The final residue is always checked, and on a failure the test goes back to the last residue
+that passed. `-use LL_JACOBI=0` turns the check off. Unlike PRP's Gerbicz check, this is no protection against every error.
+
 Lucas-Lehmer, while a very efficient primality test, still takes a rather long time for large Mersenne numbers
 (on the order of weeks of intense compute), thus it is only applied to the Mersenne candidates that survived the cheaper preliminary
 filters TF and P-1.

@@ -396,6 +396,10 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                      as long as the GCD: two minutes at 100M bits).  The Gerbicz check already covers the arithmetic.
   -use CERT_GEC=0  : CERT: turn off the Gerbicz check of the squarings (on by default; the log gives its overhead, under 1%%
                      from 400K squarings).
+  -use LL_JACOBI=0: LL: turn off the Jacobi check, on by default.  The symbol (s - 2 | 2^p-1) must be -1.  It catches about
+                     half of all errors (each error is caught at the first check after it, or never), and a failed check
+                     goes back to the last residue that passed;  more frequent checks only shorten that rollback.  The final
+                     residue is always checked, and the checks at log steps take about 1%% of the test's time.
   -use 256RADIX8_W, 256RADIX8_H : at a WIDTH (or HEIGHT) of 256 use the radix-8 code (32 threads per line, no
                      variant 0) instead of radix 4.  Faster on Radeon VII, and for FP64 on TitanV; slower for NTTs on TitanV.
 
