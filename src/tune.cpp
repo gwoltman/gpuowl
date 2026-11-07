@@ -292,6 +292,61 @@ static void configsUpdate(double current_cost, double best_cost, double threshol
 // Times one -use option setting.  With -tune workers=N, N identical timing runs share the GPU concurrently (as with -workers N)
 // and the result is the time per iteration of their combined throughput, so options are chosen for a multi-worker setup.
 double Tune::timeOption(u64 exponent, FFTConfig fft, int quick, u32* usedWmul) {
+  return guarded([&] { return timeOptionOnce(exponent, fft, quick, usedWmul); });
+}
+
+double Tune::timeRef() {
+  Args* args = shared.args;
+  struct Restore { Args* a; std::map<std::string, std::string> saved; ~Restore() { a->flags = std::move(saved); } } const restore{args, args->flags};
+  args->flags = ref.flags;
+  return timeConfig(ref.exponent, shared, *ref.fft, {}, ref.quick);
+}
+
+double Tune::guarded(const std::function<double()>& measure) {
+  if (guardPct <= 0 || !ref.fft) { return measure(); }
+  if (ref.last == 0) {
+    ref.base = ref.last = timeRef();
+    if (!std::isfinite(ref.base)) {
+      log("The reference timing failed; timings are not guarded against noise.\n");
+      guardPct = 0;
+      return measure();
+    }
+  }
+  for (int attempt = 1;; ++attempt) {
+    double const cost = measure();
+    if (!std::isfinite(cost)) { return cost; }
+    double const before = ref.last, after = timeRef();
+    if (!std::isfinite(after)) { return cost; }
+    ref.last = after;
+    double const moved = std::max(before, after) / std::min(before, after) - 1;
+    if (moved <= guardPct / 100 || attempt == 3) {
+      if (moved > guardPct / 100) { log("Timings are noisy: the reference moved %.0f%% around this one\n", moved * 100); }
+      // The reference runs at the speed of the machine now, relative to when it was first timed
+      return cost * ref.base / ((before + after) / 2);
+    }
+    log("Retiming: the reference moved from %.1f to %.1f around that timing\n", before, after);
+  }
+}
+
+bool Tune::tunedBeatsStart(FFTConfig fft, u64 exponent, int quick, const std::map<std::string, std::string>& tuned) {
+  Args* args = shared.args;
+  auto const current = args->flags;
+  auto const timeWith = [&](const std::map<std::string, std::string>& flags) {
+    args->flags = flags;
+    double const t = timeConfig(exponent, shared, fft, {}, quick);
+    args->flags = current;
+    return t;
+  };
+  double const a1 = timeWith(ref.flags), b1 = timeWith(tuned), b2 = timeWith(tuned), a2 = timeWith(ref.flags);
+  double const a = (a1 + a2) / 2, b = (b1 + b2) / 2;
+  log("Time for %12s with the settings -tune started with is %6.1f (%.1f, %.1f), with the new settings %6.1f (%.1f, %.1f)\n",
+      fft.spec().c_str(), a, a1, a2, b, b1, b2);
+  // Some settings are tuned on other FFT shapes (256RADIX8_W/H, LOADS/STORES) and are neutral on this one, so only settings that
+  // are slower than the start by more than the margin are dropped.  A failed (infinite) timing of the new settings is dropped too.
+  return b <= a * (1 + guardPct / 100);
+}
+
+double Tune::timeOptionOnce(u64 exponent, FFTConfig fft, int quick, u32* usedWmul) {
   if (workers == 1) { return timeConfig(exponent, shared, fft, {}, quick, usedWmul); }
 
   // Same error handling as timeConfig: a worker that can't be built or run makes the option a failure
@@ -405,21 +460,31 @@ void Tune::tune() {
       if (keyVal.front() == "fine") fine_pct = stod(keyVal.back());
       if (keyVal.front() == "regs") { regs_only = true; retune = Args::retuneKeys(keyVal.back()).value(); }
       if (keyVal.front() == "workers") workers = std::clamp(stoi(keyVal.back()), 1, 4);
+      if (keyVal.front() == "guard") guardPct = std::max(stod(keyVal.back()), 0.0);
     }
   }
   quick = std::max(quick, 1);
   quick = std::min(quick, 10);
   inplaceOnly = time_inplace_only;
 
-  // A GPU slows down for minutes as it heats up (clock boost, then the fan and the power limit catch up), and every option is timed
-  // once, one after the other:  timed cold, the first options look faster than the later ones.  So run the GPU until it is hot.
-  if (warmup_secs > 0) {
-    bool const useSpec = !shapes.empty() && (hasFP64(shared.context->deviceId()) || !FFTConfig{shapes[0], 202, CARRY_AUTO}.FFT_FP64);
+  // The FFT the warmup runs, and the reference for the noise guard (see guarded)
+  {
+    // -fft names the FFT.  Otherwise (shapes holds all of them, smallest first) a 3.5M NTT, which is what the options are timed on
+    bool const useSpec = !args->fftSpec.empty() && !shapes.empty() && (hasFP64(shared.context->deviceId()) || !FFTConfig{shapes[0], 202, CARRY_AUTO}.FFT_FP64);
     FFTConfig const fft{useSpec ? shapes[0] : FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO};
     u64 const exponent = primes.prevPrime(fft.maxExp());
-    log("Warming up the GPU for %u seconds before timing (-tune warmup=<secs> to change, warmup=0 to skip)\n", warmup_secs);
-    Timer timer;
-    while (timer.at() < warmup_secs) { timeConfig(exponent, shared, fft, {}, quick); }
+    ref.fft = fft;
+    ref.exponent = exponent;
+    ref.quick = quick;
+    ref.flags = args->flags;
+
+    // A GPU slows down for minutes as it heats up (clock boost, then the fan and the power limit catch up), and every option is timed
+    // once, one after the other:  timed cold, the first options look faster than the later ones.  So run the GPU until it is hot.
+    if (warmup_secs > 0) {
+      log("Warming up the GPU for %u seconds before timing (-tune warmup=<secs> to change, warmup=0 to skip)\n", warmup_secs);
+      Timer timer;
+      while (timer.at() < warmup_secs) { timeConfig(exponent, shared, fft, {}, quick); }
+    }
   }
 
   // Only retune the settings of the existing tune.txt entries -- those of the -fft shapes, if given, and those used for the
@@ -1312,6 +1377,22 @@ void Tune::tune() {
       args->flags["TAIL_KERNELS"] = to_string(best_tail_kernels);
     }
 
+    // The settings to be written must not be slower than the settings -tune started with, timed A B B A on the FFT they were tuned on.
+    // Options that won by noise, or a state of the machine that changed during the run, are then caught instead of written to config.txt.
+    bool rejectedSettings = false;
+    if (guardPct > 0 && !newConfigKeyVals.empty()) {
+      auto written = ref.flags;
+      for (const auto& [key, value] : newConfigKeyVals) { written[key] = to_string(value); }
+      FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
+      if (!tunedBeatsStart(fft, primes.prevPrime(fft.maxExp()), quick, written)) {
+        log("The new settings are slower than the settings -tune started with.  config.txt keeps those.\n");
+        newConfigKeyVals.clear();
+        suggestedConfigKeyVals.clear();
+        args->flags = ref.flags;
+        rejectedSettings = true;
+      }
+    }
+
     // Output new settings to config.txt
     File config = File::openAppend("config.txt");
     if (!newConfigKeyVals.empty()) {
@@ -1330,6 +1411,9 @@ void Tune::tune() {
         config.printf("%s=%u", suggestedConfigKeyVals[i].first.c_str(), suggestedConfigKeyVals[i].second);
       }
       config.write("\n");
+    }
+    if (rejectedSettings) {
+      config.write("\n# The settings of a -tune run were slower than the ones it started with, so none were applied.\n");
     }
     if (args->logStep < 100000) {
       config.write("\n# Less frequent save file creation improves throughput.");
@@ -1467,7 +1551,7 @@ skip_some_WH_variants = 2;   // should default be 1??
               if (w == 0 && !VARIANT0) continue;
               if (w == 0 && !test.hasVariant0W(shared.args->radix8At256(false))) continue;
               FFTConfig const fft{test, variant_WMH (w, 0, 1), CARRY_32};
-              cost = timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, adjusted_quick);
+              cost = guarded([&] { return timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, adjusted_quick); });
               log("Fast width search %6.1f %12s\n", cost, fft.spec().c_str());
               if (min_cost < 0.0 || cost < min_cost) { min_cost = cost; fastest_width = w; }
             }
@@ -1489,7 +1573,7 @@ skip_some_WH_variants = 2;   // should default be 1??
               if (h == 0 && !VARIANT0) continue;
               if (h == 0 && !test.hasVariant0H(shared.args->radix8At256(true))) continue;
               FFTConfig const fft{test, variant_WMH (1, 0, h), CARRY_32};
-              cost = timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, quick);
+              cost = guarded([&] { return timeConfig(primes.prevPrime(fft.maxExp()), shared, fft, {}, quick); });
               log("Fast height search %6.1f %12s\n", cost, fft.spec().c_str());
               if (min_cost < 0.0 || cost < min_cost) { min_cost = cost; fastest_height = h; }
             }
@@ -1519,7 +1603,7 @@ skip_some_WH_variants = 2;   // should default be 1??
         // Skip middle = 1, CARRY_32 if maximum exponent would be the same as middle = 0, CARRY_32
         if (variant_M(variant) > 0 && carry == CARRY_32 && fft.maxExp() <= FFTConfig{shape, variant - 10, CARRY_32}.maxExp()) continue;
 
-        double const cost = timeConfig(exponent, shared, fft, {}, quick);
+        double const cost = guarded([&] { return timeConfig(exponent, shared, fft, {}, quick); });
         TuneEntry entry{cost, fft, {}};
         // -tune fine: an FFT that earns a tune.txt entry, or comes within fine_pct of one, gets its best register limits.  Then it
         // has to earn the entry with them.
@@ -1573,7 +1657,7 @@ skip_some_WH_variants = 2;   // should default be 1??
       u64 const exponent = primes.prevPrime(FFTConfig{fft.shape, fft.shape.width <= 1024 ? 0u : 100u, CARRY_32}.maxExp());
       u32 adjusted_quick = (exponent < 50000000) ? quick - 1 : (exponent < 170000000) ? quick : (exponent < 350000000) ? quick + 1 : quick + 2;
       adjusted_quick = std::clamp<u32>(adjusted_quick, 1, 10);
-      double const cost = timeConfig(exponent, shared, fft, {}, adjusted_quick);
+      double const cost = guarded([&] { return timeConfig(exponent, shared, fft, {}, adjusted_quick); });
       bool const isUseful = std::isfinite(cost) && TuneEntry{cost, fft, {}}.update(results);
       log("%c %6.1f %12s %9" PRIu64 "\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
       if (isUseful) {
@@ -1862,7 +1946,7 @@ void Tune::variantTune(int quick, bool variant0, const vector<FFTShape>& onlySha
     u32 adjusted_quick = (exponent < 50000000) ? quick - 1 : (exponent < 170000000) ? quick : (exponent < 350000000) ? quick + 1 : quick + 2;
     adjusted_quick = std::clamp<u32>(adjusted_quick, 1, 10);
     for (const FFTConfig& fft : candidates[i]) {
-      double const cost = timeConfig(exponent, shared, fft, {}, adjusted_quick);
+      double const cost = guarded([&] { return timeConfig(exponent, shared, fft, {}, adjusted_quick); });
       bool const isUseful = std::isfinite(cost) && TuneEntry{cost, fft, {}}.update(results);
       log("%c %6.1f %12s %9" PRIu64 "\n", isUseful ? '*' : ' ', cost, fft.spec().c_str(), fft.maxExp());
       if (isUseful) {
