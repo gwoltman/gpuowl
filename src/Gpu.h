@@ -49,6 +49,12 @@ struct LLResult {
   u64 res64;
 };
 
+struct CERTResult {
+  array<u64, 4> hash;   // SHA3-256 of the final residue
+  u32 nErrors{};        // Gerbicz check failures
+  bool checked{};       // false with -use CERT_GEC=0
+};
+
 struct PM1Result {
   vector<u32> x;      // the stage 1 residue 3^E mod 2^p-1 (see pm1::stage1Exponent)
   u32 nErrors{};      // Gerbicz check failures
@@ -301,6 +307,7 @@ private:
   void square(Buffer<Word>& out, Buffer<Word>& in, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut, bool doMul3 = false, bool doLL = false);
   void square(Buffer<Word>& io) { square(io, io, LEAD_NONE, LEAD_NONE, false, false); }
   void squareCERT(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, false); }
+  bool certVerify(Buffer<Word>& u0, Buffer<Word>& sum1, u32 L, u64 k);
   void squareLL(Buffer<Word>& io, enum LEAD_TYPE leadIn, enum LEAD_TYPE leadOut) { square(io, io, leadIn, leadOut, false, true); }
 
   u64 squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3);
@@ -358,7 +365,7 @@ public:
   // pm1Report writes the result line of the P-1 that -prpPm1 runs inside the PRP test
   PRPResult isPrimePRP(const Task& task, const Pm1Report& pm1Report = {});
   LLResult isPrimeLL(const Task& task);
-  array<u64, 4> isCERT(const Task& task);
+  CERTResult isCERT(const Task& task);
   // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
   PM1Result pm1Stage1(const Task& task, Gcd& gcd);
 

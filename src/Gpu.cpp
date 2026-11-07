@@ -435,7 +435,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "WMUL",
                               "MULTI_Q",
                               "SLEEP_WAIT",
-                              "PM1_JACOBI"
+                              "PM1_JACOBI",
+                              "CERT_GEC"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
       // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)
@@ -631,7 +632,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // Keys that only the host reads (and deprecated keys that nothing reads) are not defines either, so that changing them does not
   // recompile the kernels.  PTX_VERSION stays: the CUDA build reads it back from the build options (see clwrap_cuda.cpp).
   initializer_list<string> const hostOnlyKeys = {"GRAPHS", "GRAPH_BATCH", "L1CUDA", "L2PERSIST", "L2PERSISTPCT", "SLEEP_WAIT",
-                                                 "SMEM_SPILL", "PM1_JACOBI", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
+                                                 "SMEM_SPILL", "PM1_JACOBI", "CERT_GEC", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
   std::erase_if(config, [&](const auto& kv) {
     return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || isInList(kv.first, hostOnlyKeys);
   });
@@ -3539,9 +3540,92 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
   }
 }
 
-array<u64, 4> Gpu::isCERT(const Task& task) {
+#ifdef PRPLL_CERT_FAULTS
+// TEST ONLY, compiled in only with -DPRPLL_CERT_FAULTS (make BIN=build-certfaults CPPFLAGS=-DPRPLL_CERT_FAULTS); a normal build has
+// none of this.  PRPLL_CERT_FAULT="<k>[:<kind>],..." corrupts the CERT once per process right after squaring k.  Kinds:  flip
+// (default) flips one bit of the residue;  check flips one bit of the Gerbicz check product instead;  checksq flips one bit of the
+// check product halfway through the check squarings of the block that ends at squaring k.
+namespace {
+struct CertFault { u64 k; string kind; bool fired; };
+
+vector<CertFault>& certFaults() {
+  static vector<CertFault> faults = [] {
+    vector<CertFault> v;
+    const char *env = getenv("PRPLL_CERT_FAULT");
+    if (!env) { return v; }
+    for (const string& item : ::split(env, ',')) {
+      auto colon = item.find(':');
+      v.push_back({stoull(item.substr(0, colon)), colon == string::npos ? "flip" : item.substr(colon + 1), false});
+    }
+    return v;
+  }();
+  return faults;
+}
+
+CertFault* certFaultAt(u64 k, bool inCheck) {
+  for (CertFault& f : certFaults()) { if (f.k == k && !f.fired && (f.kind == "checksq") == inCheck) { return &f; } }
+  return nullptr;
+}
+
+Words certFlipped(Words x) {
+  x[1] ^= 1u << 7;    // in the res64, so that the log shows it
+  return x;
+}
+}
+#endif
+
+// Check the CERT block that has just ended at squaring k (see isCERT).  On entry bufData holds u_m, bufCheck holds
+// P = u_0 * ... * u_{m-1} and u0 holds u_0.  bufCheck is consumed, bufData is kept.
+bool Gpu::certVerify(Buffer<Word>& u0, Buffer<Word>& sum1, u32 L, [[maybe_unused]] u64 k) {
+  // checksum 1 = P * u_m
+  sum1 << bufData;
+  modMul(sum1, bufCheck);
+
+  // checksum 2 = u_0 * P^(2^L), with the same plain squarings as the CERT
+  enum LEAD_TYPE leadIn = LEAD_NONE;
+  for (u32 i = 0; i < L; ++i) {
+#ifdef PRPLL_CERT_FAULTS
+    CertFault* const fault = i == L / 2 ? certFaultAt(k, true) : nullptr;
+#else
+    constexpr bool fault = false;
+#endif
+    enum LEAD_TYPE const leadOut = (i == L - 1 || fault || useLongCarry) ? LEAD_NONE : LEAD_WIDTH;
+    squareCERT(bufCheck, leadIn, leadOut);
+    leadIn = leadOut;
+#ifdef PRPLL_CERT_FAULTS
+    if (fault) {
+      fault->fired = true;
+      Words const x = readAndCompress(bufCheck);
+      writeIn(bufCheck, certFlipped(x));
+      log("TEST FAULT %s at %" PRIu64 ": %016" PRIx64 " -> %016" PRIx64 "\n", fault->kind.c_str(), k, residue(x), checkResidue());
+    }
+#endif
+  }
+  modMul(bufCheck, u0);
+
+  if (isEqual(bufCheck, sum1)) { return true; }
+
+  // The word representation of a residue is not unique; compare the values before calling it an error
+  Words const a = readAndCompress(bufCheck);
+  Words const b = readAndCompress(sum1);
+  return !a.empty() && a == b;
+}
+
+// CERT:  `squarings` plain squarings (no -2, no multiplication by 3) of the start residue x_0 from the M<E>.cert file, an arbitrary
+// residue mod 2^p-1;  the result is the SHA3 of the final residue.
+//
+// Every squaring is covered by a Gerbicz check (-use CERT_GEC=0 turns it off), which starts over with every block, as in
+// pm1Stage1:  a block starting at squaring s with u_0 = x_s is m <= L sub-blocks of L squarings, u_{j+1} = u_j^(2^L), so with
+// P = u_0 * ... * u_{m-1}
+//   checksum 1 = P * u_m                      (one multiplication every L squarings)
+//   checksum 2 = u_0 * P^(2^L)                (L squarings once per block)
+// must be equal.  The cost is about 2/L of the squarings.  This holds for any start, so a block needs only its own u_0:  the
+// savefiles hold the residue, only a verified residue is saved, and a block that fails goes back to the last savefile (or the
+// .cert file).
+CERTResult Gpu::isCERT(const Task& task) {
   assert(E == task.exponent);
-  wantROE = 0;
+  constexpr u32 CHECKS_PER_RUN = 10;       // rollback exposure: about 10% of the CERT, however long it is
+  constexpr u32 MAX_L = 3000;
 
   // Get CERT start value
   char fname[32];
@@ -3549,71 +3633,184 @@ array<u64, 4> Gpu::isCERT(const Task& task) {
 
 // AutoPrimenet.py does not add the cert entry to worktodo.txt until it has successfully downloaded the .cert file.
 
-  // Resume from a checkpoint if there is one for this assignment; otherwise start from the .cert file.
+  u32 const kEnd = task.squarings;
+  assert(kEnd > 0);
+  bool const useCheck = args.value("CERT_GEC", 1) > 0;
+
+  // L of a full block, and the L in use: halved after a failed check, grown back over about 30 good blocks
+  u32 const fullL = u32(std::clamp(std::sqrt(double(kEnd) / CHECKS_PER_RUN), 2.0, double(MAX_L)));
+  u32 curL = fullL;
+  if (useCheck) {
+    log("CERT %u squarings, Gerbicz check every %u squarings (L=%u), about %.2f%% overhead\n", kEnd, fullL * fullL, fullL, 200.0 / fullL);
+  } else {
+    log("CERT %u squarings, no Gerbicz check (-use CERT_GEC=0)\n", kEnd);
+  }
+
+  // Sized as bufData (makeBufVector's buffers are larger when the words are 32-bit), so that they can be copied to and from it
+  u32 const wordBufSize = N * fft.WordSize / sizeof(Word);
+  Buffer<Word> u0{profile.make("certU0"), &queue, wordBufSize};
+  Buffer<Word> sum1{profile.make("certSum1"), &queue, wordBufSize};
+
   Saver<CERTState> saver{E, 1000, args.nSavefiles};
-  CERTState state = saver.load();
-  if (!state.data.empty() && state.squarings != task.squarings) {
-    log("CERT checkpoint is for %" PRIu64 " squarings, assignment says %u; starting over\n", state.squarings, task.squarings);
-    state = CERTState{.exponent=E, .k=0, .squarings=0, .data={}, .elapsed=0};
-  }
-
-  if (!state.data.empty()) {
-    writeIn(bufData, state.data);
-    log("CERT loaded @ %" PRIu64 "\n", state.k);
-  } else { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
-    File fi = File::openReadThrow(fname);
-    u32 const nBytes = u32((E - 1) / 8 + 1);
-    Words const B = fi.readBytesLE(nBytes);
-    writeIn(bufData, B);
-  }
-
-  double const elapsedBefore = state.elapsed;
+  u32 nErrors = 0;
+  int nSeqErrors = 0;
+  u64 lastFailedRes64 = 0;
   Timer elapsedTimer;
 
+ reload:
   elapsedTimer.reset();
-
-  u32 const startK = u32(state.k);
-
-  IterationTimer iterationTimer{startK};
-
-  u32 k = startK;
-  u32 const kEnd = task.squarings;
-  enum LEAD_TYPE leadIn = LEAD_NONE;
-
-  while (true) {
-    ++k;
-    bool doStop = (k >= kEnd);
-
-    if (Signal::stopRequested()) {
-      doStop = true;
-      log("Stopping, please wait..\n");
+  u32 k = 0;
+  double elapsedBefore = 0;
+  // Resume from a checkpoint if there is one for this assignment; otherwise start from the .cert file.
+  for (int nTries = 0; ; ++nTries) {
+    CERTState state = saver.load();
+    if (!state.data.empty() && (state.squarings != kEnd || state.k >= kEnd)) {
+      log("CERT checkpoint is for %" PRIu64 " / %" PRIu64 " squarings, assignment says %u; starting over\n", state.k, state.squarings, kEnd);
+      state.data.clear();
     }
 
-    bool const doLog = (k % args.logStep == 0) || doStop;   // same cadence as LL; every log point is also a checkpoint
-    enum LEAD_TYPE const leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+    if (state.data.empty()) { // Enclosing this code in braces ensures the file will be closed by the File destructor.  The later file deletion requires the file be closed in Windows.
+      File fi = File::openReadThrow(fname);
+      u32 const nBytes = u32((E - 1) / 8 + 1);
+      Words const B = fi.readBytesLE(nBytes);
+      writeIn(bufData, B);
+      k = 0;
+      break;
+    }
 
-    squareCERT(bufData, leadIn, leadOut);
-    leadIn = leadOut;
+    writeIn(bufData, state.data);
+    u64 const res = dataResidue();
+    if (res == residue(state.data)) {
+      k = u32(state.k);
+      nErrors = std::max(nErrors, state.nErrors);
+      elapsedBefore = state.elapsed;
+      log("OK %9u CERT loaded: %016" PRIx64 "\n", k, res);
+      break;
+    }
+    log("EE %9" PRIu64 " CERT on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", state.k, res, residue(state.data));
+    if (nTries) { throw "CERT savefile error on load"; }
+    saver.dropMostRecent();
+  }
 
-    if (!doLog) continue;
+  u32 const startK = k;
+  IterationTimer iterationTimer{startK};
+  wantROE = 0; // skip the initial iterations
+  bool stopping = false;
 
-    Words data = readData();
-    assert(data.size() >= 2);
-    u64 const res64 = (u64(data[1]) << 32) | data[0];
+  while (true) {
+    // Plan the block:  m sub-blocks of L squarings; a remainder shorter than L is a block of its own (L = the remainder, m = 1).
+    // Without the check a block runs to the next log point, which is also a checkpoint.
+    u32 const left = kEnd - k;
+    u32 L = curL;
+    u32 m = 1;
+    if (!useCheck) {
+      L = std::min(left, args.logStep - k % args.logStep);
+    } else if (left >= u64(L) * L) {
+      m = L;
+    } else if (left >= L) {
+      m = left / L;
+    } else {
+      L = left;
+    }
+
+    if (useCheck) {
+      u0 << bufData;
+      bufCheck << bufData;
+    }
+    enum LEAD_TYPE leadIn = LEAD_NONE;
+
+    for (u32 j = 0; j < m; ++j) {
+      if (j) {
+        modMul(bufCheck, bufData, leadIn);
+        leadIn = LEAD_MIDDLE;
+      }
+
+      for (u32 i = 0; i < L; ++i) {
+        if (!wantROE && k - startK > 30) { wantROE = args.logROE ? ROE_SIZE : 2'000; }
+        ++k;
+
+        // With the check, a stop ends the block at the end of a sub-block; without, right away
+        if ((i == L - 1 || !useCheck) && !stopping && Signal::stopRequested()) {
+          stopping = true;
+          L = i + 1;
+          m = j + 1;
+          log("Stopping, please wait..\n");
+        }
+        bool const blockEnd = i == L - 1 && j == m - 1;
+        bool const doLog = k % args.logStep == 0;
+#ifdef PRPLL_CERT_FAULTS
+        CertFault* const fault = certFaultAt(k, false);
+#else
+        constexpr bool fault = false;
+#endif
+        enum LEAD_TYPE const leadOut = blockEnd || doLog || fault || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+        squareCERT(bufData, leadIn, leadOut);
+        leadIn = leadOut;
+
+#ifdef PRPLL_CERT_FAULTS
+        if (fault) {
+          fault->fired = true;
+          Buffer<Word>& target = fault->kind == "check" ? bufCheck : bufData;
+          Words const x = readAndCompress(target);
+          writeIn(target, certFlipped(x));
+          log("TEST FAULT %s at %u: %016" PRIx64 " -> %016" PRIx64 "\n", fault->kind.c_str(), k, residue(x), bufResidue(target));
+        }
+#endif
+
+        if (doLog && !blockEnd) {
+          float const secsPerIt = iterationTimer.reset(k);
+          queue.setSquareTime((int) (secsPerIt * 1'000'000));
+          log("%s\n", makeLogStr("", k, dataResidue(), secsPerIt, kEnd).c_str());
+        }
+      }
+    }
 
     float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
-    log("%7u / %7u %016" PRIx64 " %s ETA %s\n", k, kEnd, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
+    bool const ok = !useCheck || certVerify(u0, sum1, L, k);
+    u64 const res = dataResidue();
 
-    if (k >= kEnd) {
-      fs::remove (fname);
-      Saver<CERTState>::clear(E);
-      return std::move(SHA3{}.update(data.data(), u32((E-1)/8+1))).finish();
+    if (ok) {
+      nSeqErrors = 0;
+      Words data = readData();
+      assert(data.size() >= 2);
+      if (useCheck) {
+        doBigLog(k, res, true, secsPerIt, kEnd, nErrors);
+      } else {
+        log("%s\n", makeLogStr("", k, res, secsPerIt, kEnd).c_str());
+      }
+
+      if (k >= kEnd) {
+        fs::remove (fname);
+        Saver<CERTState>::clear(E);
+        return {std::move(SHA3{}.update(data.data(), u32((E-1)/8+1))).finish(), nErrors, useCheck};
+      }
+
+      saver.save({.exponent=E, .k=k, .squarings=kEnd, .data=std::move(data), .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
+      iterationTimer.reset(k);
+
+      if (stopping) {
+        queue.finish();
+        throw "stop requested";
+      }
+      curL = std::min(fullL, u32(std::ceil(curL * 1.0234)));    // 30 good blocks double L again
+    } else {
+      ++nErrors;
+      doBigLog(k, res, false, secsPerIt, kEnd, nErrors);
+      log("CERT Gerbicz check failed at %u (block of %u x %u from %u), going back to the last verified savefile\n", k, m, L, k - m * L);
+      if (++nSeqErrors > 2) {
+        log("%d sequential errors, will stop.\n", nSeqErrors);
+        throw "too many errors";
+      }
+      if (res == lastFailedRes64) {
+        log("Consistent error %016" PRIx64 ", will stop.\n", res);
+        throw "consistent error";
+      }
+      lastFailedRes64 = res;
+      curL = std::max(2u, curL / 2);
+      if (stopping) { throw "stop requested"; }
+      goto reload;
     }
-
-    saver.save({.exponent=E, .k=k, .squarings=kEnd, .data=std::move(data), .elapsed=elapsedBefore + elapsedTimer.at()});
-
-    if (doStop) { throw "stop requested"; }
   }
 }
 

@@ -520,8 +520,9 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
   } else if (kind == PM1) {
     executePM1(shared, instance, fft, std::move(gpu));
   } else if (kind == CERT) {
-    auto sha256 = gpu->isCERT(*this);
-    writeResultCERT(fft, *shared.args, instance, sha256, squarings);
+    CERTResult const r = gpu->isCERT(*this);
+    writeResultCERT(fft, *shared.args, instance, r.hash, squarings);
+    if (r.checked && r.nErrors) { log("CERT had %u Gerbicz check failures, all redone\n", r.nErrors); }
     Worktodo::deleteTask(*this, instance);
   } else {
     throw "Unexpected task kind " + to_string(kind);

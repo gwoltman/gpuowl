@@ -393,6 +393,8 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                      TABMUL_CHAIN61=2 reads the trig values plus, for each, the terms its complex multiply would otherwise compute (default on AMD).
   -use PM1_JACOBI=1: P-1 stage 1: also check a loaded savefile and the final residue with a Jacobi symbol on the GPU (about
                      as long as the GCD: two minutes at 100M bits).  The Gerbicz check already covers the arithmetic.
+  -use CERT_GEC=0  : CERT: turn off the Gerbicz check of the squarings (on by default; the log gives its overhead, under 1%%
+                     from 400K squarings).
   -use 256RADIX8_W, 256RADIX8_H : at a WIDTH (or HEIGHT) of 256 use the radix-8 code (32 threads per line, no
                      variant 0) instead of radix 4.  Faster on Radeon VII, and for FP64 on TitanV; slower for NTTs on TitanV.
 
