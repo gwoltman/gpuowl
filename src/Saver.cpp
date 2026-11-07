@@ -35,6 +35,8 @@ static constexpr const char *P2_v1 = "OWL P2 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 "
 static constexpr const char *P2_v2 = "OWL P2 2 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u plan=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
 static constexpr const char *P1PRP_v1 = "OWL P1PRP 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " prp64=%016" SCNx64 " next=%" PRIu64 " stage=%u err=%u\n";
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
+// v2 adds the count of failed Gerbicz checks;  only a residue that passed its check is saved
+static constexpr const char *CERT_v2 = "OWL CERT 2 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " err=%u time=%lf\n";
 
 struct BadHeaderError : std::runtime_error {
   string name;
@@ -159,12 +161,16 @@ void writeState(const File& fo, const PRPState& state) {
 
 CERTState readState([[maybe_unused]] const CERTState& dummy, File fi) {
   u64 exponent{}, k{}, squarings{};
+  u32 nErrors{};
   double elapsed{};
 
   string const header = fi.readLine();
 
+  if (sscanf(header.c_str(), CERT_v2, &exponent, &k, &squarings, &nErrors, &elapsed) == 5) {
+    return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed};
+  }
   if (sscanf(header.c_str(), CERT_v1, &exponent, &k, &squarings, &elapsed) == 4) {
-    return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .elapsed=elapsed};
+    return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=0, .elapsed=elapsed};
   }
 
   log("Loading CERT from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
@@ -173,7 +179,7 @@ CERTState readState([[maybe_unused]] const CERTState& dummy, File fi) {
 
 void writeState(const File& fo, const CERTState& state) {
   assert(state.data.size() == nWords(state.exponent));
-  if (fo.printf(CERT_v1, state.exponent, state.k, state.squarings, state.elapsed) <= 0) {
+  if (fo.printf(CERT_v2, state.exponent, state.k, state.squarings, state.nErrors, state.elapsed) <= 0) {
     throw WriteError{fo.name};
   }
   fo.writeChecked(state.data);
@@ -288,7 +294,7 @@ template<> P2State Saver<P2State>::initState() {
 }
 
 template<> CERTState Saver<CERTState>::initState() {
-  return {.exponent=exponent, .k=0, .squarings=0, .data={}, .elapsed=0};   // no checkpoint: caller starts from the .cert file
+  return {.exponent=exponent, .k=0, .squarings=0, .data={}, .nErrors=0, .elapsed=0};   // no checkpoint: caller starts from the .cert file
 }
 
 template<> P1State Saver<P1State>::initState() {

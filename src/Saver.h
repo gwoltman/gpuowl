@@ -32,7 +32,8 @@ struct LLState {
 };
 
 // A CERT (certification) in progress: the current residue after k of `squarings` squarings.  An empty `data`
-// means "no checkpoint": start from the M<E>.cert file.
+// means "no checkpoint": start from the M<E>.cert file.  Savefiles of version 2 hold only residues that passed the Gerbicz check
+// (unless it was turned off with -use CERT_GEC=0); nErrors counts the failed checks.
 struct CERTState {
   static const constexpr char* KIND = "cert";
 
@@ -40,6 +41,7 @@ struct CERTState {
   u64 k;
   u64 squarings;
   vector<u32> data;
+  u32 nErrors{};
   double elapsed{};
 };
 
