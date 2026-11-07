@@ -551,8 +551,8 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                                         combined throughput.  FFT timings for tune.txt still use one worker.
                          guard=<pct>  - Timings drift by 20-50%% over minutes (clocks, power limit, other programs), more than most options differ.
                                         Each timing is bracketed by a reference timing and redone if the reference moved by more than <pct>
-                                        percent (default 3), scaled by the reference's drift, and the settings found are only kept if they
-                                        beat the settings -tune started with in a final A B B A comparison.  guard=0 turns this off.
+                                        percent (default 3), scaled by the reference's drift, and the settings found are dropped if they
+                                        are slower than the settings -tune started with in a final A B B A comparison.  guard=0 turns this off.
                          level=<lvl>  - What -setup runs.  minimal: times the config.txt settings that matter most and writes the
                                         expected best values of the others (in their own group, marked as not timed), times one FFT
                                         family without FP32+M61 (type 2) or the mirrored shapes, and does not tune the register usage.
