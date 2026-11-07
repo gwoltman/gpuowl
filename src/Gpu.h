@@ -41,7 +41,7 @@ struct PRPResult {
   u32 nErrors = 0;
   fs::path proofPath;
   std::string res2048;
-  u64 shiftCount = 0;     // -shift: the shift at iteration 0 of the run that reached the result (0: no shift)
+  u64 shiftCount = 0;     // -shift: the shift of the final residue (at iteration E, as Prime95 reports it; 0: no shift)
   bool pm1Factor{};     // the P-1 inside the PRP test found a factor (its result line is written):  the PRP test stopped
 };
 
@@ -273,9 +273,15 @@ private:
   // dataShift(k) = shift0 * 2^k mod E: a squaring doubles the shift, the PRP multiply by 3 keeps it.  shift0 == 0 is "no shift".
   // Everything that leaves the GPU (logged residues, savefiles, proof residues, the result) is unshifted on the host, at the
   // isPrimePRP / isCERT call sites; readData() and dataResidue() return the raw GPU value (proofs and -tune rely on that).
-  // A PRP load starts a new shift segment at shiftK0, see loadPRP().
+  // A savefile holds the shift its iteration had, and a load continues with it (see loadShift()); a PRP load starts a new shift
+  // segment at shiftK0, see loadPRP().
   u64 shift0{};
   u64 shiftK0{};
+  // The shift at iteration 0 from -shift, chosen once per test (a "random" one is drawn once): for a load without a stored shift
+  // (the start of the test, or a savefile of an older version)
+  u64 flagShift0{};
+  u64 endShift{};     // the shift of the last isPrimePRP / isCERT result
+  bool shiftLoaded{};  // shift0 was set by an earlier load of this test (see loadShift)
   // E divides 2^blockSize - 1: then a shifted check can't shift the data (see checkShift), so the check is left unshifted and
   // writeState() and doCheck() multiply by 3 * 2^b instead of 3, with bufShiftMul == 2^b, b = dataShift(shiftK0).
   bool shiftMul{};
@@ -353,7 +359,8 @@ private:
   void writeState(u64 k, const vector<u32>& check, u32 blockSize, bool shifted = false);
 
   u64 initialShift();
-  u64 nextShift(u64 shift);
+  u64 randomShift();
+  void loadShift(u64 k, std::optional<u64> stored, const char* what);
   [[nodiscard]] u64 dataShift(u64 k) const;
   [[nodiscard]] u64 checkShift(u64 k, u32 blockSize) const;
   void startShiftSegment(u64 k, u32 blockSize);
@@ -410,7 +417,7 @@ public:
   CERTResult isCERT(const Task& task);
   // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
   PM1Result pm1Stage1(const Task& task, Gcd& gcd);
-  [[nodiscard]] u64 shiftCount() const { return shift0; }   // -shift of the last isPrimePRP / isCERT, see PRPResult::shiftCount
+  [[nodiscard]] u64 shiftCount() const { return endShift; }   // -shift of the last isPrimePRP / isCERT result, see PRPResult::shiftCount
 
   double timePRP(int quick = 7);
 

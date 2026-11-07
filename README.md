@@ -87,14 +87,16 @@ With `-shift <N>` (or `-shift random`) a PRP test or a CERT computes on x * 2^s 
 do with their "shift count". Multiplying by 2^s is a rotation of the p-bit residue, so it costs nothing in the FFT: a squaring
 doubles the shift (s becomes 2s mod p) and the PRP multiply by 3 keeps it, so PRPLL only tracks s on the host. Two runs of the
 same test with different shifts then put different data through the GPU, while every residue that leaves the GPU is rotated
-back: the logged res64, savefiles, proof residues, the final res64 and res2048 are exactly those of an unshifted run (so
-savefiles stay compatible with PRPLL builds without `-shift`, and the proof is the same). The results line gets
-"shift-count", the shift at iteration 0.
+back: the logged res64, the residues in the savefiles, proof residues, the final res64 and res2048 are exactly those of an
+unshifted run (and the proof is the same). The results line always has "shift-count": the shift of the final residue, as
+Prime95 reports it (0 without a shift).
 
-`<N>` is the shift at iteration 0; a run resumed from a savefile continues with the shift it would have had there. `random`
-draws a new shift whenever the test starts or reloads. A shifted PRP rebuilds its data from the error check on every start
-(blockSize squarings, as a resume does), and retries a failed Gerbicz check with a new shift (doubled, or redrawn), so the
-retry does not repeat the same computation. The error check holds with the shift: the check is shifted by a = s / (2^blockSize - 1)
+`<N>` is the shift at iteration 0; `random` draws one when the test starts. As in Prime95 and Mlucas, the whole test then
+keeps that one shift: the savefiles (PRP savefile version 14, CERT version 3) store the shift of their iteration, and a
+restart, or the rollback after a failed Gerbicz check, goes on with the shift of the savefile it loads; `-shift` is not
+applied to it. Only a savefile of an older version, which has no shift, takes the `-shift` of the command line. Older PRPLL
+builds can't read the new savefiles. A shifted PRP rebuilds its data from the error check on every start
+(blockSize squarings, as a resume does). The error check holds with the shift: the check is shifted by a = s / (2^blockSize - 1)
 mod p, and for the rare exponents where p divides 2^blockSize - 1 PRPLL keeps the check unshifted and multiplies by 3 * 2^s
 instead of 3. LL tests ignore `-shift`, and a shifted PRP test gets no P-1 inside it (that needs the unshifted residues).
 The default is 0, no shift, which runs exactly as before.

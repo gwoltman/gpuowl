@@ -105,7 +105,8 @@ public:
   u32 iters = 0;
   u32 nSavefiles = 4;
 
-  // -shift: PRP and CERT residue shift.  shift is the shift at iteration 0 (0 is off); shiftRandom draws a fresh one on every load.
+  // -shift: PRP and CERT residue shift.  shift is the shift at iteration 0 (0 is off); shiftRandom draws one when the test starts.  A
+  // savefile's own shift takes precedence (see Gpu::loadShift).
   u64 shift = 0;
   bool shiftRandom = false;
 

@@ -20,6 +20,9 @@ struct PRPState {
   vector<u32> check;
   u32 nErrors;
   double elapsed{};
+  // The -shift of the GPU data at iteration k (version 14 on; 0 is no shift).  The check in the file is unshifted all the same; none
+  // in an older savefile.
+  std::optional<u64> shift{};
 };
 
 struct LLState {
@@ -43,8 +46,8 @@ struct LLVerifiedState {
 };
 
 // A CERT (certification) in progress: the current residue after k of `squarings` squarings.  An empty `data`
-// means "no checkpoint": start from the M<E>.cert file.  Savefiles of version 2 hold only residues that passed the Gerbicz check
-// (unless it was turned off with -use CERT_GEC=0); nErrors counts the failed checks.
+// means "no checkpoint": start from the M<E>.cert file.  Savefiles of version 2 (with err=) and 3 hold only residues that passed the
+// Gerbicz check (unless it was turned off with -use CERT_GEC=0); nErrors counts the failed checks.
 struct CERTState {
   static const constexpr char* KIND = "cert";
 
@@ -54,6 +57,7 @@ struct CERTState {
   vector<u32> data;
   u32 nErrors{};
   double elapsed{};
+  std::optional<u64> shift{};     // as in PRPState (version 3, and the PR #212 form of 2); data is unshifted
 };
 
 // P-1 stage 1 after k of the nBits iterations of x <- x^2 * 3^bit (the bits of the exponent of B1, from the top), with x in data.

@@ -2454,23 +2454,43 @@ static u64 testEnv(const char* name) {
 }
 #endif
 
-// A shift for a new start or reload: -shift <N> gives N at iteration 0; "random" a fresh draw in [1, E-1].
+// The shift at iteration 0 from the command line, taken once per test (flagShift0): -shift <N> gives N; "random" a draw in [1, E-1].
 u64 Gpu::initialShift() {
-  if (args.shiftRandom) { return nextShift(0); }
+  if (args.shiftRandom) { return randomShift(); }
   u64 const s = args.shift % E;
   if (args.shift && !s) { log("-shift %" PRIu64 " is a multiple of the exponent: no shift\n", args.shift); }
   return s;
 }
 
-// The shift to retry with after an error: so that the retry computes on other data, a new random one or the doubled one (as
-// Mlucas does).  nextShift(0) is a fresh random shift.
-u64 Gpu::nextShift(u64 shift) {
-  if (shift && !args.shiftRandom) { return mulModE(shift, 2, E); }
+u64 Gpu::randomShift() {
   std::mt19937_64 rng{u64(std::random_device{}()) ^ u64(std::chrono::steady_clock::now().time_since_epoch().count())};
-  std::uniform_int_distribution<u64> dist(1, E - 1);
-  u64 s;
-  do { s = dist(rng); } while (s == shift);
-  return s;
+  return std::uniform_int_distribution<u64>(1, E - 1)(rng);
+}
+
+// Sets shift0 for a load at iteration k, as Prime95 does:  a savefile's stored shift is the shift of the GPU data at k, and the test goes
+// on with it (also after a failed check: the whole test keeps one shift); the command line -shift applies only without one (the start
+// of the test, from flagShift0, or a savefile of an older version, without a stored shift).  The data in the savefile is unshifted
+// either way, so any shift would be correct:  the stored one keeps the test on a single shift sequence.
+void Gpu::loadShift(u64 k, std::optional<u64> stored, const char* what) {
+  // A reload within this test (after an error) that finds the shift it already uses is no news, whatever -shift says
+  bool const sameAsBefore = shiftLoaded && stored && dataShift(k) == *stored % E;
+  shiftLoaded = true;
+  bool const flag = args.shift || args.shiftRandom;
+  if (stored) {
+    // shift0 * 2^k == stored:  2 is invertible mod the prime E
+    shift0 = *stored % E ? mulModE(*stored, invModE(powModE(2, k, E), E), E) : 0;
+    if (flag && !sameAsBefore && (args.shiftRandom || mulModE(flagShift0, powModE(2, k, E), E) != *stored % E)) {
+      log("%s: going on with the savefile's shift %" PRIu64 " at iteration %" PRIu64 ", not the one of -shift\n", what, *stored % E, k);
+    } else if (shift0) {
+      log("%s: shift %" PRIu64 " at iteration %" PRIu64 " (from the savefile)\n", what, dataShift(k), k);
+    }
+    return;
+  }
+  shift0 = flagShift0;
+  if (shift0) {
+    log("%s: shift %" PRIu64 " at iteration %" PRIu64 " (-shift%s)\n", what, dataShift(k), k,
+        k ? ", the savefile has no shift" : "");
+  }
 }
 
 u64 Gpu::dataShift(u64 k) const { return mulModE(shift0, powModE(2, k, E), E); }
@@ -3146,6 +3166,7 @@ PRPState Gpu::loadPRP(Saver<PRPState>& saver) {
     }
 
     // Savefiles are unshifted: a shifted segment starts here, with the check rotated to its shift
+    loadShift(state.k, state.shift, "PRP");
     if (shift0) {
       startShiftSegment(state.k, state.blockSize);
       writeState(state.k, rotateLeft(state.check, checkShift(state.k, state.blockSize), E), state.blockSize, true);
@@ -3173,6 +3194,7 @@ std::optional<PRPState> Gpu::loadPRPAt(u64 k) {
   // The start of the test has no savefile
   if (!state && !k) { state = PRPState{.exponent=E, .k=0, .blockSize=args.blockSize, .res64=3, .check=makeWords(E, 1), .nErrors=0}; }
   if (!state || !isValidBlockSize(state->blockSize)) { return {}; }
+  assert(!shift0);    // the P-1 inside the PRP (the only user) is not run with -shift (Task.cpp, prpPm1Bounds)
   writeState(state->k, state->check, state->blockSize);
   u64 const res = dataResidue();
   if (res != state->res64) {
@@ -3455,8 +3477,10 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   // A log's check buffer (for its unverified save) and a proof residue are read asynchronously (startStageRead), and saved
   // once the read is done.  Only one read is pending at a time, and it is collected before any later save is queued, so the
   // background thread still runs the saves in order:  no checkpoint is written past a proof residue.
-  // shift (-shift) is the rotation that unshifts the buffer read, taken when the read starts:  a reload sets the shift again.
-  struct PendingRead { bool proof{}; u64 k{}; u32 power{}; u32 blockSize{}; u64 res{}; u32 nErrors{}; double elapsed{}; u64 shift{}; };
+  // -shift:  shift is the rotation that unshifts the buffer read, kShift the data shift at k (kept in the savefile); both are taken
+  // when the read starts, as a reload sets the shift again.
+  struct PendingRead { bool proof{}; u64 k{}; u32 power{}; u32 blockSize{}; u64 res{}; u32 nErrors{}; double elapsed{}; u64 shift{};
+                       u64 kShift{}; };
   std::optional<PendingRead> pendingRead;
 
   // Collect the pending read and queue its save.  False when the buffer read as zero.
@@ -3487,14 +3511,16 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
         if (proofSaveFailed) { return; }
         getSaver()->saveUnverified({.exponent=E, .k=p.k, .blockSize=p.blockSize, .res64=p.res,
                                     .check=p.shift ? rotateRight(compactBits(raw, E), p.shift, E) : compactBits(raw, E),
-                                    .nErrors=p.nErrors, .elapsed=p.elapsed});
+                                    .nErrors=p.nErrors, .elapsed=p.elapsed, .shift=p.kShift});
       });
     }
     return true;
   };
 
-  shift0 = initialShift();
-  bool isRetry = false;     // every reload is after an error
+  // Once per test:  a reload (after an error) goes on with the shift of the savefile it loads, or this one at the start of the test
+  flagShift0 = initialShift();
+  endShift = 0;
+  shiftLoaded = false;
 
  reload:
   // Drop a save still being read:  the state is reloaded from the savefiles, all from before it
@@ -3502,8 +3528,6 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     waitStageRead();
     pendingRead.reset();
   }
-  if (isRetry && shift0) { shift0 = nextShift(shift0); }
-  isRetry = true;
   elapsedTimer.reset();
   u32 blockSize{};
   u64 k{};
@@ -3518,9 +3542,6 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   }
 
   if (pm1 && pm1->foundFactor()) { return pm1FactorResult(); }
-  if (shift0) {
-    log("Shift %" PRIu64 " at iteration %" PRIu64 " (shift-count %" PRIu64 ")\n", dataShift(k), k, shift0);
-  }
 
   assert(blockSize > 0 && logStep % blockSize == 0);
 
@@ -3694,6 +3715,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
 
     // Taken here, not when the saves run:  a reload sets the shift again before they do
     u64 const checkSh = shift0 ? checkShift(k, blockSize) : 0;
+    u64 const kShift = dataShift(k);
 
     // Once a proof residue could not be written, no checkpoint may be written past it (the background thread runs
     // the queued saves in order, so this is checked when each save runs) and the test stops.
@@ -3703,7 +3725,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
       // The unverified save needs the check buffer, read while the squarings go on;  saved once the read is done
       startStageRead(bufCheck);
       pendingRead = PendingRead{.proof=false, .k=k, .blockSize=blockSize, .res=res, .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at(),
-                                .shift=checkSh};
+                                .shift=checkSh, .kShift=kShift};
 
       log("   %9" PRIu64 " %016" PRIx64 " %s\n", k, res, formatSecsPerIter(secsPerIt).c_str());
       RoeInfo const carryStats = readCarryStats();
@@ -3747,7 +3769,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
             if (proofSaveFailed) { return; }
             getSaver()->save({.exponent=E, .k=k, .blockSize=blockSize, .res64=res,
                             .check=checkSh ? rotateRight(compactBits(rawCheck, E), checkSh, E) : compactBits(rawCheck, E), .nErrors=nErrors,
-                            .elapsed=elapsedBefore + elapsedTimer.at()});
+                            .elapsed=elapsedBefore + elapsedTimer.at(), .shift=kShift});
           });
         }
 
@@ -3770,8 +3792,10 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
               log("Proof generation failed; reporting the result without a proof\n");
             }
           }
+          // The shift-count is the shift of the final residue, as Prime95 reports it
+          endShift = dataShift(kEnd);
           return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048),
-                  .shiftCount=shift0};
+                  .shiftCount=endShift};
         }
       } else {
         ++nErrors;
@@ -4268,9 +4292,12 @@ CERTResult Gpu::isCERT(const Task& task) {
   int nSeqErrors = 0;
   u64 lastFailedRes64 = 0;
 
-  // A shifted CERT computes on B * 2^dataShift(k); the checkpoints hold the unshifted value.  The Gerbicz check holds as it is on the
-  // shifted data:  a shift is a factor 2^s, and the check compares products of the same powers on both sides.
-  shift0 = initialShift();
+  // A shifted CERT computes on B * 2^dataShift(k); the checkpoints hold the unshifted value and the shift of their squaring, which a
+  // resume, and the rollback after a failed check, go on with (loadShift).  The Gerbicz check holds as it is on the shifted data:  a
+  // shift is a factor 2^s, and both checksums are products of the same powers of it.
+  flagShift0 = initialShift();
+  endShift = 0;
+  shiftLoaded = false;
   // The unshifted res64 of bufData after squaring k
   auto certResidue = [&](u64 k) { return shift0 ? unshiftedDataResidue(k) : dataResidue(); };
   Timer elapsedTimer;
@@ -4291,11 +4318,13 @@ CERTResult Gpu::isCERT(const Task& task) {
       File fi = File::openReadThrow(fname);
       u32 const nBytes = u32((E - 1) / 8 + 1);
       Words const B = fi.readBytesLE(nBytes);
+      loadShift(0, std::nullopt, "CERT");
       writeIn(bufData, shift0 ? rotateLeft(B, dataShift(0), E) : B);
       k = 0;
       break;
     }
 
+    loadShift(state.k, state.shift, "CERT");
     writeIn(bufData, shift0 ? rotateLeft(state.data, dataShift(state.k), E) : state.data);
     u64 const res = certResidue(state.k);
     if (res == residue(state.data)) {
@@ -4309,8 +4338,6 @@ CERTResult Gpu::isCERT(const Task& task) {
     if (nTries) { throw "CERT savefile error on load"; }
     saver.dropMostRecent();
   }
-
-  if (shift0) { log("CERT shift %" PRIu64 " at iteration %u (shift-count %" PRIu64 ")\n", dataShift(k), k, shift0); }
 
   u32 const startK = k;
   IterationTimer iterationTimer{startK};
@@ -4404,10 +4431,12 @@ CERTResult Gpu::isCERT(const Task& task) {
       if (k >= kEnd) {
         fs::remove (fname);
         Saver<CERTState>::clear(E);
+        endShift = dataShift(kEnd);     // the shift of the final residue
         return {std::move(SHA3{}.update(data.data(), u32((E-1)/8+1))).finish(), nErrors, useCheck};
       }
 
-      saver.save({.exponent=E, .k=k, .squarings=kEnd, .data=std::move(data), .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()});
+      saver.save({.exponent=E, .k=k, .squarings=kEnd, .data=std::move(data), .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at(),
+                  .shift=dataShift(k)});
       iterationTimer.reset(k);
 
       if (stopping) {

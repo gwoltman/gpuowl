@@ -23,6 +23,9 @@ static constexpr const char *PRP_v12 = "OWL PRP 12 %" PRIu64 " %" PRIu64 " %u %0
 static constexpr const char *PRP_v13 = "OWL PRP 13 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " block=%u res64=%016" SCNx64 " err=%u time=%lf\n";
 // static constexpr const char *PRP_v13_PRI = "OWL PRP 13 N=1*2^%u-1 k=%u block=%u res64=%016" PRIx64 " err=%u time=%.0lf\n";
 
+// Version 13 plus the -shift of the GPU data at iteration k (the residue in the file stays unshifted)
+static constexpr const char *PRP_v14 = "OWL PRP 14 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " block=%u res64=%016" SCNx64 " err=%u time=%lf shift=%" PRIu64 "\n";
+
 // E, k, CRC
 static constexpr const char *LL_v1 = "OWL LL 1 E=%" PRIu64 " k=%" PRIu64 " CRC=%u\n";
 
@@ -36,8 +39,15 @@ static constexpr const char *P2_v1 = "OWL P2 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 "
 static constexpr const char *P2_v2 = "OWL P2 2 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u plan=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
 static constexpr const char *P1PRP_v1 = "OWL P1PRP 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " prp64=%016" SCNx64 " next=%" PRIu64 " stage=%u err=%u\n";
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
-// v2 adds the count of failed Gerbicz checks;  only a residue that passed its check is saved
+// CERT savefile versions; a header is "OWL CERT <version>" and then the fields in this order:
+//   1:  N k squarings time
+//   2:  N k squarings err time        err:  the count of failed Gerbicz checks;  only a residue that passed its check is saved
+//   2:  N k squarings time shift      (the never-released PR #212 form of version 2;  read only)
+//   3:  N k squarings err time shift  both:  err as in 2, shift = the -shift of the GPU data at squaring k (0: none), as in PRP 14
+// The residue in the file is unshifted in all of them.
 static constexpr const char *CERT_v2 = "OWL CERT 2 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " err=%u time=%lf\n";
+static constexpr const char *CERT_v2_shift = "OWL CERT 2 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf shift=%" PRIu64 "\n";
+static constexpr const char *CERT_v3 = "OWL CERT 3 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " err=%u time=%lf shift=%" PRIu64 "\n";
 
 struct BadHeaderError : std::runtime_error {
   string name;
@@ -116,6 +126,12 @@ PRPState readState(const PRPState& expected, File fi) {
 
   string const header = fi.readLine();
 
+  if (u64 shift{}; sscanf(header.c_str(), PRP_v14, &exponent, &k, &blockSize, &res64, &nErrors, &elapsed, &shift) == 7) {
+    checkExponent(exponent, expected.exponent, header);
+    return {.exponent=exponent, .k=k, .blockSize=blockSize, .res64=res64, .check=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors,
+            .elapsed=elapsed, .shift=shift};
+  }
+
   if (sscanf(header.c_str(), PRP_v13, &exponent, &k, &blockSize, &res64, &nErrors, &elapsed) == 6) {
     checkExponent(exponent, expected.exponent, header);
     return {.exponent=exponent, .k=k, .blockSize=blockSize, .res64=res64, .check=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed};
@@ -154,7 +170,7 @@ LLState readState(const LLState& expected, File fi) {
 
 void writeState(const File& fo, const PRPState& state) {
   assert(state.check.size() == nWords(state.exponent));
-  if (fo.printf(PRP_v13, state.exponent, state.k, state.blockSize, state.res64, state.nErrors, state.elapsed) <= 0) {
+  if (fo.printf(PRP_v14, state.exponent, state.k, state.blockSize, state.res64, state.nErrors, state.elapsed, state.shift.value_or(0)) <= 0) {
     throw WriteError{fo.name};
   }
   fo.writeChecked(state.check);
@@ -167,8 +183,15 @@ CERTState readState([[maybe_unused]] const CERTState& dummy, File fi) {
 
   string const header = fi.readLine();
 
+  if (u64 shift{}; sscanf(header.c_str(), CERT_v3, &exponent, &k, &squarings, &nErrors, &elapsed, &shift) == 6) {
+    return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed,
+            .shift=shift};
+  }
   if (sscanf(header.c_str(), CERT_v2, &exponent, &k, &squarings, &nErrors, &elapsed) == 5) {
     return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=nErrors, .elapsed=elapsed};
+  }
+  if (u64 shift{}; sscanf(header.c_str(), CERT_v2_shift, &exponent, &k, &squarings, &elapsed, &shift) == 5) {
+    return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=0, .elapsed=elapsed, .shift=shift};
   }
   if (sscanf(header.c_str(), CERT_v1, &exponent, &k, &squarings, &elapsed) == 4) {
     return {.exponent=exponent, .k=k, .squarings=squarings, .data=fi.readChecked<u32>(nWords(exponent)), .nErrors=0, .elapsed=elapsed};
@@ -180,7 +203,7 @@ CERTState readState([[maybe_unused]] const CERTState& dummy, File fi) {
 
 void writeState(const File& fo, const CERTState& state) {
   assert(state.data.size() == nWords(state.exponent));
-  if (fo.printf(CERT_v2, state.exponent, state.k, state.squarings, state.nErrors, state.elapsed) <= 0) {
+  if (fo.printf(CERT_v3, state.exponent, state.k, state.squarings, state.nErrors, state.elapsed, state.shift.value_or(0)) <= 0) {
     throw WriteError{fo.name};
   }
   fo.writeChecked(state.data);

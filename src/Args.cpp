@@ -340,9 +340,11 @@ named "config.txt" in the prpll run directory.
                      multiplications.
 -shift <N>|random  : PRP and CERT: compute on the residue times 2^<N> (mod 2^E-1), a "shift count" as in Prime95 and
                      Mlucas, so that two runs of the same test put different data through the GPU. Logged residues,
-                     savefiles, proofs and results are unshifted and identical to a run without -shift; the results
-                     line gets "shift-count". <N> is the shift at iteration 0; "random" draws a new shift on every
-                     start and every reload. With a shift, the retry after a failed Gerbicz check uses a new shift.
+                     savefile residues, proofs and res64 are unshifted and identical to a run without -shift. <N> is
+                     the shift at iteration 0; "random" draws one when the test starts. The savefiles keep the shift
+                     of their iteration and the test goes on with it after a restart or a failed Gerbicz check (one
+                     shift for the whole test); -shift then applies only to a savefile of an older version, without
+                     a shift. The results line gets "shift-count", the shift of the final residue (0 without a shift).
                      Default 0, no shift. Ignored for LL tests and P-1 (Pminus1=, Pfactor=). A PRP test with a shift
                      gets no P-1 inside it.
 -mprimeDir <dir>   : P-1 (Pminus1= and Pfactor= lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)

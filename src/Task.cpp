@@ -184,8 +184,8 @@ void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool is
                         json("fft-length", fft.size())
   };
 
-  // As Prime95 does, a PRP result has a shift count only when it is not zero
-  if (shiftCount) { fields.push_back(json("shift-count", shiftCount)); }
+  // The shift of the final residue (Prime95 writes it only when it is not zero; the server wants it always)
+  fields.push_back(json("shift-count", shiftCount));
 
   // "proof":{"version":1, "power":6, "hashsize":64, "md5":"0123456789ABCDEF"}, 
   if (!proofPath.empty()) {
