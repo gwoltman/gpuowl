@@ -172,7 +172,8 @@ void writeResult(u32 instance, u64 E, const char *workType, const string &status
 
 }
 
-void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool isPrime, u64 res64, const string& res2048, u32 nErrors, const fs::path& proofPath) const {
+void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool isPrime, u64 res64, const string& res2048, u32 nErrors, const fs::path& proofPath,
+                          u64 shiftCount) const {
   vector<string> fields{json("res64", hex(res64)),
                         json("res2048", res2048),
                         json("residue-type", 1),
@@ -180,6 +181,9 @@ void Task::writeResultPRP(FFTConfig fft, const Args &args, u32 instance, bool is
                         json("fft-type", ffttype(fft)),
                         json("fft-length", fft.size())
   };
+
+  // As Prime95 does, a PRP result has a shift count only when it is not zero
+  if (shiftCount) { fields.push_back(json("shift-count", shiftCount)); }
 
   // "proof":{"version":1, "power":6, "hashsize":64, "md5":"0123456789ABCDEF"}, 
   if (!proofPath.empty()) {
@@ -276,6 +280,7 @@ bool pfactorBounds(Task& task, GpuCommon shared, const Gpu& gpu) {
 void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<Gpu> gpu) {
   const Args& args = *shared.args;
   fs::path const& dir = args.mprimeDir;
+  if (args.shift || args.shiftRandom) { log("-shift is not supported for P-1: running without a shift\n"); }
   if (pfactor && !B1 && !pfactorBounds(*this, shared, *gpu)) {
     Worktodo::deleteTask(*this, instance);
     return;
@@ -389,7 +394,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
   }
 }
 
-void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings) const {
+void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array <u64, 4> hash, u32 squarings, u64 shiftCount) const {
   string const hexhash = hex(hash[3]) + hex(hash[2]) + hex(hash[1]) + hex(hash[0]);
   vector<string> fields{json("worktype", "Cert"),
                         json("exponent", exponent),
@@ -397,7 +402,7 @@ void Task::writeResultCERT(FFTConfig fft, const Args &args, u32 instance, array 
                         json("squarings", squarings),
                         json("fft-type", ffttype(fft)),
                         json("fft-length", fft.size()),
-                        json("shift-count", 0),
+                        json("shift-count", shiftCount),
                         json("error-code", "00000000"), // I don't know the meaning of this
   };
   fields += tailFields(AID, args);
@@ -495,7 +500,7 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
       Pm1Report const pm1Report = [&](u64 b1, u64 b2, const vector<string>& factors, u32 nErr) {
         writeResultPM1(fft, *shared.args, instance, b1, b2, factors, nErr, 0, true);
       };
-      auto [tmpIsPrime, res64, nErrors, proofPath, res2048, pm1Factor] = gpu->isPrimePRP(*this, pm1Report);
+      auto [tmpIsPrime, res64, nErrors, proofPath, res2048, shiftCount, pm1Factor] = gpu->isPrimePRP(*this, pm1Report);
       if (pm1Factor) {
         log("%" PRIu64 " has a factor: the PRP test is not needed\n", exponent);
         Worktodo::deleteTask(*this, instance);
@@ -503,7 +508,7 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
         return;
       }
       isPrime = tmpIsPrime;
-      writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath);
+      writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath, shiftCount);
     } else { // LL
       auto [tmpIsPrime, res64] = gpu->isPrimeLL(*this);
       isPrime = tmpIsPrime;
@@ -521,7 +526,7 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
     executePM1(shared, instance, fft, std::move(gpu));
   } else if (kind == CERT) {
     auto sha256 = gpu->isCERT(*this);
-    writeResultCERT(fft, *shared.args, instance, sha256, squarings);
+    writeResultCERT(fft, *shared.args, instance, sha256, squarings, gpu->shiftCount());
     Worktodo::deleteTask(*this, instance);
   } else {
     throw "Unexpected task kind " + to_string(kind);

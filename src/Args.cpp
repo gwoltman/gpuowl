@@ -338,6 +338,12 @@ named "config.txt" in the prpll run directory.
                      low powers, or a value above the maximum power to skip it entirely.
 -iters <N>         : run next PRP test (or P-1 stage 1) for <N> iterations and exit; P-1 stage 2 stops after about <N>
                      multiplications.
+-shift <N>|random  : PRP and CERT: compute on the residue times 2^<N> (mod 2^E-1), a "shift count" as in Prime95 and
+                     Mlucas, so that two runs of the same test put different data through the GPU. Logged residues,
+                     savefiles, proofs and results are unshifted and identical to a run without -shift; the results
+                     line gets "shift-count". <N> is the shift at iteration 0; "random" draws a new shift on every
+                     start and every reload. With a shift, the retry after a failed Gerbicz check uses a new shift.
+                     Default 0, no shift. Ignored for LL tests and P-1 (Pminus1=, Pfactor=); refused with -prpPm1.
 -mprimeDir <dir>   : P-1 (Pminus1= and Pfactor= lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)
                      and stage 1 found no factor, stage 2 and its GCD.  When stage 2 can't run here (too little GPU memory,
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
@@ -349,7 +355,7 @@ named "config.txt" in the prpll run directory.
                      about 8 to 11, from the memory free on the GPU; -maxAlloc caps it) until the PRP passes iteration
                      1.44 * B1.  Then the GCD runs, the P-1 result is written ("integrated":true) and, with B2 > B1 and
                      no factor, stage 2 runs while the PRP test waits.  A factor ends the PRP test.  Only for PRP tests
-                     started with it (from iteration 0).  The savefiles are in p1prp-<exponent>.
+                     started with it (from iteration 0).  Not with -shift.  The savefiles are in p1prp-<exponent>.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
                      uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more of
                      the primes) and fit in the memory free on the GPU when it starts less 1 GB (where the free memory
@@ -678,6 +684,18 @@ void Args::parse(const string& line) {
       }
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
+    else if (key == "-shift") {
+      const char* const e = s.data() + s.size();
+      if (s == "random") {
+        shiftRandom = true;
+        shift = 0;
+      } else if (auto const r = from_chars(s.data(), e, shift); !s.empty() && r.ec == errc{} && r.ptr == e) {
+        shiftRandom = false;
+      } else {
+        log("-shift expects a shift count <N> or 'random' (found '%s')\n", s.c_str());
+        throw "-shift <N>|random";
+      }
+    }
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
     else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
     else if (key == "-smallest") { smallest = true; }
@@ -780,6 +798,13 @@ void Args::setDefaults() {
   cl_device_id dev = getDevice(device);
   log("device %d, OpenCL %s, %s, unique id '%s'\n", device, getDriverVersionByPos(device).c_str(),
       isAmdGpu(dev) ? getBoardName(dev).c_str() : getDeviceName(dev).c_str(), uid.c_str());
+
+  // Checked here, once all the sources (config.txt and the command line) are read.  -prpPm1 multiplies the PRP's own residues into its
+  // accumulator, checks them with the PRP's Gerbicz check and goes back to unshifted PRP savefiles:  it needs the unshifted residues.
+  if (prpPm1B1 && (shift || shiftRandom)) {
+    log("-prpPm1 can't be used with -shift: P-1 inside a PRP test needs the unshifted residues.  Use one or the other.\n");
+    throw "-prpPm1 with -shift";
+  }
   
   if (!masterDir.empty()) {
     assert(masterDir.is_absolute());

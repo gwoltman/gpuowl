@@ -121,7 +121,7 @@ EventHolder run(cl_queue queue, cl_kernel kernel, size_t groupSizeX, size_t work
                 vector<cl_event>&& waits, const string &name, bool genEvent);
 
 EventHolder read(cl_queue queue, vector<cl_event>&& waits,
-                 bool blocking, cl_mem buf, size_t size, void *data, bool genEvent);
+                 bool blocking, cl_mem buf, size_t size, void *data, bool genEvent, size_t start = 0);
 
 EventHolder write(cl_queue queue, vector<cl_event>&& waits,
                   bool blocking, cl_mem buf, size_t size, const void *data, bool genEvent);

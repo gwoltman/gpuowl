@@ -522,8 +522,7 @@ EventHolder run(cl_queue queue, cl_kernel kernel,
 }
 
 EventHolder read(cl_queue queue, vector<cl_event>&& waits,
-                 bool blocking, cl_mem buf, size_t size, void *data, bool genEvent) {
-  size_t const start = 0;
+                 bool blocking, cl_mem buf, size_t size, void *data, bool genEvent, size_t start) {
   cl_event event{};
   CHECK1(clEnqueueReadBuffer(queue, buf, blocking, start, size, data,
                              u32(waits.size()), waits.empty() ? nullptr : waits.data(), genEvent ? &event : nullptr));
