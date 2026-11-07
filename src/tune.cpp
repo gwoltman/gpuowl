@@ -467,7 +467,8 @@ void Tune::tune() {
 
   // The FFT the warmup runs, and the reference for the noise guard (see guarded)
   {
-    bool const useSpec = !shapes.empty() && (hasFP64(shared.context->deviceId()) || !FFTConfig{shapes[0], 202, CARRY_AUTO}.FFT_FP64);
+    // -fft names the FFT.  Otherwise (shapes holds all of them, smallest first) a 3.5M NTT, which is what the options are timed on
+    bool const useSpec = !args->fftSpec.empty() && !shapes.empty() && (hasFP64(shared.context->deviceId()) || !FFTConfig{shapes[0], 202, CARRY_AUTO}.FFT_FP64);
     FFTConfig const fft{useSpec ? shapes[0] : FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO};
     u64 const exponent = primes.prevPrime(fft.maxExp());
     ref.fft = fft;
