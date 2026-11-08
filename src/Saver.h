@@ -56,6 +56,21 @@ struct CERTState {
   double elapsed{};
 };
 
+// A proof verification in progress (Gpu::expExp2):  x_k = A^(2^k) after k of the `span` squarings, where `start` (the first word of
+// the SHA3 of A, see proof::hashWords) identifies the start A, and so the proof.  Only residues that passed the Gerbicz check are
+// saved;  nErrors counts the failed checks.  An empty `data` means "no checkpoint":  start from A.
+struct ProofVerifyState {
+  static const constexpr char* KIND = "proofv";
+
+  u64 exponent;
+  u64 k;
+  u64 span;
+  u64 start;
+  vector<u32> data;
+  u32 nErrors{};
+  double elapsed{};
+};
+
 // P-1 stage 1 after k of the nBits iterations of x <- x^2 * 3^bit (the bits of the exponent of B1, from the top), with x in data.
 // Only residues that passed the Gerbicz check are saved.  An empty `data` means "no checkpoint": start from x = 3 at k = 1.
 struct P1State {

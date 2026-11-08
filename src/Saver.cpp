@@ -38,6 +38,7 @@ static constexpr const char *P1PRP_v1 = "OWL P1PRP 1 N=1*2^%" PRIu64 "-1 B1=%" P
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
 // v2 adds the count of failed Gerbicz checks;  only a residue that passed its check is saved
 static constexpr const char *CERT_v2 = "OWL CERT 2 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " err=%u time=%lf\n";
+static constexpr const char *PROOFV_v1 = "OWL PROOFV 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " span=%" PRIu64 " start=%016" SCNx64 " err=%u time=%lf\n";
 
 struct BadHeaderError : std::runtime_error {
   string name;
@@ -186,6 +187,26 @@ void writeState(const File& fo, const CERTState& state) {
   fo.writeChecked(state.data);
 }
 
+ProofVerifyState readState(const ProofVerifyState& expected, File fi) {
+  ProofVerifyState s{};
+  string const header = fi.readLine();
+  if (sscanf(header.c_str(), PROOFV_v1, &s.exponent, &s.k, &s.span, &s.start, &s.nErrors, &s.elapsed) == 6) {
+    checkExponent(s.exponent, expected.exponent, header);
+    s.data = fi.readChecked<u32>(nWords(s.exponent));
+    return s;
+  }
+  log("Loading proof verification from '%s': bad header '%s'\n", fi.name.c_str(), header.c_str());
+  throw BadHeaderError{fi.name};
+}
+
+void writeState(const File& fo, const ProofVerifyState& state) {
+  assert(state.data.size() == nWords(state.exponent));
+  if (fo.printf(PROOFV_v1, state.exponent, state.k, state.span, state.start, state.nErrors, state.elapsed) <= 0) {
+    throw WriteError{fo.name};
+  }
+  fo.writeChecked(state.data);
+}
+
 P2State readState(const P2State& expected, File fi) {
   P2State s{};
   string const header = fi.readLine();
@@ -323,6 +344,10 @@ template<> P2State Saver<P2State>::initState() {
 
 template<> CERTState Saver<CERTState>::initState() {
   return {.exponent=exponent, .k=0, .squarings=0, .data={}, .nErrors=0, .elapsed=0};   // no checkpoint: caller starts from the .cert file
+}
+
+template<> ProofVerifyState Saver<ProofVerifyState>::initState() {
+  return {.exponent=exponent, .k=0, .span=0, .start=0, .data={}, .nErrors=0, .elapsed=0};   // no checkpoint: caller starts from A
 }
 
 template<> P1State Saver<P1State>::initState() {
@@ -490,6 +515,7 @@ template class Saver<PRPState>;
 template class Saver<LLState>;
 template class Saver<LLVerifiedState>;
 template class Saver<CERTState>;
+template class Saver<ProofVerifyState>;
 template class Saver<P1State>;
 template class Saver<P2State>;
 template class Saver<P1PrpState>;
