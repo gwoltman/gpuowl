@@ -12,6 +12,11 @@
 // Returns whether *results* was updated.
 bool TuneEntry::update(vector<TuneEntry>& results, const TuneFile& tf) const {
   if (!std::isfinite(cost)) { return false; }   // a failed timing (see Gpu::timePRP) must never be recorded
+  // Nor one that is zero or negative:  it would be the cheapest entry and erase every entry below its max exponent
+  if (cost <= 0) {
+    log("Warning: ignoring %s with an impossible cost of %g\n", fft.spec().c_str(), cost);
+    return false;
+  }
   u64 const maxExp = tf.maxExp(fft);
   [[maybe_unused]] bool didErase = false;
 
