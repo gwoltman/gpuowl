@@ -1040,7 +1040,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 61.
   const u32 log2_root_two = LOG2_ROOT_TWO61;
   const u32 bigword_weight_shift = (NWORDS - EXP % NWORDS) * log2_root_two % 61;
-  const u32 bigword_weight_shift_minus1 = (bigword_weight_shift + 60) % 61;
+  u32 bigword_weight_shift_minus1 = (bigword_weight_shift + 60) % 61;
+  HIDE_ZERO(bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
@@ -1979,7 +1980,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Let s be the shift amount for word 1.  The shift amount for word x is ceil(x * (s - 1) + num_big_words_less_than_x) % 61.
   const u32 log2_root_two = LOG2_ROOT_TWO61;
   const u32 bigword_weight_shift = (NWORDS - EXP % NWORDS) * log2_root_two % 61;
-  const u32 bigword_weight_shift_minus1 = (bigword_weight_shift + 60) % 61;
+  u32 bigword_weight_shift_minus1 = (bigword_weight_shift + 60) % 61;
+  HIDE_ZERO(bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
@@ -2294,7 +2296,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   const u32 m31_bigword_weight_shift_minus1 = (m31_bigword_weight_shift + 30) % 31;
   const u32 m61_log2_root_two = LOG2_ROOT_TWO61;
   const u32 m61_bigword_weight_shift = (NWORDS - EXP % NWORDS) * m61_log2_root_two % 61;
-  const u32 m61_bigword_weight_shift_minus1 = (m61_bigword_weight_shift + 60) % 61;
+  u32 m61_bigword_weight_shift_minus1 = (m61_bigword_weight_shift + 60) % 61;
+  HIDE_ZERO(m61_bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
@@ -2629,7 +2632,8 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   const u32 m31_bigword_weight_shift_minus1 = (m31_bigword_weight_shift + 30) % 31;
   const u32 m61_log2_root_two = LOG2_ROOT_TWO61;
   const u32 m61_bigword_weight_shift = (NWORDS - EXP % NWORDS) * m61_log2_root_two % 61;
-  const u32 m61_bigword_weight_shift_minus1 = (m61_bigword_weight_shift + 60) % 61;
+  u32 m61_bigword_weight_shift_minus1 = (m61_bigword_weight_shift + 60) % 61;
+  HIDE_ZERO(m61_bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
