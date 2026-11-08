@@ -345,8 +345,9 @@ named "config.txt" in the prpll run directory.
                      of their iteration and the test goes on with it after a restart or a failed Gerbicz check (one
                      shift for the whole test); -shift then applies only to a savefile of an older version, without
                      a shift. The results line gets "shift-count", the shift of the final residue (0 without a shift).
-                     Default 0, no shift. Ignored for LL tests and P-1 (Pminus1=, Pfactor=). A PRP test with a shift
-                     gets no P-1 inside it.
+                     Without -shift, a PRP test from the worktodo file with no P-1 inside it gets a random shift; one
+                     with P-1, a -prp test and a CERT get none.  A PRP test with -shift (also -shift 0, no shift) gets
+                     no P-1 inside it.  Ignored for LL tests and P-1 (Pminus1=, Pfactor=).
 -mprimeDir <dir>   : P-1 (Pminus1= and Pfactor= lines): prpll runs stage 1, its GCD and, when the line asks for it (B2 > B1)
                      and stage 1 found no factor, stage 2 and its GCD.  When stage 2 can't run here (too little GPU memory,
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
@@ -699,6 +700,7 @@ void Args::parse(const string& line) {
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-shift") {
+      shiftSet = true;
       const char* const e = s.data() + s.size();
       if (s == "random") {
         shiftRandom = true;

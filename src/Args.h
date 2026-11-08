@@ -109,6 +109,7 @@ public:
   // savefile's own shift takes precedence (see Gpu::loadShift).
   u64 shift = 0;
   bool shiftRandom = false;
+  bool shiftSet = false;      // -shift was given (also -shift 0):  no P-1 inside the PRP test, and no random default (Gpu::isPrimePRP)
 
   // Extend the range of the FFTs beyond what's safe WRT ROE and CARRY32.
   // The FFT will handle up to fft.maxExp() * fftOverdrive

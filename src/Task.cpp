@@ -304,7 +304,7 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   if (args.value("PRPPM1", 1) == 0) { return; }
   // The P-1 multiplies the PRP's own residues into its accumulator:  it needs them unshifted.  A shifted test is normally a double check,
   // whose P-1 is done.
-  if (args.shift || args.shiftRandom) {
+  if (args.shiftSet) {
     if (!task.line.empty() || useValue(args, "PRPPM1_B1")) { log("P-1 in the PRP test: not with -shift: no P-1\n"); }
     return;
   }

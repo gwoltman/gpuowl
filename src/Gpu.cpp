@@ -2475,7 +2475,7 @@ void Gpu::loadShift(u64 k, std::optional<u64> stored, const char* what) {
   // A reload within this test (after an error) that finds the shift it already uses is no news, whatever -shift says
   bool const sameAsBefore = shiftLoaded && stored && dataShift(k) == *stored % E;
   shiftLoaded = true;
-  bool const flag = args.shift || args.shiftRandom;
+  bool const flag = args.shiftSet;
   if (stored) {
     // shift0 * 2^k == stored:  2 is invertible mod the prime E
     shift0 = *stored % E ? mulModE(*stored, invModE(powModE(2, k, E), E), E) : 0;
@@ -2488,7 +2488,7 @@ void Gpu::loadShift(u64 k, std::optional<u64> stored, const char* what) {
   }
   shift0 = flagShift0;
   if (shift0) {
-    log("%s: shift %" PRIu64 " at iteration %" PRIu64 " (-shift%s)\n", what, dataShift(k), k,
+    log("%s: shift %" PRIu64 " at iteration %" PRIu64 " (%s%s)\n", what, dataShift(k), k, shiftWhy,
         k ? ", the savefile has no shift" : "");
   }
 }
@@ -3518,7 +3518,11 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   };
 
   // Once per test:  a reload (after an error) goes on with the shift of the savefile it loads, or this one at the start of the test
-  flagShift0 = initialShift();
+  // Without -shift, a test from the worktodo file with no P-1 inside it runs on a random shift (the P-1 needs the unshifted residues;
+  // a -prp test, often a timing run, stays unshifted).  A savefile's stored shift still wins (loadShift): a P-1 test keeps its 0.
+  bool const randomDefault = !args.shiftSet && !task.line.empty() && !pm1;
+  flagShift0 = randomDefault ? randomShift() : initialShift();
+  shiftWhy = randomDefault ? "random: no P-1 for this test" : "-shift";
   endShift = 0;
   shiftLoaded = false;
 
@@ -4296,6 +4300,7 @@ CERTResult Gpu::isCERT(const Task& task) {
   // resume, and the rollback after a failed check, go on with (loadShift).  The Gerbicz check holds as it is on the shifted data:  a
   // shift is a factor 2^s, and both checksums are products of the same powers of it.
   flagShift0 = initialShift();
+  shiftWhy = "-shift";
   endShift = 0;
   shiftLoaded = false;
   // The unshifted res64 of bufData after squaring k

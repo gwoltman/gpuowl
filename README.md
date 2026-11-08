@@ -99,4 +99,6 @@ builds can't read the new savefiles. A shifted PRP rebuilds its data from the er
 (blockSize squarings, as a resume does). The error check holds with the shift: the check is shifted by a = s / (2^blockSize - 1)
 mod p, and for the rare exponents where p divides 2^blockSize - 1 PRPLL keeps the check unshifted and multiplies by 3 * 2^s
 instead of 3. LL tests ignore `-shift`, and a shifted PRP test gets no P-1 inside it (that needs the unshifted residues).
-The default is 0, no shift, which runs exactly as before.
+Without `-shift`, a PRP test from the worktodo file that has no P-1 inside it (tests-saved 0, or P-1 declined) runs on a
+random shift, logged as "random: no P-1 for this test"; a PRP test with P-1, a `-prp` test (often a timing run) and a CERT
+run unshifted. Any `-shift`, also `-shift 0` (no shift), means no P-1 inside the PRP test.

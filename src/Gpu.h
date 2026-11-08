@@ -280,6 +280,7 @@ private:
   // The shift at iteration 0 from -shift, chosen once per test (a "random" one is drawn once): for a load without a stored shift
   // (the start of the test, or a savefile of an older version)
   u64 flagShift0{};
+  const char* shiftWhy = "-shift";    // where flagShift0 came from, for the log
   u64 endShift{};     // the shift of the last isPrimePRP / isCERT result
   bool shiftLoaded{};  // shift0 was set by an earlier load of this test (see loadShift)
   // E divides 2^blockSize - 1: then a shifted check can't shift the data (see checkShift), so the check is left unshifted and
