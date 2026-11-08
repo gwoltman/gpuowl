@@ -112,6 +112,9 @@ void setArg<int>(cl_kernel k, int pos, const int &value, const string& name);
 */
 
 cl_mem makeBuf_(cl_context context, unsigned kind, size_t size, const void *ptr = nullptr);
+// Map, for reading and writing, a CL_MEM_ALLOC_HOST_PTR buffer's host memory, waiting for the map to complete; and unmap it
+void* mapBuf(cl_queue q, cl_mem buf, size_t size);
+void unmapBuf(cl_queue q, cl_mem buf, void* ptr);
 cl_queue makeQueue(cl_device_id d, cl_context c, bool enableProfile);
 
 void flush( cl_queue q);

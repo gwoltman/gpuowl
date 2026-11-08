@@ -136,6 +136,7 @@ private:
   // TAIL_KERNELS 1 or 3: the tail*Zero kernels run beside tailSquare / tailMul in a queue of their own.  zeroQueues[0] pairs with
   // queue, zeroQueues[1 + i] with auxQueues[i].
   vector<Queue> zeroQueues;
+  Queue copyQueue;        // Reads the check buffer at a log while the squarings go on (see startStageRead)
   Queue* zeroQueueFor(const Queue* q);
   KernelCompiler compiler;
 
@@ -238,6 +239,7 @@ private:
   Buffer<Word> bufData;   // Main int buffer with the words.
   Buffer<Word> bufAux;    // Auxiliary int buffer, used in transposing data in/out and in check.
   Buffer<Word> bufCheck;  // Buffers used with the error check.
+  Buffer<Word> bufStage;  // The check buffer at a log, in logical order, while copyQueue reads it (see startStageRead)
 
   // Carry buffers, used in carry and fusedCarry.
   Buffer<i64> bufCarry;  // Carry shuttle.
@@ -246,9 +248,16 @@ private:
   // Small aux buffers.
   Buffer<Word> bufSmallOut;
   Buffer<u64> bufSumOut;
+  Buffer<u64> bufStageSum;
   Buffer<int> bufTrue;
   Buffer<float> bufROE; // The round-off error ("ROE"), one float element per iteration.
   Buffer<float> bufStatsCarry;
+
+  // startStageRead's destination in page-locked host memory, and whether its read is still to be collected by finishStageRead
+  HostBuffer<Word> hostStage;
+  HostBuffer<u64> hostStageSum;
+  EventHolder stageRead;
+  bool stageReadPending{false};
 
   u32 roePos{};   // The next position to write in the ROE stats buffer.
   u32 carryPos{}; // The next position to write in the Carry stats buffer.
@@ -263,6 +272,7 @@ private:
 
   unsigned statsBits;
   TimeInfo* timeBufVect;
+  TimeInfo* timeStageRead;
   ZAvg zAvg;
 
   enum BOTTOM_HALF_KERNELS {KMIDIN, KFFTHIN, KTAILSQUARE, KTAILMUL, KTAILMULLOW, KTAILMULDELTA, KMIDOUT, KFFTW};
@@ -301,7 +311,7 @@ private:
   vector<Word> readWords(Buffer<Word> &buf);
   void writeWords(Buffer<Word>& buf, vector<Word> &words);
 
-  vector<Word> readOut(Buffer<Word> &buf);
+  vector<Word> fromGpuWords(const Word* p, size_t n);
   void writeIn(Buffer<Word>& buf, vector<Word>&& words);
 
   enum LEAD_TYPE {LEAD_NONE = 0, LEAD_WIDTH = 1, LEAD_MIDDLE = 2};
@@ -346,6 +356,10 @@ private:
   bool pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buffer<Word>& sum1, u32& bpowL, u32 L, const vector<u32>& C);
 
   vector<Word> readChecked(Buffer<Word>& buf);
+  void startStageRead(Buffer<Word>& buf);
+  vector<Word> finishStageRead();
+  bool stageReadDone();
+  void waitStageRead();
 
   // void measureTransferSpeed();
 

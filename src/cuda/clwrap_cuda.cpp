@@ -803,7 +803,16 @@ cl_mem clCreateBuffer(cl_context  /*ctx*/, cl_mem_flags flags, size_t size, void
   auto* buf = new _cl_mem;
   buf->size = size;
   ensureContextCurrent();
-  CUresult const r = cuMemAlloc(&buf->ptr, size);
+  CUresult r{};
+  if (flags & CL_MEM_ALLOC_HOST_PTR) {
+    // Page-locked host memory, which the copy engine reads and writes directly, so a read on its own stream overlaps the
+    // kernels (from ordinary pageable memory cuMemcpyDtoHAsync is effectively synchronous).  clEnqueueMapBuffer returns it.
+    r = cuMemHostAlloc(&buf->host, size, 0);
+    if (r == CUDA_SUCCESS) { r = cuMemHostGetDevicePointer(&buf->ptr, buf->host, 0); }
+    if (r != CUDA_SUCCESS && buf->host) { cuMemFreeHost(buf->host); }
+  } else {
+    r = cuMemAlloc(&buf->ptr, size);
+  }
   if (r != CUDA_SUCCESS) {
     delete buf;
     if (err) *err = CL_MEM_OBJECT_ALLOCATION_FAILURE;
@@ -828,9 +837,28 @@ int clReleaseMemObject(cl_mem buf) {
       std::lock_guard<std::mutex> lock(g_allocatedBuffersMutex);
       g_allocatedBuffers.erase(buf);
     }
-    cuMemFree(buf->ptr);
+    if (buf->host) { cuMemFreeHost(buf->host); } else { cuMemFree(buf->ptr); }
     delete buf;
   }
+  return CL_SUCCESS;
+}
+
+// Only CL_MEM_ALLOC_HOST_PTR buffers can be mapped: their host memory stays mapped for their lifetime
+void* clEnqueueMapBuffer(cl_command_queue q, cl_mem buf, cl_bool blocking, cl_map_flags  /*flags*/, size_t offset, size_t  /*size*/,
+                         unsigned  /*nWaits*/, const cl_event*  /*waits*/, cl_event* event, int* err) {
+  if (event) *event = nullptr;
+  if (!buf || !buf->host) {
+    if (err) *err = CL_INVALID_VALUE;
+    return nullptr;
+  }
+  int const r = blocking ? clResult("clEnqueueMapBuffer", cuStreamSynchronize(q->stream)) : CL_SUCCESS;
+  if (err) *err = r;
+  return static_cast<char*>(buf->host) + offset;
+}
+
+int clEnqueueUnmapMemObject(cl_command_queue  /*q*/, cl_mem  /*buf*/, void*  /*ptr*/, unsigned  /*nWaits*/,
+                            const cl_event*  /*waits*/, cl_event* event) {
+  if (event) *event = nullptr;
   return CL_SUCCESS;
 }
 

@@ -489,6 +489,15 @@ cl_mem makeBuf_(cl_context context, unsigned kind, size_t size, const void *ptr)
   return buf;
 }
 
+void* mapBuf(cl_queue q, cl_mem buf, size_t size) {
+  int err;
+  void* const ptr = clEnqueueMapBuffer(q, buf, true, CL_MAP_READ | CL_MAP_WRITE, 0, size, 0, nullptr, nullptr, &err);
+  CHECK2(err, "clEnqueueMapBuffer");
+  return ptr;
+}
+
+void unmapBuf(cl_queue q, cl_mem buf, void* ptr) { CHECK1(clEnqueueUnmapMemObject(q, buf, ptr, 0, nullptr, nullptr)); }
+
 cl_queue makeQueue(cl_device_id d, cl_context c, bool isProfile) {
   int err;
   cl_queue_properties props[4] = {0};

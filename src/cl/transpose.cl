@@ -24,44 +24,69 @@ u32 seqPos(u32 x, u32 g) {
   u32 r0 = 64 * gy, c0 = 64 * gx; \
   u32 me = get_local_id(0);
 
+// transposeOut adds the words it reads to *sumOut, which Gpu::readChecked compares with the sum of the words the host received.
+// The words are summed as they are loaded, so the check also covers the transpose.
+void addSum(ulong sum, local ulong *lds, global ulong *sumOut) {
+  u32 me = get_local_id(0);
+  bar();
+  lds[me] = sum;
+  bar();
+  for (u32 s = 32; s; s /= 2) {
+    if (me < s) { lds[me] += lds[me + s]; }
+    bar();
+  }
+  if (me == 0) {
+    sum = lds[0];
+    u32 prev = atomic_add((global u32 *) sumOut, (u32) sum);
+    atomic_add((global u32 *) sumOut + 1, (u32) ((sum + prev) >> 32));    // the high half and the low half's carry
+  }
+}
+
 // The input and output index of tile element i, me (output rows are the input's columns)
 #define IN_POS(toSeq, i)  (toSeq ? (r0 + i) * W + c0 + me : seqPos(r0 + i, c0 + me))
 #define OUT_POS(toSeq, i) (toSeq ? seqPos(c0 + i, r0 + me) : (c0 + i) * H + r0 + me)
 
 #if WordSize <= 4
 
-void transposeWords(bool toSeq, local Word2 *lds, global const Word2 *restrict in, global Word2 *restrict out) {
+void transposeWords(bool toSeq, local Word2 *lds, global const Word2 *restrict in, global Word2 *restrict out, global ulong *sumOut) {
   TRANSPOSE_TILE(toSeq);
+  ulong sum = 0;
   #pragma unroll 1
   for (i32 i = 0; i < 64; ++i) {
-    lds[i * 64 + me] = in[IN_POS(toSeq, i)];
+    Word2 w = in[IN_POS(toSeq, i)];
+    lds[i * 64 + me] = w;
+    sum += (long) w.x + (long) w.y;
   }
   bar();
   #pragma unroll 1
   for (i32 i = 0; i < 64; ++i) {
     out[OUT_POS(toSeq, i)] = lds[me * 64 + i];
   }
+  if (toSeq) { addSum(sum, (local ulong *) lds, sumOut); }
 }
 
 // from transposed to sequential.
-KERNEL(64) transposeOut(P(Word2) out, CP(Word2) in) {
+KERNEL(64) transposeOut(P(Word2) out, CP(Word2) in, global ulong *sumOut) {
   local Word2 lds[4096];
-  transposeWords(true, lds, in, out);
+  transposeWords(true, lds, in, out, sumOut);
 }
 
 // from sequential to transposed.
 KERNEL(64) transposeIn(P(Word2) out, CP(Word2) in) {
   local Word2 lds[4096];
-  transposeWords(false, lds, in, out);
+  transposeWords(false, lds, in, out, 0);
 }
 
 #else
 
-void transposeWords(bool toSeq, local Word *lds, global const Word2 *restrict in, global Word2 *restrict out) {
+void transposeWords(bool toSeq, local Word *lds, global const Word2 *restrict in, global Word2 *restrict out, global ulong *sumOut) {
   TRANSPOSE_TILE(toSeq);
+  ulong sum = 0;
   #pragma unroll 1
   for (i32 i = 0; i < 64; ++i) {
-    lds[i * 64 + me] = in[IN_POS(toSeq, i)].x;
+    Word w = in[IN_POS(toSeq, i)].x;
+    lds[i * 64 + me] = w;
+    sum += (long) w;
   }
   bar();
   #pragma unroll 1
@@ -71,25 +96,28 @@ void transposeWords(bool toSeq, local Word *lds, global const Word2 *restrict in
   bar();
   #pragma unroll 1
   for (i32 i = 0; i < 64; ++i) {
-    lds[i * 64 + me] = in[IN_POS(toSeq, i)].y;
+    Word w = in[IN_POS(toSeq, i)].y;
+    lds[i * 64 + me] = w;
+    sum += (long) w;
   }
   bar();
   #pragma unroll 1
   for (i32 i = 0; i < 64; ++i) {
     out[OUT_POS(toSeq, i)].y = lds[me * 64 + i];
   }
+  if (toSeq) { addSum(sum, (local ulong *) lds, sumOut); }
 }
 
 // from transposed to sequential.
-KERNEL(64) transposeOut(P(Word2) out, CP(Word2) in) {
+KERNEL(64) transposeOut(P(Word2) out, CP(Word2) in, global ulong *sumOut) {
   local Word lds[4096];
-  transposeWords(true, lds, in, out);
+  transposeWords(true, lds, in, out, sumOut);
 }
 
 // from sequential to transposed.
 KERNEL(64) transposeIn(P(Word2) out, CP(Word2) in) {
   local Word lds[4096];
-  transposeWords(false, lds, in, out);
+  transposeWords(false, lds, in, out, 0);
 }
 
 #endif

@@ -30,6 +30,7 @@ using cl_command_queue_info = unsigned;
 
 using cl_mem_flags = u64;
 using cl_svm_mem_flags = u64;
+using cl_map_flags = u64;
 using cl_device_type = u64;
 using cl_queue_properties = u64;
 
@@ -81,6 +82,9 @@ int clEnqueueCopyBuffer(cl_command_queue, cl_mem, cl_mem, size_t, size_t, size_t
                         unsigned numEvent, const cl_event *waitEvents, cl_event *outEvent);
 int clEnqueueFillBuffer(cl_command_queue, cl_mem, const void *, size_t patternSize, size_t offset, size_t size,
                         unsigned numEvent, const cl_event *waitEvents, cl_event *outEvent);
+void* clEnqueueMapBuffer(cl_command_queue, cl_mem, cl_bool, cl_map_flags, size_t offset, size_t size,
+                         unsigned numEvent, const cl_event *waitEvents, cl_event *outEvent, int *err);
+int clEnqueueUnmapMemObject(cl_command_queue, cl_mem, void *, unsigned numEvent, const cl_event *waitEvents, cl_event *outEvent);
   
 int clFlush(cl_command_queue);
 int clFinish(cl_command_queue);
@@ -138,6 +142,9 @@ int clSetKernelArgSVMPointer(cl_kernel, unsigned, const void *);
 #define CL_MEM_HOST_WRITE_ONLY  (1 << 7)
 #define CL_MEM_HOST_READ_ONLY   (1 << 8)
 #define CL_MEM_HOST_NO_ACCESS   (1 << 9)
+
+#define CL_MAP_READ             (1 << 0)
+#define CL_MAP_WRITE            (1 << 1)
 
 #define CL_MEM_SVM_FINE_GRAIN_BUFFER (1 << 10)
 #define CL_MEM_SVM_ATOMICS           (1 << 11)

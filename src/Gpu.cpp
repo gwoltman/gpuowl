@@ -30,6 +30,8 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include <bit>
+#include <chrono>
+#include <thread>
 #include <ranges>
 #include <utility>
 
@@ -1139,6 +1141,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   nH(fft.shape.nH(args.radix8At256(true))),
   useLongCarry{args.carry == CARRY_64},
   queue{*shared.context, args.profile, false, args.value("SLEEP_WAIT", -1)},
+  copyQueue{*shared.context, args.profile, true},
       
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
                                multi_q, l2_striping, graphs, zero_q)},
@@ -1293,6 +1296,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   BUF(bufData, N * fft.WordSize / sizeof(Word)),
   BUF(bufAux, N * fft.WordSize / sizeof(Word)),
   BUF(bufCheck, N * fft.WordSize / sizeof(Word)),
+  BUF(bufStage, N * fft.WordSize / sizeof(Word)),
   // Every double-word (i.e. N/2) produces one carry. In addition we may have one extra group thus WIDTH more carries.
   // FFT323161's 96-bit carries add a second plane of i32s (see csStore in carryfused.cl)
   BUF(bufCarry, (N / 2 + WIDTH) * (fft.shape.fft_type == FFT323161 ? 3 : 2) / 2),
@@ -1300,9 +1304,12 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 
   BUF(bufSmallOut, 256),
   BUF(bufSumOut,     1),
+  BUF(bufStageSum,   1),
   BUF(bufTrue,       1),
   BUF(bufROE, ROE_SIZE + 2),
   BUF(bufStatsCarry, CARRY_SIZE + 2),
+  hostStage{copyQueue, N * fft.WordSize / sizeof(Word)},
+  hostStageSum{copyQueue, 1},
 
   BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
   BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
@@ -1311,6 +1318,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 
   statsBits{u32(args.value("STATS", 0))},
   timeBufVect{profile.make("proofBufVect")},
+  timeStageRead{profile.make("stageRead")},
 
   recorded_kernels{},
   recorded_kernel_args{},
@@ -2238,11 +2246,11 @@ static bool isAllZero(vector<T> v) { return std::all_of(v.begin(), v.end(), [](T
 vector<Word> Gpu::readChecked(Buffer<Word>& buf) {
   for (int nRetry = 0; nRetry < 3; ++nRetry) {
     bufSumOut.zero();
-    sum64(bufSumOut, N, buf);
+    transpOut(bufAux, buf, bufSumOut);       // transposeOut puts the words in logical order (also with PFA), and sums them
     vector<u64> expectedVect(1);
     bufSumOut.readAsync(expectedVect);
 
-    vector<Word> data = readOut(buf);
+    vector<Word> data = readWords(bufAux);
     u64 hostSum = 0;
     for (auto it = data.begin(), end = data.end(); it < end; ++it) hostSum += u64(*it);
 
@@ -2258,6 +2266,73 @@ vector<Word> Gpu::readChecked(Buffer<Word>& buf) {
 
     log("GPU read failed: %016" PRIx64 " (gpu) != %016" PRIx64 " (host)\n", gpuSum, hostSum);
   }
+  throw "GPU persistent read errors";
+}
+
+// Start an asynchronous readChecked of buf:  snapshot it into bufStage (transposeOut, with the sum of its words in bufStageSum),
+// then read the snapshot into page-locked host memory on copyQueue, while the main queue goes on with the squarings.  Nothing
+// but this reads or writes bufStage, bufStageSum and the host buffers, so the main queue need not wait for the read.
+// finishStageRead collects it, and must be called before the next startStageRead.
+void Gpu::startStageRead(Buffer<Word>& buf) {
+  assert(!stageReadPending);
+  bufStageSum.zero();
+  transpOut(bufStage, buf, bufStageSum);
+  EventHolder snapshot = queue.createSyncEvent();
+  copyQueue.waitForSyncEvent(&snapshot);
+  copyQueue.readAsync(bufStage.get(), bufStage.size * sizeof(Word), hostStage.data(), timeStageRead);
+  copyQueue.readAsync(bufStageSum.get(), sizeof(u64), hostStageSum.data(), timeStageRead);
+  stageRead = copyQueue.createSyncEvent();
+  flush(queue.get());         // Submit the snapshot, which the read waits for
+  flush(copyQueue.get());
+  stageReadPending = true;
+}
+
+// Whether startStageRead's read is done (or failed, which finishStageRead reports), without waiting
+bool Gpu::stageReadDone() {
+  if (!stageReadPending) { return true; }
+  int const status = getEventInfo(stageRead.get());
+  return status == CL_COMPLETE || status < 0;
+}
+
+void Gpu::waitStageRead() {
+  if (!stageReadPending) { return; }
+  // Sleep-poll rather than block:  a blocking wait can spin a CPU core on ROCm (see Queue.cpp)
+  while (true) {
+    int const status = getEventInfo(stageRead.get());
+    if (status == CL_COMPLETE) { break; }
+    if (status < 0) { CHECK1(status); }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  stageRead.reset();
+  stageReadPending = false;
+}
+
+// The result of startStageRead, like readChecked's:  the words in logical order, empty for an all-zero buffer.  A transfer
+// whose sum is wrong is read again from bufStage, which still holds the snapshot.
+vector<Word> Gpu::finishStageRead() {
+  assert(stageReadPending);
+  for (int nRetry = 0; nRetry < 3; ++nRetry) {
+    waitStageRead();
+    vector<Word> data = fromGpuWords(hostStage.data(), hostStage.size);
+    u64 hostSum = 0;
+    for (auto it = data.begin(), end = data.end(); it < end; ++it) hostSum += u64(*it);
+
+    u64 const gpuSum = *hostStageSum.data();
+    if (hostSum == gpuSum) {
+      if (gpuSum == 0 && isAllZero(data)) {
+        log("Read ZERO\n");
+        return {};
+      }
+      return data;
+    }
+
+    log("GPU read failed: %016" PRIx64 " (gpu) != %016" PRIx64 " (host)\n", gpuSum, hostSum);
+    copyQueue.readAsync(bufStage.get(), bufStage.size * sizeof(Word), hostStage.data(), timeStageRead);
+    stageRead = copyQueue.createSyncEvent();
+    flush(copyQueue.get());
+    stageReadPending = true;
+  }
+  waitStageRead();
   throw "GPU persistent read errors";
 }
 
@@ -2359,15 +2434,19 @@ void Gpu::logTimeKernels() {
 }
 
 vector<Word> Gpu::readWords(Buffer<Word> &buf) {
-  // GPU is returning either 4-byte or 8-byte integers.  C++ code is expecting 8-byte integers.  Handle the "no conversion" case.
   if (fft.WordSize == 8) return buf.read();
+  vector<Word> const GPUdata = buf.read();
+  return fromGpuWords(GPUdata.data(), GPUdata.size());
+}
+
+// The GPU's words, n Words of its raw data:  either 4-byte or 8-byte integers.  C++ code is expecting 8-byte integers.
+vector<Word> Gpu::fromGpuWords(const Word* p, size_t n) {
+  if (fft.WordSize == 8) return vector<Word>(p, p + n);
   // Convert 32-bit GPU Words into 64-bit C++ Words
-  vector<Word> GPUdata = buf.read();
-  vector<Word> CPUdata;
-  CPUdata.resize(GPUdata.size() * 2);
-  for (u32 i = 0; i < GPUdata.size(); ++i) {
-    CPUdata[2*i] = (i32) GPUdata[i];
-    CPUdata[2*i+1] = (GPUdata[i] >> 32);
+  vector<Word> CPUdata(n * 2);
+  for (size_t i = 0; i < n; ++i) {
+    CPUdata[2*i] = (i32) p[i];
+    CPUdata[2*i+1] = (p[i] >> 32);
   }
   return CPUdata;
 }
@@ -2385,11 +2464,6 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
     }
     buf.write(GPUdata);
   }
-}
-
-vector<Word> Gpu::readOut(Buffer<Word> &buf) {
-  transpOut(bufAux, buf);
-  return readWords(bufAux);     // transposeOut puts the words in logical order, also with PFA
 }
 
 void Gpu::writeIn(Buffer<Word>& buf, const vector<u32>& words) { writeIn(buf, expandBits(words, N, E)); }
@@ -3187,7 +3261,51 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   u64 lastFailedRes64 = 0;
   u32 const logStep = args.logStep;
 
+  // A log's check buffer (for its unverified save) and a proof residue are read asynchronously (startStageRead), and saved
+  // once the read is done.  Only one read is pending at a time, and it is collected before any later save is queued, so the
+  // background thread still runs the saves in order:  no checkpoint is written past a proof residue.
+  struct PendingRead { bool proof{}; u64 k{}; u32 power{}; u32 blockSize{}; u64 res{}; u32 nErrors{}; double elapsed{}; };
+  std::optional<PendingRead> pendingRead;
+
+  // Collect the pending read and queue its save.  False when the buffer read as zero.
+  auto finishRead = [&]() -> bool {
+    if (!pendingRead) { return true; }
+    PendingRead const p = *pendingRead;
+    pendingRead.reset();
+    vector<Word> raw = finishStageRead();
+    if (raw.empty()) {
+      ++nErrors;
+      if (p.proof) {
+        log("Data error ZERO\n");
+      } else {
+        log("%9" PRIu64 " %016" PRIx64 " read NULL check\n", p.k, p.res);
+      }
+      return false;
+    }
+    if (p.proof) {
+      (*background)([=, this, raw = std::move(raw)] {
+        try {
+          ProofSet::save(E, p.power, p.k, compactBits(raw, E));
+        } catch (const FileError&) {
+          proofSaveFailed = true;
+        }
+      });
+    } else {
+      (*background)([=, this, raw = std::move(raw)] {
+        if (proofSaveFailed) { return; }
+        getSaver()->saveUnverified({.exponent=E, .k=p.k, .blockSize=p.blockSize, .res64=p.res, .check=compactBits(raw, E),
+                                    .nErrors=p.nErrors, .elapsed=p.elapsed});
+      });
+    }
+    return true;
+  };
+
  reload:
+  // Drop a save still being read:  the state is reloaded from the savefiles, all from before it
+  if (pendingRead) {
+    waitStageRead();
+    pendingRead.reset();
+  }
   elapsedTimer.reset();
   u32 blockSize{};
   u64 k{};
@@ -3310,19 +3428,13 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
 
     if (k == eventK) {
       if (k == persistK) {
-        vector<Word> const rawData = readChecked(bufData);
-        if (rawData.empty()) {
-          log("Data error ZERO\n");
-          ++nErrors;
+        // The proof residue is read while the squarings go on, after a log's read still in flight
+        if (!finishRead()) {
+          if (++nSeqErrors > 2) { throw "sequential errors"; }
           goto reload;
         }
-        (*background)([=, this] {
-          try {
-            ProofSet::save(E, power, k, compactBits(rawData, E));
-          } catch (const FileError&) {
-            proofSaveFailed = true;
-          }
-        });
+        startStageRead(bufData);
+        pendingRead = PendingRead{.proof=true, .k=k, .power=power};
         persistK = proofSet->next(k);
       }
       if (pm1) {
@@ -3349,30 +3461,33 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
       log("%s %8" PRIu64 " / %" PRIu64 ", %s\n", isPrime ? "PP" : "CC", kEnd, E, hex(finalRes64).c_str());
     }
 
-    if (!doCheck && !doLog) continue;
+    if (!doCheck && !doLog) {
+      // Save a log's state once its read is done, rather than at the next log.  Only look at block ends:  on ROCm
+      // asking for an event's status every squaring costs about 2%.
+      if (pendingRead && k % blockSize == 0 && stageReadDone() && !finishRead()) {
+        if (++nSeqErrors > 2) { throw "sequential errors"; }
+        goto reload;
+      }
+      continue;
+    }
+
+    if (!finishRead()) {
+      if (++nSeqErrors > 2) { throw "sequential errors"; }
+      goto reload;
+    }
 
     u64 const res = dataResidue();
     float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
-
-    vector<Word> rawCheck = readChecked(bufCheck);
-    if (rawCheck.empty()) {
-      ++nErrors;
-      log("%9" PRIu64 " %016" PRIx64 " read NULL check\n", k, res);
-      if (++nSeqErrors > 2) { throw "sequential errors"; }
-      goto reload;
-    }
 
     // Once a proof residue could not be written, no checkpoint may be written past it (the background thread runs
     // the queued saves in order, so this is checked when each save runs) and the test stops.
     if (proofSaveFailed) { throw "proof residue write failed"; }
 
     if (!doCheck) {
-      (*background)([=, this] {
-        if (proofSaveFailed) { return; }
-        getSaver()->saveUnverified({.exponent=E, .k=k, .blockSize=blockSize, .res64=res, .check=compactBits(rawCheck, E), .nErrors=nErrors,
-                                    .elapsed=elapsedBefore + elapsedTimer.at()});
-      });
+      // The unverified save needs the check buffer, read while the squarings go on;  saved once the read is done
+      startStageRead(bufCheck);
+      pendingRead = PendingRead{.proof=false, .k=k, .blockSize=blockSize, .res=res, .nErrors=nErrors, .elapsed=elapsedBefore + elapsedTimer.at()};
 
       log("   %9" PRIu64 " %016" PRIx64 " %s\n", k, res, formatSecsPerIter(secsPerIt).c_str());
       RoeInfo const carryStats = readCarryStats();
@@ -3382,6 +3497,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
         log("Carry: %x Z(%u)=%.1f\n", m, carryStats.N, z);
       }
     } else {
+      vector<Word> rawCheck = readChecked(bufCheck);
+      if (rawCheck.empty()) {
+        ++nErrors;
+        log("%9" PRIu64 " %016" PRIx64 " read NULL check\n", k, res);
+        if (++nSeqErrors > 2) { throw "sequential errors"; }
+        goto reload;
+      }
+
       bool const ok = this->doCheck(blockSize);
       [[maybe_unused]] float const secsCheck = iterationTimer.reset(k);
 
@@ -3555,7 +3678,9 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
 
   Timer elapsedTimer;
 
-  Saver<LLState> saver{E, 1000, args.nSavefiles};
+  // Shared with the background thread, which writes the log saves
+  auto const llSaver = std::make_shared<Saver<LLState>>(E, 1000, args.nSavefiles);
+  Saver<LLState>& saver = *llSaver;
   // Only with the check on, so that LL_JACOBI=0 leaves no llv- folder
   std::optional<Saver<LLVerifiedState>> verifiedSaver;
   if (gcd) { verifiedSaver.emplace(E, 1000, 2); }
@@ -3603,7 +3728,54 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
     return std::nullopt;
   };
 
+  // Go back to the last verified residue after a failed check (or a zero residue) at k:  drop the savefiles that may hold the wrong
+  // residue.  Stops after 3 failures in a row or the same wrong residue twice.
+  auto rollBack = [&](u64 k, u64 res64) {
+    background->waitEmpty();    // The log saves already queued, before their files are dropped
+    vector<u64> const verifiedKs = verifiedSaver->listK();
+    u64 const verifiedK = verifiedKs.empty() ? 0 : verifiedKs.back();
+    for (u64 savedK : saver.listK()) { if (savedK > verifiedK) { saver.removeAt(savedK); } }
+    log("LL check failed at %" PRIu64 ", going back to %" PRIu64 "\n", k, verifiedK);
+    if (++nSeqErrors > 2) {
+      log("%d sequential errors, will stop.\n", nSeqErrors);
+      throw "too many errors";
+    }
+    if (k == lastFailedK && res64 == lastFailedRes64) {
+      log("Consistent error %016" PRIx64 ", will stop.\n", res64);
+      throw "consistent error";
+    }
+    lastFailedK = k;
+    lastFailedRes64 = res64;
+    recheckK = k;
+  };
+
+  // A log with no Jacobi check reads the residue asynchronously (startStageRead) for its save, saved once the read is done
+  struct PendingLog { u64 k; double elapsed; };
+  std::optional<PendingLog> pendingLog;
+
+  // Collect the pending log's read and save it.  False when the residue read as zero, an error before the end:  with the
+  // Jacobi check, a failed check.
+  auto finishLog = [&]() -> bool {
+    if (!pendingLog) { return true; }
+    PendingLog const p = *pendingLog;
+    pendingLog.reset();
+    vector<Word> raw = finishStageRead();
+    if (raw.empty()) {
+      log("Error: early ZERO @ %" PRIu64 "\n", p.k);
+      if (verifiedSaver) { rollBack(p.k, 0); }
+      return false;
+    }
+    (*background)([=, this, raw = std::move(raw)] { llSaver->save({.exponent=E, .k=p.k, .data=compactBits(raw, E), .elapsed=p.elapsed}); });
+    return true;
+  };
+
   reload:
+  // Drop a log's save still being read:  the state is reloaded from the savefiles
+  if (pendingLog) {
+    waitStageRead();
+    pendingLog.reset();
+  }
+  background->waitEmpty();      // The saves already queued, before loading
   elapsedTimer.reset();
 
   u64 startK = 0;
@@ -3675,7 +3847,31 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
     }
 #endif
 
-    if (!doLog) continue;
+    if (!doLog) {
+      // Save a log's state once its read is done.  Only look every 1000 squarings:  on ROCm asking for an event's status
+      // every squaring is slow.
+      if (pendingLog && k % 1000 == 0 && stageReadDone() && !finishLog()) { goto reload; }
+      continue;
+    }
+
+    if (!finishLog()) {
+      if (doStop) { throw "stop requested"; }
+      goto reload;
+    }
+
+    bool const doJacobi = jacobiOn
+        && (k >= kEnd || (recheckK && k >= recheckK) || !jacobiSecs || checkAll || sinceCheck.at() >= 100 * jacobiSecs);
+
+    if (!doStop && !doJacobi) {
+      // The save needs the residue, read while the squarings go on;  the zero check comes with the save
+      u64 const res64 = dataResidue();
+      startStageRead(bufData);
+      pendingLog = PendingLog{k, elapsedBefore + elapsedTimer.at()};
+      float const secsPerIt = iterationTimer.reset(k);
+      queue.setSquareTime((int) (secsPerIt * 1'000'000));
+      log("%9" PRIu64 " %016" PRIx64 " %s ETA %s\n", k, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
+      continue;
+    }
 
     u64 res64 = 0;
     auto data = readData();
@@ -3698,8 +3894,7 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
       res64 = (u64(data[1]) << 32) | data[0];
     }
 
-    if (jacobiOn && !failed
-        && (k >= kEnd || (recheckK && k >= recheckK) || !jacobiSecs || checkAll || sinceCheck.at() >= 100 * jacobiSecs)) {
+    if (doJacobi && !failed) {
       std::optional<int> const symbol = jacobi(data, k);
       if (symbol == 1) {
         failed = true;
@@ -3716,27 +3911,13 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
     }
 
     if (failed) {
-      // Drop the savefiles that may hold the wrong residue, then go back to the verified one
-      vector<u64> const verifiedKs = verifiedSaver->listK();
-      u64 const verifiedK = verifiedKs.empty() ? 0 : verifiedKs.back();
-      for (u64 savedK : saver.listK()) { if (savedK > verifiedK) { saver.removeAt(savedK); } }
-      log("LL check failed at %" PRIu64 ", going back to %" PRIu64 "\n", k, verifiedK);
-      if (++nSeqErrors > 2) {
-        log("%d sequential errors, will stop.\n", nSeqErrors);
-        throw "too many errors";
-      }
-      if (k == lastFailedK && res64 == lastFailedRes64) {
-        log("Consistent error %016" PRIx64 ", will stop.\n", res64);
-        throw "consistent error";
-      }
-      lastFailedK = k;
-      lastFailedRes64 = res64;
-      recheckK = k;
+      rollBack(k, res64);
       if (userStop) { throw "stop requested"; }
       goto reload;
     }
 
     if (!isAllZero) {
+      background->waitEmpty();    // After the log saves already queued
       saver.save({.exponent=E, .k=k, .data=std::move(data), .elapsed=elapsedBefore + elapsedTimer.at()});
     }
 

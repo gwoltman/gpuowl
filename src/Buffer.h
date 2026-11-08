@@ -101,3 +101,35 @@ public:
     // copyBuf(queue->get(), rhs.get(), get(), size * sizeof(T));
   }
 };
+
+// Page-locked host memory: a CL_MEM_ALLOC_HOST_PTR buffer, mapped for its lifetime.  The GPU's copy engine writes it directly,
+// so a read into it on a queue of its own runs while the kernels go on (see Gpu::startStageRead).
+template<typename T>
+class HostBuffer {
+  std::unique_ptr<cl_mem> buf;
+  cl_queue queue;
+  T* ptr;
+
+public:
+  const size_t size;
+
+  HostBuffer(const Queue& q, size_t size)
+    : buf{makeBuf_(q.context->get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_WRITE, size * sizeof(T))}
+    , queue{q.get()}
+    , ptr{static_cast<T*>(mapBuf(queue, buf.get(), size * sizeof(T)))}
+    , size{size}
+  {}
+
+  HostBuffer(const HostBuffer&) = delete;
+  HostBuffer& operator=(const HostBuffer&) = delete;
+
+  ~HostBuffer() {
+    // The queue may still be reading into it.  A destructor must not throw: a failing GPU is reported elsewhere.
+    try {
+      unmapBuf(queue, buf.get(), ptr);
+      finish(queue);
+    } catch (...) {}
+  }
+
+  [[nodiscard]] T* data() const { return ptr; }
+};
