@@ -47,6 +47,7 @@ struct PRPResult {
 struct LLResult {
   bool isPrime;
   u64 res64;
+  u32 nJacobi{};      // Jacobi check failures in this process
 };
 
 struct CERTResult {
@@ -366,7 +367,8 @@ public:
 
   // pm1Report writes the result line of the P-1 that -prpPm1 runs inside the PRP test
   PRPResult isPrimePRP(const Task& task, const Pm1Report& pm1Report = {});
-  LLResult isPrimeLL(const Task& task);
+  // With the Jacobi check on (-use LL_JACOBI, on by default) gcd computes the symbols; nullptr: no check
+  LLResult isPrimeLL(const Task& task, Gcd* gcd);
   CERTResult isCERT(const Task& task);
   // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
   PM1Result pm1Stage1(const Task& task, Gcd& gcd);

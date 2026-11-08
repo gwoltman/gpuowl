@@ -31,6 +31,17 @@ struct LLState {
   double elapsed{};
 };
 
+// An LL residue that passed the Jacobi check (see Gpu::isPrimeLL), the one an LL test goes back to after a failed check.  Written
+// only with the check on.  With no savefile, the start:  s_0 = 4 at k = 0.
+struct LLVerifiedState {
+  static const constexpr char* KIND = "llv";
+
+  u64 exponent;
+  u64 k;
+  vector<u32> data;
+  double elapsed{};
+};
+
 // A CERT (certification) in progress: the current residue after k of `squarings` squarings.  An empty `data`
 // means "no checkpoint": start from the M<E>.cert file.  Savefiles of version 2 hold only residues that passed the Gerbicz check
 // (unless it was turned off with -use CERT_GEC=0); nErrors counts the failed checks.

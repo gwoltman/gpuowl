@@ -38,7 +38,7 @@ public:
   void executePM1(GpuCommon shared, u32 instance, FFTConfig fft, std::unique_ptr<Gpu> gpu);
 
   void writeResultPRP(FFTConfig fft, const Args&, u32 instance, bool isPrime, u64 res64, const std::string& res2048, u32 nErrors, const fs::path& proofPath) const;
-  void writeResultLL(FFTConfig fft, const Args&, u32 instance, bool isPrime, u64 res64) const;
+  void writeResultLL(FFTConfig fft, const Args&, u32 instance, bool isPrime, u64 res64, u32 nJacobi) const;
   void writeResultCERT(FFTConfig fft, const Args&, u32 instance, array <u64, 4> hash, u32 squarings) const;
   void writeResultPM1(FFTConfig fft, const Args&, u32 instance, u64 B1, u64 B2, const std::vector<std::string>& factors, u32 nErrors,
                       u32 nJacobi, bool integrated = false) const;

@@ -439,7 +439,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "MULTI_Q",
                               "SLEEP_WAIT",
                               "PM1_JACOBI",
-                              "CERT_GEC"
+                              "CERT_GEC",
+                              "LL_JACOBI"
                             });
     if (k == "TRY_LDS_CARVEOUT") {
       // Not a -use key: the CUDA build reads it from the environment (clwrap_cuda.cpp)
@@ -635,7 +636,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // Keys that only the host reads (and deprecated keys that nothing reads) are not defines either, so that changing them does not
   // recompile the kernels.  PTX_VERSION stays: the CUDA build reads it back from the build options (see clwrap_cuda.cpp).
   initializer_list<string> const hostOnlyKeys = {"GRAPHS", "GRAPH_BATCH", "L1CUDA", "L2PERSIST", "L2PERSISTPCT", "SLEEP_WAIT",
-                                                 "SMEM_SPILL", "PM1_JACOBI", "CERT_GEC", "TUNE_EXP", "BIGLIT", "NONTEMPORAL"};
+                                                 "SMEM_SPILL", "PM1_JACOBI", "CERT_GEC", "LL_JACOBI", "TUNE_EXP", "BIGLIT",
+                                                 "NONTEMPORAL"};
   std::erase_if(config, [&](const auto& kv) {
     return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || isInList(kv.first, hostOnlyKeys);
   });
@@ -3456,13 +3458,150 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   }
 }
 
-LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
+namespace {
+
+// x - 2 mod 2^E - 1, of the E-bit residue x in 32-bit words (as readData returns it: empty for zero)
+Words minus2(Words x, u64 E) {
+  if (x.empty()) { x = Words(nWords(E), 0); }
+  if (x[0] < 2 && std::all_of(x.begin() + 1, x.end(), [](u32 w) { return w == 0; })) {
+    // x is 0 or 1:  x - 2 + 2^E - 1
+    u32 const x0 = x[0];
+    x.assign(x.size(), ~0u);
+    if (E % 32) { x.back() = (u32(1) << (E % 32)) - 1; }
+    x[0] -= 2 - x0;
+    return x;
+  }
+  u32 borrow = 2;
+  for (u32& w : x) {
+    u32 const old = w;
+    w = old - borrow;
+    borrow = old < borrow;
+  }
+  assert(!borrow);
+  return x;
+}
+
+}
+
+#ifdef PRPLL_LL_FAULTS
+// TEST ONLY, compiled in only with -DPRPLL_LL_FAULTS (make BIN=build-llfaults CPPFLAGS=-DPRPLL_LL_FAULTS); a normal build has none
+// of this.  PRPLL_LL_FAULT="<k>[:<kind>[:<bit>]],..." corrupts the LL residue s right after iteration k, once per process.  Kinds:
+// flip (default) flips bit <bit> (default 39) of s;  triple replaces s - 2 by 3 (s - 2), whose Jacobi symbol is the opposite one, so a
+// check at that k (a log step) always fails;  stuck is triple at every pass (to test the consistent-error stop).
+// PRPLL_LL_CHECK_ALL=1 runs the Jacobi check at every log step.
+namespace {
+struct LlFault { u64 k; string kind; u32 bit; bool fired; };
+
+vector<LlFault>& llFaults() {
+  static vector<LlFault> faults = [] {
+    vector<LlFault> v;
+    const char *env = getenv("PRPLL_LL_FAULT");
+    if (!env) { return v; }
+    for (const string& item : ::split(env, ',')) {
+      vector<string> const f = ::split(item, ':');
+      v.push_back({stoull(f[0]), f.size() > 1 ? f[1] : "flip", f.size() > 2 ? u32(stoul(f[2])) : 39u, false});
+    }
+    return v;
+  }();
+  return faults;
+}
+
+LlFault* llFaultAt(u64 k) {
+  for (LlFault& f : llFaults()) { if (f.k == k && (!f.fired || f.kind == "stuck")) { return &f; } }
+  return nullptr;
+}
+
+// a + b mod 2^E - 1
+Words addMod(const Words& a, const Words& b, u64 E) {
+  Words r(a.size());
+  u64 carry = 0;
+  for (u32 i = 0; i < a.size(); ++i) {
+    u64 const s = u64(a[i]) + b[i] + carry;
+    r[i] = u32(s);
+    carry = s >> 32;
+  }
+  // the bits from E up (and the carry out) are 2^E = 1:  add them back in
+  u32 const top = E % 32 ? E % 32 : 32;
+  u64 hi = (carry << (32 - top)) | (top < 32 ? r.back() >> top : 0);
+  if (top < 32) { r.back() &= (u32(1) << top) - 1; }
+  for (u32 i = 0; hi && i < r.size(); ++i) {
+    u64 const s = u64(r[i]) + hi;
+    r[i] = u32(s);
+    hi = s >> 32;
+  }
+  assert(top == 32 || r.back() >> top == 0);
+  return r;
+}
+}
+#endif
+
+// LL:  s_0 = 4, s_{k+1} = s_k^2 - 2 mod N = 2^p - 1;  M_p is prime iff s_{p-2} = 0.
+//
+// The Jacobi check (on by default, -use LL_JACOBI=0 turns it off):  with w = 2 + sqrt(3), s_k = w^(2^k) + w^(-2^k), so for k >= 1
+// s_k - 2 = (w^(2^(k-1)) - w^(-2^(k-1)))^2 = 3 t^2 with t an integer, and (3 | N) = -1:  the Jacobi symbol (s_k - 2 | N) must be -1,
+// for a prime and a composite N alike (0 only when s_k - 2 and N have a common factor, which proves nothing either way).  That
+// includes the final s = 0 of a prime.
+// The check catches about half of all errors, and checking more often does not catch more:  s_{k+m} - 2 = (s_k^2 - 4) * (an
+// integer)^2 for m >= 1, so every later check of a wrong residue gives one same symbol.  An error is caught at the first check after
+// it or never.  Frequent checks only keep the rollback short.
+// A check costs about as much as a GCD (an estimate, from the P-1 GCD:  of the order of a minute or two at 100M bits), so it runs
+// at a log step when the time since the last one is 100 times its measured cost (about 1% overhead), at the first log step of a
+// run (to time it), and on the final residue.  A residue that passes is saved as LLVerifiedState;  a failed check goes back to the
+// last one (or to s_0), and, as the PRP test's check, stops after 3 failures in a row or the same wrong residue twice.
+// If the first check can't run (e.g. the GCD kernels don't build on this GPU) the test goes on unchecked, with a warning.
+LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
   assert(E == task.exponent);
   wantROE = 0;
 
   Timer elapsedTimer;
 
   Saver<LLState> saver{E, 1000, args.nSavefiles};
+  // Only with the check on, so that LL_JACOBI=0 leaves no llv- folder
+  std::optional<Saver<LLVerifiedState>> verifiedSaver;
+  if (gcd) { verifiedSaver.emplace(E, 1000, 2); }
+
+  bool jacobiOn = gcd != nullptr;
+  u32 nJacobi = 0;
+  int nSeqErrors = 0;
+  u64 lastFailedK = 0, lastFailedRes64 = 0;
+  u64 recheckK = 0;          // after a failed check, check again when the test gets back there
+  double jacobiSecs = 0;     // the time of the last check;  0: none in this process yet
+  Timer sinceCheck;
+
+  bool checkAll = false;
+#ifdef PRPLL_LL_FAULTS
+  checkAll = getenv("PRPLL_LL_CHECK_ALL") != nullptr;
+#endif
+
+  // The Jacobi symbol of s_k - 2 (-1 when it is right), logged.  When the first one of the process can't run (e.g. the GCD kernels
+  // don't build on this GPU), the test goes on without the check:  nullopt.  Errors after a check has run, and stops, propagate.
+  auto jacobi = [&](const Words& s, u64 k) -> std::optional<int> {
+    Timer timer;
+    string error;
+    try {
+#ifdef PRPLL_LL_FAULTS
+      if (const char* f = getenv("PRPLL_LL_JACOBI_FAIL"); f && string(f) == "run") { throw "TEST FAULT: the Jacobi kernels fail"s; }
+#endif
+      int const got = gcd->jacobi(minus2(s, E), u32(E));
+      jacobiSecs = timer.at();
+      sinceCheck.reset();
+      log("LL Jacobi check at %" PRIu64 ": %s (%d, expected -1), %.1f s\n", k, got == -1 ? "OK" : got ? "FAILED" : "inconclusive",
+          got, jacobiSecs);
+      return got;
+    } catch (const std::exception& e) {
+      if (jacobiSecs || Signal::stopRequested()) { throw; }
+      error = e.what();
+    } catch (const string& e) {
+      if (jacobiSecs || Signal::stopRequested()) { throw; }
+      error = e;
+    } catch (const char* e) {
+      if (jacobiSecs || Signal::stopRequested()) { throw; }
+      error = e;
+    }
+    log("Warning: the LL Jacobi check can't run on this GPU (%s); the test goes on without it\n", error.c_str());
+    jacobiOn = false;
+    return std::nullopt;
+  };
 
   reload:
   elapsedTimer.reset();
@@ -3471,6 +3610,15 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
   double elapsedBefore = 0;
   {
     LLState state = saver.load();
+    bool verified = false;
+    if (verifiedSaver) {
+      // After a failed check the ordinary savefiles past the verified one are gone (see below), so this is the verified one
+      LLVerifiedState v = verifiedSaver->load();
+      if (v.k >= state.k) {
+        state = {.exponent=E, .k=v.k, .data=std::move(v.data), .elapsed=v.elapsed};
+        verified = true;
+      }
+    }
 
     elapsedBefore = state.elapsed;
     startK = state.k;
@@ -3479,7 +3627,7 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
     u64 const res = dataResidue();
     if (res != expectedRes) { throw "Invalid savefile (res64)"; }
     assert(res == expectedRes);
-    log("LL loaded @ %" PRIu64 " : %016" PRIx64 "\n", startK, res);
+    log("LL loaded @ %" PRIu64 " : %016" PRIx64 "%s\n", startK, res, verified && startK ? " (Jacobi verified)" : "");
   }
 
   IterationTimer iterationTimer{startK};
@@ -3490,7 +3638,8 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
 
   while (true) {
     ++k;
-    bool doStop = (k >= kEnd) || (args.iters && k - startK >= args.iters);
+    bool const userStop = (args.iters && k - startK >= args.iters) || Signal::stopRequested();
+    bool doStop = (k >= kEnd) || userStop;
 
     if (Signal::stopRequested()) {
       doStop = true;
@@ -3498,38 +3647,103 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task) {
     }
 
     bool const doLog = (k % args.logStep == 0) || doStop;
-    enum LEAD_TYPE const leadOut = doLog || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+#ifdef PRPLL_LL_FAULTS
+    LlFault* const fault = llFaultAt(k);
+#else
+    constexpr bool fault = false;
+#endif
+    enum LEAD_TYPE const leadOut = doLog || fault || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
 
     squareLL(bufData, leadIn, leadOut);
     leadIn = leadOut;
+
+#ifdef PRPLL_LL_FAULTS
+    if (fault) {
+      fault->fired = true;
+      Words s = readData();
+      u64 const before = s.empty() ? 0 : residue(s);
+      if (fault->kind == "flip") {
+        if (s.empty()) { s = Words(nWords(E), 0); }
+        s[fault->bit / 32] ^= u32(1) << (fault->bit % 32);
+      } else {
+        // 3 (s - 2) + 2
+        Words const y = minus2(s, E);
+        s = addMod(addMod(addMod(y, y, E), y, E), makeWords(E, 2), E);
+      }
+      writeIn(bufData, s);
+      log("TEST FAULT %s at %" PRIu64 ": %016" PRIx64 " -> %016" PRIx64 "\n", fault->kind.c_str(), k, before, dataResidue());
+    }
+#endif
 
     if (!doLog) continue;
 
     u64 res64 = 0;
     auto data = readData();
     bool const isAllZero = data.empty();
+    float const secsPerIt = iterationTimer.reset(k);
+    bool failed = false;
 
     if (isAllZero) {
       if (k < kEnd) {
         log("Error: early ZERO @ %" PRIu64 "\n", k);
         if (doStop) {
           throw "stop requested";
-        } 
-          goto reload;
-       
+        }
+        if (!verifiedSaver) { goto reload; }
+        failed = true;
       }
       res64 = 0;
     } else {
       assert(data.size() >= 2);
       res64 = (u64(data[1]) << 32) | data[0];
+    }
+
+    if (jacobiOn && !failed
+        && (k >= kEnd || (recheckK && k >= recheckK) || !jacobiSecs || checkAll || sinceCheck.at() >= 100 * jacobiSecs)) {
+      std::optional<int> const symbol = jacobi(data, k);
+      if (symbol == 1) {
+        failed = true;
+        ++nJacobi;
+      } else if (symbol) {
+        recheckK = 0;
+        if (symbol == -1) {
+          nSeqErrors = 0;
+          // Not the final residue:  a test resumed from it would go past the end
+          if (k < kEnd) { verifiedSaver->save({.exponent=E, .k=k, .data=data, .elapsed=elapsedBefore + elapsedTimer.at()}); }
+        }
+      }
+      iterationTimer.reset(k);    // keep the check out of the time per iteration
+    }
+
+    if (failed) {
+      // Drop the savefiles that may hold the wrong residue, then go back to the verified one
+      vector<u64> const verifiedKs = verifiedSaver->listK();
+      u64 const verifiedK = verifiedKs.empty() ? 0 : verifiedKs.back();
+      for (u64 savedK : saver.listK()) { if (savedK > verifiedK) { saver.removeAt(savedK); } }
+      log("LL check failed at %" PRIu64 ", going back to %" PRIu64 "\n", k, verifiedK);
+      if (++nSeqErrors > 2) {
+        log("%d sequential errors, will stop.\n", nSeqErrors);
+        throw "too many errors";
+      }
+      if (k == lastFailedK && res64 == lastFailedRes64) {
+        log("Consistent error %016" PRIx64 ", will stop.\n", res64);
+        throw "consistent error";
+      }
+      lastFailedK = k;
+      lastFailedRes64 = res64;
+      recheckK = k;
+      if (userStop) { throw "stop requested"; }
+      goto reload;
+    }
+
+    if (!isAllZero) {
       saver.save({.exponent=E, .k=k, .data=std::move(data), .elapsed=elapsedBefore + elapsedTimer.at()});
     }
 
-    float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
     log("%9" PRIu64 " %016" PRIx64 " %s ETA %s\n", k, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
 
-    if (k >= kEnd) { return {.isPrime=isAllZero, .res64=res64}; }
+    if (k >= kEnd) { return {.isPrime=isAllZero, .res64=res64, .nJacobi=nJacobi}; }
 
     if (doStop) { throw "stop requested"; }
   }
@@ -4145,6 +4359,7 @@ void Gpu::clear(bool isPRP) {
     if (args.prpPm1B1) { Saver<P1PrpState>::clear(E); }
   } else {
     Saver<LLState>::clear(E);
+    Saver<LLVerifiedState>::clear(E);
   }
 }
 
