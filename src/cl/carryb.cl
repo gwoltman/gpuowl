@@ -46,10 +46,10 @@ KERNEL(G_W) carryB(P(Word2) io, CP(CarryABM) carryIn) {
     // that nothing can escape the group.  An un-normalized word holds the same value and is normalized
     // by the next iteration.
     if (i == CARRY_LEN - 1) {
-      io[p] = carryWordLast(io[p], carry, biglit0);
+      io[p] = carryWordLast(io[p], carry, biglit0, word_index + 2 * i);
       return;
     }
-    io[p] = carryWord(io[p], &carry, biglit0, biglit1);
+    io[p] = carryWord(io[p], &carry, biglit0, biglit1, word_index + 2 * i);
     if (carryIsZero(carry)) { return; }
   }
 }
@@ -83,7 +83,7 @@ KERNEL(G_W) carryNorm(P(Word2) io, P(CarryABM) carryOut, P(int) allZero) {
 #else
   CarryABM carry = 0;
 #endif
-  io[p] = carryWord(io[p], &carry, biglit0, biglit1);
+  io[p] = carryWord(io[p], &carry, biglit0, biglit1, word_index + 2 * i);
   carryOut[G_W * g + me] = carry;
   if (!carryIsZero(carry)) { *allZero = 0; }
 }
