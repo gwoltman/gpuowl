@@ -396,6 +396,13 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   }
   string const archOpt = "--gpu-architecture=" + arch;
 
+  // NVRTC up to 13.0.88 generates wrong code for carryFused on Blackwell (sm_100 and up) when a weight-shift constant is 0 at
+  // compile time (see NVRTC_ZERO_FIX in base.cl).  NVRTC 13.1.115 is the first release tested that does not, and nvrtcVersion
+  // reports only major.minor, so 13.1 is included too (13.1.80 was not tested; the workaround costs nothing where it is not needed).
+  int nvrtcMajor = 0, nvrtcMinor = 0;
+  nvrtcVersion(&nvrtcMajor, &nvrtcMinor);
+  bool const needsZeroFix = cc >= 100 && arch.starts_with("sm_") && nvrtcMajor * 100 + nvrtcMinor < 1302;
+
   // Parse OpenCL options string into NVRTC options
   // Convert OpenCL build options to NVRTC equivalents:
   //   -cl-std=CL2.0         → -std=c++17
@@ -413,6 +420,7 @@ int clCompileProgram(cl_program prog, unsigned  /*nDevices*/, const cl_device_id
   // parts of -use_fast_math (no flush-to-zero, no reduced-precision division/sqrt).
   // This is critical for FFT performance: every butterfly is multiply-add pairs.
   nvrtcOpts.emplace_back("--fmad=true");
+  if (needsZeroFix) { nvrtcOpts.emplace_back("-DNVRTC_ZERO_FIX=1"); }
 
   // NOTE: --restrict (all kernel pointers are __restrict__) was tested but causes GPU read
   // errors — some PRPLL kernels use in-place operations where in/out buffers alias.

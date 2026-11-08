@@ -1041,7 +1041,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
   const u32 log2_root_two = LOG2_ROOT_TWO61;
   const u32 bigword_weight_shift = (NWORDS - EXP % NWORDS) * log2_root_two % 61;
   u32 bigword_weight_shift_minus1 = (bigword_weight_shift + 60) % 61;
-  if (bigword_weight_shift_minus1 == 0) { OPAQUE(bigword_weight_shift_minus1); }   // NVRTC 12.9 on Blackwell miscompiles the kernel when this is a compile-time 0 (EXP % NWORDS a multiple of 61 with PFA): hide the 0
+  HIDE_ZERO(bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
@@ -1981,7 +1981,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   const u32 log2_root_two = LOG2_ROOT_TWO61;
   const u32 bigword_weight_shift = (NWORDS - EXP % NWORDS) * log2_root_two % 61;
   u32 bigword_weight_shift_minus1 = (bigword_weight_shift + 60) % 61;
-  if (bigword_weight_shift_minus1 == 0) { OPAQUE(bigword_weight_shift_minus1); }   // NVRTC 12.9 on Blackwell miscompiles the kernel when this is a compile-time 0 (EXP % NWORDS a multiple of 61 with PFA): hide the 0
+  HIDE_ZERO(bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
@@ -2297,7 +2297,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   const u32 m61_log2_root_two = LOG2_ROOT_TWO61;
   const u32 m61_bigword_weight_shift = (NWORDS - EXP % NWORDS) * m61_log2_root_two % 61;
   u32 m61_bigword_weight_shift_minus1 = (m61_bigword_weight_shift + 60) % 61;
-  if (m61_bigword_weight_shift_minus1 == 0) { OPAQUE(m61_bigword_weight_shift_minus1); }   // NVRTC 12.9 on Blackwell miscompiles the kernel when this is a compile-time 0 (EXP % NWORDS a multiple of 61 with PFA): hide the 0
+  HIDE_ZERO(m61_bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
@@ -2633,7 +2633,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   const u32 m61_log2_root_two = LOG2_ROOT_TWO61;
   const u32 m61_bigword_weight_shift = (NWORDS - EXP % NWORDS) * m61_log2_root_two % 61;
   u32 m61_bigword_weight_shift_minus1 = (m61_bigword_weight_shift + 60) % 61;
-  if (m61_bigword_weight_shift_minus1 == 0) { OPAQUE(m61_bigword_weight_shift_minus1); }   // NVRTC 12.9 on Blackwell miscompiles the kernel when this is a compile-time 0 (EXP % NWORDS a multiple of 61 with PFA): hide the 0
+  HIDE_ZERO(m61_bigword_weight_shift_minus1);
 
   // Derive the big vs. little flags from the fractional number of bits in each word.
   // Create a 64-bit counter that tracks both weight shifts and frac_bits (adding 0xFFFFFFFF to effect the ceil operation required for weight shift).
