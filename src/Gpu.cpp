@@ -2382,43 +2382,14 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
   }
 }
 
-// With PFA (an NTT with an odd MIDDLE factor, see base.cl) the pair transposeOut puts at x * BIG_HEIGHT + line is logical pair pfaPair(x, line).
-// Return, for each such position, the logical pair it holds.
-static vector<u32> pfaPairMap(const FFTShape& shape) {
-  u32 const R = shape.pfaRadix(), W = shape.width, BH = shape.height * shape.middle, RBH = BH / R, L = W * RBH;   // RBH: PFA_BH
-  u32 linv = 1;
-  while (L % R * linv % R != 1) { ++linv; }
-  vector<u32> map(W * BH);
-  for (u32 x = 0; x < W; ++x) {
-    for (u32 g = 0; g < BH; ++g) {
-      u32 const q = x * RBH + g % RBH;
-      map[x * BH + g] = q + L * ((g % R + R - q % R) * linv % R);
-    }
-  }
-  return map;
-}
-
 vector<Word> Gpu::readOut(Buffer<Word> &buf) {
   transpOut(bufAux, buf);
-  vector<Word> words = readWords(bufAux);
-  if (fft.shape.isPfa()) {
-    vector<u32> const map = pfaPairMap(fft.shape);
-    vector<Word> logical(words.size());
-    for (u32 i = 0; i < map.size(); ++i) { logical[2 * map[i]] = words[2 * i]; logical[2 * map[i] + 1] = words[2 * i + 1]; }
-    words = std::move(logical);
-  }
-  return words;
+  return readWords(bufAux);     // transposeOut puts the words in logical order, also with PFA
 }
 
 void Gpu::writeIn(Buffer<Word>& buf, const vector<u32>& words) { writeIn(buf, expandBits(words, N, E)); }
 
 void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
-  if (fft.shape.isPfa()) {
-    vector<u32> const map = pfaPairMap(fft.shape);
-    vector<Word> stock(words.size());
-    for (u32 i = 0; i < map.size(); ++i) { stock[2 * i] = words[2 * map[i]]; stock[2 * i + 1] = words[2 * map[i] + 1]; }
-    words = std::move(stock);
-  }
   writeWords(bufAux, words);
   transpIn(buf, bufAux);
 }
