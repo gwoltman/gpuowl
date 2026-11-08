@@ -21,8 +21,7 @@ namespace {
 
 constexpr u32 TEMP_BUFS = pm1::INLINE_TEMP_BUFS;   // the fold's running products, its two results, and two for its checks
 constexpr u32 MAX_L = pm1::INLINE_MAX_L;
-constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // as stage 2:  kept back when the free memory is not known, and under -maxAlloc
-constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
+constexpr size_t RESERVE_BYTES = Stage2::RESERVE_BYTES;    // as stage 2:  kept back when the free memory is not known, and under -maxAlloc
 // A PRP that has to go back further than this many verified-check intervals for its accumulator does not:  the P-1 is given up
 constexpr u64 MAX_REWIND_CHECKS = 2;
 
@@ -115,21 +114,11 @@ u32 Pm1Prp::chooseL(u64 bitsLeft, u64 itersLeft, u64 maxBufs) const {
 // The buckets for this PRP:  as many as the memory budget allows (as for stage 2:  the free memory of the device less 1 GB, or 90% of
 // its RAM less what prpll holds when the free memory can't be queried; -maxAlloc caps it), and no more than the cheapest L needs.
 Pm1Prp::Budget Pm1Prp::budget(const Gpu& gpu) {
-  const Args& args = gpu.args;
   size_t const bufBytes = size_t(gpu.N) * gpu.fft.WordSize;
-  cl_device_id const dev = gpu.shared.context->deviceId();
-  const void* const devKey = gpu.shared.context->get();
   double const GB = double(1u << 30);
-  double const held = double(AllocTrac::totalAllocBytes(devKey));
-#ifdef CUDA_BACKEND
-  bool const haveFree = true;
-#else
-  bool const haveFree = hasFreeMemInfo(dev);
-#endif
-  double const freeBytes = haveFree ? double(getFreeMem(dev)) : -1;
-  float const ramGB = getGpuRamGB(dev);
-  double budget = haveFree ? freeBytes - HEADROOM_BYTES : ramGB > 0 ? ramGB * GB * 0.9 - held - RESERVE_BYTES : 0;
-  if (args.maxAlloc) { budget = std::min(budget, double(args.maxAlloc) - held - RESERVE_BYTES); }
+  Stage2::DeviceBudget const dev = Stage2::deviceBudget(gpu.shared);
+  double const budget = dev.bytes;
+  bool const haveFree = dev.haveFree;
   u64 const maxBufs = budget > 0 ? u64(budget / bufBytes) : 0;
   char why[160];
   snprintf(why, sizeof(why), "%.2f GB of GPU memory (%s) is too little for %u buffers of %.0f MB", std::max(0.0, budget) / GB,

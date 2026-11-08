@@ -57,8 +57,8 @@ constexpr u32 EXTRA_BUFS = 3;             // big buffers besides the table:  A a
                                           // the fftMidIn state
 constexpr u32 WORD_BUFS = 2;              // residue (word) buffers besides the Gpu's own:  acc and a scratch (C and the dup acc are in
                                           // the Gpu's bufData and bufCheck, which stage 2 does not otherwise use)
-constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // kept back when the free memory is not known, and under a -maxAlloc cap
-constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
+constexpr size_t RESERVE_BYTES = Stage2::RESERVE_BYTES;     // kept back when the free memory is not known, and under a -maxAlloc cap
+constexpr size_t HEADROOM_BYTES = Stage2::HEADROOM_BYTES;   // kept back from the free memory
 // Buffers are counted at their size rounded up to this (GPU memory pages).  XTX, ROCm:  tables of 15 MiB buffers stopped holding their
 // values a little beyond what 16 MiB each would fill, and 41.25 MiB ones held up to 22.2 GiB:  consistent with 2 MiB pages, but also
 // with a fixed overhead of about 1 GiB beyond the headroom; not settled (stage2-design.md "Stage 2 v2")
@@ -733,21 +733,8 @@ struct Budget {
 // PRP) is raised by the budget, for this device only, while stage 2 runs.
 Budget memoryBudget(GpuCommon shared, size_t bufBytes, size_t wordBytes, const char* what) {
   const Args& args = *shared.args;
-  cl_device_id const dev = shared.context->deviceId();
   double const GB = double(1u << 30);
-  const void* const devKey = shared.context->get();      // AllocTrac's accounting is per device
-  double const held = double(AllocTrac::totalAllocBytes(devKey));
-#ifdef CUDA_BACKEND
-  bool const haveFree = true;      // cuMemGetInfo
-#else
-  bool const haveFree = hasFreeMemInfo(dev);
-#endif
-  double const freeBytes = haveFree ? double(getFreeMem(dev)) : -1;
-  float const ramGB = getGpuRamGB(dev);
-  double budget = haveFree ? freeBytes - HEADROOM_BYTES
-                : ramGB > 0 ? ramGB * GB * 0.9 - held - RESERVE_BYTES : 0;
-  double const cap = args.maxAlloc ? double(args.maxAlloc) - held - RESERVE_BYTES : -1;
-  if (args.maxAlloc) { budget = std::min(budget, cap); }
+  auto const [budget, haveFree, freeBytes, ramGB, held] = Stage2::deviceBudget(shared);
   char memNote[256];
   if (haveFree) {
     snprintf(memNote, sizeof(memNote), "free %.2f GB - headroom %.2f GB", freeBytes / GB, HEADROOM_BYTES / GB);
@@ -767,6 +754,25 @@ Budget memoryBudget(GpuCommon shared, size_t bufBytes, size_t wordBytes, const c
 }
 
 } // namespace
+
+Stage2::DeviceBudget Stage2::deviceBudget(GpuCommon shared) {
+  const Args& args = *shared.args;
+  cl_device_id const dev = shared.context->deviceId();
+  double const GB = double(1u << 30);
+  const void* const devKey = shared.context->get();      // AllocTrac's accounting is per device
+  double const held = double(AllocTrac::totalAllocBytes(devKey));
+#ifdef CUDA_BACKEND
+  bool const haveFree = true;      // cuMemGetInfo
+#else
+  bool const haveFree = hasFreeMemInfo(dev);
+#endif
+  double const freeBytes = haveFree ? double(getFreeMem(dev)) : -1;
+  float const ramGB = getGpuRamGB(dev);
+  double budget = haveFree ? freeBytes - HEADROOM_BYTES
+                : ramGB > 0 ? ramGB * GB * 0.9 - held - RESERVE_BYTES : 0;
+  if (args.maxAlloc) { budget = std::min(budget, double(args.maxAlloc) - held - RESERVE_BYTES); }
+  return {.bytes = budget, .haveFree = haveFree, .freeBytes = freeBytes, .ramGB = ramGB, .held = held};
+}
 
 u64 Stage2::tableCapacity(GpuCommon shared, const Gpu& g, u64 E) {
   vector<Pm1Fft> ffts;
