@@ -53,3 +53,37 @@ KERNEL(G_W) carryB(P(Word2) io, CP(CarryABM) carryIn) {
     if (carryIsZero(carry)) { return; }
   }
 }
+
+// carryB has no carry-out, so the last word of a group may be left un-normalized (carryWordLast).  Such a representation is not
+// a function of the value alone -- it depends on how the value was split between the groups -- which the bitwise Gerbicz
+// compare (isEqual) needs.  carryNorm normalizes each group's last pair with a zero carry-in and writes the carry that comes
+// out of it to the carry shuttle, in the slot where carryB expects the group's carry-out; it clears *allZero if any group
+// produced one.  Gpu::canonicalize alternates carryNorm and carryB until nothing is left.  The value never changes.
+KERNEL(G_W) carryNorm(P(Word2) io, P(CarryABM) carryOut, P(int) allZero) {
+  u32 g  = get_group_id(0);
+  u32 me = get_local_id(0);
+  u32 gx = g % NW;
+  u32 gy = g / NW;
+  u32 H = BIG_HEIGHT;
+  u32 line = gy * CARRY_LEN;
+#if PFA
+  u32 word_index = pfaPair(G_W * gx + me, line) * 2;
+#else
+  u32 word_index = (gx * G_W * H + me * H + line) * 2;
+#endif
+  u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
+
+  const i32 i = CARRY_LEN - 1;
+  bool biglit0 = frac_bits + (2*i) * FRAC_BPW_HI <= FRAC_BPW_HI;
+  bool biglit1 = frac_bits + (2*i) * FRAC_BPW_HI >= -FRAC_BPW_HI;
+  u32 p = G_W * gx + WIDTH * (line + i) + me;
+
+#if FFT_TYPE == FFT323161
+  CarryABM carry = make_i96(0);
+#else
+  CarryABM carry = 0;
+#endif
+  io[p] = carryWord(io[p], &carry, biglit0, biglit1, word_index + 2 * i);
+  carryOut[G_W * g + me] = carry;
+  if (!carryIsZero(carry)) { *allZero = 0; }
+}
