@@ -249,3 +249,62 @@
 { "51:4K:16:512", {32.75f, 32.75f, 32.75f, 32.75f, 32.75f, 32.75f}},
 {  "51:4K:16:1K", {32.25f, 32.25f, 32.25f, 32.25f, 32.25f, 32.25f}},
 {  "51:4K:16:2K", {31.75f, 31.75f, 31.75f, 31.75f, 31.75f, 31.75f}},  // Estimated
+// FFT31 - Computed by targeting maxROE of ~0.35 over 2000 iterations (-roe: every iteration sampled), one shape per size
+// (the NTT is exact, so every shape of a size has the same ROE).  Radeon RX 7900 XTX.  Checked at 50000 iterations (20000 for 1K:16:1K)
+// on three exponents at the top of the range for 256:2:256, 1K:16:512 and 1K:16:1K (ROEmax <= 0.41, clean; 0.2 bpw above the
+// table value 1K:16:512 shows Gerbicz errors, 1.25 bpw below it is clean); the other sizes are the 2000-iteration fit only.
+{ "52:256:1:256", {10.19f, 10.19f, 10.19f, 10.19f, 10.19f, 10.19f}},
+{ "52:256:2:256", {10.01f, 10.01f, 10.01f, 10.01f, 10.01f, 10.01f}},
+{ "52:256:4:256", {9.72f, 9.72f, 9.72f, 9.72f, 9.72f, 9.72f}},
+{ "52:256:8:256", {9.49f, 9.49f, 9.49f, 9.49f, 9.49f, 9.49f}},
+{ "52:512:4:256", {9.49f, 9.49f, 9.49f, 9.49f, 9.49f, 9.49f}},
+{"52:256:16:256", {9.17f, 9.17f, 9.17f, 9.17f, 9.17f, 9.17f}},
+{ "52:512:8:256", {9.17f, 9.17f, 9.17f, 9.17f, 9.17f, 9.17f}},
+{ "52:512:4:512", {9.17f, 9.17f, 9.17f, 9.17f, 9.17f, 9.17f}},
+{  "52:1K:8:256", {8.93f, 8.93f, 8.93f, 8.93f, 8.93f, 8.93f}},
+{"52:512:16:256", {8.93f, 8.93f, 8.93f, 8.93f, 8.93f, 8.93f}},
+{ "52:512:8:512", {8.93f, 8.93f, 8.93f, 8.93f, 8.93f, 8.93f}},
+{ "52:1K:16:256", {8.62f, 8.62f, 8.62f, 8.62f, 8.62f, 8.62f}},
+{  "52:1K:8:512", {8.62f, 8.62f, 8.62f, 8.62f, 8.62f, 8.62f}},
+{"52:512:16:512", {8.62f, 8.62f, 8.62f, 8.62f, 8.62f, 8.62f}},
+{ "52:1K:16:512", {8.43f, 8.43f, 8.43f, 8.43f, 8.43f, 8.43f}},
+{   "52:1K:8:1K", {8.43f, 8.43f, 8.43f, 8.43f, 8.43f, 8.43f}},
+{  "52:1K:16:1K", {8.12f, 8.12f, 8.12f, 8.12f, 8.12f, 8.12f}},
+{  "52:2K:16:1K", {7.83f, 7.83f, 7.83f, 7.83f, 7.83f, 7.83f}},
+{  "52:2K:16:2K", {7.56f, 7.56f, 7.56f, 7.56f, 7.56f, 7.56f}},
+{ "52:4K:16:512", {7.83f, 7.83f, 7.83f, 7.83f, 7.83f, 7.83f}},
+{  "52:4K:16:1K", {7.56f, 7.56f, 7.56f, 7.56f, 7.56f, 7.56f}},
+{  "52:4K:16:2K", {7.22f, 7.22f, 7.22f, 7.22f, 7.22f, 7.22f}},  // One run (ROEmax 0.35 at 7.23); an earlier run at 7.02 had a Gerbicz error at ROEmax 0.26
+// FFT32 - Computed by targeting maxROE of ~0.35 over 2000 iterations (-roe: every iteration sampled), Radeon RX 7900 XTX.  Checked clean at 50000 iterations on three
+// exponents at the table value of the first five rows (ROEmax <= 0.37; 0.2 bpw above the table value 0.44-0.46).  Variants
+// 000..212 give the same ROE.  The ROE has a floor that grows in proportion to the size and does not depend on bpw (it comes from
+// the -1/2 mean of the balanced words, not from FP32 rounding), so the limit falls quickly with size and from 768K words no bpw
+// works; those rows are set to the minimum bpw (no exponent fits).  Below ~2.25 bpw the Gerbicz check fails as well.
+{ "53:256:1:256", {5.45f, 5.45f, 5.45f, 5.45f, 5.45f, 5.45f}},
+{ "53:256:2:256", {5.15f, 5.15f, 5.15f, 5.15f, 5.15f, 5.15f}},
+{ "53:512:1:256", {5.15f, 5.15f, 5.15f, 5.15f, 5.15f, 5.15f}},
+{ "53:256:3:256", {4.90f, 4.90f, 4.90f, 4.90f, 4.90f, 4.90f}},
+{ "53:256:4:256", {4.60f, 4.60f, 4.60f, 4.60f, 4.60f, 4.60f}},
+{ "53:512:2:256", {4.60f, 4.60f, 4.60f, 4.60f, 4.60f, 4.60f}},
+{ "53:256:5:256", {4.50f, 4.50f, 4.50f, 4.50f, 4.50f, 4.50f}},
+{ "53:256:6:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable: the ROE floor is >= 0.35 at any bpw (0.36-0.45)
+{ "53:256:7:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable: the ROE floor is >= 0.35 at any bpw (0.37-0.49); 3890011 at 4.24 bpw fails on a 7900 XTX
+{ "53:256:8:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable: ROEmax ~0.5 and Gerbicz errors at 3.0 bpw (also 512:4:256, 512:2:512)
+{ "53:512:4:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{"53:256:16:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable from here on: the ROE floor doubles with the size (not run)
+{ "53:512:8:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{ "53:512:4:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{  "53:1K:8:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{"53:512:16:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{ "53:512:8:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{ "53:1K:16:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{  "53:1K:8:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{"53:512:16:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{ "53:1K:16:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{   "53:1K:8:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{  "53:1K:16:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{  "53:2K:16:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{  "53:2K:16:2K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{ "53:4K:16:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{  "53:4K:16:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+{  "53:4K:16:2K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
