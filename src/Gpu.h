@@ -41,7 +41,7 @@ struct PRPResult {
   u32 nErrors = 0;
   fs::path proofPath;
   std::string res2048;
-  bool pm1Factor{};     // -prpPm1 found a factor (its result line is written):  the PRP test stopped
+  bool pm1Factor{};     // the P-1 inside the PRP test found a factor (its result line is written):  the PRP test stopped
 };
 
 struct LLResult {
@@ -102,7 +102,7 @@ struct Weights {
 
 class Gpu {
   friend class Stage2Run;   // P-1 stage 2 (Stage2.cpp) drives the transform kernels directly
-  friend class Pm1Prp;      // P-1 stage 1 inside the PRP test (-prpPm1)
+  friend class Pm1Prp;      // P-1 stage 1 inside the PRP test (Pm1Prp)
 
   GpuCommon shared;
   Background* background;
@@ -379,7 +379,7 @@ public:
   // The WMUL this Gpu runs with, after clDefines lowered a requested value the FFT or device cannot use
   [[nodiscard]] u32 effectiveWmul() const { return wmul; }
 
-  // pm1Report writes the result line of the P-1 that -prpPm1 runs inside the PRP test
+  // pm1Report writes the result line of the P-1 that runs inside the PRP test
   PRPResult isPrimePRP(const Task& task, const Pm1Report& pm1Report = {});
   // With the Jacobi check on (-use LL_JACOBI, on by default) gcd computes the symbols; nullptr: no check
   LLResult isPrimeLL(const Task& task, Gcd* gcd);

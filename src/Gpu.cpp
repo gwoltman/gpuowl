@@ -403,7 +403,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "MIDDLE_CHAIN61",
                               "CS_FENCE",               // Device-scope fences in carryFused's hand-offs (see carryfused.cl).  Required for Intel Arc GPUs.
                               "CS_ATOMIC",              // Experimental: carryFused's carry shuttle accessed with atomics (see carryfused.cl)
-                              "ZEROMEAN"                // FP32: zero-mean balanced words, default 1 for type 53, 0 for the hybrids (see carryutil.cl)
+                              "ZEROMEAN",               // FP32: zero-mean balanced words, default 1 for type 53, 0 for the hybrids (see carryutil.cl)
+                              "PRPPM1",                 // Developer: PRPPM1=0, no P-1 inside PRP tests (Task.cpp, prpPm1Bounds)
+                              "PRPPM1_B1","PRPPM1_B2"   // Developer, tests: these P-1 bounds inside every PRP test, whatever its line says
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
@@ -639,7 +641,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // recompile the kernels.  PTX_VERSION stays: the CUDA build reads it back from the build options (see clwrap_cuda.cpp).
   initializer_list<string> const hostOnlyKeys = {"GRAPHS", "GRAPH_BATCH", "L1CUDA", "L2PERSIST", "L2PERSISTPCT", "SLEEP_WAIT",
                                                  "SMEM_SPILL", "PM1_JACOBI", "CERT_GEC", "LL_JACOBI", "TUNE_EXP", "BIGLIT",
-                                                 "NONTEMPORAL"};
+                                                 "NONTEMPORAL", "PRPPM1", "PRPPM1_B1", "PRPPM1_B2"};
   std::erase_if(config, [&](const auto& kv) {
     return Args::isRegisterKey(kv.first) || Args::isRadixKey(kv.first) || isInList(kv.first, hostOnlyKeys);
   });
@@ -3249,9 +3251,10 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   assert(E == task.exponent);
   auto pm1FactorResult = [] { PRPResult r{}; r.pm1Factor = true; return r; };
 
-  // -prpPm1:  P-1 stage 1 from this test's squarings (see Pm1Prp.h).  Without it there is nothing:  pm1 stays null.
+  // P-1 stage 1 from this test's squarings (see Pm1Prp.h), with the bounds of the task (Task.cpp, prpPm1Bounds).  Without
+  // them there is nothing:  pm1 stays null.
   std::unique_ptr<Pm1Prp> pm1;
-  if (args.prpPm1B1) { pm1 = Pm1Prp::make(*this, args.prpPm1B1, args.prpPm1B2, pm1Report); }
+  if (task.B1) { pm1 = Pm1Prp::make(*this, task.B1, task.B2, pm1Report); }
 
   // This timer is used to measure total elapsed time to be written to the savefile.
   Timer elapsedTimer;
@@ -3363,7 +3366,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   bool skipNextCheckUpdate = false;
 
   u64 persistK = proofSet ? proofSet->next(k) : u64(-1);
-  // The next iteration with work besides the squaring:  a proof residue, or (-prpPm1) a P-1 accumulator step
+  // The next iteration with work besides the squaring:  a proof residue, or a P-1 accumulator step (Pm1Prp)
   u64 eventK = persistK;
   bool eventWords = true;     // the event needs the residue in words (bufData), not only its transform (buf1, the fused carry's output)
   auto nextEvent = [&] {
@@ -3379,7 +3382,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   const u64 startK = k;
   u32 const graphBatch = std::clamp(args.value("GRAPH_BATCH", 1), 1, 256);
 
-  // The first check comes early, at 2 blocks; -prpPm1 also wants one when its last step is done
+  // The first check comes early, at 2 blocks; the P-1 inside the PRP also wants one when its last step is done
   u64 extraCheckK = startK + 2 * blockSize;
   IterationTimer iterationTimer{k};
 
@@ -3393,7 +3396,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     // Batch only unsampled, already-captured squarings on bufData, stopping strictly before the next block/check/log, proof residue,
     // final residue or -iters boundary, which keeps its single-iteration path.  Halving the batch to fit bounds the graph cache
     // to GRAPH_BATCH, GRAPH_BATCH / 2, ... squarings.
-    u64 boundary = std::min({roundUp(k + 1, blockSize), eventK, kEnd});     // eventK: the proof residue, and the P-1 steps of -prpPm1
+    u64 boundary = std::min({roundUp(k + 1, blockSize), eventK, kEnd});     // eventK: the proof residue, and the P-1 steps (Pm1Prp)
     if (extraCheckK > k) { boundary = std::min(boundary, extraCheckK); }
     if (args.iters) { boundary = std::min(boundary, startK + args.iters); }
     u32 repeat = graphBatch;
@@ -4537,7 +4540,7 @@ PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd) {
 void Gpu::clear(bool isPRP) {
   if (isPRP) {
     Saver<PRPState>::clear(E);
-    if (args.prpPm1B1) { Saver<P1PrpState>::clear(E); }
+    Saver<P1PrpState>::clear(E);     // (none when there was no P-1 in the test)
   } else {
     Saver<LLState>::clear(E);
     Saver<LLVerifiedState>::clear(E);

@@ -88,7 +88,7 @@ struct P2State {
   double elapsed{};
 };
 
-// P-1 stage 1 inside a PRP test (Pm1Prp, -prpPm1):  written beside the verified PRP savefile of iteration k, whose res64 is prp64.  data
+// P-1 stage 1 inside a PRP test (Pm1Prp):  written beside the verified PRP savefile of iteration k, whose res64 is prp64.  data
 // is the product of the PRP residues 3^(2^j) over the set bits j < next of the stage 1 exponent of B1.  stage 0:  accumulating;
 // 1:  stage 1 done without a factor, stage 2 to run;  2:  the P-1 result is written;  3:  given up (accumulator or GCD errors).
 struct P1PrpState {

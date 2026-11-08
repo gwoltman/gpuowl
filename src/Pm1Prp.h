@@ -2,7 +2,7 @@
 
 #pragma once
 
-// P-1 stage 1 inside a PRP test (-prpPm1 <B1>[,<B2>]), from the PRP's own squarings.
+// P-1 stage 1 inside a PRP test (automatic for PRP lines that ask for P-1, Task.cpp prpPm1Bounds), from the PRP's own squarings.
 //
 // The PRP residue after k squarings is u_k = 3^(2^k), so the stage 1 residue 3^E (E = pm1::stage1Exponent(p, B1)) is the product of
 // the u_k over the set bits k of E.  It is collected by the k-ary method:  the bits of E are cut into windows of L bits at the grid
@@ -22,7 +22,7 @@
 //
 // When all the bits of E are in X (the PRP is at about iteration log2(E) = 1.44 B1), the next PRP check is the last fold, and then:
 // the GCD on the GPU, the P-1 result line ("integrated":true), stage 2 if B2 > B1 (the PRP waits for it), and a factor ends the PRP.
-// When -prpPm1 is not given none of this exists:  no buffers, no savefiles, no kernels; the PRP loop is unchanged.
+// Without P-1 in the test none of this exists:  no buffers, no savefiles, no kernels; the PRP loop is unchanged.
 
 #include "AllocTrac.h"
 #include "Buffer.h"
@@ -45,8 +45,14 @@ public:
   static std::unique_ptr<Pm1Prp> make(Gpu& gpu, u64 B1, u64 B2, Pm1Report report);
   ~Pm1Prp();
 
+  // The residue buffers this PRP test's GPU has room for (the free memory less 1 GB, -maxAlloc caps it), as the buckets are allocated;
+  // tooLittle says why when they are fewer than the smallest window needs.  And the PRP's verified-check interval the folds are at.
+  struct Budget { u64 maxBufs; double bytes; string tooLittle; };
+  static Budget budget(const Gpu& gpu);
+  static u64 checkStep(const Gpu& gpu);
+
   // After the PRP loaded `state`:  restores the accumulator of the same iteration, or brings the PRP back to the last iteration that
-  // has one (and returns that state).  Without one (a test started without -prpPm1, the savefiles lost) the P-1 is given up, with a log
+  // has one (and returns that state).  Without one (a test started without P-1, the savefiles lost) the P-1 is given up, with a log
   // line.  A finished stage 1 waiting for stage 2 (a stop in stage 2) runs it now.
   PRPState sync(PRPState state);
 

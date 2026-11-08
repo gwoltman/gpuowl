@@ -4,6 +4,7 @@
 #include "Gpu.h"
 #include "Gcd.h"
 #include "Pm1.h"
+#include "Pm1Bounds.h"
 #include "Stage2.h"
 #include "AllocTrac.h"
 #include "Args.h"
@@ -18,15 +19,10 @@
 
 namespace {
 
-constexpr u32 TEMP_BUFS = 6;         // the fold's running products, its two results, and two for its checks
-constexpr u32 MIN_L = 2;
-constexpr u32 MAX_L = 16;
+constexpr u32 TEMP_BUFS = pm1::INLINE_TEMP_BUFS;   // the fold's running products, its two results, and two for its checks
+constexpr u32 MAX_L = pm1::INLINE_MAX_L;
 constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // as stage 2:  kept back when the free memory is not known, and under -maxAlloc
 constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
-// Cost in PRP squarings, for the choice of L (XTX, 40M and 100M):  an accumulator step (one multiplication with u_k already
-// transformed, mostly from the fused carry's output), and a multiplication of the fold (both operands to transform)
-constexpr double STEP_COST = 1.3;
-constexpr double FOLD_MUL_COST = 1.7;
 // A PRP that has to go back further than this many verified-check intervals for its accumulator does not:  the P-1 is given up
 constexpr u64 MAX_REWIND_CHECKS = 2;
 
@@ -108,24 +104,17 @@ void Pm1Prp::release() {
   allowance.reset();
 }
 
+u64 Pm1Prp::checkStep(const Gpu& gpu) {
+  return std::min<u64>(checkInterval(gpu.args.blockSize), std::max<u64>(gpu.E / 8, gpu.args.logStep));
+}
+
 u32 Pm1Prp::chooseL(u64 bitsLeft, u64 itersLeft, u64 maxBufs) const {
-  u64 const checkStep = std::min<u64>(checkInterval(gpu.args.blockSize), std::max<u64>(E / 8, gpu.args.logStep));
-  double const folds = double(itersLeft) / checkStep + 2;
-  u32 best = 0;
-  double bestCost = 0;
-  for (u32 l = MIN_L; l <= MAX_L && (u64(1) << l) + 1 + TEMP_BUFS <= maxBufs; ++l) {
-    double const cost = double(bitsLeft) / l * STEP_COST + folds * (4.0 * (u64(1) << l) * FOLD_MUL_COST + 3.0 * l);
-    if (!best || cost < bestCost) {
-      best = l;
-      bestCost = cost;
-    }
-  }
-  return best;
+  return pm1::inlineStage1(double(bitsLeft), double(itersLeft), double(checkStep(gpu)), maxBufs).L;
 }
 
 // The buckets for this PRP:  as many as the memory budget allows (as for stage 2:  the free memory of the device less 1 GB, or 90% of
 // its RAM less what prpll holds when the free memory can't be queried; -maxAlloc caps it), and no more than the cheapest L needs.
-bool Pm1Prp::alloc(u64 fromK) {
+Pm1Prp::Budget Pm1Prp::budget(const Gpu& gpu) {
   const Args& args = gpu.args;
   size_t const bufBytes = size_t(gpu.N) * gpu.fft.WordSize;
   cl_device_id const dev = gpu.shared.context->deviceId();
@@ -142,6 +131,20 @@ bool Pm1Prp::alloc(u64 fromK) {
   double budget = haveFree ? freeBytes - HEADROOM_BYTES : ramGB > 0 ? ramGB * GB * 0.9 - held - RESERVE_BYTES : 0;
   if (args.maxAlloc) { budget = std::min(budget, double(args.maxAlloc) - held - RESERVE_BYTES); }
   u64 const maxBufs = budget > 0 ? u64(budget / bufBytes) : 0;
+  char why[160];
+  snprintf(why, sizeof(why), "%.2f GB of GPU memory (%s) is too little for %u buffers of %.0f MB", std::max(0.0, budget) / GB,
+           haveFree ? "free less 1 GB" : "90% of the RAM less what is held", u32(pm1::inlineBuffers(pm1::INLINE_MIN_L)),
+           bufBytes / double(1u << 20));
+  return {.maxBufs = maxBufs, .bytes = std::max(0.0, budget), .tooLittle = why};
+}
+
+bool Pm1Prp::alloc(u64 fromK) {
+  const Args& args = gpu.args;
+  size_t const bufBytes = size_t(gpu.N) * gpu.fft.WordSize;
+  const void* const devKey = gpu.shared.context->get();
+  double const GB = double(1u << 30);
+  Budget const b = budget(gpu);
+  u64 const maxBufs = b.maxBufs;
 
   u64 const itersLeft = hiBit >= fromK ? hiBit + 1 - fromK : 0;
   L = chooseL(itersLeft, itersLeft, maxBufs);
@@ -149,14 +152,13 @@ bool Pm1Prp::alloc(u64 fromK) {
   if (const char* env = getenv("PRPLL_PM1_PRP_L")) { L = u32(atoi(env)); }
 #endif
   if (!L) {
-    log("P-1 in the PRP test: %.2f GB of GPU memory (%s) is too little for %u buffers of %.0f MB\n", std::max(0.0, budget) / GB,
-        haveFree ? "free less 1 GB" : "90% of the RAM less what is held", 4 + 1 + TEMP_BUFS, bufBytes / double(1u << 20));
+    log("P-1 in the PRP test: %s\n", b.tooLittle.c_str());
     return false;
   }
   u32 const nBuckets = 1u << L;
   log("P-1 in the PRP test: L=%u, %u buckets + %u buffers of %.0f MB (%.2f GB, budget %.2f GB), about %" PRIu64
       " accumulator multiplications for the %" PRIu64 " bits left\n", L, nBuckets, 1 + TEMP_BUFS, bufBytes / double(1u << 20),
-      double(nBuckets + 1 + TEMP_BUFS) * bufBytes / GB, std::max(0.0, budget) / GB, itersLeft / L + 1, itersLeft);
+      double(nBuckets + 1 + TEMP_BUFS) * bufBytes / GB, b.bytes / GB, itersLeft / L + 1, itersLeft);
 
   // Without -maxAlloc, AllocTrac's default limit (for PRP) is raised for these buffers
   if (!args.maxAlloc) { allowance.emplace(devKey, size_t(nBuckets + 1 + TEMP_BUFS) * bufBytes + RESERVE_BYTES); }
@@ -303,7 +305,7 @@ PRPState Pm1Prp::sync(PRPState state) {
   }
   done = true;
   if (ks.empty()) {
-    log("P-1 in the PRP test: not possible here, the PRP test is at iteration %" PRIu64 " and was started without -prpPm1 (P-1 needs"
+    log("P-1 in the PRP test: not possible here, the PRP test is at iteration %" PRIu64 " and was started without P-1 (P-1 needs"
         " the PRP residues from iteration 1 on).  The PRP test goes on without P-1.\n", state.k);
   } else {
     log("P-1 in the PRP test: no accumulator savefile for the PRP test at iteration %" PRIu64 " (nor one it can go back to, within %"

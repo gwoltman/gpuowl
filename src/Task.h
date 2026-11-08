@@ -28,10 +28,12 @@ public:
   string verifyPath{}; // For Verify
 
   // For P-1 (Pminus1= and Pfactor= lines).  Pminus1 gives the bounds.  Pfactor gives the trial factoring depth and the number of
-  // primality tests that a factor would save, and the bounds are chosen from those.
+  // primality tests that a factor would save, and the bounds are chosen from those.  For PRP lines (pm1Fields:  the line has them)
+  // the same two fields, and B1, B2 are those of the P-1 inside the PRP test (0:  none).
   u64 B1{}, B2{};
   double tfBits{}, testsSaved{};
   bool pfactor{};
+  bool pm1Fields{};
 
   void execute(GpuCommon shared, u32 instance);
   void executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vector<KeyVal>& fftUses);   // execute's work on one FFT

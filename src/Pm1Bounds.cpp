@@ -7,6 +7,8 @@
 #include <cassert>
 #include <cmath>
 #include <array>
+#include <utility>
+#include <limits>
 #include <numbers>
 
 namespace pm1 {
@@ -337,8 +339,25 @@ FactorProb factorProbability(double exponent, double tfBits, double B1, double B
   return {sum1, sum2 - sum1};
 }
 
-double stage1Cost(double B1) {
+// Pm1Prp, in PRP squarings (XTX, 40M and 100M):  an accumulator step (one multiplication with u_k already transformed, mostly from the
+// fused carry's output), and a multiplication of the fold (both operands to transform).  A fold is 4 running-product multiplications per
+// bucket and 3 squaring loops of L for its checks.
+constexpr double INLINE_STEP_COST = 1.3;
+constexpr double INLINE_FOLD_MUL_COST = 1.7;
+
+InlineStage1 inlineStage1(double bits, double iters, double checkStep, u64 maxBufs) {
+  double const folds = iters / checkStep + 2;
+  InlineStage1 best{.L = 0, .cost = std::numeric_limits<double>::infinity()};
+  for (u32 l = INLINE_MIN_L; l <= INLINE_MAX_L && inlineBuffers(l) <= maxBufs; ++l) {
+    double const cost = bits / l * INLINE_STEP_COST + folds * (4.0 * double(u64(1) << l) * INLINE_FOLD_MUL_COST + 3.0 * l);
+    if (!best.L || cost < best.cost) { best = {.L = l, .cost = cost}; }
+  }
+  return best;
+}
+
+double stage1Cost(double B1, const Stage1Model& model) {
   double const bits = B1 / std::numbers::ln2;
+  if (model.maxBufs) { return inlineStage1(bits, bits, model.checkStep, model.maxBufs).cost; }
   double const L = std::clamp(sqrt(bits / STAGE1_CHECKS), 2.0, 3000.0);
   return bits * STAGE1_PER_BIT * (1 + 2 / L);
 }
@@ -439,16 +458,35 @@ double stage2Cost(u64 B1, u64 B2, u64 maxN) {
 
 u64 stage2MinTable() { return stage2TableSize(30, 15); }
 
-Bounds evaluateBounds(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 B2, u64 maxN) {
+double assumedTfBits(u64 exponent) {
+  // Prime95's trial factoring limits (bits, exponents above which they apply), as copied in AutoPrimeNet (FACTOR_LIMITS)
+  constexpr std::pair<int, u64> LIMITS[] = {
+    {82, 1071000000}, {81, 842000000}, {80, 662000000}, {79, 516800000}, {78, 408400000}, {77, 322100000}, {76, 253500000},
+    {75, 199500000}, {74, 153400000}, {73, 120000000}, {72, 96830000}, {71, 77910000}, {70, 60940000}, {69, 48800000},
+    {68, 38300000}, {67, 29690000}, {66, 23390000}, {65, 13380000}, {64, 8250000}, {63, 6515000}, {62, 5160000}, {61, 3960000},
+    {60, 2950000}, {59, 2360000}, {58, 1930000}, {57, 1480000}, {56, 1000000}};
+  int bits = 40;
+  for (auto [b, e] : LIMITS) {
+    if (exponent > e) {
+      bits = b;
+      break;
+    }
+  }
+  return bits + 4 - 1;
+}
+
+Bounds evaluateBounds(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 B2, u64 maxN, const Stage1Model& model) {
   assert(B1 >= 2);
   B2 = std::max(B1, B2);
   Stage2Choice const s2 = B2 > B1 ? chooseStage2(B1, B2, maxN) : Stage2Choice{};
   if (!s2.D) { B2 = B1; }
   FactorProb const prob = factorProbability(double(exponent), tfBits, double(B1), double(B2));
-  double cost = stage1Cost(double(B1)) + gcdCost(double(exponent));
+  double cost = stage1Cost(double(B1), model) + gcdCost(double(exponent));
   // Stage 2 runs only when stage 1 found no factor
   if (s2.D) { cost += (1 - prob.stage1) * (s2.cost * STAGE2_PER_MUL + gcdCost(double(exponent))); }
-  double const savings = prob.total() * testsSaved * double(exponent) - cost;
+  // Inside a PRP test a factor stops the PRP only after its first 1.44 * B1 iterations
+  double const done = model.maxBufs ? double(B1) / std::numbers::ln2 : 0;
+  double const savings = prob.total() * (testsSaved * double(exponent) - done) - cost;
   return {.B1 = B1, .B2 = B2, .D = s2.D, .M = s2.M, .prob = prob, .cost = cost, .savings = savings};
 }
 
@@ -480,18 +518,18 @@ double goldenMax(double lo, double hi, F&& f, int steps) {
 }
 
 // The best B2 for B1:  B2 = B1 (no stage 2), or B2 = B1 * ratio on a grid in log(ratio) up to MAX_B2, refined around the best grid point
-Bounds bestB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN) {
-  Bounds best = evaluateBounds(exponent, tfBits, testsSaved, B1, B1, maxN);
+Bounds bestB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN, const Stage1Model& model) {
+  Bounds best = evaluateBounds(exponent, tfBits, testsSaved, B1, B1, maxN, model);
   if (maxN < stage2MinTable() || B1 >= MAX_B2) { return best; }
   constexpr double STEP = 1.2, MAX_RATIO = 10000;
   double const top = std::min(double(B1) * MAX_RATIO, double(MAX_B2));
   double bestX = 0;
   for (double x = log(double(B1) * 1.5); x <= log(top) + 1e-9; x += log(STEP)) {
-    Bounds const b = evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(x)), maxN);
+    Bounds const b = evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(x)), maxN, model);
     if (b.savings > best.savings) { best = b; bestX = x; }
   }
   if (!bestX) { return best; }
-  auto const at = [&](double x) { return evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(std::min(x, log(top)))), maxN); };
+  auto const at = [&](double x) { return evaluateBounds(exponent, tfBits, testsSaved, B1, u64(exp(std::min(x, log(top)))), maxN, model); };
   double const x = goldenMax(bestX - log(STEP), std::min(bestX + log(STEP), log(top)), [&](double x) { return at(x).savings; }, 16);
   if (Bounds const b = at(x); b.savings > best.savings) { best = b; }
   return best;
@@ -499,27 +537,27 @@ Bounds bestB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN) 
 
 } // namespace
 
-Bounds chooseB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN) {
-  Bounds const b = bestB2(exponent, tfBits, testsSaved, std::max(B1, MIN_B1), maxN);
-  return evaluateBounds(exponent, tfBits, testsSaved, b.B1, b.B2 > b.B1 ? std::max(b.B1, round3(double(b.B2))) : b.B1, maxN);
+Bounds chooseB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN, const Stage1Model& model) {
+  Bounds const b = bestB2(exponent, tfBits, testsSaved, std::max(B1, MIN_B1), maxN, model);
+  return evaluateBounds(exponent, tfBits, testsSaved, b.B1, b.B2 > b.B1 ? std::max(b.B1, round3(double(b.B2))) : b.B1, maxN, model);
 }
 
-Bounds chooseBounds(u64 exponent, double tfBits, double testsSaved, u64 maxN) {
+Bounds chooseBounds(u64 exponent, double tfBits, double testsSaved, u64 maxN, const Stage1Model& model) {
   // B1 on a grid in log(B1) from p / 100000 to p / 10 (as mprime's search, which starts at p / 3300 and goes up), each with its best B2
   constexpr double STEP = 1.25;
   double const lo = std::max(double(MIN_B1), exponent / 1e5), hi = std::max(lo * 2, exponent / 10.0);
   Bounds best{};
   double bestX = 0;
   for (double x = log(lo); x <= log(hi) + 1e-9; x += log(STEP)) {
-    Bounds const b = bestB2(exponent, tfBits, testsSaved, u64(exp(x)), maxN);
+    Bounds const b = bestB2(exponent, tfBits, testsSaved, u64(exp(x)), maxN, model);
     if (!best.B1 || b.savings > best.savings) { best = b; bestX = x; }
   }
-  auto const at = [&](double x) { return bestB2(exponent, tfBits, testsSaved, std::max(MIN_B1, u64(exp(x))), maxN); };
+  auto const at = [&](double x) { return bestB2(exponent, tfBits, testsSaved, std::max(MIN_B1, u64(exp(x))), maxN, model); };
   double const x = goldenMax(bestX - log(STEP), bestX + log(STEP), [&](double x) { return at(x).savings; }, 12);
   if (Bounds const b = at(x); b.savings > best.savings) { best = b; }
 
   // Rounded (as mprime rounds its bounds), then the B2 of the rounded B1
-  return chooseB2(exponent, tfBits, testsSaved, std::max(MIN_B1, round3(double(best.B1))), maxN);
+  return chooseB2(exponent, tfBits, testsSaved, std::max(MIN_B1, round3(double(best.B1))), maxN, model);
 }
 
 }
