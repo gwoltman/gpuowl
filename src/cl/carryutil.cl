@@ -511,30 +511,62 @@ Word OVERLOAD carryStepSignedSloppy(i32 x, i32 *outCarry, bool isBigWord) {
 
 
 
+// ZEROMEAN (FP32 types): the balanced range [-2^(b-1), 2^(b-1)) gives every word a mean of -1/2, a coherent DC term of ~N/4..N/2
+// that sets an ROE floor proportional to N in the FP32 FFT (at 896K words ~0.38 at any bpw).  With ZEROMEAN=1 a word whose tie bit
+// h is 1 takes the range (-2^(b-1), 2^(b-1)] instead: w = carryStep(x - h) + h, so x - w, and hence the carry, is exact.  The tie
+// bits are a pure function of the word index (carryA and carryB agree), so the stored words stay canonical for the bitwise Gerbicz
+// compare (isEqual); the host reads any signed words and writes the [-2^(b-1), 2^(b-1)) form, which holds the same values.
+// The tie bits must look random along the words: alternating ties (j & 1) only move the DC term to x - i*y, and one multiply
+// (top bit of j * K) leaves a spike at another frequency.  The tie bit is bit 0 of the lowbias32 hash of the word index.  (One hash per
+// word pair, x and y taking two of its bits, models as well and has fewer operations, but was no faster on an RTX 5090 in carryA,
+// and its kCarryAROE was 5% slower at 2M words.)
+// Default on for type 53 (FFT32) only; on the hybrids the data term (20+ bpw) dwarfs the DC term, so it gains nothing there.
+// -use ZEROMEAN=0 gives the old words (for A/B tests); -use ZEROMEAN=1 also enables it on the hybrids.
+#ifndef ZEROMEAN
+#define ZEROMEAN (FFT_TYPE == FFT32)
+#endif
+#define ZM (ZEROMEAN && FFT_FP32)
+#if ZM
+// zmPair(j): the tie bits of the word pair at j (x's word index): x's in bit 0, y's in bit 1
+u32 zmLb(u32 j) { j ^= j >> 16; j *= 0x7feb352du; j ^= j >> 15; j *= 0x846ca68bu; j ^= j >> 16; return j & 1; }
+u32 zmPair(u32 j) { return zmLb(j) | (zmLb(j + 1) << 1); }
+i32 OVERLOAD zmSub(i32 x, u32 h) { return x - (i32) h; }
+i64 OVERLOAD zmSub(i64 x, u32 h) { return x - (i64) h; }
+i96 OVERLOAD zmSub(i96 x, u32 h) { return sub(x, (i32) h); }
+i128 OVERLOAD zmSub(i128 x, u32 h) { return sub(x, (i64) h); }
+// h: zmPair(j) for x, zmPair(j) >> 1 for y
+#define CARRYSTEP_ZM(x, c, big, h) (carryStep(zmSub((x), (h) & 1), (c), (big)) + (Word) ((h) & 1))
+#else
+#define zmPair(j) 0u
+#define CARRYSTEP_ZM(x, c, big, h) ((void) (h), carryStep((x), (c), (big)))
+#endif
+
 // Carry propagation from word and carry.  Used by carryB.cl.
 // carryWordLast: the same for the last word pair of a carryB group, adding the carry out of the first word into the second without
 // normalizing it.  carryIsZero: true if the carry is zero.
 #if FFT_TYPE == FFT323161
-Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
-  a.x = carryStep(add(make_i128(*carry), (i64) a.x), carry, b1);
-  a.y = carryStep(add(make_i128(*carry), (i64) a.y), carry, b2);
+Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2, u32 j) {
+  u32 zh = zmPair(j);
+  a.x = CARRYSTEP_ZM(add(make_i128(*carry), (i64) a.x), carry, b1, zh);
+  a.y = CARRYSTEP_ZM(add(make_i128(*carry), (i64) a.y), carry, b2, zh >> 1);
   return a;
 }
-Word2 carryWordLast(Word2 a, CarryABM carry, bool b1) {
+Word2 carryWordLast(Word2 a, CarryABM carry, bool b1, u32 j) {
   i64 c;      // The carry out of one word fits in an i64
-  a.x = carryStep(add(make_i128(carry), (i64) a.x), &c, b1);
+  a.x = CARRYSTEP_ZM(add(make_i128(carry), (i64) a.x), &c, b1, zmPair(j));
   a.y += c;
   return a;
 }
 bool carryIsZero(CarryABM c) { return (i96_lo64(c) | i96_hi32(c)) == 0; }
 #else
-Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2) {
-  a.x = carryStep(a.x + *carry, carry, b1);
-  a.y = carryStep(a.y + *carry, carry, b2);
+Word2 carryWord(Word2 a, CarryABM* carry, bool b1, bool b2, u32 j) {
+  u32 zh = zmPair(j);
+  a.x = CARRYSTEP_ZM(a.x + *carry, carry, b1, zh);
+  a.y = CARRYSTEP_ZM(a.y + *carry, carry, b2, zh >> 1);
   return a;
 }
-Word2 carryWordLast(Word2 a, CarryABM carry, bool b1) {
-  a.x = carryStep(a.x + carry, &carry, b1);
+Word2 carryWordLast(Word2 a, CarryABM carry, bool b1, u32 j) {
+  a.x = CARRYSTEP_ZM(a.x + carry, &carry, b1, zmPair(j));
   a.y += carry;
   return a;
 }

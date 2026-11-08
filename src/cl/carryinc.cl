@@ -350,7 +350,14 @@ error - missing weightAndCarryOne implementation
 #if !ICARRY_I96
 Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
   iCARRY tmpCarry;
+#if ZM
+  // ZEROMEAN: balance x exactly with a tie direction taken from y's low bit (carryFused's words are never stored, so the
+  // representative need not be canonical).  y stays as it is: u.y += tmpCarry (~Bernoulli 1/2) already makes it ~zero-mean.
+  u32 h = (u32) (u.y & 1);
+  u.x = carryStep(zmSub(u.x + inCarry, h), &tmpCarry, b1) + (Word) h;
+#else
   u.x = carryStepSignedSloppy(u.x + inCarry, &tmpCarry, b1);
+#endif
   u.y += tmpCarry;
   return u;
 }
@@ -359,7 +366,12 @@ Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
 // Like the i64 version (whose carryStepSignedSloppy is carryStep) the word is balanced exactly.
 Word2 OVERLOAD carryFinal(Word2 u, iCARRY inCarry, bool b1) {
   i64 tmpCarry;
+#if ZM
+  u32 h = (u32) (u.y & 1);
+  u.x = carryStep(zmSub(add(inCarry, (i64) u.x), h), &tmpCarry, b1) + (Word) h;
+#else
   u.x = carryStep(add(inCarry, (i64) u.x), &tmpCarry, b1);
+#endif
   u.y += tmpCarry;
   return u;
 }
@@ -403,12 +415,13 @@ Word2 OVERLOAD weightAndCarryPairSloppy(T2 u, T2 invWeight, iCARRY inCarry, bool
 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
-Word2 OVERLOAD weightAndCarryPair(F2 u, F2 invWeight, iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax) {
+Word2 OVERLOAD weightAndCarryPair(F2 u, F2 invWeight, iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax, u32 zmj) {
   iCARRY midCarry;
+  u32 zh = zmPair(zmj);   // x and y tie bits (ZEROMEAN)
   i32 tmp1 = weightAndCarryOne(u.x, invWeight.x, inCarry, maxROE, sizeof(midCarry) == 4);
-  Word a = carryStep(tmp1, &midCarry, b1);
+  Word a = CARRYSTEP_ZM(tmp1, &midCarry, b1, zh);
   i32 tmp2 = weightAndCarryOne(u.y, invWeight.y, midCarry, maxROE, sizeof(midCarry) == 4);
-  Word b = carryStep(tmp2, outCarry, b2);
+  Word b = CARRYSTEP_ZM(tmp2, outCarry, b2, zh >> 1);
   *carryMax = max(*carryMax, max(boundCarry(midCarry), boundCarry(*outCarry)));
   return (Word2) (a, b);
 }
@@ -526,12 +539,13 @@ Word2 OVERLOAD weightAndCarryPairSloppy(T2 u, GF31 u31, T invWeight1, T invWeigh
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
 Word2 OVERLOAD weightAndCarryPair(F2 uF, GF31 u31, F invWeight1, F invWeight2, u32 m31_invWeight1, u32 m31_invWeight2,
-                                  iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax) {
+                                  iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax, u32 zmj) {
   iCARRY midCarry;
+  u32 zh = zmPair(zmj);   // x and y tie bits (ZEROMEAN)
   i64 tmp1 = weightAndCarryOne(uF.x, u31.x, invWeight1, m31_invWeight1, inCarry, maxROE);
-  Word a = carryStep(tmp1, &midCarry, b1);
+  Word a = CARRYSTEP_ZM(tmp1, &midCarry, b1, zh);
   i64 tmp2 = weightAndCarryOne(uF.y, u31.y, invWeight2, m31_invWeight2, midCarry, maxROE);
-  Word b = carryStep(tmp2, outCarry, b2);
+  Word b = CARRYSTEP_ZM(tmp2, outCarry, b2, zh >> 1);
   *carryMax = max(*carryMax, max(boundCarry(midCarry), boundCarry(*outCarry)));
   return (Word2) (a, b);
 }
@@ -558,12 +572,13 @@ Word2 OVERLOAD weightAndCarryPairSloppy(F2 uF, GF31 u31, F invWeight1, F invWeig
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
 Word2 OVERLOAD weightAndCarryPair(F2 uF, GF61 u61, F invWeight1, F invWeight2, u32 m61_invWeight1, u32 m61_invWeight2,
-                                  bool hasInCarry, iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax) {
+                                  bool hasInCarry, iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax, u32 zmj) {
   iCARRY midCarry;
+  u32 zh = zmPair(zmj);   // x and y tie bits (ZEROMEAN)
   i96 tmp1 = weightAndCarryOne(uF.x, u61.x, invWeight1, m61_invWeight1, hasInCarry, inCarry, maxROE);
-  Word a = carryStep(tmp1, &midCarry, b1);
+  Word a = CARRYSTEP_ZM(tmp1, &midCarry, b1, zh);
   i96 tmp2 = weightAndCarryOne(uF.y, u61.y, invWeight2, m61_invWeight2, true, midCarry, maxROE);
-  Word b = carryStep(tmp2, outCarry, b2);
+  Word b = CARRYSTEP_ZM(tmp2, outCarry, b2, zh >> 1);
   *carryMax = max(*carryMax, max(boundCarry(midCarry), boundCarry(*outCarry)));
   return (Word2) (a, b);
 }
@@ -621,12 +636,13 @@ Word2 OVERLOAD weightAndCarryPairSloppy(GF31 u31, GF61 u61, u32 m31_invWeight1, 
 // Apply inverse weights, add in optional carry, calculate roundoff error, convert to integer. Handle MUL3.
 // Then propagate carries through two words.  Generate the output carry.
 Word2 OVERLOAD weightAndCarryPair(F2 uF, GF31 u31, GF61 u61, F invWeight1, F invWeight2, u32 m31_invWeight1, u32 m31_invWeight2,
-                                  u32 m61_invWeight1, u32 m61_invWeight2, bool hasInCarry, iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax) {
+                                  u32 m61_invWeight1, u32 m61_invWeight2, bool hasInCarry, iCARRY inCarry, bool b1, bool b2, iCARRY *outCarry, float* maxROE, float* carryMax, u32 zmj) {
   iCARRY midCarry;
+  u32 zh = zmPair(zmj);   // x and y tie bits (ZEROMEAN)
   i128 tmp1 = weightAndCarryOne(uF.x, u31.x, u61.x, invWeight1, m31_invWeight1, m61_invWeight1, hasInCarry, inCarry, maxROE);
-  Word a = carryStep(tmp1, &midCarry, b1);
+  Word a = CARRYSTEP_ZM(tmp1, &midCarry, b1, zh);
   i128 tmp2 = weightAndCarryOne(uF.y, u31.y, u61.y, invWeight2, m31_invWeight2, m61_invWeight2, true, midCarry, maxROE);
-  Word b = carryStep(tmp2, outCarry, b2);
+  Word b = CARRYSTEP_ZM(tmp2, outCarry, b2, zh >> 1);
   *carryMax = max(*carryMax, max(boundCarry(midCarry), boundCarry(*outCarry)));
   return (Word2) (a, b);
 }
