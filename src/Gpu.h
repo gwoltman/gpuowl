@@ -100,6 +100,9 @@ struct Weights {
   vector<double> weightsIF;
 };
 
+// The PRP's verified-check interval for a block size (200, 400, 500 or 1000), without errors; throws for any other block size
+u32 baseCheckStep(u32 blockSize);
+
 class Gpu {
   friend class Stage2Run;   // P-1 stage 2 (Stage2.cpp) drives the transform kernels directly
   friend class Pm1Prp;      // P-1 stage 1 inside the PRP test (Pm1Prp)

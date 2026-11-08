@@ -25,8 +25,6 @@ constexpr size_t RESERVE_BYTES = Stage2::RESERVE_BYTES;    // as stage 2:  kept 
 // A PRP that has to go back further than this many verified-check intervals for its accumulator does not:  the P-1 is given up
 constexpr u64 MAX_REWIND_CHECKS = 2;
 
-// The PRP's verified-check interval for a block size, without errors (as baseCheckStep in Gpu.cpp)
-u64 checkInterval(u32 blockSize) { return blockSize == 200 ? 40'000 : blockSize == 400 ? 160'000 : blockSize == 500 ? 200'000 : 1'000'000; }
 
 #ifdef PRPLL_PM1_FAULTS
 // TEST ONLY (fault build):  PRPLL_PM1_PRP_FAULT="<k>:<kind>,..." once per process.  bucket:  flips a bit of the bucket stepped at
@@ -104,7 +102,7 @@ void Pm1Prp::release() {
 }
 
 u64 Pm1Prp::checkStep(const Gpu& gpu) {
-  return std::min<u64>(checkInterval(gpu.args.blockSize), std::max<u64>(gpu.E / 8, gpu.args.logStep));
+  return std::min<u64>(baseCheckStep(gpu.args.blockSize), std::max<u64>(gpu.E / 8, gpu.args.logStep));
 }
 
 u32 Pm1Prp::chooseL(u64 bitsLeft, u64 itersLeft, u64 maxBufs) const {
@@ -256,7 +254,7 @@ PRPState Pm1Prp::sync(PRPState state) {
     return state;
   }
 
-  u64 const maxRewind = MAX_REWIND_CHECKS * checkInterval(state.blockSize);
+  u64 const maxRewind = MAX_REWIND_CHECKS * baseCheckStep(state.blockSize);
   bool triedOther = false;
   for (auto it = ks.rbegin(); it != ks.rend(); ++it) {
     u64 const ka = *it;

@@ -888,6 +888,8 @@ bool isValidBlockSize(u32 blockSize) {
   return blockSize == 200 || blockSize == 400 || blockSize == 500 || blockSize == 1000;
 }
 
+}  // namespace
+
 u32 baseCheckStep(u32 blockSize) {
   switch (blockSize) {
     case 200:  return 40'000;
@@ -899,6 +901,8 @@ u32 baseCheckStep(u32 blockSize) {
       throw "invalid blockSize";
   }
 }
+
+namespace {
 
 u32 checkStepForErrors(u32 blockSize, u32 nErrors) {
   u32 const step = baseCheckStep(blockSize);
