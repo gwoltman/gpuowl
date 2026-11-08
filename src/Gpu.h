@@ -194,6 +194,7 @@ private:
   Kernel kCarryFusedLL;
 
   Kernel carryB;
+  Kernel carryNorm;
   Kernel transpIn, transpOut;
   Kernel readResidue;
   Kernel kernIsEqual;
@@ -313,6 +314,7 @@ private:
   u64 squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool doTailMul3);
   u64 squareLoop(Buffer<Word>& io, u64 from, u64 to) { return squareLoop(io, io, from, to, false); }
 
+  void canonicalize(Buffer<Word>& buf);
   bool isEqual(Buffer<Word>& bufCheck, Buffer<Word>& bufAux);
   u64 bufResidue(Buffer<Word>& buf);
   

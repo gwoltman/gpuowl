@@ -1255,6 +1255,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   K(kCarryFusedLL,         "carryfused.cl", "carryFused", WIDTH * (BIG_H + wmul) / nW, kernelDefines(KALL) + numRegisters(CARRYFUSED) + "-DLL=1"),
 
   K(carryB,                "carryb.cl", "carryB",   hN / CARRY_LEN, kernelDefines(KALL)),
+  K(carryNorm,             "carryb.cl", "carryNorm", hN / CARRY_LEN, kernelDefines(KALL)),
 
   // 64
   K(transpIn,  "transpose.cl", "transposeIn",  hN / 64),
@@ -1412,6 +1413,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   }
 
   carryB.setFixedArgs(1, bufCarry);
+  carryNorm.setFixedArgs(1, bufCarry, bufTrue);
 
   kernIsEqual.setFixedArgs(2, bufTrue);
 
@@ -2569,7 +2571,25 @@ u64 Gpu::squareLoop(Buffer<Word>& out, Buffer<Word>& in, u64 from, u64 to, bool 
   return to;
 }
 
+// After carryA + carryB the last word of each carryB group may hold an un-normalized residue (carryb.cl), so two buffers with the
+// same value can differ bitwise.  Alternate carryNorm (split each group's last word, its carry into the shuttle) and carryB (propagate
+// the carries into the next group) until no group carries out.  The value does not change.  At low bits per word (type 53) a carry
+// commonly survives the 16 words of a group; one or two rounds normally finish the job.  The round cap only guards against a value whose
+// carry would travel forever (all words at the end of their range); the compare then sees the un-normalized words, as before.
+void Gpu::canonicalize(Buffer<Word>& buf) {
+  for (int round = 0; round < 64; ++round) {
+    carryNorm(buf);
+    int allZero = 0;
+    bufTrue.read(&allZero, 1);
+    if (allZero) { return; }
+    bufTrue.write({1});
+    carryB(buf);
+  }
+}
+
 bool Gpu::isEqual(Buffer<Word>& in1, Buffer<Word>& in2) {
+  canonicalize(in1);
+  canonicalize(in2);
   kernIsEqual(in1, in2);
   int isEq = 0;
   bufTrue.read(&isEq, 1);
@@ -2578,6 +2598,7 @@ bool Gpu::isEqual(Buffer<Word>& in1, Buffer<Word>& in2) {
 }
 
 u64 Gpu::bufResidue(Buffer<Word> &buf) {
+  canonicalize(buf);        // readResidue sees 32 words above word 0; a carry held in an un-normalized word below them would be missed
   readResidue(bufSmallOut, buf);
   vector<Word> words = readWords(bufSmallOut);
 
