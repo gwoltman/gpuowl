@@ -571,12 +571,34 @@ void Tune::tune() {
       }
     }
 
+    // Without -fft, an exponent range without 141M (e.g. minexp=330M,maxexp=336M) has its options timed on the FFTs that handle its
+    // middle, as the probe above chose them:  the smallest favored shape of each type, not the 141M wavefront shapes.
+    u64 const range_exponent = args->fftSpec.empty() && range_given && (141000001 < min_exponent || 141000001 > max_exponent)
+                               ? primes.prevPrime(min_exponent / 2 + max_exponent / 2) : 0;
+    auto const rangeShape = [&](enum FFT_TYPES type, u32 variant, FFTShape fallback) {
+      if (range_exponent == 0) { return fallback; }
+      vector<FFTShape> sizes = FFTShape::allShapes();
+      std::ranges::stable_sort(sizes, [](const FFTShape& a, const FFTShape& b) { return a.size() < b.size(); });
+      for (const FFTShape& shape : sizes) {
+        if (shape.fft_type == type && shape.isFavoredShape() && FFTConfig{shape, variant, CARRY_AUTO}.maxExp() >= range_exponent) { return shape; }
+      }
+      return fallback;
+    };
+    if (time_FFTs) { defaultFFTShape = rangeShape(FFT64, 101, defaultFFTShape); }
+    if (time_NTTs) { defaultNTTShape = rangeShape(FFT3161, 202, defaultNTTShape); }
+
     log("\n");
     log("Beginning timing of various options.  These settings will be appended to config.txt.\n");
     log("Please read config.txt after -tune completes.\n");
     log("\n");
 
     u32 const variant = (defaultShape == &defaultFFTShape) ? 101 : 202;
+    {
+      bool const otherFP64 = time_FFTs && defaultShape == &defaultNTTShape, otherNTT = time_NTTs && defaultShape == &defaultFFTShape;
+      string const other = otherFP64 ? ", the FP64 options on " + FFTConfig{defaultFFTShape, 101, CARRY_AUTO}.spec()
+                         : otherNTT ? ", the NTT options on " + FFTConfig{defaultNTTShape, 202, CARRY_AUTO}.spec() : "";
+      log("Timing the options on %s%s\n", FFTConfig{*defaultShape, variant, CARRY_AUTO}.spec().c_str(), other.c_str());
+    }
 //GW: if fft spec on the command line specifies a variant then we should use that variant (I get some interesting results with 000 vs 101 vs 201 vs 202 likely due to rocm optimizer)
 
     // IN_WG/SIZEX, OUT_WG/SIZEX, PAD, MIDDLE_IN/OUT_LDS_TRANSPOSE apply only if INPLACE=0
@@ -912,7 +934,7 @@ void Tune::tune() {
     // Find best TAIL_TRIGS32 setting
     if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.FFT_FP32) fft = FFTConfig(rangeShape(FFT3261, 202, FFTShape(FFT3261, 512, 8, 512)), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(u64(fft.maxBpw() * 0.95 * fft.shape.size()));   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tail_trigs = 0;
       u32 const current_tail_trigs = args->value("TAIL_TRIGS32", 2);
@@ -995,7 +1017,7 @@ void Tune::tune() {
     // Find best TABMUL_CHAIN32 setting
     if (time_NTTs && time_FP32) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.FFT_FP32) fft = FFTConfig(FFTShape(FFT3261, 512, 8, 512), 202, CARRY_AUTO);
+      if (!fft.FFT_FP32) fft = FFTConfig(rangeShape(FFT3261, 202, FFTShape(FFT3261, 512, 8, 512)), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(u64(fft.maxBpw() * 0.95 * fft.shape.size()));   // Back off the maxExp as different settings will have different maxBpw
       u32 best_tabmul_chain = 0;
       u32 const current_tabmul_chain = args->value("TABMUL_CHAIN32", 0);
