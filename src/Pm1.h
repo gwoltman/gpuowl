@@ -90,6 +90,11 @@ int isProbablePrime(const vector<u32>& words);
 // checked).  A factor from the GCD must divide 2^p - 1; this catches a wrong GCD with about log2(p) modular squarings.
 int dividesMersenne(const vector<u32>& words, u64 p);
 
+// The factor that a P-1 GCD of stage `stage` found, as a decimal string (empty when the GCD is 1), with its log line.  The gcd can be
+// composite:  it is reported whole, as Prime95 does.  Anything that does not divide 2^p - 1 is a GPU error in the GCD:  it is logged
+// and not reported (throws).
+vector<string> gcdFactor(const vector<u32>& g, int stage, u64 p);
+
 // Prime95 file name of the P-1 savefile of exponent p (commonc.c, tempFileName):  "m<p>" from 80,000,000 up, an encoded name below.
 string mprimeSaveName(u64 p);
 

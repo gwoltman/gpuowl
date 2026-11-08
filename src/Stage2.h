@@ -13,6 +13,8 @@
 class Args;
 class Gpu;
 
+class Gcd;
+
 struct Stage2Result {
   enum Status {DONE, DECLINED, STOPPED};
   Status status{};
@@ -69,6 +71,10 @@ public:
 
   // Whether p2-<E>/ holds a savefile of the stage 2 for these E, B1, B2 and x (it was started, so the stage 1 GCD found no factor)
   static bool hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x);
+
+  // The factor in a finished stage 2's accumulator acc:  gcd(acc, 2^E - 1) on the GPU, the factor (pm1::gcdFactor; empty when none) and
+  // the log lines.  Stage 2 checks acc != 0 at every checkpoint, so a GCD of 2^E - 1 (acc = 0 mod 2^E - 1) is an error:  it throws.
+  static vector<string> accFactor(Gcd& gcd, const vector<u32>& acc, u64 E, u64 B1, u64 B2);
 
   // Orders the untuned candidates ffts by their timeMul at E (for the rest of the run, the same candidates in the same order)
   static void rankUntuned(GpuCommon shared, u64 E, vector<Pm1Fft>& ffts);

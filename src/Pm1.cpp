@@ -377,6 +377,21 @@ bool testBit(const vector<u32>& words, u64 i) {
   return i / 32 < words.size() && ((words[i / 32] >> (i % 32)) & 1);
 }
 
+vector<string> gcdFactor(const vector<u32>& g, int stage, u64 p) {
+  if (isOne(g)) { return {}; }
+  string const f = toDecimal(g);
+  int const divides = dividesMersenne(g, p);
+  if (divides == 0) {
+    log("P-1 stage %d: the GCD returned %s, which does not divide 2^%" PRIu64 " - 1: a GPU error, not reporting it\n", stage, f.c_str(), p);
+    throw "P-1 GCD result is not a factor";
+  }
+  int const prime = isProbablePrime(g);
+  log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s%s)\n", stage, f.c_str(), bitLength(g),
+      prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here",
+      divides == 1 ? ", divides 2^p-1" : ", not checked against 2^p-1");
+  return {f};
+}
+
 string mprimeSaveName(u64 p) {
   char buf[48];
   if (p < 80000000) {

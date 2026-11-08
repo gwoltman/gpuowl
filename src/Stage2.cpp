@@ -508,6 +508,18 @@ bool Stage2::hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x) {
   return !s.acc.empty() && s.B1 == B1 && s.B2 == B2 && s.x64 == res64(x);
 }
 
+vector<string> Stage2::accFactor(Gcd& gcd, const vector<u32>& acc, u64 E, u64 B1, u64 B2) {
+  Words const g = gcd.gcd(acc, u32(E));
+  log("P-1 stage 2 GCD: %.1f s\n", gcd.lastStats().seconds);
+  if (pm1::bitLength(g) >= E) {
+    log("P-1 stage 2: the accumulator is zero (the GCD is 2^%" PRIu64 " - 1)\n", E);
+    throw "P-1 stage 2 accumulator is zero";
+  }
+  vector<string> factors = pm1::gcdFactor(g, 2, E);
+  if (factors.empty()) { log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2=%" PRIu64 ")\n", B1, B2); }
+  return factors;
+}
+
 Stage2::MulTime Stage2::timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, const vector<KeyVal>& uses, int quick) {
   // As many multiplications as Gpu::timePRP times squarings for this quick, in blocks of BLOCK (stage 2 at D = 2310 has ~120 per k)
   u32 BLOCK = 120, TABLE = 24;      // 24 entries (D = 210's, the smallest table):  more than a GPU cache holds
