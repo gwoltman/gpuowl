@@ -275,36 +275,38 @@
 { "52:4K:16:512", {7.83f, 7.83f, 7.83f, 7.83f, 7.83f, 7.83f}},
 {  "52:4K:16:1K", {7.56f, 7.56f, 7.56f, 7.56f, 7.56f, 7.56f}},
 {  "52:4K:16:2K", {7.22f, 7.22f, 7.22f, 7.22f, 7.22f, 7.22f}},  // One run (ROEmax 0.35 at 7.23); an earlier run at 7.02 had a Gerbicz error at ROEmax 0.26
-// FFT32 - Computed by targeting maxROE of ~0.35 over 2000 iterations (-roe: every iteration sampled), Radeon RX 7900 XTX.  Checked clean at 50000 iterations on three
-// exponents at the table value of the first five rows (ROEmax <= 0.37; 0.2 bpw above the table value 0.44-0.46).  Variants
-// 000..212 give the same ROE.  The ROE has a floor that grows in proportion to the size and does not depend on bpw (it comes from
-// the -1/2 mean of the balanced words, not from FP32 rounding), so the limit falls quickly with size and from 768K words no bpw
-// works; those rows are set to the minimum bpw (no exponent fits).  Below ~2.25 bpw the Gerbicz check fails as well.
-{ "53:256:1:256", {5.45f, 5.45f, 5.45f, 5.45f, 5.45f, 5.45f}},
-{ "53:256:2:256", {5.15f, 5.15f, 5.15f, 5.15f, 5.15f, 5.15f}},
-{ "53:512:1:256", {5.15f, 5.15f, 5.15f, 5.15f, 5.15f, 5.15f}},
-{ "53:256:3:256", {4.90f, 4.90f, 4.90f, 4.90f, 4.90f, 4.90f}},
-{ "53:256:4:256", {4.60f, 4.60f, 4.60f, 4.60f, 4.60f, 4.60f}},
-{ "53:512:2:256", {4.60f, 4.60f, 4.60f, 4.60f, 4.60f, 4.60f}},
-{ "53:256:5:256", {4.50f, 4.50f, 4.50f, 4.50f, 4.50f, 4.50f}},
-{ "53:256:6:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable: the ROE floor is >= 0.35 at any bpw (0.36-0.45)
-{ "53:256:7:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable: the ROE floor is >= 0.35 at any bpw (0.37-0.49); 3890011 at 4.24 bpw fails on a 7900 XTX
-{ "53:256:8:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable: ROEmax ~0.5 and Gerbicz errors at 3.0 bpw (also 512:4:256, 512:2:512)
-{ "53:512:4:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{"53:256:16:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},  // Unusable from here on: the ROE floor doubles with the size (not run)
-{ "53:512:8:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{ "53:512:4:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{  "53:1K:8:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{"53:512:16:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{ "53:512:8:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{ "53:1K:16:256", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{  "53:1K:8:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{"53:512:16:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{ "53:1K:16:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{   "53:1K:8:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{  "53:1K:16:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{  "53:2K:16:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{  "53:2K:16:2K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{ "53:4K:16:512", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{  "53:4K:16:1K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
-{  "53:4K:16:2K", {1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f}},
+// FFT32 - With zero-mean words (ZEROMEAN, the default for type 53, see carryutil.cl).  Computed by targeting maxROE of ~0.35 over
+// 2000 iterations (-roe: every iteration sampled) on a Radeon RX 7900 XTX and an RTX 5090: each row is the lower of the two (they agree
+// within ~0.05 bpw; a shape fitted on the XTX only takes the 5090's value for its size when that is lower).  Checked on the 5090 at 50000
+// iterations on three exponents at the table value (ROEmax <= 0.43) and one 1.25 bpw below it, all clean (256M: two exponents, 20000
+// iterations; the low end from 64M 10000-20000 iterations); XTX spot checks give the same residues.  Variants 000..212 give the same ROE.  With the old [-2^(b-1), 2^(b-1))
+// words (-use ZEROMEAN=0) their -1/2 mean makes an ROE floor proportional to the size (0.12 at 256K words, 0.5 from 1M) and these
+// limits do not hold: from 768K words no bpw works.
+{ "53:256:1:256", {5.54f, 5.54f, 5.54f, 5.54f, 5.54f, 5.54f}},
+{ "53:256:2:256", {5.21f, 5.21f, 5.21f, 5.21f, 5.21f, 5.21f}},
+{ "53:512:1:256", {5.29f, 5.29f, 5.29f, 5.29f, 5.29f, 5.29f}},
+{ "53:256:3:256", {5.04f, 5.04f, 5.04f, 5.04f, 5.04f, 5.04f}},
+{ "53:256:4:256", {4.92f, 4.92f, 4.92f, 4.92f, 4.92f, 4.92f}},
+{ "53:512:2:256", {5.03f, 5.03f, 5.03f, 5.03f, 5.03f, 5.03f}},
+{ "53:256:5:256", {4.81f, 4.81f, 4.81f, 4.81f, 4.81f, 4.81f}},
+{ "53:256:6:256", {4.71f, 4.71f, 4.71f, 4.71f, 4.71f, 4.71f}},
+{ "53:256:7:256", {4.58f, 4.58f, 4.58f, 4.58f, 4.58f, 4.58f}},  // 3890011 (both GPUs) and 3890021 (5090) at 4.24 bpw complete with verified proofs
+{ "53:256:8:256", {4.60f, 4.60f, 4.60f, 4.60f, 4.60f, 4.60f}},
+{ "53:512:4:256", {4.67f, 4.67f, 4.67f, 4.67f, 4.67f, 4.67f}},
+{"53:256:16:256", {4.29f, 4.29f, 4.29f, 4.29f, 4.29f, 4.29f}},
+{ "53:512:8:256", {4.26f, 4.26f, 4.26f, 4.26f, 4.26f, 4.26f}},
+{ "53:512:4:512", {4.33f, 4.33f, 4.33f, 4.33f, 4.33f, 4.33f}},
+{  "53:1K:8:256", {4.08f, 4.08f, 4.08f, 4.08f, 4.08f, 4.08f}},
+{"53:512:16:256", {4.08f, 4.08f, 4.08f, 4.08f, 4.08f, 4.08f}},
+{ "53:512:8:512", {4.01f, 4.01f, 4.01f, 4.01f, 4.01f, 4.01f}},
+{ "53:1K:16:256", {3.77f, 3.77f, 3.77f, 3.77f, 3.77f, 3.77f}},
+{  "53:1K:8:512", {3.76f, 3.76f, 3.76f, 3.76f, 3.76f, 3.76f}},
+{"53:512:16:512", {3.71f, 3.71f, 3.71f, 3.71f, 3.71f, 3.71f}},
+{ "53:1K:16:512", {3.48f, 3.48f, 3.48f, 3.48f, 3.48f, 3.48f}},
+{   "53:1K:8:1K", {3.49f, 3.49f, 3.49f, 3.49f, 3.49f, 3.49f}},
+{  "53:1K:16:1K", {3.21f, 3.21f, 3.21f, 3.21f, 3.21f, 3.21f}},
+{  "53:2K:16:1K", {2.91f, 2.91f, 2.91f, 2.91f, 2.91f, 2.91f}},
+{  "53:2K:16:2K", {2.62f, 2.62f, 2.62f, 2.62f, 2.62f, 2.62f}},
+{ "53:4K:16:512", {2.90f, 2.90f, 2.90f, 2.90f, 2.90f, 2.90f}},
+{  "53:4K:16:1K", {2.60f, 2.60f, 2.60f, 2.60f, 2.60f, 2.60f}},
+{  "53:4K:16:2K", {2.35f, 2.35f, 2.35f, 2.35f, 2.35f, 2.35f}},  // RTX 5090 fit (5 points) and one XTX point
