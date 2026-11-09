@@ -1163,6 +1163,15 @@ void barsync(const u32 numWG, const u32 WG) {
 #define OPAQUE_F64(x)
 #endif
 
+// NVRTC_ZERO_FIX (set by the CUDA backend for NVRTC below 13.1 on Blackwell): NVRTC's own PTX-to-CUBIN compiler generates wrong
+// code for carryFused when a weight-shift constant it can see is 0 (EXP % NWORDS a multiple of 61 with PFA).  HIDE_ZERO(x) makes
+// x opaque when it is 0, so the compiler cannot fold it.  Nothing changes for any other value of x.
+#if NVRTC_ZERO_FIX
+#define HIDE_ZERO(x) do { if ((x) == 0) { OPAQUE(x); } } while (0)
+#else
+#define HIDE_ZERO(x)
+#endif
+
 // nVidia GPUs (Hopper architecture sm 9.0 and later) support Programatic Dependent Launch where the tail end execution of one kernel can overlap
 // with the beginning of the next kernel.  This requires a special launch kernel command that is only available in CUDA 12.0 and later.
 // These routines let us take advantage of this CUDA feature.  These routines do nothing in OpenCL.

@@ -60,7 +60,8 @@ RegLimits regLimits(cl_device_id id);
 bool anyCandidateRan = false;
 
 // After a failed candidate, before any candidate has run:  build the FFT with no tune overrides (only the user's own -use settings).
-// If that fails too, stop the tune with an explanation.
+// If that fails too, run the smallest FFT of the same type:  a shape too big for the GPU (out of resources or memory) fails on its own,
+// and the tune goes on to the next shape as it does after a warmup.  If the smallest FFT fails too, stop the tune with an explanation.
 void checkGpuCanRun(u64 exponent, GpuCommon shared, FFTConfig fft, bool candidateWasDefault) {
   if (anyCandidateRan) { return; }
   if (!candidateWasDefault) {
@@ -74,7 +75,24 @@ void checkGpuCanRun(u64 exponent, GpuCommon shared, FFTConfig fft, bool candidat
       log("%s with no tune overrides failed: %s\n", fft.spec().c_str(), mes.c_str());
     }
   }
-  throw "the GPU cannot run "s + fft.spec() + " even with no tune overrides, so -tune would only time failures (see the errors above;"
+  FFTShape smallest = fft.shape;
+  for (const FFTShape& sh : FFTShape::allShapes(0, u32(-1), true)) {
+    if (sh.fft_type == smallest.fft_type && sh.size() < smallest.size()) { smallest = sh; }
+  }
+  FFTConfig const small{smallest, 202, CARRY_AUTO};
+  if (small.size() < fft.size()) {
+    try {
+      Gpu::make(Primes{}.prevPrime(small.maxExp()), shared, small, {}, false, {})->timePRP(10);
+      anyCandidateRan = true;     // as after a warmup:  the GPU can run this FFT type, so the failure was the candidate's own
+      return;
+    } catch (const std::exception& e) {
+      log("%s failed: %s\n", small.spec().c_str(), e.what());
+    } catch (const string& mes) {
+      log("%s failed: %s\n", small.spec().c_str(), mes.c_str());
+    }
+  }
+  throw "the GPU cannot run "s + fft.spec() + (small.size() < fft.size() ? " or " + small.spec() : "") +
+        " even with no tune overrides, so -tune would only time failures (see the errors above;"
         " e.g. a CUDA/NVRTC version that no longer supports this GPU, or a bad -use setting)";
 }
 
