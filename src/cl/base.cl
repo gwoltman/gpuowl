@@ -461,6 +461,15 @@ ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2)
 #define P(x) global x * restrict
 #define CP(x) const P(x)
 
+// PA/CPA: the out and in pointers of a kernel that runs in place.  With INPLACE both are the same buffer, so promising the
+// compiler that they do not alias (restrict) is wrong, and on some compilers (AMD Windows LC, RX 7700 XT) it breaks tailMul.
+#if INPLACE
+#define PA(x) global x *
+#else
+#define PA(x) P(x)
+#endif
+#define CPA(x) const PA(x)
+
 #define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
 
 // AMD only: Gpu.cpp can pass -DAMD_WAVES_PER_EU=n (ask for at least n waves per SIMD) or -DAMD_NUM_VGPR=n (explicit VGPR count), either of which caps
