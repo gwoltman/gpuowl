@@ -357,7 +357,7 @@ CARRY_SIZE = 100000
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 nH, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
-                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q) {
+                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q, bool &zero_mean) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -578,6 +578,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // (Only the CUDA build has graphs.  Leave the OpenCL build's flags alone, or the next Gpu would report GRAPHS as having no effect.)
   graphs = configValue("GRAPHS", 1);
   if (zero_q) { config["TAIL_KERNELS"] = to_string(configValue("TAIL_KERNELS", 2) % 10); }
+
+  // ZEROMEAN (carryutil.cl) as the kernels will see it, for the words the host writes (Gpu::writeIn)
+  zero_mean = fft.FFT_FP32 && configValue("ZEROMEAN", fft.shape.fft_type == FFT32 ? 1 : 0) != 0;
 #if CUDA_BACKEND
   if (args.profile && graphs) {
     graphs = false;
@@ -1144,7 +1147,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   copyQueue{*shared.context, args.profile, true},
       
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
-                               multi_q, l2_striping, graphs, zero_q)},
+                               multi_q, l2_striping, graphs, zero_q, zero_mean)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
@@ -2469,6 +2472,9 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
 void Gpu::writeIn(Buffer<Word>& buf, const vector<u32>& words) { writeIn(buf, expandBits(words, N, E)); }
 
 void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
+  // Words in the plain balanced range [-2^(b-1), 2^(b-1)) have a mean of -1/2 each, a coherent term in an FP32 transform that is
+  // as large as the data from 1M words up; the kernels' own words are zero-mean (carryutil.cl).  Give the loaded words that form too.
+  if (zero_mean) { zeroMeanWords(words, E); }
   writeWords(bufAux, words);
   transpIn(buf, bufAux);
 }
