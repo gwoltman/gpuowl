@@ -125,6 +125,11 @@ CUresult cuLaunchKernelEx(const void*, void*, void**, void**) { return 0; }
 static std::atomic<CUdeviceptr> nextPtr{1ull << 40};
 CUresult cuMemAlloc_v2(CUdeviceptr* p, size_t n) { *p = nextPtr.fetch_add((n + 0xffff) & ~size_t(0xffff)); return 0; }
 CUresult cuMemFree_v2(CUdeviceptr) { return 0; }
+// Page-locked host memory (the asynchronous residue reads, clCreateBuffer with CL_MEM_ALLOC_HOST_PTR):  ordinary memory, which the
+// fake copies write into like any other host pointer; its "device pointer" is the host address.
+CUresult cuMemHostAlloc(void** p, size_t n, unsigned) { *p = calloc(1, n ? n : 1); return *p ? 0 : 2; }
+CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr* d, void* h, unsigned) { *d = (CUdeviceptr) h; return 0; }
+CUresult cuMemFreeHost(void* p) { free(p); return 0; }
 static void fakeRead(void* dst, size_t n) {
   static long long const res = getenv("FAKECUDA_RES") ? atoll(getenv("FAKECUDA_RES")) : 3;
   memset(dst, 0, n);
