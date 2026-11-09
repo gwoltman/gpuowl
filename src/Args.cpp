@@ -350,7 +350,8 @@ named "config.txt" in the prpll run directory.
                      1.44 * B1.  Then the GCD runs, the P-1 result is written ("integrated":true) and, with B2 > B1 and
                      no factor, stage 2 runs while the PRP test waits.  A factor ends the PRP test.  Only for PRP tests
                      started with it (from iteration 0).  The savefiles are in p1prp-<exponent>.
--maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  P-1 stage 2
+-maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  Without it the
+                     cap is the memory free on the GPU when prpll starts less 1 GB (90%% of its RAM if that can't be queried).  P-1 stage 2
                      uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more of
                      the primes) and fit in the memory free on the GPU when it starts less 1 GB (where the free memory
                      can't be queried, 90%% of the GPU's RAM), and with -maxAlloc in no more than the cap.  It runs with as
