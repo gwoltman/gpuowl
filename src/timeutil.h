@@ -30,3 +30,6 @@ public:
 
 std::string timeStr();
 std::string timeStr(const char *format);
+
+// A remaining time as HH:MM:SS, with a "Nd " prefix when it is a day or more (so 00:02:00 is two minutes)
+std::string formatETA(double secs);
