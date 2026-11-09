@@ -2718,20 +2718,6 @@ u64 Gpu::bufResidue(Buffer<Word> &buf) {
   return res;
 }
 
-static string formatETA(u32 secs) {
-  u32 const etaMins = (secs + 30) / 60;
-  int const days  = etaMins / (24 * 60);
-  int const hours = etaMins / 60 % 24;
-  int const mins  = etaMins % 60;
-  char buf[64];
-  if (days) {
-    snprintf(buf, sizeof(buf), "%dd %02d:%02d", days, hours, mins);
-  } else {
-    snprintf(buf, sizeof(buf), "%02d:%02d", hours, mins);
-  }
-  return string(buf);  
-}
-
 static string getETA(u64 step, u64 total, float secsPerStep) {
   u32 const etaSecs = max(0u, u32((total - step) * secsPerStep));
   return formatETA(etaSecs);
