@@ -10,7 +10,7 @@
 
 #if FFT_FP64
 
-KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
+KERNEL_CAP(OUT_WG) fftMiddleOut(PA_MO(T2) out, CPA_MO(T2) in, u32 base, Trig trig) {
   T2 u[MIDDLE];
 
   u32 SIZEY = OUT_WG / OUT_SIZEX;
@@ -81,7 +81,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
 #if FFT_FP32
 
-KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
+KERNEL_CAP(OUT_WG) fftMiddleOut(PA_MO(T2) out, CPA_MO(T2) in, u32 base, Trig trig) {
   F2 u[MIDDLE];
 
   CP(F2) inF2 = (CP(F2)) in;
@@ -153,7 +153,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOut(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF31
 
-KERNEL_CAP(OUT_WG) fftMiddleOutGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
+KERNEL_CAP(OUT_WG) fftMiddleOutGF31(PA_MO(T2) out, CPA_MO(T2) in, u32 base, Trig trig) {
   GF31 u[MIDDLE];
 
   CP(GF31) in31 = (CP(GF31)) (in + DISTGF31);
@@ -220,7 +220,7 @@ KERNEL_CAP(OUT_WG) fftMiddleOutGF31(P(T2) out, CP(T2) in, u32 base, Trig trig) {
 
 #if NTT_GF61
 
-KERNEL_CAP(OUT_WG) fftMiddleOutGF61(P(T2) out, CP(T2) in, u32 base, Trig trig) {
+KERNEL_CAP(OUT_WG) fftMiddleOutGF61(PA_MO(T2) out, CPA_MO(T2) in, u32 base, Trig trig) {
   GF61 u[MIDDLE];
 
   CP(GF61) in61 = (CP(GF61)) (in + DISTGF61);
@@ -325,7 +325,7 @@ void map_striping_group_id(u32 base_lo, u32 g, u32 *startx, u32 *starty) {
 
 #if FFT_FP64
 
-KERNEL_CAP((TILE64*TILE64)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE64*TILE64)) fftMiddleOut(PA_MO(T2) out, PA_MO(T2) in, u32 base, Trig trig) {
   assert(out == in);
   T2 u[MIDDLE];
 
@@ -387,7 +387,7 @@ KERNEL_CAP((TILE64*TILE64)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig tri
 
 #if FFT_FP32
 
-KERNEL_CAP((TILE32*TILE32)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE32*TILE32)) fftMiddleOut(PA_MO(T2) out, PA_MO(T2) in, u32 base, Trig trig) {
   assert(out == in);
   F2 u[MIDDLE];
 
@@ -450,7 +450,7 @@ KERNEL_CAP((TILE32*TILE32)) fftMiddleOut(P(T2) out, P(T2) in, u32 base, Trig tri
 
 #if NTT_GF31
 
-KERNEL_CAP((TILE32*TILE32)) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE32*TILE32)) fftMiddleOutGF31(PA_MO(T2) out, PA_MO(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF31 u[MIDDLE];
 
@@ -510,7 +510,7 @@ KERNEL_CAP((TILE32*TILE32)) fftMiddleOutGF31(P(T2) out, P(T2) in, u32 base, Trig
 
 #if NTT_GF61
 
-KERNEL_CAP((TILE64*TILE64)) fftMiddleOutGF61(P(T2) out, P(T2) in, u32 base, Trig trig) {
+KERNEL_CAP((TILE64*TILE64)) fftMiddleOutGF61(PA_MO(T2) out, PA_MO(T2) in, u32 base, Trig trig) {
   assert(out == in);
   GF61 u[MIDDLE];
 

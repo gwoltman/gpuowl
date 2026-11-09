@@ -98,7 +98,7 @@ void OVERLOAD pairSq(u32 N, T2 *u, T2 *v, T2 base_squared, bool special, bool ne
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZero(PA_TS(T2) out, CPA_TS(T2) in, Trig smallTrig) {
   local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   LDSinit(lds, 1);
 
@@ -165,7 +165,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailSquare(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   LDSinit(lds, 1);
 
@@ -273,7 +273,7 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailSquare(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES(2) / sizeof(T2)];
   LDSinit(lds, 2);
 
@@ -420,7 +420,7 @@ void OVERLOAD pairSq(u32 N, F2 *u, F2 *v, F2 base_squared, bool special, bool ne
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZero(PA_TS(T2) out, CPA_TS(T2) in, Trig smallTrig) {
   local F2 lds[LDS_BYTES(1) / sizeof(F2)];
   LDSinit(lds, 1);
 
@@ -483,7 +483,7 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailSquare(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES(1) / sizeof(F2)];
   LDSinit(lds, 1);
 
@@ -587,7 +587,7 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailSquare(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES(2) / sizeof(F2)];
   LDSinit(lds, 2);
 
@@ -743,7 +743,7 @@ void OVERLOAD pairSq(u32 N, GF31 *u, GF31 *v, GF31 base_squared, bool special) {
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZeroGF31(PA_TS(T2) out, CPA_TS(T2) in, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
   LDSinit(lds, 1);
 
@@ -808,7 +808,7 @@ KERNEL(G_H) tailSquareZeroGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL_CAP(G_H) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailSquareGF31(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
   LDSinit(lds, 1);
 
@@ -894,7 +894,7 @@ KERNEL_CAP(G_H) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-KERNEL_CAP(G_H * 2) tailSquareGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailSquareGF31(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(2) / sizeof(GF31)];
   LDSinit(lds, 2);
 
@@ -1092,7 +1092,7 @@ void OVERLOAD pairSq(u32 N, GF61 *u, GF61 *v, GF61 base_squared, bool special) {
 #if !SINGLE_KERNEL
 // The kernel tailSquareZero handles the special cases in tailSquare, i.e. the lines 0 and H/2
 // This kernel is launched with 2 workgroups (handling line 0, resp. H/2)
-KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_H) tailSquareZeroGF61(PA_TS(T2) out, CPA_TS(T2) in, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
   LDSinit(lds, 1);
 
@@ -1157,7 +1157,7 @@ KERNEL(G_H) tailSquareZeroGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if SINGLE_WIDE
 
-KERNEL_CAP(G_H) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H) tailSquareGF61(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
   LDSinit(lds, 1);
 
@@ -1243,7 +1243,7 @@ KERNEL_CAP(G_H) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
 #else
 
-KERNEL_CAP(G_H * 2) tailSquareGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL_CAP(G_H * 2) tailSquareGF61(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(2) / sizeof(GF61)];
   LDSinit(lds, 2);
 

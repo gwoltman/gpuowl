@@ -32,7 +32,7 @@ u32 get_line_number(u32 base_lo) {
 #if FFT_FP64
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
-KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL(G_H) fftHin(PA_HW(T2) out, CPA_HW(T2) in, u32 base, Trig smallTrig) {
   local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   LDSinit(lds, 1);
 
@@ -67,7 +67,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #if FFT_FP32
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
-KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL(G_H) fftHin(PA_HW(T2) out, CPA_HW(T2) in, u32 base, Trig smallTrig) {
   local F2 lds[LDS_BYTES(1) / sizeof(F2)];
   LDSinit(lds, 1);
 
@@ -106,7 +106,7 @@ KERNEL(G_H) fftHin(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #if NTT_GF31
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
-KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL(G_H) fftHinGF31(PA_HW(T2) out, CPA_HW(T2) in, u32 base, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
   LDSinit(lds, 1);
 
@@ -135,7 +135,7 @@ KERNEL(G_H) fftHinGF31(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 #if NTT_GF61
 
 // Do an FFT Height after an fftMiddleIn (which may not have fully transposed data, leading to non-sequential input)
-KERNEL(G_H) fftHinGF61(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
+KERNEL(G_H) fftHinGF61(PA_HW(T2) out, CPA_HW(T2) in, u32 base, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
   LDSinit(lds, 1);
 

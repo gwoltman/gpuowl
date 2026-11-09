@@ -260,7 +260,7 @@ void OVERLOAD shufl_carries_up(local void *lds2, i96 *carry, u32 me, u32 lowMe) 
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
   local T2 lds[LDS_BYTES(WMUL) / sizeof(T2)];
   LDSinit(lds, WMUL);
@@ -490,7 +490,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigFP32 smallTrig,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigFP32 smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
   local F2 lds[LDS_BYTES(WMUL) / sizeof(F2)];
   LDSinit(lds, WMUL);
@@ -728,7 +728,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(F2) out, CP(F2) in, u32 posROE, P(i64) carry
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF31 smallTrig, P(uint) bufROE,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF31 smallTrig, P(uint) bufROE,
                                   NttWtTab nttWeights) {
   local GF31 lds[LDS_BYTES(WMUL) / sizeof(GF31)];
   LDSinit(lds, WMUL);
@@ -993,7 +993,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF31) out, CP(GF31) in, u32 posROE, P(i64) c
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF61 smallTrig, P(uint) bufROE,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, TrigGF61 smallTrig, P(uint) bufROE,
                                   NttWtTab nttWeights) {
   local GF61 lds[LDS_BYTES(WMUL) / sizeof(GF61)];
   LDSinit(lds, WMUL);
@@ -1260,7 +1260,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(GF61) out, CP(GF61) in, u32 posROE, P(i64) c
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTab CONST_THREAD_WEIGHTS, BigTab THREAD_WEIGHTS, P(uint) bufROE) {
   local T2 lds[LDS_BYTES(WMUL) / sizeof(T2)];
   local GF31 *lds31 = (local GF31 *) lds;
@@ -1574,7 +1574,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
   local F2 ldsF2[LDS_BYTES(WMUL) / sizeof(F2)];
   local GF31 *lds31 = (local GF31 *) ldsF2;
@@ -1903,7 +1903,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
   local GF61 lds61[LDS_BYTES(WMUL) / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
@@ -2235,7 +2235,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig, P(uint) bufROE,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig, P(uint) bufROE,
                                   NttWtTab nttWeights) {
   local GF61 lds61[LDS_BYTES(WMUL) / sizeof(GF61)];
   local GF31 *lds31 = (local GF31 *) lds61;
@@ -2545,7 +2545,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
 // The "carryFused" is equivalent to the sequence: fftW, carryA, carryB, fftPremul.
 // It uses "stairway forwarding" (forwarding carry data from one workgroup to the next)
-KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
+KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i64) carryShuttle, P(u32) ready, Trig smallTrig,
                               ConstBigTabFP32 CONST_THREAD_WEIGHTS, BigTabFP32 THREAD_WEIGHTS, P(uint) bufROE) {
   local GF61 lds61[LDS_BYTES(WMUL) / sizeof(GF61)];
   local F2 *ldsF2 = (local F2 *) lds61;
