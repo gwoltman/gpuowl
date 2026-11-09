@@ -316,15 +316,25 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
+#if PFA
+  // Pair 0's weights from the PFA tables, the other pairs' by a compile-time step from it, see pfaFWeightStep and pfaFracBitsStep32
+  u32 const pfaR0 = pfaRow0(lowMe, line);
+  u32 const pfaF0 = pfaFrac32(lowMe, line, pfaR0), pfaF0Wrap = pfaFrac32Wrap(pfaF0);
+  T2 pfaW0, pfaW1;
+  pfaWeightsI(lowMe, 0, line, THREAD_WEIGHTS, &pfaW0, &pfaW1);
+  T invBase = pfaW0.x;
+#else
   T invBase = optionalDouble(weights.x);
+#endif
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
-    T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
-    T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
 #if PFA
-    { T2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); invWeight1 = pw0.x; invWeight2 = pw1.x; }
-    frac_bits = pfaFracBitsI(lowMe, i, line);
+    T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, pfaIWeightStep(i)));
+    frac_bits = pfaFracBitsStep32(pfaF0, pfaF0Wrap, pfaR0, i);
+#else
+    T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
 #endif
+    T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
 
     // Generate big-word/little-word flags
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
@@ -399,14 +409,19 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
 
   // Calculate inverse weights
+#if PFA
+  T base = pfaW0.y;
+#else
   T base = optionalHalve(weights.y);
+#endif
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
-    T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
-    T weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
 #if PFA
-    { T2 pw0, pw1; pfaWeightsI(lowMe, i, line, THREAD_WEIGHTS, &pw0, &pw1); weight1 = pw0.y; weight2 = pw1.y; }
+    T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, pfaFWeightStep(i)));
+#else
+    T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
 #endif
+    T weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
     u[i] = U2(weight1, weight2);
   }
 
@@ -472,7 +487,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
 #if PFA
-    frac_bits = pfaFracBitsI(lowMe, i, line);
+    frac_bits = pfaFracBitsStep32(pfaF0, pfaF0Wrap, pfaR0, i);
 #endif
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);

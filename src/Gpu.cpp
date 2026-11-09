@@ -749,6 +749,24 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
       defines += toDefine("PFA_W" + to_string(q), to_string(pfaRootOfUnity(q, R)) + suffix);
     }
     // The FP side of a hybrid needs no constants from here: its radix-PFA is the hand-tuned fftN (fft-middle.cl pfaDftR)
+
+    // FFT64 carryFused (see pfaWeightStepI in weight.cl): the weight and inverse weight ratios, minus one, of its pair i to its pair 0,
+    // 2 * dpair words apart (the row wrap moves dpair by NWORDS / 2, which changes no weight)
+    if (fft.FFT_FP64 && !fft.NTT_GF31 && !fft.NTT_GF61) {
+      u32 const gw = fft.shape.width / nW, rowStep = gw * rowBH % R * invModR(rowL) % R;
+      vector<double> fstep, istep;
+      for (u32 i = 0; i < nW; ++i) {
+        u32 const ci = (R - i * rowStep % R) % R;
+        u32 const dw = 2 * (i * gw * rowBH + rowL * ci) % N;
+        long double const e = (long double) extra(N, E, dw) / N;
+        fstep.push_back(expm1l(M_LN2l * e));
+        istep.push_back(expm1l(-M_LN2l * e));
+      }
+      string f = "{", iv = "{";
+      for (u32 i = 0; i < nW; ++i) { f += toLiteral(fstep[i]) + ","; iv += toLiteral(istep[i]) + ","; }
+      defines += toDefine("PFA_FWSTEP", f + "}");
+      defines += toDefine("PFA_IWSTEP", iv + "}");
+    }
   }
 
   // Send the FFT/NTT type and booleans that enable/disable code for each possible FP and NTT
@@ -955,12 +973,6 @@ unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const ve
   if (fftConfig.FFT_FP64 && (variant_W(v) == 0 || variant_H(v) == 0) && missingVariant0Support) {
     FFTConfig const fallback{fftConfig.shape, variant_WMH(max(variant_W(v), 1u), variant_M(v), max(variant_H(v), 1u)), fftConfig.carry};
     log("%s: this OpenCL compiler lacks what FFT variant 0 needs, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
-    fftConfig = fallback;
-  }
-  // Middle variant 3 (PFA) is only for FFT64 with a MIDDLE of 3, 5, 7, 9, 11 or 15 times 1, 2 or 4.  Elsewhere it is middle variant 1.
-  if (variant_M(fftConfig.variant) == 3 && !fftConfig.shape.hasVariant3M()) {
-    FFTConfig const fallback{fftConfig.shape, fftConfig.variant - 20, fftConfig.carry};
-    log("%s: there is no middle variant 3 for this FFT, using %s\n", fftConfig.spec().c_str(), fallback.spec().c_str());
     fftConfig = fallback;
   }
   // No variant 0 for radix 8 at 256: an explicit one (with -use 256RADIX8_W on the command line, say) becomes variant 1
