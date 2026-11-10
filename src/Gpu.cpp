@@ -166,7 +166,7 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu, i
   // PFA hybrids (see pfaWeights in weight.cl): the weights of word 2 * x * BH for x < W (scaled as the per-thread weights below),
   // then those of word 2 * (b + L * r) minus one at W + b + BH * r, for the R rows of L = W * BH pairs.  The weight functions take
   // the word number k as "line" k / 2 of column 0.
-  bool const pfa = fft.shape.isPfa();
+  bool const pfa = fft.isPfa();
   u32 const pfaR = fft.shape.pfaRadix(), pfaBH = H / pfaR, pfaL = W * pfaBH;
   auto pfaK = [&](u32 i) { return i < W ? i * pfaBH : i - W - (i - W) / pfaBH * pfaBH + (i - W) / pfaBH * pfaL; };  // word k / 2 of entry i
 
@@ -357,7 +357,7 @@ CARRY_SIZE = 100000
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 nH, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
-                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q) {
+                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q, bool &zero_mean) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -552,6 +552,41 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     }
   }
 
+  // The double-wide tail kernels allocate 2 * (G_H * NH + pad) * SHUFL_BYTES_H bytes of local memory (fftbase.cl LDS_BYTES(2)): 34,784 at
+  // height 2K with the defaults.  AMD's Windows OpenCL runtime (PAL) reports CL_DEVICE_LOCAL_MEM_SIZE as 32KB even on hardware with 64KB, and
+  // refuses the launch of a kernel that needs more (CL_OUT_OF_RESOURCES), so every 2K-height FFT failed there at its first tailMul.
+  // The same check on the width side is above.  Steps, in order, until the H kernels fit:  LDSPAD_H=0 (double-wide at height 2K is then exactly
+  // 32KB), halve SHUFL_BYTES_H (down to 4), single-wide tail.  Only when the LDS is not shared (LDSMUL_H=1).
+  {
+    auto val = [&config](const char* key, u32 dflt) { auto it = config.find(key); return it == config.end() ? dflt : u32(atoi(it->second.c_str())); };
+    u64 const local_mem = getLocalMemSize(id);
+    u32 const g_h = fft.shape.height / nH;
+    u32 shufl = val("SHUFL_BYTES_H", 8);
+    bool ldspad = val("LDSPAD_H", 1) != 0;
+    auto need = [&](u32 wide) {
+      u32 const pad = !ldspad ? 0 : nH == 4 ? (shufl == 4 ? g_h - 16 : 12) : shufl >= 16 ? 7 : g_h == 256 ? (shufl == 4 ? 252 : 126) : 56;
+      return u64(wide) * (g_h * nH + pad) * shufl;
+    };
+    u64 const before = need(tail_single_wide ? 1 : 2);
+    bool const wasSingle = tail_single_wide;
+    while (val("LDSMUL_H", 1) <= 1 && need(tail_single_wide ? 1 : 2) > local_mem) {
+      if (ldspad) { ldspad = false; }
+      else if (shufl > 4) { shufl /= 2; }
+      else if (!tail_single_wide) { tail_single_wide = true; }
+      else { break; }   // the compile or the launch will report it
+    }
+    if (need(tail_single_wide ? 1 : 2) != before) {
+      if (!ldspad && val("LDSPAD_H", 1)) { config["LDSPAD_H"] = "0"; }
+      if (shufl != val("SHUFL_BYTES_H", 8)) { config["SHUFL_BYTES_H"] = to_string(shufl); }
+      if (tail_single_wide != wasSingle) { config["TAIL_KERNELS"] = tail_single_kernel ? "0" : "1"; }
+      if (doLog) {
+        log("H kernels need %llu bytes of local memory at height %u, the device has %llu.  Using LDSPAD_H=%d SHUFL_BYTES_H=%u TAIL_KERNELS=%s (%llu bytes)\n",
+            (unsigned long long)before, fft.shape.height, (unsigned long long)local_mem, int(ldspad), shufl,
+            tail_single_wide ? (tail_single_kernel ? "0" : "1") : (tail_single_kernel ? "2" : "3"), (unsigned long long)need(tail_single_wide ? 1 : 2));
+      }
+    }
+  }
+
   // MULTI_Q is not allowed when profiling with -time
   auto configValue = [&config](const char* key, u32 valNotFound) {
     auto it = config.find(key);
@@ -580,6 +615,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // (Only the CUDA build has graphs.  Leave the OpenCL build's flags alone, or the next Gpu would report GRAPHS as having no effect.)
   graphs = configValue("GRAPHS", 1);
   if (zero_q) { config["TAIL_KERNELS"] = to_string(configValue("TAIL_KERNELS", 2) % 10); }
+
+  // ZEROMEAN (carryutil.cl) as the kernels will see it, for the words the host writes (Gpu::writeIn)
+  zero_mean = fft.FFT_FP32 && configValue("ZEROMEAN", fft.shape.fft_type == FFT32 ? 1 : 0) != 0;
 #if CUDA_BACKEND
   if (args.profile && graphs) {
     graphs = false;
@@ -588,7 +626,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 #endif
 
   // L2_STRIPING's stripe order and special lines assume the stock tail pairing (line with H - line), not PFA's
-  if (fft.shape.isPfa() && configValue("L2_STRIPING", 0)) {
+  if (fft.isPfa() && configValue("L2_STRIPING", 0)) {
     log("L2_STRIPING does not support a non-power-of-two MIDDLE.  Changing to L2_STRIPING=0.\n");
     config["L2_STRIPING"] = to_string(0);
   }
@@ -732,7 +770,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   if (fft.NTT_GF61) {
     defines += toDefine("TAILTGF61", root1GF61(fft.shape.height * 2, 1));
   }
-  if (fft.shape.isPfa()) {
+  if (fft.isPfa()) {
     // MIDDLE = R * 2^k as a Good-Thomas transform (see base.cl).  The root of unity of the radix-R comes from pfaRootOfUnity,
     // as the tail trig tables do (TrigBufCache.cpp).
     u32 const R = fft.shape.pfaRadix();
@@ -751,6 +789,24 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
       defines += toDefine("PFA_W" + to_string(q), to_string(pfaRootOfUnity(q, R)) + suffix);
     }
     // The FP side of a hybrid needs no constants from here: its radix-PFA is the hand-tuned fftN (fft-middle.cl pfaDftR)
+
+    // FFT64 carryFused (see pfaWeightStepI in weight.cl): the weight and inverse weight ratios, minus one, of its pair i to its pair 0,
+    // 2 * dpair words apart (the row wrap moves dpair by NWORDS / 2, which changes no weight)
+    if (fft.FFT_FP64 && !fft.NTT_GF31 && !fft.NTT_GF61) {
+      u32 const gw = fft.shape.width / nW, rowStep = gw * rowBH % R * invModR(rowL) % R;
+      vector<double> fstep, istep;
+      for (u32 i = 0; i < nW; ++i) {
+        u32 const ci = (R - i * rowStep % R) % R;
+        u32 const dw = 2 * (i * gw * rowBH + rowL * ci) % N;
+        long double const e = (long double) extra(N, E, dw) / N;
+        fstep.push_back(expm1l(M_LN2l * e));
+        istep.push_back(expm1l(-M_LN2l * e));
+      }
+      string f = "{", iv = "{";
+      for (u32 i = 0; i < nW; ++i) { f += toLiteral(fstep[i]) + ","; iv += toLiteral(istep[i]) + ","; }
+      defines += toDefine("PFA_FWSTEP", f + "}");
+      defines += toDefine("PFA_IWSTEP", iv + "}");
+    }
   }
 
   // Send the FFT/NTT type and booleans that enable/disable code for each possible FP and NTT
@@ -1150,16 +1206,16 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   copyQueue{*shared.context, args.profile, true},
       
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
-                               multi_q, l2_striping, graphs, zero_q)},
+                               multi_q, l2_striping, graphs, zero_q, zero_mean)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
   K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDIN)),
 // With PFA every row frequency has its own pair of self-paired tail lines, see tailSquareZero
-#define PFA_ROWS (fft.shape.isPfa() ? fft.shape.pfaRadix() : 1u)
+#define PFA_ROWS (fft.isPfa() ? fft.shape.pfaRadix() : 1u)
 // The FP side of a PFA hybrid pairs the tail rows k3 and R - k3 (see base.cl): tailSquareZero does 2 + (R - 1) / 2 workgroups, the
 // two-kernel tailSquare PFA_FP_TAIL_PAIRS pairs of lines
-#define PFA_FP (fft.shape.isPfa() && (fft.FFT_FP64 || fft.FFT_FP32))
+#define PFA_FP (fft.isPfa() && (fft.FFT_FP64 || fft.FFT_FP32))
 #define PFA_FP2 (PFA_FP && !tail_single_kernel)      // The two-kernel FP tail; with one kernel the stock H/2 pairs apply
 #define PFA_FP_TW (WIDTH * (fft.shape.middle / fft.shape.pfaRadix()))
 #define PFA_FP_ZERO_THREADS (SMALL_H / nH * (2 + (fft.shape.pfaRadix() - 1) / 2))
@@ -1273,7 +1329,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   K(transpIn,  "transpose.cl", "transposeIn",  hN / 64),
   K(transpOut, "transpose.cl", "transposeOut", hN / 64),
 
-  K(readResidue, "etc.cl", "readResidue", 32, "-DREADRESIDUE=1"),
+  K(readResidue, "etc.cl", "readResidue", 64, "-DREADRESIDUE=1"),
 
   // 256
   K(kernIsEqual, "etc.cl", "isEqual", 256 * 256, "-DISEQUAL=1"),
@@ -2475,28 +2531,11 @@ void Gpu::writeWords(Buffer<Word>& buf, vector<Word> &words) {
 void Gpu::writeIn(Buffer<Word>& buf, const vector<u32>& words) { writeIn(buf, expandBits(words, N, E)); }
 
 void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
+  // Words in the plain balanced range [-2^(b-1), 2^(b-1)) have a mean of -1/2 each, a coherent term in an FP32 transform that is
+  // as large as the data from 1M words up; the kernels' own words are zero-mean (carryutil.cl).  Give the loaded words that form too.
+  if (zero_mean) { zeroMeanWords(words, E); }
   writeWords(bufAux, words);
   transpIn(buf, bufAux);
-}
-
-Words Gpu::expExp2(const Words& A, u32 n) {
-  u32 const logStep   = 10000;
-  u32 const blockSize = 100;
-  
-  writeIn(bufData, A);
-  IterationTimer timer{0};
-  u32 k = 0;
-  while (k < n) {
-    u32 const its = std::min(blockSize, n - k);
-    squareLoop(bufData, 0, its);
-    k += its;
-    queue.finish();
-    if (k % logStep == 0) {
-      float const secsPerIt = timer.reset(k);
-      log("%u / %u, %s us/it\n", k, n, formatSecsPerIter(secsPerIt).c_str());
-    }
-  }
-  return readData();
 }
 
 // A:= A^h * B
@@ -2681,7 +2720,9 @@ bool Gpu::isEqual(Buffer<Word>& in1, Buffer<Word>& in2) {
 }
 
 u64 Gpu::bufResidue(Buffer<Word> &buf) {
-  canonicalize(buf);        // readResidue sees 32 words above word 0; a carry held in an un-normalized word below them would be missed
+  // readResidue reads the 32 words below word 0 (they only supply the carry into it) and the 96 words from word 0 up.  At 1 bit per
+  // word (the lowest bpw of FFT32) those are 96 bits, enough for the 64 of the result; 32 words were only 53 bits at 1.67 bpw.
+  canonicalize(buf);        // a carry held in an un-normalized word below the words read would be missed
   readResidue(bufSmallOut, buf);
   vector<Word> words = readWords(bufSmallOut);
 
@@ -2694,7 +2735,7 @@ u64 Gpu::bufResidue(Buffer<Word> &buf) {
 
   u64 res = 0;
   int hasBits = 0;
-  for (int k = 0; k < 32 && hasBits < 64; ++k) {
+  for (int k = 0; k < 96 && hasBits < 64; ++k) {
     u32 const len = bitlen(N, E, k);
     i64 const tmp = (i64) words[32 + k] + carry;
     carry = (int) (tmp >> len);
@@ -2704,20 +2745,6 @@ u64 Gpu::bufResidue(Buffer<Word> &buf) {
     hasBits += len;
   }
   return res;
-}
-
-static string formatETA(u32 secs) {
-  u32 const etaMins = (secs + 30) / 60;
-  int const days  = etaMins / (24 * 60);
-  int const hours = etaMins / 60 % 24;
-  int const mins  = etaMins % 60;
-  char buf[64];
-  if (days) {
-    snprintf(buf, sizeof(buf), "%dd %02d:%02d", days, hours, mins);
-  } else {
-    snprintf(buf, sizeof(buf), "%02d:%02d", hours, mins);
-  }
-  return string(buf);  
 }
 
 static string getETA(u64 step, u64 total, float secsPerStep) {
@@ -2886,8 +2913,8 @@ void Gpu::doDiv9(u64 E, Words& words) {
   doDiv3(E, words);
 }
 
-// Generating and verifying a proof can fail for transient reasons: a hardware error during the verification squarings (which
-// have no Gerbicz check), a bad GPU read, a file error.  So try hard before giving up: the initial power twice, then each lower
+// Generating and verifying a proof can fail for transient reasons: a hardware error while building the proof (unchecked:  only
+// the verification squarings have a Gerbicz check, see expExp2), a bad GPU read, a file error.  So try hard before giving up: the initial power twice, then each lower
 // power down to 5, all verified (subject to -autoverify), and finally power 4 (or the initial power if lower) without verification.
 // Any failure moves on to the next attempt.
 // If every attempt fails, a file error (missing or corrupt proof residues, which a restart cannot fix) throws to the caller,
@@ -3558,6 +3585,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
               if (Signal::stopRequested()) { throw; }     // including saveProof's stop after a GPU error
               log("Proof generation failed; reporting the result without a proof\n");
             }
+            // A verification that threw (Gerbicz check errors) left its savefiles; nothing resumes them once the result is reported
+            Saver<ProofVerifyState>::clear(E);
           }
           return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048)};
         }
@@ -3617,7 +3646,8 @@ Words minus2(Words x, u64 E) {
 // TEST ONLY, compiled in only with -DPRPLL_LL_FAULTS (make BIN=build-llfaults CPPFLAGS=-DPRPLL_LL_FAULTS); a normal build has none
 // of this.  PRPLL_LL_FAULT="<k>[:<kind>[:<bit>]],..." corrupts the LL residue s right after iteration k, once per process.  Kinds:
 // flip (default) flips bit <bit> (default 39) of s;  triple replaces s - 2 by 3 (s - 2), whose Jacobi symbol is the opposite one, so a
-// check at that k (a log step) always fails;  stuck is triple at every pass (to test the consistent-error stop).
+// check at that k (a log step) always fails;  stuck is triple at every pass (to test the consistent-error stop);  set sets s to
+// <bit> and neg to N - <bit> (set:0 is a zeroed residue, neg:1 the -1 fixed point).
 // PRPLL_LL_CHECK_ALL=1 runs the Jacobi check at every log step.
 namespace {
 struct LlFault { u64 k; string kind; u32 bit; bool fired; };
@@ -3670,7 +3700,10 @@ Words addMod(const Words& a, const Words& b, u64 E) {
 // The Jacobi check (on by default, -use LL_JACOBI=0 turns it off):  with w = 2 + sqrt(3), s_k = w^(2^k) + w^(-2^k), so for k >= 1
 // s_k - 2 = (w^(2^(k-1)) - w^(-2^(k-1)))^2 = 3 t^2 with t an integer, and (3 | N) = -1:  the Jacobi symbol (s_k - 2 | N) must be -1,
 // for a prime and a composite N alike (0 only when s_k - 2 and N have a common factor, which proves nothing either way).  That
-// includes the final s = 0 of a prime.
+// includes the final s = 0 of a prime.  The exceptions are s_k = -2 and s_k = 2, the path of a zeroed residue (0 -> -2 -> 2 -> 2,
+// symbols -1 and 0):  they are counted as failed checks.  They are no LL residues for k <= p - 2:  for a prime N, s would stay at 2
+// and not end at 0;  for a composite N they need w^(2^(k+1)) = 1 mod N, which no k <= p - 2 gives for any p < 1300 (nor modulo
+// any of the 1312 prime factors 2pm + 1, m < 2000, of the M_p with p < 20000).
 // The check catches about half of all errors, and checking more often does not catch more:  s_{k+m} - 2 = (s_k^2 - 4) * (an
 // integer)^2 for m >= 1, so every later check of a wrong residue gives one same symbol.  An error is caught at the first check after
 // it or never.  Frequent checks only keep the rollback short.
@@ -3714,6 +3747,11 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
 #ifdef PRPLL_LL_FAULTS
       if (const char* f = getenv("PRPLL_LL_JACOBI_FAIL"); f && string(f) == "run") { throw "TEST FAULT: the Jacobi kernels fail"s; }
 #endif
+      if (s == makeWords(E, 2) || s == minus2({}, E)) {
+        // A zeroed residue (see above), counted as a failed check
+        log("LL Jacobi check at %" PRIu64 ": FAILED (residue %s2)\n", k, s[0] == 2 ? "" : "-");
+        return 1;
+      }
       int const got = gcd->jacobi(minus2(s, E), u32(E));
       jacobiSecs = timer.at();
       sinceCheck.reset();
@@ -3844,6 +3882,13 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
       if (fault->kind == "flip") {
         if (s.empty()) { s = Words(nWords(E), 0); }
         s[fault->bit / 32] ^= u32(1) << (fault->bit % 32);
+      } else if (fault->kind == "set" || fault->kind == "neg") {
+        s = makeWords(E, fault->bit);
+        // N = 2^E - 1 is all ones, so N - v is ~v in E bits
+        if (fault->kind == "neg") {
+          for (u32& w : s) { w = ~w; }
+          if (E % 32) { s.back() &= (u32(1) << (E % 32)) - 1; }
+        }
       } else {
         // 3 (s - 2) + 2
         Words const y = minus2(s, E);
@@ -3939,7 +3984,8 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
 
 #ifdef PRPLL_CERT_FAULTS
 // TEST ONLY, compiled in only with -DPRPLL_CERT_FAULTS (make BIN=build-certfaults CPPFLAGS=-DPRPLL_CERT_FAULTS); a normal build has
-// none of this.  PRPLL_CERT_FAULT="<k>[:<kind>],..." corrupts the CERT once per process right after squaring k.  Kinds:  flip
+// none of this.  PRPLL_CERT_FAULT="<k>[:<kind>],..." corrupts the CERT (or the squarings of a proof verification, expExp2, which
+// a process runs instead of a CERT) once per process right after squaring k.  Kinds:  flip
 // (default) flips one bit of the residue;  check flips one bit of the Gerbicz check product instead;  checksq flips one bit of the
 // check product halfway through the check squarings of the block that ends at squaring k.
 namespace {
@@ -4195,6 +4241,176 @@ CERTResult Gpu::isCERT(const Task& task) {
       ++nErrors;
       doBigLog(k, res, false, secsPerIt, kEnd, nErrors);
       log("CERT Gerbicz check failed at %u (block of %u x %u from %u), going back to the last verified savefile\n", k, m, L, k - m * L);
+      if (++nSeqErrors > 2) {
+        log("%d sequential errors, will stop.\n", nSeqErrors);
+        throw "too many errors";
+      }
+      if (res == lastFailedRes64) {
+        log("Consistent error %016" PRIx64 ", will stop.\n", res);
+        throw "consistent error";
+      }
+      lastFailedRes64 = res;
+      curL = std::max(2u, curL / 2);
+      if (stopping) { throw "stop requested"; }
+      goto reload;
+    }
+  }
+}
+
+
+// A^(2^n):  the squarings of a proof verification (Proof::verify), which are those of a CERT from another start.  So they are
+// checked as a CERT's are (see isCERT and certVerify):  blocks of m <= L sub-blocks of L squarings, at a cost of about 2/L of the
+// squarings, and a block that fails goes back to the last verified residue.  Every verified block end is saved (ProofVerifyState,
+// in proofv-<E>/) so that a stopped or killed verification resumes there.  A savefile is used only for the same n and the same
+// start A, which stands for the proof being verified;  the savefiles are removed once the n squarings are done.
+Words Gpu::expExp2(const Words& A, u32 n) {
+  constexpr u32 CHECKS_PER_RUN = 10;       // as a CERT:  rollback exposure about 10% of the run, and that often a savefile
+  constexpr u32 MAX_L = 3000;
+  constexpr u32 logStep = 10000;
+  assert(n > 0);
+
+  u64 const start = proof::hashWords(E, A)[0];
+  u32 const fullL = u32(std::clamp(std::sqrt(double(n) / CHECKS_PER_RUN), 2.0, double(MAX_L)));
+  u32 curL = fullL;
+  log("proof verification: Gerbicz check every %u squarings (L=%u), about %.2f%% overhead\n", fullL * fullL, fullL, 200.0 / fullL);
+
+  // Sized as bufData (makeBufVector's buffers are larger when the words are 32-bit), so that they can be copied to and from it
+  u32 const wordBufSize = N * fft.WordSize / sizeof(Word);
+  Buffer<Word> u0{timeBufVect, &queue, wordBufSize};
+  Buffer<Word> sum1{timeBufVect, &queue, wordBufSize};
+
+  Saver<ProofVerifyState> saver{E, 1000, args.nSavefiles};
+  u32 nErrors = 0;
+  int nSeqErrors = 0;
+  u64 lastFailedRes64 = 0;
+  Timer elapsedTimer;
+
+ reload:
+  elapsedTimer.reset();
+  u32 k = 0;
+  double elapsedBefore = 0;
+  for (int nTries = 0; ; ++nTries) {
+    ProofVerifyState state = saver.load();
+    if (!state.data.empty() && (state.span != n || state.start != start || state.k >= n)) {
+      log("proof verification savefile is for %" PRIu64 " / %" PRIu64 " squarings from %016" PRIx64 ", this one is %u from %016" PRIx64
+          "; starting over\n", state.k, state.span, state.start, n, start);
+      // Removed, not just ignored:  the savefiles of this verification would be older than it by k, and load() takes the latest
+      for (u64 const oldK : saver.listK()) { saver.removeAt(oldK); }
+      state.data.clear();
+    }
+
+    if (state.data.empty()) {
+      writeIn(bufData, A);
+      k = 0;
+      break;
+    }
+
+    writeIn(bufData, state.data);
+    u64 const res = dataResidue();
+    if (res == residue(state.data)) {
+      k = u32(state.k);
+      nErrors = std::max(nErrors, state.nErrors);
+      elapsedBefore = state.elapsed;
+      log("proof verification loaded @ %u / %u: %016" PRIx64 "\n", k, n, res);
+      break;
+    }
+    log("proof verification EE %u on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", u32(state.k), res, residue(state.data));
+    if (nTries) { throw "proof verification savefile error on load"; }
+    saver.dropMostRecent();
+  }
+
+  IterationTimer iterationTimer{k};
+  bool stopping = false;
+
+  while (true) {
+    // Plan the block:  m sub-blocks of L squarings; a remainder shorter than L is a block of its own (L = the remainder, m = 1).
+    u32 const left = n - k;
+    u32 L = curL;
+    u32 m = 1;
+    if (left >= u64(L) * L) {
+      m = L;
+    } else if (left >= L) {
+      m = left / L;
+    } else {
+      L = left;
+    }
+
+    u0 << bufData;
+    bufCheck << bufData;
+    enum LEAD_TYPE leadIn = LEAD_NONE;
+
+    for (u32 j = 0; j < m; ++j) {
+      if (j) {
+        modMul(bufCheck, bufData, leadIn);
+        leadIn = LEAD_MIDDLE;
+      }
+
+      for (u32 i = 0; i < L; ++i) {
+        ++k;
+
+        // A stop ends the block at the end of a sub-block
+        if (i == L - 1 && !stopping && Signal::stopRequested()) {
+          stopping = true;
+          m = j + 1;
+          log("Stopping, please wait..\n");
+        }
+        bool const blockEnd = i == L - 1 && j == m - 1;
+#ifdef PRPLL_CERT_FAULTS
+        CertFault* const fault = certFaultAt(k, false);
+#else
+        constexpr bool fault = false;
+#endif
+        enum LEAD_TYPE const leadOut = blockEnd || fault || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+        squareCERT(bufData, leadIn, leadOut);
+        leadIn = leadOut;
+
+#ifdef PRPLL_CERT_FAULTS
+        if (fault) {
+          fault->fired = true;
+          Buffer<Word>& target = fault->kind == "check" ? bufCheck : bufData;
+          Words const x = readAndCompress(target);
+          writeIn(target, certFlipped(x));
+          log("TEST FAULT %s at %u: %016" PRIx64 " -> %016" PRIx64 "\n", fault->kind.c_str(), k, residue(x), bufResidue(target));
+        }
+#endif
+
+        if (k % logStep == 0 && !blockEnd) {
+          queue.finish();
+          float const secsPerIt = iterationTimer.reset(k);
+          log("%u / %u, %s us/it\n", k, n, formatSecsPerIter(secsPerIt).c_str());
+        }
+      }
+    }
+
+    float const secsPerIt = iterationTimer.reset(k);
+    bool const ok = certVerify(u0, sum1, L, k);
+    u64 const res = dataResidue();
+    u32 const nErr = nErrors + !ok;
+    log("proof verification %s %9u / %u %016" PRIx64 " %s ETA %s%s\n", ok ? "OK" : "EE", k, n, res, formatSecsPerIter(secsPerIt).c_str(),
+        getETA(k, n, secsPerIt).c_str(), nErr ? (" "s + to_string(nErr) + " errors").c_str() : "");
+
+    if (ok) {
+      nSeqErrors = 0;
+      Words data = readData();
+      if (k >= n) {
+        Saver<ProofVerifyState>::clear(E);
+        if (nErrors) { log("proof verification had %u Gerbicz check failures, all redone\n", nErrors); }
+        return data;
+      }
+
+      saver.save({.exponent=E, .k=k, .span=n, .start=start, .data=std::move(data), .nErrors=nErrors,
+                  .elapsed=elapsedBefore + elapsedTimer.at()});
+      iterationTimer.reset(k);
+
+      if (stopping) {
+        queue.finish();
+        throw "stop requested";
+      }
+      curL = std::min(fullL, u32(std::ceil(curL * 1.0234)));    // 30 good blocks double L again
+    } else {
+      ++nErrors;
+      log("proof verification: Gerbicz check failed at %u (block of %u x %u from %u), going back to the last verified residue\n",
+          k, m, L, k - m * L);
       if (++nSeqErrors > 2) {
         log("%d sequential errors, will stop.\n", nSeqErrors);
         throw "too many errors";

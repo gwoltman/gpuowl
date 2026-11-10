@@ -76,13 +76,6 @@ double primesIn(u64 B1, u64 B2) { return B2 / log(double(B2)) - B1 / log(double(
 
 bool isZero(const vector<u32>& w) { return std::ranges::all_of(w, [](u32 x) { return x == 0; }); }
 
-string formatETA(double secs) {
-  u64 const s = u64(std::max(0.0, secs));
-  char buf[64];
-  snprintf(buf, sizeof(buf), "%" PRIu64 "d %02u:%02u", s / 86400, u32(s / 3600 % 24), u32(s / 60 % 60));
-  return buf;
-}
-
 }
 
 // Thrown by Stage2::runOn when the GPU could not hold its table:  run again with at most maxN table buffers

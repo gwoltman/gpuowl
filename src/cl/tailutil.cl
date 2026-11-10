@@ -31,6 +31,37 @@
 #define SINGLE_WIDE    (TAIL_KERNELS < 2)         // Old single-wide tailSquare vs. new double-wide tailSquare
 #define SINGLE_KERNEL  ((TAIL_KERNELS & 1) == 0)  // TailSquare uses a single kernel vs. two kernels
 
+#if PFA && (FFT_FP64 || FFT_FP32) && !defined(PFA_TAIL_TRIG_DEFINED)    // tailutil.cl is included once per number type
+#define PFA_TAIL_TRIG_DEFINED
+// The PFA FP tail's trig value of table entry e for thread lowMe (see appendPfaTailTrig in TrigBufCache.cpp).  The entries are in
+// launch order, so no line arithmetic finds them:  tail group g's is g (single-wide) or 2 * g + half (double-wide, half 1 for line_v),
+// tailSquareZero group which's PFA_TAIL_ZERO + which.  line is needed only to compute the value from scratch (TAIL_TRIGS 2).
+#define PFA_TAIL_ZERO (WIDTH * MIDDLE / 2 * (SINGLE_WIDE ? 1 : 2))
+#if FFT_FP64
+T2 OVERLOAD pfaTailTrig(Trig smallTrig, u32 e, u32 line, u32 lowMe) {
+#if TAIL_TRIGS == 2
+  return slowTrig_N(pfaFpTailTrigBase(line) + lowMe * (WIDTH * MIDDLE), 2 * ND);
+#elif TAIL_TRIGS == 1
+  // A plain multiplier for the entry times the fancy base row (small angles), cached by all groups
+  return cmulFancy(TSLOAD(&smallTrig[SMALL_HEIGHT * 5 + G_H + e]), TFLOAD(&smallTrig[SMALL_HEIGHT * 5 + lowMe]));
+#else
+  return TOLOAD(&smallTrig[SMALL_HEIGHT * 5 + e * G_H + lowMe]);
+#endif
+}
+#endif
+#if FFT_FP32
+F2 OVERLOAD pfaTailTrig(TrigFP32 smallTrig, u32 e, u32 line, u32 lowMe) {
+#if TAIL_TRIGS32 == 2
+  return slowTrig_N(pfaFpTailTrigBase(line) + lowMe * (WIDTH * MIDDLE), 2 * ND);
+#elif TAIL_TRIGS32 == 1
+  return cmulFancy(TSLOAD(&smallTrig[SMALL_HEIGHT * 5 + G_H + e]), TFLOAD(&smallTrig[SMALL_HEIGHT * 5 + lowMe]));
+#else
+  return TOLOAD(&smallTrig[SMALL_HEIGHT * 5 + e * G_H + lowMe]);
+#endif
+}
+#endif
+#endif
+
 // 64-bit implementations of reverse routines
 
 #if FFT_FP64 || NTT_GF61

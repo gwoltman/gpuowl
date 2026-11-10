@@ -128,7 +128,8 @@ G_H        "group height" == SMALL_HEIGHT / NH
 // Note: smaller numbers above do more F64 and are less accurate, larger numbers have more memory accesses and are more accurate
 // For MIDDLE there are two variants:
 // 0   full length chainmul
-// 1   lots of computing trigs, very short chainmul for maximum accuracy
+// 1   lots of computing trigs, very short chainmul for maximum accuracy.  FFT64 with a MIDDLE that is not a power of two:  a Good-Thomas
+//     (PFA) middle, as the FP part of FFT6431 (the host defines PFA)
 #define FFT_VARIANT_W    (FFT_VARIANT / 100)
 #define FFT_VARIANT_M    (FFT_VARIANT % 100 / 10)
 #define FFT_VARIANT_H    (FFT_VARIANT % 10)
@@ -284,8 +285,11 @@ typedef ulong u64;
 #define PFA 0
 #endif
 #if PFA
-#if (PFA != 3 && PFA != 5 && PFA != 7 && PFA != 9 && PFA != 11 && PFA != 15) || MIDDLE % PFA || ((MIDDLE / PFA) & (MIDDLE / PFA - 1))
-#error PFA needs MIDDLE = 3, 5, 7, 9, 11 or 15 times a power of two
+#if (PFA != 3 && PFA != 5 && PFA != 7 && PFA != 9 && PFA != 11 && PFA != 13 && PFA != 15) || MIDDLE % PFA || ((MIDDLE / PFA) & (MIDDLE / PFA - 1))
+#error PFA needs MIDDLE = 3, 5, 7, 9, 11, 13 or 15 times a power of two
+#endif
+#if PFA == 13 && FFT_TYPE != 0                  // FFT64
+#error PFA 13 is only for FFT64
 #endif
 #if NTT_GF31 && (PFA == 5 || PFA == 15)
 #error PFA 5 and 15 need a 5th root of unity, which GF(M31^2) does not have
@@ -345,9 +349,12 @@ u32 pfaFpTailLine(u32 g) {
   g -= PFA_TW / 2 - 1;
   return (1 + g / (PFA_TW - 1)) * PFA_TW + 1 + g % (PFA_TW - 1);
 }
-// The u line of the g-th of all H/2 tail pairs, for the single-kernel FP tail (TAIL_KERNELS 0 or 2): pair 0 is row 0's self-paired
-// lines 0 and PFA_TW/2, then row 0's lines 1..PFA_TW/2-1, then for each k3 = 1..(PFA-1)/2 the lines kx = 0..PFA_TW-1 of row k3.
-u32 pfaFpTailLineAll(u32 g) { return g < PFA_TW / 2 ? g : (1 + (g - PFA_TW / 2) / PFA_TW) * PFA_TW + (g - PFA_TW / 2) % PFA_TW; }
+// The u line of the g-th of all H/2 tail pairs, for the single-kernel FP tail (TAIL_KERNELS 0 or 2):  the PFA_FP_TAIL_PAIRS pairs of
+// pfaFpTailLine first, numbered as there, then row 0's self-paired lines 0 and PFA_TW/2, then for each k3 = 1..(PFA-1)/2 the kx = 0
+// line of row k3.  With one or two kernels a pair has one group number, which is where its tail trig values are (see pfaTailTrig).
+u32 pfaFpTailLineAll(u32 g) { return g < PFA_FP_TAIL_PAIRS ? pfaFpTailLine(g) : (g - PFA_FP_TAIL_PAIRS) * PFA_TW; }
+// tailSquareZero's line of group which:  0 is line 0, 1..(PFA-1)/2 the kx = 0 lines of rows k3 = which, the last line PFA_TW/2
+u32 pfaFpTailZeroLine(u32 which) { return which == PFA_FP_ZERO_GROUPS - 1 ? PFA_TW / 2 : which * PFA_TW; }
 u32 pfaFpTailPartner(u32 line) { return (PFA - line / PFA_TW) % PFA * PFA_TW + (PFA_TW - line % PFA_TW) % PFA_TW; }
 u32 pfaFpTailTrigBase(u32 line) { return (line / PFA_TW * PFA_L + PFA * (line % PFA_TW)) % ND; }
 #else

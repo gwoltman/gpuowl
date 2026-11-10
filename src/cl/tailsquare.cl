@@ -108,9 +108,9 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
 #if PFA
-  // PFA_FP_ZERO_GROUPS workgroups: row 0's self-paired lines 0 and PFA_TW/2, then the kx = 0 lines of rows k3 and PFA - k3
+  // PFA_FP_ZERO_GROUPS workgroups: row 0's line 0, the kx = 0 lines of rows k3 and PFA - k3, row 0's line PFA_TW/2
   assert(which < PFA_FP_ZERO_GROUPS);
-  u32 line = which == 0 ? 0 : which == 1 ? PFA_TW / 2 : (which - 1) * PFA_TW;
+  u32 line = pfaFpTailZeroLine(which);
 #else
   assert(which < 2);
 
@@ -132,8 +132,8 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
 #endif
 
 #if PFA
-  T2 trig = slowTrig_N(pfaFpTailTrigBase(line) + me * H, 2 * ND);
-  if (which >= 2) {
+  T2 trig = pfaTailTrig(smallTrig, PFA_TAIL_ZERO + which, line, me);
+  if (which && which < PFA_FP_ZERO_GROUPS - 1) {
     // Line kx = 0 of row k3 pairs element ky with element -ky of line kx = 0 of row PFA - k3
     T2 v[NH];
     u32 line2 = pfaFpTailPartner(line);
@@ -204,7 +204,7 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
 #if PFA
-  T2 trig = slowTrig_N(pfaFpTailTrigBase(line1) + me * H, 2 * ND);
+  T2 trig = pfaTailTrig(smallTrig, get_group_id(0), line1, me);
 #elif TAIL_TRIGS == 2
   T2 trig = slowTrig_N(line1 + me * H, ND / NH);
 
@@ -314,7 +314,7 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   // Compute trig values from scratch.  Good on GPUs with high DP throughput.
 #if PFA
-  T2 trig = slowTrig_N(pfaFpTailTrigBase(line) + H * lowMe, 2 * ND);
+  T2 trig = pfaTailTrig(smallTrig, 2 * get_group_id(0) + isSecondHalf, line, lowMe);
 #elif TAIL_TRIGS == 2
   T2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
 
@@ -434,9 +434,9 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   // This kernel in executed in two workgroups.
   u32 which = get_group_id(0);
 #if PFA
-  // PFA_FP_ZERO_GROUPS workgroups: row 0's self-paired lines 0 and PFA_TW/2, then the kx = 0 lines of rows k3 and PFA - k3
+  // PFA_FP_ZERO_GROUPS workgroups: row 0's line 0, the kx = 0 lines of rows k3 and PFA - k3, row 0's line PFA_TW/2
   assert(which < PFA_FP_ZERO_GROUPS);
-  u32 line = which == 0 ? 0 : which == 1 ? PFA_TW / 2 : (which - 1) * PFA_TW;
+  u32 line = pfaFpTailZeroLine(which);
 #else
   assert(which < 2);
 
@@ -450,8 +450,8 @@ KERNEL(G_H) tailSquareZero(P(T2) out, CP(T2) in, Trig smallTrig) {
   readTailFusedLine(inF2, u, line, me);
 
 #if PFA
-  F2 trig = slowTrig_N(pfaFpTailTrigBase(line) + me * H, 2 * ND);
-  if (which >= 2) {
+  F2 trig = pfaTailTrig(smallTrigF2, PFA_TAIL_ZERO + which, line, me);
+  if (which && which < PFA_FP_ZERO_GROUPS - 1) {
     // Line kx = 0 of row k3 pairs element ky with element -ky of line kx = 0 of row PFA - k3
     F2 v[NH];
     u32 line2 = pfaFpTailPartner(line);
@@ -518,7 +518,7 @@ KERNEL_CAP(G_H) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   // Compute trig values from scratch.  Good on GPUs with high FP throughput.
 #if PFA
-  F2 trig = slowTrig_N(pfaFpTailTrigBase(line1) + me * H, 2 * ND);
+  F2 trig = pfaTailTrig(smallTrigF2, get_group_id(0), line1, me);
 #elif TAIL_TRIGS32 == 2
   F2 trig = slowTrig_N(line1 + me * H, ND / NH);
 
@@ -624,7 +624,7 @@ KERNEL_CAP(G_H * 2) tailSquare(P(T2) out, CP(T2) in, u32 base, Trig smallTrig) {
 
   // Compute trig values from scratch.  Good on GPUs with high FP throughput.
 #if PFA
-  F2 trig = slowTrig_N(pfaFpTailTrigBase(line) + H * lowMe, 2 * ND);
+  F2 trig = pfaTailTrig(smallTrigF2, 2 * get_group_id(0) + isSecondHalf, line, lowMe);
 #elif TAIL_TRIGS32 == 2
   F2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
 

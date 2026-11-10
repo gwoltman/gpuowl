@@ -316,10 +316,24 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
+#if PFA
+  // Pair 0's weights from the PFA tables, the other pairs' by a compile-time step from it, see pfaFWeightStep and pfaFracBitsStep32
+  u32 const pfaR0 = pfaRow0(lowMe, line);
+  u32 const pfaF0 = pfaFrac32(lowMe, line, pfaR0), pfaF0Wrap = pfaFrac32Wrap(pfaF0);
+  T2 pfaW0, pfaW1;
+  pfaWeightsI(lowMe, 0, line, THREAD_WEIGHTS, &pfaW0, &pfaW1);
+  T invBase = pfaW0.x;
+#else
   T invBase = optionalDouble(weights.x);
+#endif
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
+#if PFA
+    T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, pfaIWeightStep(i)));
+    frac_bits = pfaFracBitsStep32(pfaF0, pfaF0Wrap, pfaR0, i);
+#else
     T invWeight1 = i == 0 ? invBase : optionalDouble(fancyMul(invBase, iweightStep(i)));
+#endif
     T invWeight2 = optionalDouble(fancyMul(invWeight1, IWEIGHT_STEP));
 
     // Generate big-word/little-word flags
@@ -378,6 +392,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Group zero will be redone when gr == H / WMUL
   if (gr == 0) { signalLinesRead(ready); return; }
 
+  // The redo of line 0 takes its carries from column x - 1 of the last line.  With PFA so do the other lines that are multiples of PFA_BH.
+#if PFA
+  bool rotatedCarries = pfaRotatedLine(gr * WMUL);
+#else
+  bool rotatedCarries = gr >= H / WMUL;
+#endif
+
   // Do some work while our carries may not be ready
   setPriority(0);
 
@@ -388,10 +409,18 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
 #endif
 
   // Calculate inverse weights
+#if PFA
+  T base = pfaW0.y;
+#else
   T base = optionalHalve(weights.y);
+#endif
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (u32 i = 0; i < NW; ++i) {
+#if PFA
+    T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, pfaFWeightStep(i)));
+#else
     T weight1 = i == 0 ? base : optionalHalve(fancyMul(base, fweightStep(i)));
+#endif
     T weight2 = optionalHalve(fancyMul(weight1, WEIGHT_STEP));
     u[i] = U2(weight1, weight2);
   }
@@ -427,14 +456,14 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // For the last group the carry reading is shifted, so the per-wavefront ready flags are not enough and a
   // barrier is needed.  gr is uniform but "me < G_W" is not, so the barrier is taken outside that guard and
   // the shuttle reads resume in a second "me < G_W" block.
-  if (gr >= H / WMUL) { bar(); }
+  if (rotatedCarries) { bar(); }
 #endif
 
   if (me < G_W) {
 
     // Read from the carryShuttle carries produced by the previous WIDTH group.  Rotate carries from the last WIDTH line.
     // The new carry layout lets the AMD compiler generate global_load_dwordx4 instructions.
-    if (gr < H / WMUL) {
+    if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
         carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
@@ -457,6 +486,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(P(T2) out, CP(T2) in, u32 posROE, P(i64) carry
   // Apply each 32 or 64 bit carry to the 2 words.  Then apply the weights -- or if FUSE_WEIGHT_BUTTERFLY apply weights only for the "low" i indices.
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
   for (i32 i = 0; i < NW; ++i) {
+#if PFA
+    frac_bits = pfaFracBitsStep32(pfaF0, pfaF0Wrap, pfaR0, i);
+#endif
     bool biglit0 = frac_bits <= FRAC_BPW_HI;
     wu[i] = carryFinal(wu[i], carry[i], biglit0);
     if (!FUSE_WEIGHT_BUTTERFLY || i < NW/2) u[i] = U2(u[i].x * wu[i].x, u[i].y * wu[i].y);

@@ -79,6 +79,12 @@ public:
   }
   [[nodiscard]] u32 pfaRadix() const { return pfaRadix(middle); }
   [[nodiscard]] bool isPfa() const { return pfaMiddle(middle, fft_type) && pfaType(fft_type); }
+  // FFT64's middle variant 1 does a MIDDLE that is not a power of two (an odd factor times 1, 2 or 4) as a Good-Thomas transform, as the
+  // FP part of FFT6431 does
+  [[nodiscard]] bool hasPfa64() const {
+    u32 const r = pfaRadix();
+    return fft_type == FFT64 && (r == 3 || r == 5 || r == 7 || r == 9 || r == 11 || r == 13 || r == 15);
+  }
 };
 
 static const u32 N_VARIANT_W = 3;
@@ -136,6 +142,8 @@ public:
 
   [[nodiscard]] float minBpw() const { return shape.minBpw(); }
   [[nodiscard]] float maxBpw() const;
+  // A Good-Thomas MIDDLE:  the NTT and hybrid types' PFA shapes, and FFT64's middle variant 1 of a MIDDLE that is not a power of two
+  [[nodiscard]] bool isPfa() const { return shape.isPfa() || (variant_M(variant) == 1 && shape.hasPfa64()); }
 };
 
 // A P-1 FFT choice, its -use settings (from the -fft spec's or the chosen line's tune file) and where the choice came from

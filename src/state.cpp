@@ -82,6 +82,27 @@ struct BitBucket {
   }
 };
 
+// The tie bit of word j:  bit 0 of the lowbias32 hash of the word index (zmLb in carryutil.cl, which must agree)
+static u32 zmLb(u32 j) { j ^= j >> 16; j *= 0x7feb352du; j ^= j >> 15; j *= 0x846ca68bu; j ^= j >> 16; return j & 1; }
+
+void zeroMeanWords(vector<Word>& words, u64 E) {
+  u32 const N = u32(words.size());
+  for (int pass = 0; pass < 8; ++pass) {
+    i64 carry = 0;
+    for (u32 p = 0; p < N; ++p) {
+      u32 const len = bitlen(N, E, p);
+      i64 const radix = i64(1) << len, lo = zmLb(p) ? 1 - radix / 2 : -radix / 2;
+      i64 v = i64(words[p]) + carry;
+      carry = 0;
+      if (v < lo) { v += radix; carry = -1; }
+      else if (v >= lo + radix) { v -= radix; carry = 1; }
+      words[p] = (Word) v;
+    }
+    if (!carry) { return; }
+    words[0] += (Word) carry;     // 2^E == 1: what leaves the top word comes back at word 0
+  }
+}
+
 vector<Word> expandBits(const vector<u32> &compactBits, u32 N, u64 E) {
   assert(E % 32 != 0);
 

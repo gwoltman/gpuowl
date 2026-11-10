@@ -314,6 +314,30 @@ void pfaWeightsIW(u32 lowMe, u32 i, u32 g, BigTabFP32 THREAD_WEIGHTS, bool wrap,
 #endif
 
 #if FFT_FP64
+// FFT64 carryFused's big-word test value (fracBits + FRAC_BPW_HI, as without PFA) of the first word of its i-th pair, from pair 0's
+// (pfaFrac32, r0 = pfaRow0):  fracBits(k) is the top half of k * FRAC_BPW mod 2^64, minus one, so pair i's is pair 0's plus the top half of
+// a compile-time step, one of two as pfaRowI wraps or not (the wrap is NWORDS words fewer, pfaFrac32Wrap).  A select and a 32-bit add
+// instead of pfaRowI and a fracBits.
+// The sum misses the carry out of the bottom halves, one per add, so it is up to 2 short of the exact value and never over.  That never
+// changes a big-word test:  the value of word k is (1 - (k * (E % NWORDS) mod NWORDS) / NWORDS) * 2^32 - 1, apart by 2^32 / NWORDS (over
+// 500) for the different residues, and the only words whose value is near an edge of the tests are the last two (the ties of FRAC_BPW,
+// see clDefines), whose values are just below the wrap at 2^32:  lowering them is safe, raising them would not be.
+#define PFA_FRAC64 (((u64) FRAC_BPW_HI << 32) | FRAC_BPW_LO)
+u32 pfaFrac32(u32 lowMe, u32 g, u32 r0) { return fracBits(2 * (lowMe * PFA_BH + g % PFA_BH + PFA_L * r0)) + FRAC_BPW_HI; }
+// pfaFrac32 less NWORDS words, as an add (of -NWORDS words' frac mod 2^64) so that it too can only fall short
+u32 pfaFrac32Wrap(u32 f0) { return f0 + (u32) ((0 - (u64) (2 * PFA_L * PFA) * PFA_FRAC64) >> 32); }
+u32 pfaFracBitsStep32(u32 f0, u32 f0Wrap, u32 r0, u32 i) {
+  u32 ci = (PFA - i * (G_W * PFA_BH % PFA * PFA_LINV % PFA) % PFA) % PFA;     // pfaRowI's step
+  return (r0 >= PFA - ci ? f0Wrap : f0) + (u32) (((u64) (2 * (i * G_W * PFA_BH + PFA_L * ci)) * PFA_FRAC64) >> 32);
+}
+
+// The weight and inverse weight ratios, minus one, of carryFused's pair i to its pair 0 (the host's PFA_FWSTEP / PFA_IWSTEP):  one
+// fancyMul and an optionalHalve / optionalDouble per pair as without PFA, instead of pfaWeightsI's two table loads and two fancyMuls
+#if defined(PFA_FWSTEP)                                                        // FFT64 only, not the PFA hybrids
+T pfaFWeightStep(u32 i) { const T tab[NW] = PFA_FWSTEP; return tab[i]; }
+T pfaIWeightStep(u32 i) { const T tab[NW] = PFA_IWSTEP; return tab[i]; }
+#endif
+
 // The FP64 weights are kept in [2, 4) (inverse weights in [1, 2)), which optionalHalve / optionalDouble restore from the value.
 void pfaWeightsOf(u32 x, u32 b, u32 r, BigTab THREAD_WEIGHTS, T2 *w0, T2 *w1) {
   T2 w = fancyMul(TFLOAD(&THREAD_WEIGHTS[x]), TFLOAD(&THREAD_WEIGHTS[WIDTH + b + PFA_BH * r]));

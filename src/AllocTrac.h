@@ -10,7 +10,7 @@
 using namespace std::string_literals;
 
 // Tracks the GPU memory allocated by Buffers, per device (keyed by the OpenCL / CUDA context the buffer belongs to), and refuses an
-// allocation that would take a device over its limit:  the -maxAlloc cap (default 15 GB), the same for every device, plus the
+// allocation that would take a device over its limit:  the -maxAlloc cap (default the memory free at start less 1 GB, see main.cpp), plus the
 // allowances that are held on that device (P-1 stage 2 without a cap, see Allowance).  Nothing is shared between devices.
 class AllocTrac {
   struct Device {

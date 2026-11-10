@@ -248,13 +248,51 @@ static vector<double2> genSmallTrigFP64(u32 size, u32 radix) {
   return tab;
 }
 
+// The tail trig values of a PFA FP tail (FP64 or the FP part of a hybrid), see pfaTailTrig in tailutil.cl.  Tail line kx + PFA_TW*k3
+// has t^2 = w^k3 * v^(kx + PFA_TW*ky), root1(ND, pfaFpTailTrigBase(line) + ky * WIDTH * MIDDLE).  The entries are in launch order, so
+// that a kernel finds them from its group id alone:  region A one per tailSquare / tailMul group g (two when double-wide:  line_u, then
+// line_v), region B one per tailSquareZero group which.  TAIL_TRIGS 1 stores a base row (ky * WIDTH * MIDDLE, small angles, fancy) and
+// one multiplier per entry (any angle, plain), TAIL_TRIGS 0 all the values.
+template<typename T2>
+static void appendPfaTailTrig(vector<T2>& tab, u32 tail_trigs, u32 width, u32 middle, u32 height, u32 radix, bool tail_single_wide,
+                              T2 (*rootPlain)(u32, u32), T2 (*rootFancy)(u32, u32)) {
+  u32 const R = FFTShape::pfaRadix(middle), TW = width * (middle / R), L = width * height * (middle / R);
+  u32 const ND = width * middle * height, H = width * middle, G_H = height / radix;
+  auto base = [&](u32 line) { return (line / TW * L + R * (line % TW)) % ND; };
+  auto partner = [&](u32 line) { return (R - line / TW) % R * TW + (TW - line % TW) % TW; };
+  auto fpTailLine = [&](u32 g) { return g < TW / 2 - 1 ? 1 + g : (1 + (g - (TW / 2 - 1)) / (TW - 1)) * TW + 1 + (g - (TW / 2 - 1)) % (TW - 1); };
+  u32 const P = TW / 2 - 1 + (R - 1) / 2 * (TW - 1), zeroGroups = 2 + (R - 1) / 2;
+  vector<u32> lines;                                            // The line of each entry
+  for (u32 g = 0; g < H / 2; ++g) {                             // Region A, see pfaFpTailLineAll
+    u32 const u = g < P ? fpTailLine(g) : (g - P) * TW;
+    lines.push_back(u);
+    if (!tail_single_wide) { lines.push_back(u ? partner(u) : TW / 2); }
+  }
+  for (u32 which = 0; which < zeroGroups; ++which) {           // Region B, see pfaFpTailZeroLine
+    lines.push_back(which == zeroGroups - 1 ? TW / 2 : which * TW);
+  }
+  if (tail_trigs == 1) {
+    for (u32 me = 0; me < G_H; ++me) { tab.push_back(rootFancy(ND, H * me)); }
+    for (u32 line : lines) { tab.push_back(rootPlain(ND, base(line))); }
+  }
+  if (tail_trigs == 0) {
+    for (u32 line : lines) {
+      for (u32 me = 0; me < G_H; ++me) { tab.push_back(rootPlain(ND, (base(line) + H * me) % ND)); }
+    }
+  }
+}
+
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
-static vector<double2> genSmallTrigComboFP64(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+static vector<double2> genSmallTrigComboFP64(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide, bool pfa) {
   if (LOG_TRIG_ALLOC) { log("genSmallTrigComboFP64(%u, %u)\n", size, radix); }
 
   vector<double2> tab = genSmallTrigFP64(size, radix);
 
   u32 const tail_trigs = args->value("TAIL_TRIGS", 2);                   // Default is calculating from scratch, no memory accesses
+  if (pfa) {
+    appendPfaTailTrig<double2>(tab, tail_trigs, width, middle, size, radix, tail_single_wide, root1, root1Fancy);
+    return tab;
+  }
 
   // From tailSquare pre-calculate some or all of these:  T2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
   if (tail_trigs == 1) {          // Some trig values in memory, some are computed with a complex multiply.  Best option on a Radeon VII.
@@ -528,10 +566,14 @@ static vector<float2> genSmallTrigFP32(u32 size, u32 radix) {
 }
 
 // Generate the small trig values for fft_HEIGHT plus optionally trig values used in pairSq.
-static vector<float2> genSmallTrigComboFP32(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+static vector<float2> genSmallTrigComboFP32(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide, bool pfa) {
   vector<float2> tab = genSmallTrigFP32(size, radix);
 
   u32 const tail_trigs = args->value("TAIL_TRIGS32", 2);          // Default is calculating from scratch, no memory accesses
+  if (pfa) {
+    appendPfaTailTrig<float2>(tab, tail_trigs, width, middle, size, radix, tail_single_wide, root1FP32, root1FancyFP32);
+    return tab;
+  }
 
   // From tailSquare pre-calculate some or all of these:  F2 trig = slowTrig_N(line + H * lowMe, ND / NH * 2);
   if (tail_trigs == 1) {          // Some trig values in memory, some are computed with a complex multiply.
@@ -1132,12 +1174,12 @@ static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u
   size_t tabsize;
 
   if (fft.FFT_FP64) {
-    tab = genSmallTrigComboFP64(args, width, middle, size, radix, tail_single_wide);
+    tab = genSmallTrigComboFP64(args, width, middle, size, radix, tail_single_wide, fft.isPfa());
     tab.resize(SMALLTRIGCOMBO_FP64_SIZE(width, middle, size, radix));
   }
 
   if (fft.FFT_FP32) {
-    vector<float2> tab1 = genSmallTrigComboFP32(args, width, middle, size, radix, tail_single_wide);
+    vector<float2> tab1 = genSmallTrigComboFP32(args, width, middle, size, radix, tail_single_wide, fft.isPfa());
     tab1.resize(SMALLTRIGCOMBO_FP32_SIZE(width, middle, size, radix));
     // Append tab1 to tab
     tabsize = tab.size();
@@ -1187,12 +1229,12 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
   size_t tabsize;
 
   if (fft.FFT_FP64) {
-    tab = fft.shape.isPfa() ? genPfaMiddleTrigFP<double2>(smallH, middle, width, root1) : genMiddleTrigFP64(smallH, middle, width);
+    tab = fft.isPfa() ? genPfaMiddleTrigFP<double2>(smallH, middle, width, root1) : genMiddleTrigFP64(smallH, middle, width);
     tab.resize(MIDDLETRIG_FP64_SIZE(width, middle, smallH));
   }
 
   if (fft.FFT_FP32) {
-    vector<float2> tab1 = fft.shape.isPfa() ? genPfaMiddleTrigFP<float2>(smallH, middle, width, root1FP32) : genMiddleTrigFP32(smallH, middle, width);
+    vector<float2> tab1 = fft.isPfa() ? genPfaMiddleTrigFP<float2>(smallH, middle, width, root1FP32) : genMiddleTrigFP32(smallH, middle, width);
     tab1.resize(MIDDLETRIG_FP32_SIZE(width, middle, smallH));
     // Append tab1 to tab
     tabsize = tab.size();
@@ -1248,7 +1290,8 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
   u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
   bool const chain31 = chainTablesGF31(args, false);
-  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31);
+  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31)
+                       | u32(fft.isPfa()) << 20;     // PFA lays out the FP tail trig values differently (a 212 and a 232 FFT64 share the shape)
 
   // See if there is an existing smallTrigCombo that we can return (using only a subset of the data)
   // In theory, we could match any smallTrigCombo where width matches.  However, SMALLTRIG_GF31_SIZE wouldn't be able to figure out the size.
@@ -1277,7 +1320,8 @@ TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 m
   u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
   u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
   bool const chain31 = chainTablesGF31(args, false);
-  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31);
+  u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31)
+                       | u32(fft.isPfa()) << 20;     // PFA lays out the FP tail trig values differently (a 212 and a 232 FFT64 share the shape)
 
   // If there are no pre-computed trig values we might be able to share this trig table with fft_WIDTH
   if (((tail_trigs == 2 && fft.FFT_FP64) || (tail_trigs32 == 2 && fft.FFT_FP32)) && !fft.NTT_GF31 && !fft.NTT_GF61)
@@ -1301,7 +1345,7 @@ TrigPtr TrigBufCache::middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MID
   std::scoped_lock const lock{mut};
   auto& m = middle;
   bool const chain31 = chainTablesGF31(args, true);
-  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, 0, chain31);
+  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, fft.isPfa(), chain31);   // FFT64 may or may not be PFA
   decay_t<decltype(m)>::key_type const key{SMALL_H, MIDDLE, width, key_part};
 
   TrigPtr p{};
