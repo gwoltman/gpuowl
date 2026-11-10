@@ -1323,7 +1323,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   K(transpIn,  "transpose.cl", "transposeIn",  hN / 64),
   K(transpOut, "transpose.cl", "transposeOut", hN / 64),
 
-  K(readResidue, "etc.cl", "readResidue", 32, "-DREADRESIDUE=1"),
+  K(readResidue, "etc.cl", "readResidue", 64, "-DREADRESIDUE=1"),
 
   // 256
   K(kernIsEqual, "etc.cl", "isEqual", 256 * 256, "-DISEQUAL=1"),
@@ -2734,7 +2734,9 @@ bool Gpu::isEqual(Buffer<Word>& in1, Buffer<Word>& in2) {
 }
 
 u64 Gpu::bufResidue(Buffer<Word> &buf) {
-  canonicalize(buf);        // readResidue sees 32 words above word 0; a carry held in an un-normalized word below them would be missed
+  // readResidue reads the 32 words below word 0 (they only supply the carry into it) and the 96 words from word 0 up.  At 1 bit per
+  // word (the lowest bpw of FFT32) those are 96 bits, enough for the 64 of the result; 32 words were only 53 bits at 1.67 bpw.
+  canonicalize(buf);        // a carry held in an un-normalized word below the words read would be missed
   readResidue(bufSmallOut, buf);
   vector<Word> words = readWords(bufSmallOut);
 
@@ -2747,7 +2749,7 @@ u64 Gpu::bufResidue(Buffer<Word> &buf) {
 
   u64 res = 0;
   int hasBits = 0;
-  for (int k = 0; k < 32 && hasBits < 64; ++k) {
+  for (int k = 0; k < 96 && hasBits < 64; ++k) {
     u32 const len = bitlen(N, E, k);
     i64 const tmp = (i64) words[32 + k] + carry;
     carry = (int) (tmp >> len);

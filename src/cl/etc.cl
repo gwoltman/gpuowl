@@ -6,7 +6,7 @@
 
 // Because the data "in" is stored transposed, and we want to read
 // a number of logically successive values, we have a very bad read access pattern
-KERNEL(32) readResidue(P(Word2) out, CP(Word2) in) {
+KERNEL(64) readResidue(P(Word2) out, CP(Word2) in) {
   u32 me = get_local_id(0);
   u32 k = (ND - 16 + me) % ND;
 #if PFA
