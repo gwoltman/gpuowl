@@ -3639,7 +3639,8 @@ Words minus2(Words x, u64 E) {
 // TEST ONLY, compiled in only with -DPRPLL_LL_FAULTS (make BIN=build-llfaults CPPFLAGS=-DPRPLL_LL_FAULTS); a normal build has none
 // of this.  PRPLL_LL_FAULT="<k>[:<kind>[:<bit>]],..." corrupts the LL residue s right after iteration k, once per process.  Kinds:
 // flip (default) flips bit <bit> (default 39) of s;  triple replaces s - 2 by 3 (s - 2), whose Jacobi symbol is the opposite one, so a
-// check at that k (a log step) always fails;  stuck is triple at every pass (to test the consistent-error stop).
+// check at that k (a log step) always fails;  stuck is triple at every pass (to test the consistent-error stop);  set sets s to
+// <bit> and neg to N - <bit> (set:0 is a zeroed residue, neg:1 the -1 fixed point).
 // PRPLL_LL_CHECK_ALL=1 runs the Jacobi check at every log step.
 namespace {
 struct LlFault { u64 k; string kind; u32 bit; bool fired; };
@@ -3692,7 +3693,10 @@ Words addMod(const Words& a, const Words& b, u64 E) {
 // The Jacobi check (on by default, -use LL_JACOBI=0 turns it off):  with w = 2 + sqrt(3), s_k = w^(2^k) + w^(-2^k), so for k >= 1
 // s_k - 2 = (w^(2^(k-1)) - w^(-2^(k-1)))^2 = 3 t^2 with t an integer, and (3 | N) = -1:  the Jacobi symbol (s_k - 2 | N) must be -1,
 // for a prime and a composite N alike (0 only when s_k - 2 and N have a common factor, which proves nothing either way).  That
-// includes the final s = 0 of a prime.
+// includes the final s = 0 of a prime.  The exceptions are s_k = -2 and s_k = 2, the path of a zeroed residue (0 -> -2 -> 2 -> 2,
+// symbols -1 and 0):  they are counted as failed checks.  They are no LL residues for k <= p - 2:  for a prime N, s would stay at 2
+// and not end at 0;  for a composite N they need w^(2^(k+1)) = 1 mod N, which no k <= p - 2 gives for any p < 1300 (nor modulo
+// any of the 1312 prime factors 2pm + 1, m < 2000, of the M_p with p < 20000).
 // The check catches about half of all errors, and checking more often does not catch more:  s_{k+m} - 2 = (s_k^2 - 4) * (an
 // integer)^2 for m >= 1, so every later check of a wrong residue gives one same symbol.  An error is caught at the first check after
 // it or never.  Frequent checks only keep the rollback short.
@@ -3736,6 +3740,11 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
 #ifdef PRPLL_LL_FAULTS
       if (const char* f = getenv("PRPLL_LL_JACOBI_FAIL"); f && string(f) == "run") { throw "TEST FAULT: the Jacobi kernels fail"s; }
 #endif
+      if (s == makeWords(E, 2) || s == minus2({}, E)) {
+        // A zeroed residue (see above), counted as a failed check
+        log("LL Jacobi check at %" PRIu64 ": FAILED (residue %s2)\n", k, s[0] == 2 ? "" : "-");
+        return 1;
+      }
       int const got = gcd->jacobi(minus2(s, E), u32(E));
       jacobiSecs = timer.at();
       sinceCheck.reset();
@@ -3866,6 +3875,13 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
       if (fault->kind == "flip") {
         if (s.empty()) { s = Words(nWords(E), 0); }
         s[fault->bit / 32] ^= u32(1) << (fault->bit % 32);
+      } else if (fault->kind == "set" || fault->kind == "neg") {
+        s = makeWords(E, fault->bit);
+        // N = 2^E - 1 is all ones, so N - v is ~v in E bits
+        if (fault->kind == "neg") {
+          for (u32& w : s) { w = ~w; }
+          if (E % 32) { s.back() &= (u32(1) << (E % 32)) - 1; }
+        }
       } else {
         // 3 (s - 2) + 2
         Words const y = minus2(s, E);
