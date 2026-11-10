@@ -2532,26 +2532,6 @@ void Gpu::writeIn(Buffer<Word>& buf, vector<Word>&& words) {
   transpIn(buf, bufAux);
 }
 
-Words Gpu::expExp2(const Words& A, u32 n) {
-  u32 const logStep   = 10000;
-  u32 const blockSize = 100;
-  
-  writeIn(bufData, A);
-  IterationTimer timer{0};
-  u32 k = 0;
-  while (k < n) {
-    u32 const its = std::min(blockSize, n - k);
-    squareLoop(bufData, 0, its);
-    k += its;
-    queue.finish();
-    if (k % logStep == 0) {
-      float const secsPerIt = timer.reset(k);
-      log("%u / %u, %s us/it\n", k, n, formatSecsPerIter(secsPerIt).c_str());
-    }
-  }
-  return readData();
-}
-
 // A:= A^h * B
 void Gpu::expMul(Buffer<Word>& A, u64 h, Buffer<Word>& B) {
   exponentiate(A, h);
@@ -2927,8 +2907,8 @@ void Gpu::doDiv9(u64 E, Words& words) {
   doDiv3(E, words);
 }
 
-// Generating and verifying a proof can fail for transient reasons: a hardware error during the verification squarings (which
-// have no Gerbicz check), a bad GPU read, a file error.  So try hard before giving up: the initial power twice, then each lower
+// Generating and verifying a proof can fail for transient reasons: a hardware error while building the proof (unchecked:  only
+// the verification squarings have a Gerbicz check, see expExp2), a bad GPU read, a file error.  So try hard before giving up: the initial power twice, then each lower
 // power down to 5, all verified (subject to -autoverify), and finally power 4 (or the initial power if lower) without verification.
 // Any failure moves on to the next attempt.
 // If every attempt fails, a file error (missing or corrupt proof residues, which a restart cannot fix) throws to the caller,
@@ -3598,6 +3578,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
               if (Signal::stopRequested()) { throw; }     // including saveProof's stop after a GPU error
               log("Proof generation failed; reporting the result without a proof\n");
             }
+            // A verification that threw (Gerbicz check errors) left its savefiles; nothing resumes them once the result is reported
+            Saver<ProofVerifyState>::clear(E);
           }
           return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048)};
         }
@@ -3979,7 +3961,8 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
 
 #ifdef PRPLL_CERT_FAULTS
 // TEST ONLY, compiled in only with -DPRPLL_CERT_FAULTS (make BIN=build-certfaults CPPFLAGS=-DPRPLL_CERT_FAULTS); a normal build has
-// none of this.  PRPLL_CERT_FAULT="<k>[:<kind>],..." corrupts the CERT once per process right after squaring k.  Kinds:  flip
+// none of this.  PRPLL_CERT_FAULT="<k>[:<kind>],..." corrupts the CERT (or the squarings of a proof verification, expExp2, which
+// a process runs instead of a CERT) once per process right after squaring k.  Kinds:  flip
 // (default) flips one bit of the residue;  check flips one bit of the Gerbicz check product instead;  checksq flips one bit of the
 // check product halfway through the check squarings of the block that ends at squaring k.
 namespace {
@@ -4235,6 +4218,176 @@ CERTResult Gpu::isCERT(const Task& task) {
       ++nErrors;
       doBigLog(k, res, false, secsPerIt, kEnd, nErrors);
       log("CERT Gerbicz check failed at %u (block of %u x %u from %u), going back to the last verified savefile\n", k, m, L, k - m * L);
+      if (++nSeqErrors > 2) {
+        log("%d sequential errors, will stop.\n", nSeqErrors);
+        throw "too many errors";
+      }
+      if (res == lastFailedRes64) {
+        log("Consistent error %016" PRIx64 ", will stop.\n", res);
+        throw "consistent error";
+      }
+      lastFailedRes64 = res;
+      curL = std::max(2u, curL / 2);
+      if (stopping) { throw "stop requested"; }
+      goto reload;
+    }
+  }
+}
+
+
+// A^(2^n):  the squarings of a proof verification (Proof::verify), which are those of a CERT from another start.  So they are
+// checked as a CERT's are (see isCERT and certVerify):  blocks of m <= L sub-blocks of L squarings, at a cost of about 2/L of the
+// squarings, and a block that fails goes back to the last verified residue.  Every verified block end is saved (ProofVerifyState,
+// in proofv-<E>/) so that a stopped or killed verification resumes there.  A savefile is used only for the same n and the same
+// start A, which stands for the proof being verified;  the savefiles are removed once the n squarings are done.
+Words Gpu::expExp2(const Words& A, u32 n) {
+  constexpr u32 CHECKS_PER_RUN = 10;       // as a CERT:  rollback exposure about 10% of the run, and that often a savefile
+  constexpr u32 MAX_L = 3000;
+  constexpr u32 logStep = 10000;
+  assert(n > 0);
+
+  u64 const start = proof::hashWords(E, A)[0];
+  u32 const fullL = u32(std::clamp(std::sqrt(double(n) / CHECKS_PER_RUN), 2.0, double(MAX_L)));
+  u32 curL = fullL;
+  log("proof verification: Gerbicz check every %u squarings (L=%u), about %.2f%% overhead\n", fullL * fullL, fullL, 200.0 / fullL);
+
+  // Sized as bufData (makeBufVector's buffers are larger when the words are 32-bit), so that they can be copied to and from it
+  u32 const wordBufSize = N * fft.WordSize / sizeof(Word);
+  Buffer<Word> u0{timeBufVect, &queue, wordBufSize};
+  Buffer<Word> sum1{timeBufVect, &queue, wordBufSize};
+
+  Saver<ProofVerifyState> saver{E, 1000, args.nSavefiles};
+  u32 nErrors = 0;
+  int nSeqErrors = 0;
+  u64 lastFailedRes64 = 0;
+  Timer elapsedTimer;
+
+ reload:
+  elapsedTimer.reset();
+  u32 k = 0;
+  double elapsedBefore = 0;
+  for (int nTries = 0; ; ++nTries) {
+    ProofVerifyState state = saver.load();
+    if (!state.data.empty() && (state.span != n || state.start != start || state.k >= n)) {
+      log("proof verification savefile is for %" PRIu64 " / %" PRIu64 " squarings from %016" PRIx64 ", this one is %u from %016" PRIx64
+          "; starting over\n", state.k, state.span, state.start, n, start);
+      // Removed, not just ignored:  the savefiles of this verification would be older than it by k, and load() takes the latest
+      for (u64 const oldK : saver.listK()) { saver.removeAt(oldK); }
+      state.data.clear();
+    }
+
+    if (state.data.empty()) {
+      writeIn(bufData, A);
+      k = 0;
+      break;
+    }
+
+    writeIn(bufData, state.data);
+    u64 const res = dataResidue();
+    if (res == residue(state.data)) {
+      k = u32(state.k);
+      nErrors = std::max(nErrors, state.nErrors);
+      elapsedBefore = state.elapsed;
+      log("proof verification loaded @ %u / %u: %016" PRIx64 "\n", k, n, res);
+      break;
+    }
+    log("proof verification EE %u on-load: %016" PRIx64 " vs. %016" PRIx64 "\n", u32(state.k), res, residue(state.data));
+    if (nTries) { throw "proof verification savefile error on load"; }
+    saver.dropMostRecent();
+  }
+
+  IterationTimer iterationTimer{k};
+  bool stopping = false;
+
+  while (true) {
+    // Plan the block:  m sub-blocks of L squarings; a remainder shorter than L is a block of its own (L = the remainder, m = 1).
+    u32 const left = n - k;
+    u32 L = curL;
+    u32 m = 1;
+    if (left >= u64(L) * L) {
+      m = L;
+    } else if (left >= L) {
+      m = left / L;
+    } else {
+      L = left;
+    }
+
+    u0 << bufData;
+    bufCheck << bufData;
+    enum LEAD_TYPE leadIn = LEAD_NONE;
+
+    for (u32 j = 0; j < m; ++j) {
+      if (j) {
+        modMul(bufCheck, bufData, leadIn);
+        leadIn = LEAD_MIDDLE;
+      }
+
+      for (u32 i = 0; i < L; ++i) {
+        ++k;
+
+        // A stop ends the block at the end of a sub-block
+        if (i == L - 1 && !stopping && Signal::stopRequested()) {
+          stopping = true;
+          m = j + 1;
+          log("Stopping, please wait..\n");
+        }
+        bool const blockEnd = i == L - 1 && j == m - 1;
+#ifdef PRPLL_CERT_FAULTS
+        CertFault* const fault = certFaultAt(k, false);
+#else
+        constexpr bool fault = false;
+#endif
+        enum LEAD_TYPE const leadOut = blockEnd || fault || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+        squareCERT(bufData, leadIn, leadOut);
+        leadIn = leadOut;
+
+#ifdef PRPLL_CERT_FAULTS
+        if (fault) {
+          fault->fired = true;
+          Buffer<Word>& target = fault->kind == "check" ? bufCheck : bufData;
+          Words const x = readAndCompress(target);
+          writeIn(target, certFlipped(x));
+          log("TEST FAULT %s at %u: %016" PRIx64 " -> %016" PRIx64 "\n", fault->kind.c_str(), k, residue(x), bufResidue(target));
+        }
+#endif
+
+        if (k % logStep == 0 && !blockEnd) {
+          queue.finish();
+          float const secsPerIt = iterationTimer.reset(k);
+          log("%u / %u, %s us/it\n", k, n, formatSecsPerIter(secsPerIt).c_str());
+        }
+      }
+    }
+
+    float const secsPerIt = iterationTimer.reset(k);
+    bool const ok = certVerify(u0, sum1, L, k);
+    u64 const res = dataResidue();
+    u32 const nErr = nErrors + !ok;
+    log("proof verification %s %9u / %u %016" PRIx64 " %s ETA %s%s\n", ok ? "OK" : "EE", k, n, res, formatSecsPerIter(secsPerIt).c_str(),
+        getETA(k, n, secsPerIt).c_str(), nErr ? (" "s + to_string(nErr) + " errors").c_str() : "");
+
+    if (ok) {
+      nSeqErrors = 0;
+      Words data = readData();
+      if (k >= n) {
+        Saver<ProofVerifyState>::clear(E);
+        if (nErrors) { log("proof verification had %u Gerbicz check failures, all redone\n", nErrors); }
+        return data;
+      }
+
+      saver.save({.exponent=E, .k=k, .span=n, .start=start, .data=std::move(data), .nErrors=nErrors,
+                  .elapsed=elapsedBefore + elapsedTimer.at()});
+      iterationTimer.reset(k);
+
+      if (stopping) {
+        queue.finish();
+        throw "stop requested";
+      }
+      curL = std::min(fullL, u32(std::ceil(curL * 1.0234)));    // 30 good blocks double L again
+    } else {
+      ++nErrors;
+      log("proof verification: Gerbicz check failed at %u (block of %u x %u from %u), going back to the last verified residue\n",
+          k, m, L, k - m * L);
       if (++nSeqErrors > 2) {
         log("%d sequential errors, will stop.\n", nSeqErrors);
         throw "too many errors";
