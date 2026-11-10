@@ -550,6 +550,41 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     }
   }
 
+  // The double-wide tail kernels allocate 2 * (G_H * NH + pad) * SHUFL_BYTES_H bytes of local memory (fftbase.cl LDS_BYTES(2)): 34,784 at
+  // height 2K with the defaults.  AMD's Windows OpenCL runtime (PAL) reports CL_DEVICE_LOCAL_MEM_SIZE as 32KB even on hardware with 64KB, and
+  // refuses the launch of a kernel that needs more (CL_OUT_OF_RESOURCES), so every 2K-height FFT failed there at its first tailMul.
+  // The same check on the width side is above.  Steps, in order, until the H kernels fit:  LDSPAD_H=0 (double-wide at height 2K is then exactly
+  // 32KB), halve SHUFL_BYTES_H (down to 4), single-wide tail.  Only when the LDS is not shared (LDSMUL_H=1).
+  {
+    auto val = [&config](const char* key, u32 dflt) { auto it = config.find(key); return it == config.end() ? dflt : u32(atoi(it->second.c_str())); };
+    u64 const local_mem = getLocalMemSize(id);
+    u32 const g_h = fft.shape.height / nH;
+    u32 shufl = val("SHUFL_BYTES_H", 8);
+    bool ldspad = val("LDSPAD_H", 1) != 0;
+    auto need = [&](u32 wide) {
+      u32 const pad = !ldspad ? 0 : nH == 4 ? (shufl == 4 ? g_h - 16 : 12) : shufl >= 16 ? 7 : g_h == 256 ? (shufl == 4 ? 252 : 126) : 56;
+      return u64(wide) * (g_h * nH + pad) * shufl;
+    };
+    u64 const before = need(tail_single_wide ? 1 : 2);
+    bool const wasSingle = tail_single_wide;
+    while (val("LDSMUL_H", 1) <= 1 && need(tail_single_wide ? 1 : 2) > local_mem) {
+      if (ldspad) { ldspad = false; }
+      else if (shufl > 4) { shufl /= 2; }
+      else if (!tail_single_wide) { tail_single_wide = true; }
+      else { break; }   // the compile or the launch will report it
+    }
+    if (need(tail_single_wide ? 1 : 2) != before) {
+      if (!ldspad && val("LDSPAD_H", 1)) { config["LDSPAD_H"] = "0"; }
+      if (shufl != val("SHUFL_BYTES_H", 8)) { config["SHUFL_BYTES_H"] = to_string(shufl); }
+      if (tail_single_wide != wasSingle) { config["TAIL_KERNELS"] = tail_single_kernel ? "0" : "1"; }
+      if (doLog) {
+        log("H kernels need %llu bytes of local memory at height %u, the device has %llu.  Using LDSPAD_H=%d SHUFL_BYTES_H=%u TAIL_KERNELS=%s (%llu bytes)\n",
+            (unsigned long long)before, fft.shape.height, (unsigned long long)local_mem, int(ldspad), shufl,
+            tail_single_wide ? (tail_single_kernel ? "0" : "1") : (tail_single_kernel ? "2" : "3"), (unsigned long long)need(tail_single_wide ? 1 : 2));
+      }
+    }
+  }
+
   // MULTI_Q is not allowed when profiling with -time
   auto configValue = [&config](const char* key, u32 valNotFound) {
     auto it = config.find(key);
