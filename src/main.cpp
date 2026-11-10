@@ -203,6 +203,24 @@ int main(int argc, char **argv) {
     if (args.maxAlloc) { AllocTrac::setMaxAlloc(args.maxAlloc); }
 
     Context context(getDevice(args.device));
+
+    // Without -maxAlloc, the GPU memory prpll may allocate is what is free on the device now less 1 GB (90% of its RAM where the free
+    // memory can't be queried), not a fixed number.  A fixed 15 GB stopped a 16 GB card from using the memory it has and left a bigger
+    // one with an arbitrary cap.
+    if (!args.maxAlloc) {
+      constexpr u64 GB1 = u64(1) << 30;
+      cl_device_id const dev = getDevice(args.device);
+      u64 limit = 0;
+      if (hasFreeMemInfo(dev)) {
+        u64 const free = getFreeMem(dev);
+        limit = std::max(free > GB1 ? free - GB1 : 0, free / 2);
+        log("GPU memory limit %.1f GB: %.1f GB free less 1 GB (-maxAlloc to change)\n", double(limit) / GB1, double(free) / GB1);
+      } else if (float const ram = getGpuRamGB(dev); ram > 0) {
+        limit = u64(double(ram) * double(GB1) * 0.9);
+        log("GPU memory limit %.1f GB: 90%% of the %.1f GB of RAM, the free memory is not known (-maxAlloc to change)\n", double(limit) / GB1, double(ram));
+      }
+      if (limit) { AllocTrac::setMaxAlloc(size_t(limit)); }
+    }
     Signal const signal;
     Background background;
     GpuCommon shared;
