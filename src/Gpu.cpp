@@ -3270,6 +3270,12 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   if (Signal::stopRequested()) { throw "stop requested"; }
 
   u64 const res = dataResidue();
+  // doCheck() passes when no kernel ran at all:  bufCheck and bufAux start as copies of the same words, and isEqual only writes on a
+  // mismatch.  The residue can't still be the 3 loaded before the squarings, so if it is the timing measured nothing and must not win.
+  if (res == state.res64) {
+    log("Error: the residue is still %016" PRIx64 " after %u squarings, so the kernels did not run\n", res, iters);
+    return std::numeric_limits<double>::infinity();
+  }
   bool const ok = doCheck(blockSize);
   if (!ok) {
     log("Error %016" PRIx64 "\n", res);
