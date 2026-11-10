@@ -13,6 +13,7 @@
 #include "Gcd.h"
 #include "Stage2.h"
 #include "Pm1Bounds.h"
+#include "Pm1Prp.h"
 #include "KernelCompiler.h"
 #include "Proof.h"
 #include "log.h"
@@ -219,7 +220,7 @@ void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1,
   vector<string> errors{json("gerbicz", nErrors)};
   if (nJacobi) { errors.push_back(json("jacobi", nJacobi)); }
   fields.push_back(json("errors", errors));
-  if (integrated) { fields.push_back(json("integrated") + ":true"); }    // stage 1 from the squarings of a PRP test (-prpPm1)
+  if (integrated) { fields.push_back(json("integrated") + ":true"); }    // stage 1 from the squarings of a PRP test (Pm1Prp)
   if (!factors.empty()) {
     string list = "[";
     for (size_t i = 0; i < factors.size(); ++i) { list += (i ? ", " : "") + json(factors[i]); }
@@ -268,6 +269,103 @@ bool pfactorBounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   return true;
 }
 
+// Whether the PRP test of E has a savefile (it has started)
+bool prpStarted(u64 E) {
+  std::error_code ec;
+  fs::path const dir = fs::current_path() / to_string(E);
+  if (!fs::is_directory(dir, ec)) { return false; }
+  string const prefix = to_string(E) + '-';
+  for (const auto& entry : fs::directory_iterator(dir, ec)) {
+    string const name = entry.path().filename().string();
+    if (entry.is_regular_file(ec) && name.starts_with(prefix) && name.ends_with(".prp")) { return true; }
+  }
+  return false;
+}
+
+// A -use key's value as a number (0 when absent or not a number)
+u64 useValue(const Args& args, const string& key) {
+  auto it = args.flags.find(key);
+  return it == args.flags.end() ? 0 : strtoull(it->second.c_str(), nullptr, 10);
+}
+
+// The bounds of the P-1 inside a PRP test (Pm1Prp), into task.B1 and task.B2 (B1 = 0:  none).  It runs for a worktodo line that asks
+// for it (tests saved above 0, or no tf and tests-saved fields at all).
+// The bounds are chosen once, as for a Pfactor line, but for stage 1 inside the PRP (its cost, its buffers) and with -pm1TestsSaved,
+// not the line's value.  A test with accumulator savefiles keeps their bounds; a test started without P-1 can't have it.  P-1 never stops the PRP test:  when it can't be done (no memory for
+// its buffers, no saving), the PRP goes on without it.  Hidden -use keys, for debugging and tests:  PRPPM1=0, no P-1;
+// PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>], these bounds in every PRP test whatever its line says.
+void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
+  const Args& args = *shared.args;
+  task.B1 = task.B2 = 0;
+  if (args.value("PRPPM1", 1) == 0) { return; }
+  if (u64 const b1 = useValue(args, "PRPPM1_B1")) {
+    u64 const b2 = useValue(args, "PRPPM1_B2");
+    if (b1 < 2 || (b2 && b2 <= b1) || b2 >= pm1::MAX_B2) {
+      log("-use PRPPM1_B1=%" PRIu64 ",PRPPM1_B2=%" PRIu64 ": B1 must be at least 2 and B2, when given, above B1 and at most %" PRIu64 "\n",
+          b1, b2, pm1::MAX_B2);
+      throw "bad PRPPM1_B1/PRPPM1_B2";
+    }
+    task.B1 = b1;
+    task.B2 = b2;
+    return;
+  }
+  u64 const E = task.exponent;
+  if (task.line.empty()) { return; }    // -prp <exponent> from the command line (often a timing run):  no P-1
+  // A P-1 under way (or done) in this test keeps its bounds, whatever the line, the memory or -pm1TestsSaved say now
+  if (fs::exists(fs::current_path() / (string(P1PrpState::KIND) + '-' + to_string(E)))) {
+    Saver<P1PrpState> const saver{E, 1000, args.nSavefiles + 2};
+    vector<u64> const ks = saver.listK();
+    for (auto it = ks.rbegin(); it != ks.rend(); ++it) {
+      if (std::optional<P1PrpState> const s = saver.loadAt(*it)) {
+        task.B1 = s->B1;
+        task.B2 = s->B2;
+        log("P-1 in the PRP test: bounds from its savefile: B1=%" PRIu64 " B2=%" PRIu64 "\n", task.B1, task.B2);
+        return;
+      }
+    }
+  }
+  if (!task.pm1Fields) {
+    // A line without the fields (e.g. PRP=<p> or PRP=AID,1,2,p,-1):  P-1 is taken as needed, with an assumed trial factoring depth
+    task.tfBits = pm1::assumedTfBits(E);
+    task.testsSaved = 1;
+    log("P-1 in the PRP test: the line has no trial factoring depth and tests-saved fields: P-1 is taken as needed, with no factor "
+        "assumed below 2^%g\n", task.tfBits);
+  }
+  if (task.testsSaved <= 0) {
+    log("P-1 in the PRP test: the line's tests-saved field is 0 (P-1 is done or not wanted): no P-1\n");
+    return;
+  }
+  if (prpStarted(E)) {
+    log("P-1 in the PRP test: the PRP test was started without P-1 (it needs the PRP residues from iteration 1 on): no P-1\n");
+    return;
+  }
+  Pm1Prp::Budget const mem = Pm1Prp::budget(gpu);
+  if (mem.maxBufs < pm1::inlineBuffers(pm1::INLINE_MIN_L)) {
+    log("P-1 in the PRP test: %s: no P-1\n", mem.tooLittle.c_str());
+    return;
+  }
+  u64 const maxR = Stage2::tableCapacity(shared, gpu, E);
+  pm1::Stage1Model const model{.maxBufs = mem.maxBufs, .checkStep = double(Pm1Prp::checkStep(gpu))};
+  double const ts = args.pm1TestsSaved;
+  pm1::Bounds const b = pm1::chooseBounds(E, task.tfBits, ts, maxR, model);
+  if (b.savings <= 0) {
+    log("P-1 in the PRP test is not worth its cost for %" PRIu64 " (no factor below 2^%g, %g tests saved; at best B1=%" PRIu64 " B2=%"
+        PRIu64 " would save %.2f%% of a PRP test): no P-1\n", E, task.tfBits, ts, b.B1, b.B2,
+        100 * b.savings / double(E));
+    return;
+  }
+  task.B1 = b.B1;
+  task.B2 = b.B2;
+  log("P-1 in the PRP test, bounds (no factor below 2^%g, %g tests saved, room for %" PRIu64 " residue buffers): B1=%" PRIu64 " B2=%"
+      PRIu64 ", chance of a factor %.2f%% (stage 1 %.2f%%), expected cost %.2f%% of the PRP test, saving %.2f%% of one\n", task.tfBits,
+      ts, mem.maxBufs, b.B1, b.B2, 100 * b.prob.total(), 100 * b.prob.stage1, 100 * b.cost / double(E),
+      100 * b.savings / double(E));
+  if (b.B2 == b.B1) {
+    log("P-1 in the PRP test without stage 2 (B2 = B1): %s\n", maxR < pm1::stage2MinTable() ?
+        "too little GPU memory for stage 2's smallest table, or no stage 2 FFT for this exponent" : "a stage 2 does not pay for itself here");
+  }
+}
+
 }
 
 // P-1:  stage 1 on the GPU, then the stage 1 GCD on the GPU.  A factor ends the assignment, and so does B2 <= B1.  Otherwise stage 2
@@ -309,23 +407,9 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     if (args.clean) { Saver<P1State>::clear(exponent); }
   };
 
-  // The GCD, as a factor (empty when it is 1).  The gcd can be composite:  it is reported whole, as Prime95 does.
+  // The GCD, as a factor (empty when it is 1)
   vector<string> factors;
-  auto addFactor = [&](const Words& g, int stage) {
-    if (pm1::isOne(g)) { return; }
-    string const f = pm1::toDecimal(g);
-    // A factor of 2^p - 1 divides it: anything else is a GPU error in the GCD, and is not reported
-    int const divides = pm1::dividesMersenne(g, exponent);
-    if (divides == 0) {
-      log("P-1 stage %d: the GCD returned %s, which does not divide 2^%" PRIu64 " - 1: a GPU error, not reporting it\n", stage, f.c_str(), exponent);
-      throw "P-1 GCD result is not a factor";
-    }
-    int const prime = pm1::isProbablePrime(g);
-    log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s%s)\n", stage, f.c_str(), pm1::bitLength(g),
-        prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here",
-        divides == 1 ? ", divides 2^p-1" : ", not checked against 2^p-1");
-    factors.push_back(f);
-  };
+  auto addFactor = [&](const Words& g, int stage) { factors = pm1::gcdFactor(g, stage, exponent); };
 
   // A stage 2 savefile for this residue means that this stage 1 GCD already ran and found nothing (stage 2 starts only then)
   bool const stage2Started = B2 > B1 && Stage2::hasSavefile(exponent, B1, B2, x);
@@ -363,15 +447,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
       throw "stop requested";
     }
     if (r.status == Stage2Result::DONE) {
-      // gcd(acc, 2^p - 1).  Stage 2 checks acc != 0 at every checkpoint, so a gcd of 2^p - 1 (acc = 0 mod 2^p - 1) is an error
-      Words const g = gcd.gcd(r.acc, u32(exponent));
-      log("P-1 stage 2 GCD: %.1f s\n", gcd.lastStats().seconds);
-      if (pm1::bitLength(g) >= exponent) {
-        log("P-1 stage 2: the accumulator is zero (the GCD is 2^%" PRIu64 " - 1)\n", exponent);
-        throw "P-1 stage 2 accumulator is zero";
-      }
-      addFactor(g, 2);
-      if (factors.empty()) { log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2=%" PRIu64 ")\n", B1, B2); }
+      factors = Stage2::accFactor(gcd, r.acc, exponent, B1, B2);
       doneB2 = B2;
     } else if (!dir.empty()) {
       log("P-1 stage 2 is not run here (%s)\n", r.why.c_str());
@@ -493,10 +569,11 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
   } else if (kind == PRP || kind == LL) {
     bool isPrime;
     if (kind == PRP) {
-      // -prpPm1:  the P-1 inside the PRP test reports through this; a factor ends the test (it is composite) with no PRP result
+      // The P-1 inside the PRP test reports through this; a factor ends the test (it is composite) with no PRP result
       Pm1Report const pm1Report = [&](u64 b1, u64 b2, const vector<string>& factors, u32 nErr) {
         writeResultPM1(fft, *shared.args, instance, b1, b2, factors, nErr, 0, true);
       };
+      prpPm1Bounds(*this, shared, *gpu);
       auto [tmpIsPrime, res64, nErrors, proofPath, res2048, pm1Factor] = gpu->isPrimePRP(*this, pm1Report);
       if (pm1Factor) {
         log("%" PRIu64 " has a factor: the PRP test is not needed\n", exponent);

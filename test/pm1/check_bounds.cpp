@@ -4,6 +4,8 @@
 //   make check_bounds MPRIME_SRC=~/mprime && ./check_bounds
 //   ./check_bounds p,tfBits,testsSaved,maxR ...      print the choices for these cases
 //   ./check_bounds eval:p,tfBits,testsSaved,maxR,B1,B2 ...   print the model's chance, cost and saving at these bounds
+//   ./check_bounds inline:p,tfBits,testsSaved,maxR,maxBufs,checkStep...   the choice for a PRP line (stage 1
+//                  inside the PRP test, maxBufs 0:  stand-alone)
 
 #include "Pm1Bounds.h"
 #include "Pm1.h"
@@ -16,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <tuple>
+#include <numbers>
 #include <utility>
 #include <vector>
 
@@ -232,6 +235,59 @@ static void testChoice() {
   check(chooseB2(110000017, 77, 1, 1000000, 0).B2 == 1000000, "chooseB2 without memory: B2 = B1");
 }
 
+// P-1 inside a PRP test (Task.cpp, prpPm1Bounds):  stage 1 inside the PRP test, at its inline cost (pm1::inlineStage1, Pm1Prp's model of L)
+static void testInline() {
+  char what[300];
+  // Inline stage 1 against stand-alone, 40M B1 = 1M (docs/pm1.md: about 13.5% measured on the XTX, L about 8 to 11)
+  for (u64 bufs : {300, 600, 2100}) {
+    double const bits = 1e6 / std::numbers::ln2;
+    InlineStage1 const s = inlineStage1(bits, bits, 1e6, bufs);
+    double const ratio = s.cost / stage1Cost(1e6);
+    snprintf(what, sizeof(what), "inline stage 1, 40M B1=1M, %" PRIu64 " buffers: L=%u, %.1f%% of a stand-alone stage 1", bufs, s.L, 100 * ratio);
+    printf("%s\n", what);
+    check(s.L >= 8 && s.L <= 11 && ratio > 0.11 && ratio < 0.17, what);
+    check(stage1Cost(1e6, Stage1Model{bufs, 1e6}) == s.cost, "stage1Cost of the inline model is inlineStage1's");
+  }
+  // Too few buffers for the smallest window:  no inline stage 1, and no bounds pay
+  check(inlineStage1(1e6, 1e6, 1e6, inlineBuffers(INLINE_MIN_L) - 1).L == 0, "too few buffers: L = 0");
+  check(inlineStage1(1e6, 1e6, 1e6, inlineBuffers(INLINE_MIN_L)).L == INLINE_MIN_L, "the smallest window's buffers: L = 2");
+  check(!(chooseBounds(206448349, 79, 1.02, 300, Stage1Model{inlineBuffers(INLINE_MIN_L) - 1, 1e6}).savings > 0),
+        "inline without buffers: no saving");
+
+  // Cheaper stage 1:  a larger B1 (and chance) than the stand-alone bounds, at the same tests saved and stage 2 memory
+  struct C { u64 p; double tf, ts; u64 maxR, bufs; } cs[] = {{206448349, 79, 1.02, 300, 400}, {206448349, 79, 2, 300, 400},
+                                                            {110000017, 77, 1.02, 480, 600}, {41000017, 74, 1.02, 1300, 2000},
+                                                            {400381, 20, 1.02, 1000, 1000}};
+  for (C c : cs) {
+    Stage1Model const m{c.bufs, std::min(1e6, std::max(c.p / 8.0, 20000.0))};
+    Bounds const a = chooseBounds(c.p, c.tf, c.ts, c.maxR), b = chooseBounds(c.p, c.tf, c.ts, c.maxR, m);
+    print("alone ", c.p, c.tf, c.ts, c.maxR, a, 0);
+    print("inline", c.p, c.tf, c.ts, c.maxR, b, 0);
+    snprintf(what, sizeof(what), "p=%" PRIu64 " ts=%g: inline B1 %" PRIu64 " >= stand-alone %" PRIu64 ", chance not lower", c.p, c.ts, b.B1, a.B1);
+    check(b.B1 >= a.B1 && b.prob.total() >= a.prob.total() && b.savings > 0 && b.B2 >= b.B1 && b.B2 <= MAX_B2, what);
+    // The saving inside a PRP test does not count the PRP iterations done before the factor
+    Bounds const e = evaluateBounds(c.p, c.tf, c.ts, b.B1, b.B2, c.maxR, m);
+    snprintf(what, sizeof(what), "p=%" PRIu64 ": inline saving = P * (ts * p - 1.44 B1) - cost", c.p);
+    check(fabs(e.savings - (e.prob.total() * (c.ts * c.p - b.B1 / std::numbers::ln2) - e.cost)) < 1e-6 * c.p, what);
+  }
+}
+
+// The XTX at 206448349 (tf 79, 1.02 tests saved, 307 table buffers), stand-alone:  B1=710000 B2=26.1M, which saves 1.93% of a PRP;  and the
+// depth assumed for a line without one
+static void testReference() {
+  char what[300];
+  u64 const p = 206448349;
+  Bounds const b = chooseBounds(p, 79, 1.02, 307);
+  print("ref   ", p, 79, 1.02, 307, b, 0);
+  snprintf(what, sizeof(what), "206448349 stand-alone: saving %.2f%% of a PRP (expected 1.93%%), B1=%" PRIu64 " B2=%" PRIu64,
+           100 * b.savings / p, b.B1, b.B2);
+  printf("%s\n", what);
+  check(fabs(100 * b.savings / p - 1.93) < 0.015 && b.B1 == 710000 && b.B2 == 26100000, what);
+  // The depth assumed for a line without one:  GIMPS's GPU target less 1 bit
+  check(assumedTfBits(206448349) == 78 && assumedTfBits(141000000) == 76 && assumedTfBits(400381) == 43 && assumedTfBits(1000) == 43 &&
+        assumedTfBits(1100000000) == 85, "assumedTfBits: Prime95's table + 4 - 1");
+}
+
 int main(int argc, char** argv) {
   if (argc == 2 && !strcmp(argv[1], "pairtable")) { pairTable(); return 0; }
   if (argc > 1) {
@@ -246,6 +302,21 @@ int main(int argc, char** argv) {
         print("eval", p, tf, ts, maxR, evaluateBounds(p, tf, ts, B1, B2, maxR), 0);
         continue;
       }
+      if (!strncmp(argv[i], "inline:", 7)) {
+        u64 bufs{};
+        double checkStep{};
+        int const n = sscanf(argv[i] + 7, "%" SCNu64 ",%lf,%lf,%" SCNu64 ",%" SCNu64 ",%lf", &p, &tf, &ts, &maxR, &bufs, &checkStep);
+        if (n != 6) {
+          printf("bad case %s\n", argv[i]);
+          return 2;
+        }
+        Bounds const b = chooseBounds(p, tf, ts, maxR, Stage1Model{bufs, checkStep});
+        print("inline", p, tf, ts, maxR, b, 0);
+        printf("  L=%u, stage 1 inline %.4f%% of a PRP test (stand-alone %.4f%%)\n",
+               inlineStage1(b.B1 / std::numbers::ln2, b.B1 / std::numbers::ln2, checkStep, bufs).L,
+               100 * stage1Cost(double(b.B1), Stage1Model{bufs, checkStep}) / p, 100 * stage1Cost(double(b.B1)) / p);
+        continue;
+      }
       if (sscanf(argv[i], "%" SCNu64 ",%lf,%lf,%" SCNu64, &p, &tf, &ts, &maxR) != 4) { printf("bad case %s\n", argv[i]); return 2; }
       double ms = 0;
       Bounds const b = timedChoice(p, tf, ts, maxR, &ms);
@@ -256,6 +327,8 @@ int main(int argc, char** argv) {
   testProbability();
   testPairing();
   testChoice();
+  testInline();
+  testReference();
   printf("%s\n", bad ? "check_bounds: FAILED" : "check_bounds: all OK");
   return bad ? 1 : 0;
 }

@@ -4,6 +4,7 @@
 #include "Gpu.h"
 #include "Gcd.h"
 #include "Pm1.h"
+#include "Pm1Bounds.h"
 #include "Stage2.h"
 #include "AllocTrac.h"
 #include "Args.h"
@@ -18,20 +19,12 @@
 
 namespace {
 
-constexpr u32 TEMP_BUFS = 6;         // the fold's running products, its two results, and two for its checks
-constexpr u32 MIN_L = 2;
-constexpr u32 MAX_L = 16;
-constexpr size_t RESERVE_BYTES = size_t(256) << 20;    // as stage 2:  kept back when the free memory is not known, and under -maxAlloc
-constexpr size_t HEADROOM_BYTES = size_t(1) << 30;     // kept back from the free memory
-// Cost in PRP squarings, for the choice of L (XTX, 40M and 100M):  an accumulator step (one multiplication with u_k already
-// transformed, mostly from the fused carry's output), and a multiplication of the fold (both operands to transform)
-constexpr double STEP_COST = 1.3;
-constexpr double FOLD_MUL_COST = 1.7;
+constexpr u32 TEMP_BUFS = pm1::INLINE_TEMP_BUFS;   // the fold's running products, its two results, and two for its checks
+constexpr u32 MAX_L = pm1::INLINE_MAX_L;
+constexpr size_t RESERVE_BYTES = Stage2::RESERVE_BYTES;    // as stage 2:  kept back when the free memory is not known, and under -maxAlloc
 // A PRP that has to go back further than this many verified-check intervals for its accumulator does not:  the P-1 is given up
 constexpr u64 MAX_REWIND_CHECKS = 2;
 
-// The PRP's verified-check interval for a block size, without errors (as baseCheckStep in Gpu.cpp)
-u64 checkInterval(u32 blockSize) { return blockSize == 200 ? 40'000 : blockSize == 400 ? 160'000 : blockSize == 500 ? 200'000 : 1'000'000; }
 
 #ifdef PRPLL_PM1_FAULTS
 // TEST ONLY (fault build):  PRPLL_PM1_PRP_FAULT="<k>:<kind>,..." once per process.  bucket:  flips a bit of the bucket stepped at
@@ -108,40 +101,37 @@ void Pm1Prp::release() {
   allowance.reset();
 }
 
+u64 Pm1Prp::checkStep(const Gpu& gpu) {
+  return std::min<u64>(baseCheckStep(gpu.args.blockSize), std::max<u64>(gpu.E / 8, gpu.args.logStep));
+}
+
 u32 Pm1Prp::chooseL(u64 bitsLeft, u64 itersLeft, u64 maxBufs) const {
-  u64 const checkStep = std::min<u64>(checkInterval(gpu.args.blockSize), std::max<u64>(E / 8, gpu.args.logStep));
-  double const folds = double(itersLeft) / checkStep + 2;
-  u32 best = 0;
-  double bestCost = 0;
-  for (u32 l = MIN_L; l <= MAX_L && (u64(1) << l) + 1 + TEMP_BUFS <= maxBufs; ++l) {
-    double const cost = double(bitsLeft) / l * STEP_COST + folds * (4.0 * (u64(1) << l) * FOLD_MUL_COST + 3.0 * l);
-    if (!best || cost < bestCost) {
-      best = l;
-      bestCost = cost;
-    }
-  }
-  return best;
+  return pm1::inlineStage1(double(bitsLeft), double(itersLeft), double(checkStep(gpu)), maxBufs).L;
 }
 
 // The buckets for this PRP:  as many as the memory budget allows (as for stage 2:  the free memory of the device less 1 GB, or 90% of
 // its RAM less what prpll holds when the free memory can't be queried; -maxAlloc caps it), and no more than the cheapest L needs.
+Pm1Prp::Budget Pm1Prp::budget(const Gpu& gpu) {
+  size_t const bufBytes = size_t(gpu.N) * gpu.fft.WordSize;
+  double const GB = double(1u << 30);
+  Stage2::DeviceBudget const dev = Stage2::deviceBudget(gpu.shared);
+  double const budget = dev.bytes;
+  bool const haveFree = dev.haveFree;
+  u64 const maxBufs = budget > 0 ? u64(budget / bufBytes) : 0;
+  char why[160];
+  snprintf(why, sizeof(why), "%.2f GB of GPU memory (%s) is too little for %u buffers of %.0f MB", std::max(0.0, budget) / GB,
+           haveFree ? "free less 1 GB" : "90% of the RAM less what is held", u32(pm1::inlineBuffers(pm1::INLINE_MIN_L)),
+           bufBytes / double(1u << 20));
+  return {.maxBufs = maxBufs, .bytes = std::max(0.0, budget), .tooLittle = why};
+}
+
 bool Pm1Prp::alloc(u64 fromK) {
   const Args& args = gpu.args;
   size_t const bufBytes = size_t(gpu.N) * gpu.fft.WordSize;
-  cl_device_id const dev = gpu.shared.context->deviceId();
   const void* const devKey = gpu.shared.context->get();
   double const GB = double(1u << 30);
-  double const held = double(AllocTrac::totalAllocBytes(devKey));
-#ifdef CUDA_BACKEND
-  bool const haveFree = true;
-#else
-  bool const haveFree = hasFreeMemInfo(dev);
-#endif
-  double const freeBytes = haveFree ? double(getFreeMem(dev)) : -1;
-  float const ramGB = getGpuRamGB(dev);
-  double budget = haveFree ? freeBytes - HEADROOM_BYTES : ramGB > 0 ? ramGB * GB * 0.9 - held - RESERVE_BYTES : 0;
-  if (args.maxAlloc) { budget = std::min(budget, double(args.maxAlloc) - held - RESERVE_BYTES); }
-  u64 const maxBufs = budget > 0 ? u64(budget / bufBytes) : 0;
+  Budget const b = budget(gpu);
+  u64 const maxBufs = b.maxBufs;
 
   u64 const itersLeft = hiBit >= fromK ? hiBit + 1 - fromK : 0;
   L = chooseL(itersLeft, itersLeft, maxBufs);
@@ -149,14 +139,13 @@ bool Pm1Prp::alloc(u64 fromK) {
   if (const char* env = getenv("PRPLL_PM1_PRP_L")) { L = u32(atoi(env)); }
 #endif
   if (!L) {
-    log("P-1 in the PRP test: %.2f GB of GPU memory (%s) is too little for %u buffers of %.0f MB\n", std::max(0.0, budget) / GB,
-        haveFree ? "free less 1 GB" : "90% of the RAM less what is held", 4 + 1 + TEMP_BUFS, bufBytes / double(1u << 20));
+    log("P-1 in the PRP test: %s\n", b.tooLittle.c_str());
     return false;
   }
   u32 const nBuckets = 1u << L;
   log("P-1 in the PRP test: L=%u, %u buckets + %u buffers of %.0f MB (%.2f GB, budget %.2f GB), about %" PRIu64
       " accumulator multiplications for the %" PRIu64 " bits left\n", L, nBuckets, 1 + TEMP_BUFS, bufBytes / double(1u << 20),
-      double(nBuckets + 1 + TEMP_BUFS) * bufBytes / GB, std::max(0.0, budget) / GB, itersLeft / L + 1, itersLeft);
+      double(nBuckets + 1 + TEMP_BUFS) * bufBytes / GB, b.bytes / GB, itersLeft / L + 1, itersLeft);
 
   // Without -maxAlloc, AllocTrac's default limit (for PRP) is raised for these buffers
   if (!args.maxAlloc) { allowance.emplace(devKey, size_t(nBuckets + 1 + TEMP_BUFS) * bufBytes + RESERVE_BYTES); }
@@ -265,7 +254,7 @@ PRPState Pm1Prp::sync(PRPState state) {
     return state;
   }
 
-  u64 const maxRewind = MAX_REWIND_CHECKS * checkInterval(state.blockSize);
+  u64 const maxRewind = MAX_REWIND_CHECKS * baseCheckStep(state.blockSize);
   bool triedOther = false;
   for (auto it = ks.rbegin(); it != ks.rend(); ++it) {
     u64 const ka = *it;
@@ -303,7 +292,7 @@ PRPState Pm1Prp::sync(PRPState state) {
   }
   done = true;
   if (ks.empty()) {
-    log("P-1 in the PRP test: not possible here, the PRP test is at iteration %" PRIu64 " and was started without -prpPm1 (P-1 needs"
+    log("P-1 in the PRP test: not possible here, the PRP test is at iteration %" PRIu64 " and was started without P-1 (P-1 needs"
         " the PRP residues from iteration 1 on).  The PRP test goes on without P-1.\n", state.k);
   } else {
     log("P-1 in the PRP test: no accumulator savefile for the PRP test at iteration %" PRIu64 " (nor one it can go back to, within %"
@@ -511,22 +500,6 @@ Pm1Prp::Outcome Pm1Prp::verified(u64 k, u64 prp64) {
   return CONTINUE;
 }
 
-// The factor of a GCD, logged:  empty when the GCD is 1
-static vector<string> factorOf(const Words& g, int stage, u64 p) {
-  if (pm1::isOne(g)) { return {}; }
-  string const f = pm1::toDecimal(g);
-  int const divides = pm1::dividesMersenne(g, p);
-  if (divides == 0) {
-    log("P-1 stage %d: the GCD returned %s, which does not divide 2^%" PRIu64 " - 1: a GPU error, not reporting it\n", stage, f.c_str(), p);
-    throw "P-1 GCD result is not a factor";
-  }
-  int const prime = pm1::isProbablePrime(g);
-  log("P-1 found a factor in stage %d: %s (%" PRIu64 " bits, %s%s)\n", stage, f.c_str(), pm1::bitLength(g),
-      prime == 1 ? "prime" : prime == 0 ? "composite: a product of factors, not split" : "too large to test for primality here",
-      divides == 1 ? ", divides 2^p-1" : ", not checked against 2^p-1");
-  return {f};
-}
-
 Pm1Prp::Outcome Pm1Prp::finish(u64 k, u64 prp64) {
   release();
   active = false;
@@ -556,7 +529,7 @@ Pm1Prp::Outcome Pm1Prp::finish(u64 k, u64 prp64) {
     giveUp("the GCD failed on the GPU ("s + mes + ")", k, prp64);
     return CONTINUE;
   }
-  vector<string> const factors = factorOf(g, 1, E);
+  vector<string> const factors = pm1::gcdFactor(g, 1, E);
   if (!factors.empty()) {
     report(B1, 0, factors, nErrors);
     save(k, prp64, 2);
@@ -594,11 +567,7 @@ Pm1Prp::Outcome Pm1Prp::afterSave() {
     }
     if (r.status == Stage2Result::DONE) {
       Gcd gcd{gpu.shared};
-      Words const g = gcd.gcd(r.acc, u32(E));
-      log("P-1 stage 2 GCD: %.1f s\n", gcd.lastStats().seconds);
-      if (pm1::bitLength(g) >= E) { throw "the accumulator is zero (the GCD is 2^p - 1)"; }
-      factors = factorOf(g, 2, E);
-      if (factors.empty()) { log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2=%" PRIu64 ")\n", B1, B2); }
+      factors = Stage2::accFactor(gcd, r.acc, E, B1, B2);
       doneB2 = B2;
     } else {
       log("P-1 stage 2 (B2=%" PRIu64 ") is not run (%s); the result is for B1=%" PRIu64 " only\n", B2, r.why.c_str(), B1);

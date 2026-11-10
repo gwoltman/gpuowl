@@ -19,8 +19,26 @@ struct FactorProb {
 };
 FactorProb factorProbability(double exponent, double tfBits, double B1, double B2);
 
-// Costs, in PRP iterations of the exponent:  stage 1 (one iteration per bit of its exponent, plus the Gerbicz check) and one GCD
-double stage1Cost(double B1);
+// ---- P-1 stage 1 inside a PRP test (Pm1Prp) ----
+// The window length L runs from INLINE_MIN_L to INLINE_MAX_L, and L needs 2^L buckets, u_s and the fold's INLINE_TEMP_BUFS buffers.
+inline constexpr u32 INLINE_MIN_L = 2;
+inline constexpr u32 INLINE_MAX_L = 16;
+inline constexpr u32 INLINE_TEMP_BUFS = 6;
+inline constexpr u64 inlineBuffers(u32 L) { return (u64(1) << L) + 1 + INLINE_TEMP_BUFS; }
+// The cheapest L for `bits` bits of the stage 1 exponent over `iters` PRP iterations, with folds at the PRP's verified checks
+// (`checkStep` apart) and at most maxBufs residue buffers, and its cost in PRP iterations:  an accumulator multiplication per L
+// iterations and a fold of the 2^L buckets at every check.  L = 0 (cost infinite) when maxBufs is too few for INLINE_MIN_L.
+struct InlineStage1 { u32 L{}; double cost{}; };
+InlineStage1 inlineStage1(double bits, double iters, double checkStep, u64 maxBufs);
+
+// How stage 1 is run, for its cost in the bounds:  on its own (maxBufs = 0), or inside a PRP test with room for maxBufs residue buffers
+// and that test's verified-check interval checkStep.  Inside a PRP test, a factor also comes after the PRP has done the iterations of
+// stage 1, so those are not saved.
+struct Stage1Model { u64 maxBufs{}; double checkStep{}; };
+
+// Costs, in PRP iterations of the exponent:  stage 1 (on its own, one iteration per bit of its exponent, plus the Gerbicz check;  inside
+// a PRP test, inlineStage1) and one GCD
+double stage1Cost(double B1, const Stage1Model& model = {});
 double gcdCost(double exponent);
 
 // ---- Stage 2 cost model, for the stage 2 planner (Stage2::run) and the bounds ----
@@ -52,17 +70,22 @@ struct Bounds {
   u32 D{}, M{};       // the stage 2 plan of the model (D = 0:  no stage 2)
   FactorProb prob{};
   double cost{};      // the expected cost (stage 2 runs only when stage 1 found nothing)
-  double savings{};   // prob * testsSaved * exponent - cost:  P-1 with these bounds pays for itself when > 0
+  double savings{};   // prob * (testsSaved * exponent - the iterations a PRP test has done when stage 1 ends) - cost:  P-1 with these bounds pays for itself when > 0
 };
 
 // maxN:  the number of table buffers stage 2 can have (Stage2::tableCapacity); below stage2MinTable() there is no stage 2.
-Bounds evaluateBounds(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 B2, u64 maxN);
+Bounds evaluateBounds(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 B2, u64 maxN, const Stage1Model& model = {});
 
 // The best bounds (the largest saving, which can be negative).  B1 >= 11, B1 <= B2 <= MAX_B2; rounded to 3 significant digits.
-Bounds chooseBounds(u64 exponent, double tfBits, double testsSaved, u64 maxN);
+Bounds chooseBounds(u64 exponent, double tfBits, double testsSaved, u64 maxN, const Stage1Model& model = {});
 
 // The best B2 for a given B1 (a stage 1 that is already under way)
-Bounds chooseB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN);
+Bounds chooseB2(u64 exponent, double tfBits, double testsSaved, u64 B1, u64 maxN, const Stage1Model& model = {});
+
+// The trial factoring depth assumed for an exponent whose PRP line does not give one:  GIMPS's GPU trial factoring target (Prime95's
+// table of CPU limits plus 4, as AutoPrimeNet's factor_limit) less 1 bit, to err low (a lower depth raises the chance of a factor and
+// the bounds a little).  E.g. 76 at 141M, 78 at 206M.
+double assumedTfBits(u64 exponent);
 
 // The largest B2 stage 2 takes (Stage2::run)
 inline constexpr u64 MAX_B2 = (u64(1) << 32) - 8192;

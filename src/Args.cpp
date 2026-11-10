@@ -343,17 +343,20 @@ named "config.txt" in the prpll run directory.
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
                      the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
                      result.  Without it such a line is reported for B1 alone.
--prpPm1 <B1>[,<B2>]: P-1 with bound B1 inside each PRP test, from the PRP's own squarings (off by default; without it
-                     a PRP test has no extra buffer, kernel or savefile).  Stage 1 then costs about 15%% of a stage 1
-                     run on its own (one multiplication per L squarings), and GPU memory for 2^L residue buffers (L
-                     about 8 to 11, from the memory free on the GPU; -maxAlloc caps it) until the PRP passes iteration
-                     1.44 * B1.  Then the GCD runs, the P-1 result is written ("integrated":true) and, with B2 > B1 and
-                     no factor, stage 2 runs while the PRP test waits.  A factor ends the PRP test.  Only for PRP tests
-                     started with it (from iteration 0).  The savefiles are in p1prp-<exponent>.
+P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2,p,-1,<tf>,<tests saved>: PrimeNet
+                     wants P-1 done) gets P-1 from the PRP's own squarings, with bounds chosen for <tf>, -pm1TestsSaved
+                     (not the line's value) and this GPU's memory; with tests saved 0, none.  A line without the two
+                     fields gets it with <tf> assumed from the exponent; a -prp test does not.
+                     Stage 1 costs about 15%% of a stage 1 run on its own, and GPU memory for 2^L residue buffers (with
+                     too little, or -maxAlloc too low, there is no P-1) until the PRP passes iteration 1.44 * B1.  Then
+                     the P-1 result is written ("integrated":true) and stage 2 runs while the PRP test waits.  A factor
+                     ends the PRP test.  Only for PRP tests started with it; a restart keeps the bounds (p1prp-<p>).
+-pm1TestsSaved <x> : the primality tests a factor saves, for the bounds of the P-1 inside PRP tests (default 1.02: the PRP
+                     test plus its proof and the certificate).  Pfactor= lines use their own field.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  Without it the
-                     cap is the memory free on the GPU when prpll starts less 1 GB (90%% of its RAM if that can't be queried).  P-1 stage 2
-                     uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more of
-                     the primes) and fit in the memory free on the GPU when it starts less 1 GB (where the free memory
+                     cap is the memory free on the GPU when prpll starts less 1 GB (90%% of its RAM if that can't be queried).
+                     P-1 stage 2 uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more
+                     of the primes) and fit in the memory free on the GPU when it starts less 1 GB (where the free memory
                      can't be queried, 90%% of the GPU's RAM), and with -maxAlloc in no more than the cap.  It runs with as
                      few as 6 of them beside the GPU's own, more slowly.  The bounds of a Pfactor line are chosen for that
                      memory.
@@ -669,21 +672,21 @@ void Args::parse(const string& line) {
       log("-from is no longer supported; PRPLL always resumes from the most recent checkpoint in -dir\n");
       throw "-from no longer supported";
     }
+    else if (key == "-pm1TestsSaved") {
+      double x = 0;
+      try { size_t n = 0; x = stod(s, &n); if (n != s.size()) { x = -1; } } catch (const std::logic_error&) { x = -1; }
+      if (!(x > 0 && x <= 100)) {
+        log("-pm1TestsSaved expects a number above 0 and at most 100, e.g. -pm1TestsSaved 1.02 (found '%s')\n", s.c_str());
+        throw "-pm1TestsSaved <x>";
+      }
+      pm1TestsSaved = x;
+    }
     else if (key == "-prpPm1") {
-      // -prpPm1 B1[,B2]
-      vector<string> const v = split(s, ',');
-      try {
-        if (v.empty() || v.size() > 2) { throw std::invalid_argument(s); }
-        prpPm1B1 = stoull(v[0]);
-        prpPm1B2 = v.size() > 1 ? stoull(v[1]) : 0;
-      } catch (const std::logic_error&) {
-        log("-prpPm1 expects <B1>[,<B2>], e.g. -prpPm1 1000000 or -prpPm1 1000000,30000000\n");
-        throw "-prpPm1 <B1>[,<B2>]";
-      }
-      if (prpPm1B1 < 2 || (prpPm1B2 && prpPm1B2 <= prpPm1B1) || prpPm1B2 >= (u64(1) << 32)) {
-        log("-prpPm1 %s: B1 must be at least 2 and B2, when given, above B1 and below 2^32\n", s.c_str());
-        throw "-prpPm1 <B1>[,<B2>]";
-      }
+      // Was an option of master only (PR #213):  P-1 inside the PRP test is now automatic, from the worktodo line.  Args::parse runs
+      // once per source (config.txt, command line), so this is said once.
+      static bool said = false;
+      if (!said) { log("-prpPm1 is ignored: P-1 inside PRP tests is now automatic, from the worktodo line (see -h)\n"); }
+      said = true;
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }

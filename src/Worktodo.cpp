@@ -157,7 +157,17 @@ std::optional<Task> parse(const std::string& line) {
       log("worktodo.txt line ignored, exponent %" PRIu64 " is not prime: \"%s\"\n", exp, rstripNewline(line).c_str());
       return {};
     }
-    if (exp > 1000) { return {{.kind=isPRP ? Task::PRP : Task::LL, .exponent=exp, .AID=AID, .line=line, .squarings=0}}; }
+    if (exp > 1000) {
+      Task task{.kind=isPRP ? Task::PRP : Task::LL, .exponent=exp, .AID=AID, .line=line, .squarings=0};
+      // PRP=k,b,n,c,how_far_factored,tests_saved,...:  the trial factoring depth and whether P-1 is wanted (prpPm1Bounds)
+      double tf{}, saved{};
+      if (isPRP && mersenne && parts.size() >= 6 && parseNumber(parts[4], tf) && tf < 100 && parseNumber(parts[5], saved)) {
+        task.pm1Fields = true;
+        task.tfBits = tf;
+        task.testsSaved = std::min(saved, 100.0);
+      }
+      return task;
+    }
   }
   if (isCERT) {
     vector<string> parts = split(topParts.back(), ',');

@@ -263,10 +263,28 @@ in the P-1 savefile (`p1-<p>/`, header version 2), so a resume keeps them. A ver
 - **Probability:** at mprime's own bounds, PRPLL's model gives mprime's printed chance of a factor to within 1% (relative) in
   every case above.
 
-## P-1 inside a PRP test (`-prpPm1`)
+## P-1 inside a PRP test
 
-`-prpPm1 <B1>[,<B2>]` runs P-1 stage 1 on the PRP test's own squarings. It is off by default: without it a PRP test has no extra
-buffer, kernel or savefile, and the PRP loop does the same work per iteration as before.
+P-1 runs inside a PRP test, on the PRP test's own squarings, when the worktodo line asks for it:
+
+- `PRP=AID,1,2,p,-1,<tf>,<tests saved>` with tests saved above 0 (PrimeNet wants P-1 done, e.g. work preference 154): yes.
+- The same with tests saved 0 (P-1 is done): no.
+- A line without these two fields (`PRP=<p>`, `PRP=AID,1,2,p,-1`): yes, with no factor assumed below 2^tf, tf from the exponent
+  (Prime95's trial factoring table plus 4, GIMPS's GPU target, less 1 bit: 76 at 141M, 78 at 206M). The log says so.
+- `-prp <p>` on the command line: no.
+
+The bounds are chosen as for `Pfactor=` lines (see [Bounds](#bounds-of-pfactor-lines)), with `tf` from the line but with PRPLL's own
+tests saved, `-pm1TestsSaved` (default 1.02: the PRP test plus about 1.5% for its proof, its verification and the certificate), and
+with the cost of stage 1 inside the PRP (below), which is much lower than on its own, so B1 comes out about 4 times larger
+(206448349, tf 79: B1 = 2890000, B2 = 33800000, a 4.0% chance, saving 2.66% of a PRP test, against B1 = 710000, B2 = 26100000 and
+1.93% for a stand-alone P-1). The choice is logged and kept in the savefiles: a restart uses the bounds it started with. Without
+GPU memory for the smallest set of buffers, or when P-1 does not pay, the PRP runs without it. (The `-prpPm1` option of earlier
+master builds is ignored with a log line.)
+
+**Cost of stage 1 inside the PRP, for the bounds** (`pm1::inlineStage1`, the model that also picks L): 1.3 PRP iterations per
+accumulator multiplication (one per L bits) and, at each verified PRP check, a fold of 4 * 2^L multiplications of 1.7 iterations,
+with the cheapest L that fits in the memory. A factor found inside the PRP also comes after the PRP has done about 1.44 B1
+iterations, which are not saved.
 
 - **How:** the PRP residue u_k = 3^(2^k), and 3^E is the product of the u_k over the set bits k of E. Every L iterations the
   residue is multiplied into one of 2^L buckets chosen by the L bits of E at that point (one multiplication per L squarings). The
@@ -281,12 +299,14 @@ buffer, kernel or savefile, and the PRP loop does the same work per iteration as
 - **Savefiles:** `p1prp-<exponent>/`, next to each verified PRP savefile. The PRP savefile format is unchanged. After a PRP
   rollback to an iteration with no accumulator save, the accumulator goes back to its last save (at most 2 check intervals,
   otherwise P-1 is given up with a log line).
-- **Only for a PRP test started with the flag** (from iteration 0). Turned on mid-run it logs that P-1 is not possible and the PRP
-  continues.
+- **Only for a PRP test started with it** (from iteration 0). A PRP test started by a build without it logs that P-1 is not
+  possible and continues.
+- **Developers:** `-use PRPPM1=0` turns it off; `-use PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>]` gives these bounds to every PRP test.
 - **Result:** at completion the GPU GCD runs and a P-1 result line is written with `"integrated":true`. A factor ends the PRP test
   and deletes the worktodo line. With B2 > B1 and no factor, stage 2 runs while the PRP test waits; a failure in stage 2 gives a B1-only
   result and the PRP goes on.
-- The bounds of `Pfactor=` are not wired to `-prpPm1`; give B1 (and B2) explicitly.
+- LL tests get no automatic P-1: LL has no P-1 inside the test, and a P-1 run before it would have to rewrite the LL line (tests
+  saved 0) so that a restart does not redo it.
 
 ## Not implemented
 

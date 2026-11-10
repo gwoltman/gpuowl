@@ -13,6 +13,8 @@
 class Args;
 class Gpu;
 
+class Gcd;
+
 struct Stage2Result {
   enum Status {DONE, DECLINED, STOPPED};
   Status status{};
@@ -53,6 +55,15 @@ public:
   };
   static MulTime timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, const vector<KeyVal>& uses, int quick = 7);
 
+  // The GPU memory P-1 may allocate on the device of `shared` now (stage 2's table, the buckets of the P-1 inside a PRP test):  the
+  // memory free on the device less HEADROOM_BYTES; where the free memory can't be queried (OpenCL without
+  // CL_DEVICE_GLOBAL_FREE_MEMORY_AMD, e.g. Nvidia's or PoCL), 90% of the device RAM less what prpll holds and RESERVE_BYTES.  -maxAlloc,
+  // when given, caps it (less what prpll holds and RESERVE_BYTES).  bytes can be negative; the rest is for the log lines.
+  static constexpr size_t RESERVE_BYTES = size_t(256) << 20;
+  static constexpr size_t HEADROOM_BYTES = size_t(1) << 30;
+  struct DeviceBudget { double bytes; bool haveFree; double freeBytes, ramGB, held; };
+  static DeviceBudget deviceBudget(GpuCommon shared);
+
   // The number of table buffers a stage 2 of E would have room for (pm1::Stage2Plan's table entries), estimated before stage 1 (for the bounds of a Pfactor line):  run()'s
   // memory budget now, with g (the stage 1 Gpu) holding about what stage 2's own Gpu will hold, in buffers of the size of chooseFFTs'
   // first FFT with g's layout.  0 when stage 2 can't run at all.
@@ -60,6 +71,10 @@ public:
 
   // Whether p2-<E>/ holds a savefile of the stage 2 for these E, B1, B2 and x (it was started, so the stage 1 GCD found no factor)
   static bool hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x);
+
+  // The factor in a finished stage 2's accumulator acc:  gcd(acc, 2^E - 1) on the GPU, the factor (pm1::gcdFactor; empty when none) and
+  // the log lines.  Stage 2 checks acc != 0 at every checkpoint, so a GCD of 2^E - 1 (acc = 0 mod 2^E - 1) is an error:  it throws.
+  static vector<string> accFactor(Gcd& gcd, const vector<u32>& acc, u64 E, u64 B1, u64 B2);
 
   // Orders the untuned candidates ffts by their timeMul at E (for the rest of the run, the same candidates in the same order)
   static void rankUntuned(GpuCommon shared, u64 E, vector<Pm1Fft>& ffts);

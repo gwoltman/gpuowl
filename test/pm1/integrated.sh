@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end tests of -prpPm1 (P-1 inside a PRP test, src/Pm1Prp.cpp), with GMP (stage1_oracle) as the oracle for every accumulator
+# End-to-end tests of the P-1 inside a PRP test (here with the bounds of the hidden -use PRPPM1_B1[,PRPPM1_B2] keys, src/Pm1Prp.cpp), with GMP (stage1_oracle) as the oracle for every accumulator
 # savefile (its residue must be 3^(E mod 2^next), its prp64 the res64 of 3^(2^k)) and for the factor.
 #
 #   test/pm1/integrated.sh [factor|nf|carry|resume|fault|onoff|crash|stage2|stage2fail|all]      (default all)
@@ -73,7 +73,7 @@ sameResidues() {
 
 REF=$WORK/ref-400033
 reference() {
-  # A PRP without -prpPm1:  the residues the PRP of the other tests must have
+  # A PRP without P-1 (its line has tests saved 0):  the residues the PRP of the other tests must have
   if ! grep -q " 40000 " "$REF/out" 2>/dev/null; then
     setup "$REF" 400033
     run "$REF" "$PRPLL" -iters 40000
@@ -83,7 +83,7 @@ reference() {
 factor_tests() {
   local d=$WORK/factor
   setup "$d" 400381
-  run "$d" "$PRPLL" -prpPm1 1000
+  run "$d" "$PRPLL" -use PRPPM1_B1=1000
   if accOK "$d" 400381 1000 && [[ "$(cat "$d/gcd")" = 671839319 ]] && resultOK "$d" 400381 1000 0 671839319 && factorEnd "$d"; then
     pass "factor M400381 B1=1000: 671839319 = GMP gcd, PRP stopped ($(grep -o 'L=[0-9]*' "$d/out" | head -1), $(grep -o "res64 [0-9a-f]*" "$d/out" | head -1))"
   else
@@ -95,10 +95,10 @@ nf_tests() {
   reference
   local d=$WORK/nf
   setup "$d" 400033
-  run "$d" "$PRPLL" -prpPm1 1000 -iters 40000
+  run "$d" "$PRPLL" -use PRPPM1_B1=1000 -iters 40000
   if accOK "$d" 400033 1000 && [[ "$(cat "$d/gcd")" = 1 ]] && resultOK "$d" 400033 1000 0 NF && sameResidues "$d" "$REF" 400033 \
      && [[ -s "$d/worktodo-0.txt" ]]; then
-    pass "no factor M400033 B1=1000: NF result, the PRP goes on with the residues of a PRP without -prpPm1 ($(join <(prpLines "$d" 400033) <(prpLines "$REF" 400033) | wc -l) compared)"
+    pass "no factor M400033 B1=1000: NF result, the PRP goes on with the residues of a PRP without P-1 ($(join <(prpLines "$d" 400033) <(prpLines "$REF" 400033) | wc -l) compared)"
   else
     fail "no factor M400033 (see $d)"
   fi
@@ -112,7 +112,7 @@ carry_tests() {
   setup "$r" "$p"
   run "$r" "$PRPLL" -fft 256:1:256 -iters 3000
   setup "$d" "$p"
-  run "$d" "$PRPLL" -fft 256:1:256 -prpPm1 "$B1" -iters 3000
+  run "$d" "$PRPLL" -fft 256:1:256 -use PRPPM1_B1="$B1" -iters 3000
   local g; accOK "$d" "$p" "$B1" && g=$(cat "$d/gcd")
   if [[ -n "${g:-}" ]] && ! grep -q "Using long carry" "$d/out" && sameResidues "$d" "$r" "$p" \
      && { { [[ "$g" = 1 ]] && resultOK "$d" "$p" "$B1" 0 NF; } || { [[ "$g" != 1 ]] && resultOK "$d" "$p" "$B1" 0 "$g" && factorEnd "$d"; }; }; then
@@ -128,13 +128,13 @@ resume_tests() {
   # grid off every block boundary, so every stop is mid-window.
   local d=$WORK/resume
   setup "$d" 400381
-  PRPLL_PM1_PRP_L=7 run "$d" "$FAULT_PRPLL" -prpPm1 20000 -iters 3000
-  PRPLL_PM1_PRP_L=5 run "$d" "$FAULT_PRPLL" -prpPm1 20000 -iters 4000
-  (cd "$d" && { PRPLL_PM1_PRP_L=6 "$FAULT_PRPLL" -device "$DEVICE" -log 1000 -noclean -prpPm1 20000 >> out 2>&1 & echo $! > pid; })
-  until grep -q " 12000 " "$d/gpuowl-0.log" 2>/dev/null; do sleep 2; done     # (stdout is buffered: the log file)
+  PRPLL_PM1_PRP_L=7 run "$d" "$FAULT_PRPLL" -use PRPPM1_B1=20000 -iters 3000
+  PRPLL_PM1_PRP_L=5 run "$d" "$FAULT_PRPLL" -use PRPPM1_B1=20000 -iters 4000
+  (cd "$d" && { PRPLL_PM1_PRP_L=6 "$FAULT_PRPLL" -device "$DEVICE" -log 1000 -noclean -use PRPPM1_B1=20000 >> out 2>&1 & echo $! > pid; })
+  until grep -q " 12000 " "$d/gpuowl-0.log" 2>/dev/null; do sleep 0.05; done     # (stdout is buffered: the log file; a fast GPU passes 12000 in under a second)
   kill -INT "$(cat "$d/pid")"
   while kill -0 "$(cat "$d/pid")" 2>/dev/null; do sleep 1; done
-  run "$d" "$PRPLL" -prpPm1 20000
+  run "$d" "$PRPLL" -use PRPPM1_B1=20000
   local loads; loads=$(grep -c "accumulator loaded at" "$d/out")
   # shellcheck disable=SC2012  # the names are prpll's own savefile names: no spaces or newlines
   if accOK "$d" 400381 20000 && [[ "$(cat "$d/gcd")" = 671839319 ]] && resultOK "$d" 400381 20000 0 671839319 && factorEnd "$d" \
@@ -153,7 +153,7 @@ fault_tests() {
     read -r kind k <<< "$c"
     local d=$WORK/fault-$kind-$k
     setup "$d" 400381
-    PRPLL_PM1_PRP_L=6 PRPLL_PM1_PRP_FAULT="$k:$kind" run "$d" "$FAULT_PRPLL" -prpPm1 20000
+    PRPLL_PM1_PRP_L=6 PRPLL_PM1_PRP_FAULT="$k:$kind" run "$d" "$FAULT_PRPLL" -use PRPPM1_B1=20000
     local caught
     case $kind in
       prp) caught=$(grep -cE " EE +[0-9]+ " "$d/out") ;;
@@ -174,9 +174,9 @@ onoff_tests() {
   local d=$WORK/on-late
   setup "$d" 400033
   run "$d" "$PRPLL" -iters 4000
-  run "$d" "$PRPLL" -prpPm1 1000 -iters 6000
+  run "$d" "$PRPLL" -use PRPPM1_B1=1000 -iters 6000
   # shellcheck disable=SC2010,SC2143  # the names are prpll's own savefile names: no spaces or newlines
-  if grep -q "was started without -prpPm1" "$d/out" && [[ ! -e "$d/results-0.txt" ]] && sameResidues "$d" "$REF" 400033 \
+  if grep -q "was started without P-1" "$d/out" && [[ ! -e "$d/results-0.txt" ]] && sameResidues "$d" "$REF" 400033 \
      && [[ -z "$(ls "$d/p1prp-400033/" 2>/dev/null | grep p1prp)" ]]; then
     pass "flag on at 4000: P-1 not possible (logged), no savefile, PRP residues unchanged"
   else
@@ -185,12 +185,12 @@ onoff_tests() {
   # Off mid-run, then on again:  the PRP goes back to the accumulator's last savefile (within 2 check intervals)
   d=$WORK/off-on
   setup "$d" 400381
-  run "$d" "$PRPLL" -prpPm1 20000 -iters 4000
-  run "$d" "$PRPLL" -iters 4000
+  run "$d" "$PRPLL" -use PRPPM1_B1=20000 -iters 4000
+  run "$d" "$PRPLL" -use PRPPM1=0 -iters 4000
   local offOK=0
   # shellcheck disable=SC2012  # the names are prpll's own savefile names: no spaces or newlines
   [[ "$(ls "$d/p1prp-400381/"*.p1prp | wc -l)" = 3 ]] && offOK=1      # 0, 2000 and 4000, nothing from the run without the flag
-  run "$d" "$PRPLL" -prpPm1 20000
+  run "$d" "$PRPLL" -use PRPPM1_B1=20000
   if [[ "$offOK" = 1 ]] && grep -q "goes back there from 8000" "$d/out" && accOK "$d" 400381 20000 && resultOK "$d" 400381 20000 0 671839319 \
      && factorEnd "$d"; then
     pass "flag off from 4000 to 8000, then on: the PRP goes back to 4000, factor = GMP"
@@ -203,12 +203,12 @@ crash_tests() {
   # kill -9 after unverified PRP savefiles (every 1000):  the PRP loads the unverified one and goes back to the accumulator's
   local d=$WORK/crash
   setup "$d" 400381
-  (cd "$d" && { "$PRPLL" -device "$DEVICE" -log 1000 -noclean -prpPm1 20000 >> out 2>&1 & echo $! > pid; })
-  until grep -q " 9000 " "$d/gpuowl-0.log" 2>/dev/null; do sleep 1; done
+  (cd "$d" && { "$PRPLL" -device "$DEVICE" -log 1000 -noclean -use PRPPM1_B1=20000 >> out 2>&1 & echo $! > pid; })
+  until grep -q " 9000 " "$d/gpuowl-0.log" 2>/dev/null; do sleep 0.05; done
   kill -KILL "$(cat "$d/pid")"
   while kill -0 "$(cat "$d/pid")" 2>/dev/null; do sleep 1; done
-  run "$d" "$PRPLL" -prpPm1 20000
-  if grep -qE "goes back there from (9|10)000" "$d/out" && accOK "$d" 400381 20000 && resultOK "$d" 400381 20000 0 671839319 && factorEnd "$d"; then
+  run "$d" "$PRPLL" -use PRPPM1_B1=20000
+  if grep -qE "goes back there from (8|9|10)000" "$d/out" && accOK "$d" 400381 20000 && resultOK "$d" 400381 20000 0 671839319 && factorEnd "$d"; then
     pass "kill -9 at ~9000: $(grep -o 'last savefile is at iteration [0-9]*: the PRP test goes back there from [0-9]*' "$d/out"), factor = GMP"
   else
     fail "crash (see $d)"
@@ -219,7 +219,7 @@ stage2_tests() {
   # B1=500 misses 671839319 (stage 1 at B1=500 gives gcd 1, GMP), B2=200000 finds it in stage 2;  a stop in stage 2 resumes there
   local d=$WORK/stage2
   setup "$d" 400381
-  run "$d" "$PRPLL" -prpPm1 500,200000
+  run "$d" "$PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=200000
   if accOK "$d" 400381 500 && [[ "$(cat "$d/gcd")" = 1 ]] && resultOK "$d" 400381 500 200000 671839319 && factorEnd "$d"; then
     pass "stage 2 M400381 B1=500 B2=200000: stage 1 gcd 1 (GMP), stage 2 found 671839319, PRP stopped"
   else
@@ -227,10 +227,10 @@ stage2_tests() {
   fi
   d=$WORK/stage2-stop
   setup "$d" 400381
-  run "$d" "$PRPLL" -prpPm1 500,200000 -iters 3000
+  run "$d" "$PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=200000 -iters 3000
   local stopped=0
   grep -q "stage 2 resumes\|Stage 2 B1=500" "$d/out" && [[ ! -e "$d/results-0.txt" ]] && [[ -s "$d/worktodo-0.txt" ]] && stopped=1
-  run "$d" "$PRPLL" -prpPm1 500,200000
+  run "$d" "$PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=200000
   if [[ "$stopped" = 1 ]] && grep -q "stage 1 is done (at iteration [0-9]*), stage 2 resumes" "$d/out" && grep -q "Stage 2 resuming" "$d/out" \
      && resultOK "$d" 400381 500 200000 671839319 && factorEnd "$d"; then
     pass "stage 2 stopped by -iters 3000 and resumed: factor 671839319"
@@ -244,8 +244,8 @@ stage2fail_tests() {
   # does not try stage 2 again
   local d=$WORK/stage2-fail
   setup "$d" 400381
-  PRPLL_STAGE2_BUILD_FAULT=99 run "$d" "$FAULT_PRPLL" -prpPm1 500,200000 -iters 4000
-  PRPLL_STAGE2_BUILD_FAULT=99 run "$d" "$FAULT_PRPLL" -prpPm1 500,200000 -iters 2000
+  PRPLL_STAGE2_BUILD_FAULT=99 run "$d" "$FAULT_PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=200000 -iters 4000
+  PRPLL_STAGE2_BUILD_FAULT=99 run "$d" "$FAULT_PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=200000 -iters 2000
   if grep -q "P-1 stage 2 (B2=200000) failed" "$d/out" && resultOK "$d" 400381 500 0 NF && [[ -s "$d/worktodo-0.txt" ]] \
      && [[ "$(grep -c "stage 2 to B2" "$d/out")" = 1 ]] && grep -qE " OK +6000 [0-9a-f]{16}" "$d/out"; then
     pass "stage 2 failing: result for B1=500 only, the PRP went on to 6000, no second stage 2 on restart"
