@@ -9,6 +9,7 @@
 #include "log.h"
 #include "timeutil.h"
 #include "File.h"
+#include "CycleFile.h"
 #include "TuneEntry.h"
 #include "Signal.h"
 #include "Stage2.h"
@@ -295,6 +296,27 @@ void Tune::carryTune() {
   }
 }
 
+// config.txt as it was when -tune began timing the options, while it times them
+static optional<string> configBeforeOptions;
+
+// Rewrite config.txt as it was before the option timings plus the settings chosen so far, so that a -tune that is stopped (or crashes, or
+// hangs and is killed) before the end of the timings keeps them.  The end of the timings writes config.txt again with all the settings.
+static void savePartialConfig(const vector<pair<string,int>> &newConfigKeyVals, const vector<pair<string,int>> &suggestedConfigKeyVals) {
+  if (!configBeforeOptions) return;
+  CycleFile config{"config.txt"};
+  if (!configBeforeOptions->empty()) { config->write(*configBeforeOptions); }   // File::write of 0 bytes is a WriteError
+  config->write("\n# Settings chosen so far by a -tune run that had not finished timing the options when this was written.");
+  for (u32 i = 0; i < newConfigKeyVals.size(); ++i) {
+    config->write(i == 0 ? "\n   -use " : ",");
+    config->printf("%s=%u", newConfigKeyVals[i].first.c_str(), newConfigKeyVals[i].second);
+  }
+  for (u32 i = 0; i < suggestedConfigKeyVals.size(); ++i) {
+    config->write(i == 0 ? "\n# Slightly faster, to be timed over a longer duration:\n#  -use " : ",");
+    config->printf("%s=%u", suggestedConfigKeyVals[i].first.c_str(), suggestedConfigKeyVals[i].second);
+  }
+  config->write("\n");
+}
+
 // Add better -use settings to list of changes to be made to config.txt
 static void configsUpdate(double current_cost, double best_cost, double threshold, const char *key, u32 value, vector<pair<string,int>> &newConfigKeyVals, vector<pair<string,int>> &suggestedConfigKeyVals) {
   if (best_cost == current_cost) return;
@@ -305,6 +327,7 @@ static void configsUpdate(double current_cost, double best_cost, double threshol
   // Otherwise, add the key value pair to newConfigKeyVals
   else
     suggestedConfigKeyVals.emplace_back(key, value);
+  savePartialConfig(newConfigKeyVals, suggestedConfigKeyVals);
 }
 
 // Times one -use option setting.  With -tune workers=N, N identical timing runs share the GPU concurrently (as with -workers N)
@@ -602,6 +625,7 @@ void Tune::tune() {
     u32 const default_inplace = NVIDIAGPU ? 1 : AMDGPU && getAmdWavefrontWidth(shared.context->deviceId()) == 32 ? 2 : 0;
     u32 const current_inplace = args->value("INPLACE", default_inplace);
     args->flags["INPLACE"] = to_string(0);
+    if (File f = File::openRead("config.txt")) { configBeforeOptions = f.readAll(); } else { configBeforeOptions = ""; }
 
     // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings
     if (!time_inplace_only) {
@@ -716,6 +740,7 @@ void Tune::tune() {
     if (time_inplace_only) {
       args->flags["INPLACE"] = to_string(1);
       newConfigKeyVals.emplace_back("INPLACE", 1);
+      savePartialConfig(newConfigKeyVals, suggestedConfigKeyVals);
     }
     // Find best INPLACE setting
     else {
@@ -1333,7 +1358,10 @@ void Tune::tune() {
     }
 
     // Output new settings to config.txt
-    File config = File::openAppend("config.txt");
+    CycleFile configFile{"config.txt"};   // replaces the settings saved so far (savePartialConfig) when done
+    File& config = *configFile;
+    if (!configBeforeOptions->empty()) { config.write(*configBeforeOptions); }
+    configBeforeOptions.reset();
     if (!newConfigKeyVals.empty()) {
       config.write("\n# New settings based on a -tune run.");
       for (u32 i = 0; i < newConfigKeyVals.size(); ++i) {
