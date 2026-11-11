@@ -48,12 +48,12 @@ void OVERLOAD readSubLow(u32 WG_SZ, u32 N, GF61 *u, CP(T2) b, u32 base, u32 lane
 void OVERLOAD readSubLow(u32 WG_SZ, u32 N, GF61 *u, CP(T2) b, u32 base) { readSubLow(WG_SZ, N, u, b, base, get_local_id(0)); }
 #endif
 
-// The extra argument b, after a
-#define tailMulZero(out, in, a, ...) tailMulZero(out, in, a, CP(T2) b, __VA_ARGS__)
-#define tailMul(out, in, a, ...) tailMul(out, in, a, CP(T2) b, __VA_ARGS__)
-#define tailMulZeroGF31(out, in, a, ...) tailMulZeroGF31(out, in, a, CP(T2) b, __VA_ARGS__)
-#define tailMulGF31(out, in, a, ...) tailMulGF31(out, in, a, CP(T2) b, __VA_ARGS__)
-#define tailMulZeroGF61(out, in, a, ...) tailMulZeroGF61(out, in, a, CP(T2) b, __VA_ARGS__)
-#define tailMulGF61(out, in, a, ...) tailMulGF61(out, in, a, CP(T2) b, __VA_ARGS__)
+// The extra argument b, after a.  Fixed arity:  Nvidia's OpenCL compiler rejects variadic macros.
+#define tailMulZero(out, in, a, smallTrig) tailMulZero(out, in, a, CP(T2) b, smallTrig)
+#define tailMul(out, in, a, base, smallTrig) tailMul(out, in, a, CP(T2) b, base, smallTrig)
+#define tailMulZeroGF31(out, in, a, smallTrig) tailMulZeroGF31(out, in, a, CP(T2) b, smallTrig)
+#define tailMulGF31(out, in, a, base, smallTrig) tailMulGF31(out, in, a, CP(T2) b, base, smallTrig)
+#define tailMulZeroGF61(out, in, a, smallTrig) tailMulZeroGF61(out, in, a, CP(T2) b, smallTrig)
+#define tailMulGF61(out, in, a, base, smallTrig) tailMulGF61(out, in, a, CP(T2) b, base, smallTrig)
 
 #include "tailmul.cl"
