@@ -468,6 +468,31 @@ ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2)
 #define P(x) global x * restrict
 #define CP(x) const P(x)
 
+// With INPLACE the host passes the same buffer as out and in of tailMul, fftMiddleIn, fftMiddleOut, tailSquare and carryFused.
+// restrict on both is a lie, and a compiler that believes it (AMD Windows PAL/LC, RX 7700 XT) computes wrong multiplications.
+// fftHin and fftW are launched with distinct buffers even then, so they keep restrict.  INPLACE=0 is unchanged: every pointer stays restrict.
+// Reading and writing through one pointer would let the compiler share the address math, but that saving is tiny and can bloat registers.
+#if INPLACE
+#define PA_TM(x) global x *
+#define PA_MI(x) global x *
+#define PA_MO(x) global x *
+#define PA_TS(x) global x *
+#define PA_CF(x) global x *
+#else
+#define PA_TM(x) P(x)
+#define PA_MI(x) P(x)
+#define PA_MO(x) P(x)
+#define PA_TS(x) P(x)
+#define PA_CF(x) P(x)
+#endif
+#define CPA_TM(x) const PA_TM(x)
+#define CPA_MI(x) const PA_MI(x)
+#define CPA_MO(x) const PA_MO(x)
+#define CPA_TS(x) const PA_TS(x)
+#define CPA_CF(x) const PA_CF(x)
+#define PA_HW(x) P(x)
+#define CPA_HW(x) const PA_HW(x)
+
 #define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
 
 // AMD only: Gpu.cpp can pass -DAMD_WAVES_PER_EU=n (ask for at least n waves per SIMD) or -DAMD_NUM_VGPR=n (explicit VGPR count), either of which caps

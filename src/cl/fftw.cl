@@ -9,7 +9,7 @@
 #if FFT_FP64
 
 // Do the ending fft_WIDTH after an fftMiddleOut.  This is the same as the first half of carryFused.
-KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_W) fftW(PA_HW(T2) out, CPA_HW(T2) in, Trig smallTrig) {
   local T2 lds[LDS_BYTES(1) / sizeof(T2)];
   LDSinit(lds, 1);
 
@@ -35,7 +35,7 @@ KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
 #if FFT_FP32
 
 // Do the ending fft_WIDTH after an fftMiddleOut.  This is the same as the first half of carryFused.
-KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_W) fftW(PA_HW(T2) out, CPA_HW(T2) in, Trig smallTrig) {
   local F2 lds[LDS_BYTES(1) / sizeof(F2)];
   LDSinit(lds, 1);
 
@@ -64,7 +64,7 @@ KERNEL(G_W) fftW(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if NTT_GF31
 
-KERNEL(G_W) fftWGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_W) fftWGF31(PA_HW(T2) out, CPA_HW(T2) in, Trig smallTrig) {
   local GF31 lds[LDS_BYTES(1) / sizeof(GF31)];
   LDSinit(lds, 1);
 
@@ -93,7 +93,7 @@ KERNEL(G_W) fftWGF31(P(T2) out, CP(T2) in, Trig smallTrig) {
 
 #if NTT_GF61
 
-KERNEL(G_W) fftWGF61(P(T2) out, CP(T2) in, Trig smallTrig) {
+KERNEL(G_W) fftWGF61(PA_HW(T2) out, CPA_HW(T2) in, Trig smallTrig) {
   local GF61 lds[LDS_BYTES(1) / sizeof(GF61)];
   LDSinit(lds, 1);
 
