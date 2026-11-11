@@ -391,6 +391,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   initializer_list<string> const hiddenKeys = {
                               "NTT_WEIGHT_TABLE",       // NTT types: carryFused's weight shifts from a table, 1-3 (see base.cl), set by -tune
                               "TILE64","TILE32",        // INPLACE: transpose tile size 8 or 16 for FP64 and GF61 / FP32 and GF31 (see base.cl), set by -tune
+                              "ROWPAD","BLKPAD","MIDPAD", // INPLACE=3: the layout's pads in bytes (see middle.cl).  No better values than the
+                                                          // defaults found on RTX 5080, TITAN V and Radeon Pro VII production FFTs
                               "TUNE_EXP",               // Developer: -tune times every FFT at this exponent (those that handle it)
                               "BIGLIT",                 // Deprecated
                               "ENABLE_SUBBARRIER",      // Experimental, nVidia: LDSbar syncs only its sub-workgroup, 1 = each, 2 = four in pairs (see base.cl)
@@ -482,7 +484,13 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
       tail_single_kernel = tailKernels % 2 == 0;
       zero_q = tailKernels >= 10;
     }
-    if (k == "INPLACE") in_place = atoi(v.c_str());
+    if (k == "INPLACE") {
+      in_place = atoi(v.c_str());
+      if (in_place > 3) {
+        log("Invalid INPLACE=%u, must be 0, 1, 2 or 3\n", in_place);
+        throw "invalid INPLACE";
+      }
+    }
     if (k == "WMUL") wmul = atoi(v.c_str());
     if (k == "PAD") {
       // The data buffers are sized from a table keyed on PAD (PAD_ADJUST in Gpu.h) that covers padding up to 512
@@ -499,6 +507,28 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     if (k == "SHUFL_BYTES_W" && v != "4" && v != "8" && v != "16") {
       log("Invalid -use SHUFL_BYTES_W=%s (must be 4, 8 or 16)\n", v.c_str());
       throw "Invalid SHUFL_BYTES_W";
+    }
+  }
+
+  // INPLACE=3's pads (see middle.cl), in bytes:  after every tail line, after every block of TILE tail lines, after every middle.
+  // Tuned on a Radeon Pro VII at 512:9:512 and 512:16:512.  Multiples of 256 keep every run of TILE values in one 256-byte block.
+  // They size the buffers (IP3_PADS in Gpu.h), so the kernels get the values used here.
+  if (in_place == 3) {
+    struct { const char* key; u32 def, max; } const padKeys[] = {{"ROWPAD", 256, 63 * 256}, {"BLKPAD", 256, 63 * 256}, {"MIDPAD", 2048, 1023 * 256}};
+    u32 pads[3];
+    for (u32 i = 0; i < 3; ++i) {
+      auto [key, def, max] = padKeys[i];
+      pads[i] = config.contains(key) ? atoi(config[key].c_str()) : def;
+      if (pads[i] % 256 || pads[i] > max) {
+        log("Invalid %s=%u, must be a multiple of 256 up to %u\n", key, pads[i], max);
+        throw "invalid INPLACE=3 pad";
+      }
+      config[key] = to_string(pads[i]);
+    }
+    pad_size = IP3_PADS(pads[0], pads[1], pads[2]);
+  } else {
+    for (const char* key : {"ROWPAD", "BLKPAD", "MIDPAD"}) {
+      if (config.erase(key) && doLog) { log("Note: -use %s applies only to INPLACE=3\n", key); }
     }
   }
 
@@ -631,7 +661,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     config["L2_STRIPING"] = to_string(0);
   }
   // L2_STRIPING's stripes are 16 columns wide (see fftmiddlein.cl)
-  if (configValue("L2_STRIPING", 0) && (configValue("TILE64", 8) != 16 || configValue("TILE32", 16) != 16)) {
+  if (configValue("L2_STRIPING", 0) && (configValue("TILE64", isAmdGpu(id) ? 16 : 8) != 16 || configValue("TILE32", 16) != 16)) {
     if (doLog) { log("L2_STRIPING needs 16x16 in-place tiles.  Changing to TILE64=16 and TILE32=16.\n"); }
     config["TILE64"] = config["TILE32"] = to_string(16);
   }
@@ -645,7 +675,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     multi_q = configValue("MULTI_Q", 0);
     if (l2_striping && !in_place) {
       config["L2_STRIPING"] = to_string(0);
-      log("L2_STRIPING is only allowed if INPLACE=1.  Changing to L2_STRIPING=0.\n");
+      log("L2_STRIPING is only allowed in place.  Changing to L2_STRIPING=0.\n");
     }
     else if (multi_q == 0 && l2_striping > fft.shape.width/64) {
       config["L2_STRIPING"] = to_string(fft.shape.width/64);

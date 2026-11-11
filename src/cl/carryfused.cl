@@ -96,10 +96,7 @@ i96 OVERLOAD csAtomicLoad(P(i96) p) {
 #define CSLOAD(mem)       csAtomicLoad(mem)
 #endif
 
-// Increasing WMUL to 2 reduces carryShuttle activity.  This led to a 1% speedup on Titan V.  Testing on other GPUs is needed.
-#ifndef WMUL
-#define WMUL 2
-#endif
+// WMUL (lines per workgroup) defaults to 2, see base.cl
 
 // AMD (GCN) pays per load instruction: each lane's carries go 16 bytes at a time (global_load_dwordx4), with neighboring lanes adjacent.
 // CS_GROUP is the carries in 16 bytes, taken from the carry[] array at the call site (all of them use it): 4 for 32-bit carries, 2 for
@@ -284,7 +281,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutFP64
 
-  readCarryFusedLine(in, u, line, lowMe);
+  readCarryFusedLines(in, u, gr, me, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -510,7 +507,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   // fft_WIDTH2 itself knows (via its callnum) to skip the first radix butterfly when FUSE_WEIGHT_BUTTERFLY is set.
   fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(u, out, line, lowMe);
+  writeCarryFusedLines(u, out, gr, me, line, lowMe);
 }
 
 
@@ -546,7 +543,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i6
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutFP32
 
-  readCarryFusedLine(in, u, line, lowMe);
+  readCarryFusedLines(in, u, gr, me, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -748,7 +745,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i6
 
   fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(u, out, line, lowMe);
+  writeCarryFusedLines(u, out, gr, me, line, lowMe);
 }
 
 
@@ -784,7 +781,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
-  readCarryFusedLine(in, u, line, lowMe);
+  readCarryFusedLines(in, u, gr, me, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -1013,7 +1010,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
 
   fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(u, out, line, lowMe);
+  writeCarryFusedLines(u, out, gr, me, line, lowMe);
 }
 
 
@@ -1049,7 +1046,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
-  readCarryFusedLine(in, u, line, lowMe);
+  readCarryFusedLines(in, u, gr, me, line, lowMe);
 
 // Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
 // common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
@@ -1280,7 +1277,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
 
   fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(u, out, line, lowMe);
+  writeCarryFusedLines(u, out, gr, me, line, lowMe);
 }
 
 
@@ -1327,10 +1324,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
-  readCarryFusedLine(in, u, line, lowMe);
+  readCarryFusedLines(in, u, gr, me, line, lowMe);
   fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
-  readCarryFusedLine(in31, u31, line, lowMe);
+  readCarryFusedLines(in31, u31, gr, me, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
@@ -1589,12 +1586,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   fft_WIDTH2(lds, u, smallTrig, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(u, out, line, lowMe);
+  writeCarryFusedLines(u, out, gr, me, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
   fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
-  writeCarryFusedLine(u31, out31, line, lowMe);
+  writeCarryFusedLines(u31, out31, gr, me, line, lowMe);
 }
 
 
@@ -1644,10 +1641,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF31
 
-  readCarryFusedLine(inF2, uF2, line, lowMe);
+  readCarryFusedLines(inF2, uF2, gr, me, line, lowMe);
   fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
 
-  readCarryFusedLine(in31, u31, line, lowMe);
+  readCarryFusedLines(in31, u31, gr, me, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
@@ -1918,12 +1915,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(uF2, outF2, line, lowMe);
+  writeCarryFusedLines(uF2, outF2, gr, me, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
   fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
-  writeCarryFusedLine(u31, out31, line, lowMe);
+  writeCarryFusedLines(u31, out31, gr, me, line, lowMe);
 }
 
 
@@ -1973,10 +1970,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
-  readCarryFusedLine(inF2, uF2, line, lowMe);
+  readCarryFusedLines(inF2, uF2, gr, me, line, lowMe);
   fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
 
-  readCarryFusedLine(in61, u61, line, lowMe);
+  readCarryFusedLines(in61, u61, gr, me, line, lowMe);
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
@@ -2250,12 +2247,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(uF2, outF2, line, lowMe);
+  writeCarryFusedLines(uF2, outF2, gr, me, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
   fft_WIDTH2(lds61, u61, smallTrig61, WMUL, lowMe);
-  writeCarryFusedLine(u61, out61, line, lowMe);
+  writeCarryFusedLines(u61, out61, gr, me, line, lowMe);
 }
 
 
@@ -2305,10 +2302,10 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
-  readCarryFusedLine(in31, u31, line, lowMe);
+  readCarryFusedLines(in31, u31, gr, me, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
-  readCarryFusedLine(in61, u61, line, lowMe);
+  readCarryFusedLines(in61, u61, gr, me, line, lowMe);
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
@@ -2560,12 +2557,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(u31, out31, line, lowMe);
+  writeCarryFusedLines(u31, out31, gr, me, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInGF31
 
   fft_WIDTH2(lds61, u61, smallTrig61, WMUL, lowMe);
-  writeCarryFusedLine(u61, out61, line, lowMe);
+  writeCarryFusedLines(u61, out61, gr, me, line, lowMe);
 }
 
 
@@ -2620,13 +2617,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   dependentLaunchWait();   // Previous kernel was fftMiddleOutGF61
 
-  readCarryFusedLine(inF2, uF2, line, lowMe);
+  readCarryFusedLines(inF2, uF2, gr, me, line, lowMe);
   fft_WIDTH1(ldsF2 + zerohack, uF2, smallTrigF2 + zerohack, WMUL, lowMe);
 
-  readCarryFusedLine(in31, u31, line, lowMe);
+  readCarryFusedLines(in31, u31, gr, me, line, lowMe);
   fft_WIDTH1(lds31 + zerohack, u31, smallTrig31 + zerohack, WMUL, lowMe);
 
-  readCarryFusedLine(in61, u61, line, lowMe);
+  readCarryFusedLines(in61, u61, gr, me, line, lowMe);
   fft_WIDTH1(lds61 + zerohack, u61, smallTrig61 + zerohack, WMUL, lowMe);
 
   Word2 wu[NW];
@@ -2926,15 +2923,15 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   fft_WIDTH2(ldsF2, uF2, smallTrigF2, WMUL, lowMe);
   if (gr == H / WMUL) { waitLinesRead(ready); }
-  writeCarryFusedLine(uF2, outF2, line, lowMe);
+  writeCarryFusedLines(uF2, outF2, gr, me, line, lowMe);
 
   dependentLaunch();   // Next kernel will be fftMiddleInFP32
 
   fft_WIDTH2(lds31, u31, smallTrig31, WMUL, lowMe);
-  writeCarryFusedLine(u31, out31, line, lowMe);
+  writeCarryFusedLines(u31, out31, gr, me, line, lowMe);
 
   fft_WIDTH2(lds61, u61, smallTrig61, WMUL, lowMe);
-  writeCarryFusedLine(u61, out61, line, lowMe);
+  writeCarryFusedLines(u61, out61, gr, me, line, lowMe);
 }
 
 

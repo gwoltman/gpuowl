@@ -218,9 +218,10 @@ private:
   // Copy of some -use options needed for Kernel, Trig, and Weights initialization
   bool tail_single_wide;                // TailSquare processes one line at a time
   bool tail_single_kernel;              // TailSquare does not use a separate kernel for line zero
-  u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly.
+  u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly, 3 = padded.
   u32 wmul;                             // Number of workgroups carryFused kernel should process ("width multiplier").
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
+                                        // With INPLACE=3 the ROWPAD, BLKPAD and MIDPAD packed by IP3_PADS instead.
   u32 multi_q;                          // MULTI_Q, L2_STRIPING and GRAPHS as adjusted for this FFT and device (see clDefines)
   u32 l2_striping;
   bool graphs;
@@ -473,9 +474,18 @@ private:
 //    1 + PAD_SIZE/(MIDDLE*IN_WG) + BIG_PAD_SIZE/(MIDDLE*SMALL_HEIGHT*IN_SIZEX)
 // times N, and writeMiddleOutLine the mirror image.  With MIDDLE=2, PAD=512, IN_WG=64 and IN_SIZEX=4 that is 1.5156
 #define PAD_ADJUST(N,W,M,inplace,pad)           ((inplace) ? (N) + 2*(M)*((W)+16) : MID_ADJUST((pad) == 0 ? (N) : (pad) <= 128 ? 9*(N)/8 : (pad) <= 256 ? 5*(N)/4 : 16*(N)/10, M, pad))
-#define FP64_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad)
-#define FP32_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(float) / sizeof(double)
-#define GF31_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(uint) / sizeof(double)
-#define GF61_DATA_SIZE(W,M,H,inplace,pad)       PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad) * sizeof(ulong) / sizeof(double)
+// INPLACE=3 does not use PAD, so its pad holds INPLACE=3's ROWPAD, BLKPAD and MIDPAD (bytes, multiples of 256, see middle.cl) in units
+// of 256 bytes.  Its layout of complex values of eb bytes takes (MIDDLE - 1) * SIZEM + WIDTH / TILE * SIZEW elements, at most the
+// size below (TILE >= 8).
+#define IP3_PADS(row,blk,mid)                   ((row) / 256 | (blk) / 256 << 6 | (mid) / 256 << 12)
+#define IP3_ROWPAD(pad)                         (((pad) & 63) * 256)
+#define IP3_BLKPAD(pad)                         (((pad) >> 6 & 63) * 256)
+#define IP3_MIDPAD(pad)                         (((pad) >> 12) * 256)
+#define IP3_DATA_SIZE(W,M,H,pad,eb)             (u64(M) * (u64(W) * ((H) * (eb) + IP3_ROWPAD(pad)) + (W) / 8 * IP3_BLKPAD(pad) + IP3_MIDPAD(pad)) / sizeof(double))
+#define DATA_SIZE(W,M,H,inplace,pad,eb)         ((inplace) == 3 ? IP3_DATA_SIZE(W,M,H,pad,eb) : u64(PAD_ADJUST((W)*(M)*(H)*2, W, M, inplace, pad)) * (eb) / 16)
+#define FP64_DATA_SIZE(W,M,H,inplace,pad)       DATA_SIZE(W,M,H,inplace,pad,2 * sizeof(double))
+#define FP32_DATA_SIZE(W,M,H,inplace,pad)       DATA_SIZE(W,M,H,inplace,pad,2 * sizeof(float))
+#define GF31_DATA_SIZE(W,M,H,inplace,pad)       DATA_SIZE(W,M,H,inplace,pad,2 * sizeof(uint))
+#define GF61_DATA_SIZE(W,M,H,inplace,pad)       DATA_SIZE(W,M,H,inplace,pad,2 * sizeof(ulong))
 #define TOTAL_DATA_SIZE(fft,W,M,H,inplace,pad)  ((int)(fft).FFT_FP64 * FP64_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).FFT_FP32 * FP32_DATA_SIZE(W,M,H,inplace,pad) + \
                                                 (int)(fft).NTT_GF31 * GF31_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).NTT_GF61 * GF61_DATA_SIZE(W,M,H,inplace,pad))

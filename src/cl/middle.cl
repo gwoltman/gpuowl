@@ -606,10 +606,11 @@ void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 
 #endif
 
-
-
-
-
+// carryFused reads and writes the WMUL lines of a workgroup with these (see the in-place ones below)
+#ifdef T2_F2_GF31_GF61
+void OVERLOAD readCarryFusedLines(CP(T2_F2_GF31_GF61) in, T2_F2_GF31_GF61 *u, u32 gr, u32 me, u32 line, u32 lowMe) { readCarryFusedLine(in, u, line, lowMe); }
+void OVERLOAD writeCarryFusedLines(T2_F2_GF31_GF61 *u, P(T2_F2_GF31_GF61) out, u32 gr, u32 me, u32 line, u32 lowMe) { writeCarryFusedLine(u, out, line, lowMe); }
+#endif
 
 
 
@@ -680,6 +681,16 @@ void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 //      The +64Ks are at +128KB
 // This leaves the "columns" starting at +1KB unused - suggesting a pad of +1KB before the 64Ks would yield a better distribution in the L2 cache.
 // However, if we have say an 8-way 16MB L2 cache then each way contains 2MB.  If so, we'd want to pad 1KB before the 16th 64K FFT data value.
+//
+// INPLACE=3 (tuned on a Radeon Pro VII) uses the same blocks of TILE x TILE tiles as INPLACE=1, but pads instead of swizzling:
+//      tail line (middle, width) is one contiguous run at  middle * SIZEM + width / TILE * SIZEW + width % TILE * SIZEBLK
+//      SIZEBLK = SMALL_HEIGHT + ROWPAD, SIZEW = TILE * SIZEBLK + BLKPAD, SIZEM = WIDTH / TILE * SIZEW + MIDPAD
+// with the pads in bytes (multiples of 256, defaults in Gpu.cpp).  Every kernel reads and writes runs of TILE values (256 bytes with
+// TILE64=16) with the lanes in address order, tailSquare whole lines.  No stride is a power of two: with ROWPAD=0 or BLKPAD=0 a Pro VII's
+// carryFused ran 1.4 to 1.9 times slower, and MIDPAD=0 cost the middle kernels 4% at MIDDLE=16.  Without the swizzle a carryFused
+// workgroup's WMUL lines are SIZEBLK apart, so readCarryFusedLines splits each address into a part that is the same for the whole
+// workgroup (scalar registers on AMD) and a part that depends only on the local id.  That saves ALU ops and keeps the address out of
+// the vector registers that carryFused needs for its FFT (84 VGPRs, 3 waves per SIMD on gfx906, instead of 85 and 2 with INPLACE=1).
 
 #ifdef T2_GF61
 
@@ -687,7 +698,12 @@ void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 // Pair of routines to read/write data to/from carryFused
 //****************************************************************************************
 
-#if INPLACE == 1                                               // nVidia friendly padding
+#if INPLACE == 3                                               // Padded, not swizzled (see INPLACE=3 above)
+#define SIZEBLK (SMALL_HEIGHT + ROWPAD / 16)                   // Pads in bytes, 16-byte values
+#define SIZEW   (TILE64 * SIZEBLK + BLKPAD / 16)
+#define SIZEM   (WIDTH / TILE64 * SIZEW + MIDPAD / 16)
+#define SWIZ(a,m) (m)
+#elif INPLACE == 1                                             // nVidia friendly padding
 // Place middle rows after first 16 rows
 //#define SIZEBLK (SMALL_HEIGHT + 16)                            // Pad 256 bytes
 //#define SIZEW   (16 * SIZEA + 16)                              // Pad 256 bytes
@@ -729,6 +745,33 @@ void OVERLOAD writeCarryFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) 
   for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / TILE64 * SIZEW], u[i]); }
 }
 
+// The same for all WMUL lines of carryFused workgroup gr: me is the local id, line and lowMe as carryFused computed them from gr and me.
+// With INPLACE=3 the lines of a workgroup are SIZEBLK apart (when they are in one block of TILE64 lines), so the address is the workgroup's
+// part plus the local id's part, see INPLACE=3 above.  Line gr * WMUL wraps to 0 for the last workgroup.
+void OVERLOAD readCarryFusedLines(CP(T2_GF61) in, T2_GF61 *u, u32 gr, u32 me, u32 line, u32 lowMe) {
+  if (INPLACE == 3 && TILE64 % WMUL == 0) {
+    u32 line0 = gr * WMUL;
+    if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
+    in += line0 / SMALL_HEIGHT * SIZEM + line0 % TILE64 * SIZEBLK + line0 % SMALL_HEIGHT / TILE64 * TILE64;
+    in += me / G_W * SIZEBLK + me % G_W / TILE64 * SIZEW + me % G_W % TILE64;
+    for (u32 i = 0; i < NW; ++i) { u[i] = FFTLOAD(&in[i * G_W / TILE64 * SIZEW]); }
+  } else {
+    readCarryFusedLine(in, u, line, lowMe);
+  }
+}
+
+void OVERLOAD writeCarryFusedLines(T2_GF61 *u, P(T2_GF61) out, u32 gr, u32 me, u32 line, u32 lowMe) {
+  if (INPLACE == 3 && TILE64 % WMUL == 0) {
+    u32 line0 = gr * WMUL;
+    if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
+    out += line0 / SMALL_HEIGHT * SIZEM + line0 % TILE64 * SIZEBLK + line0 % SMALL_HEIGHT / TILE64 * TILE64;
+    out += me / G_W * SIZEBLK + me % G_W / TILE64 * SIZEW + me % G_W % TILE64;
+    for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / TILE64 * SIZEW], u[i]); }
+  } else {
+    writeCarryFusedLine(u, out, line, lowMe);
+  }
+}
+
 //****************************************************************************************
 // Pair of routines to read/write data to/from fftMiddleIn
 //****************************************************************************************
@@ -758,7 +801,15 @@ void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 //      line      ranges 0...MIDDLE*WIDTH-1 (multiples of SMALL_HEIGHT)
 
 // Read a line for tailSquare/Mul or fftHin
+// INPLACE=3: a tail line is one contiguous run
+#define TAIL_LINE_START(line) ((line) / WIDTH * SIZEM + (line) % WIDTH * SIZEBLK + (line) % WIDTH / TILE64 * (BLKPAD / 16))
+
 void OVERLOAD readTailFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
+  if (INPLACE == 3) {
+    in += TAIL_LINE_START(line) + me;
+    for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT / NH)]); }
+    return;
+  }
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
   in += (width / TILE64 * SIZEW) + (middle * SIZEM) + (width % TILE64 * SIZEBLK) + (me % TILE64);
@@ -766,6 +817,11 @@ void OVERLOAD readTailFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
 }
 
 void OVERLOAD writeTailFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) {
+  if (INPLACE == 3) {
+    out += TAIL_LINE_START(line) + me;
+    for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[i * (SMALL_HEIGHT / NH)], u[i]); }
+    return;
+  }
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
   out += (width / TILE64 * SIZEW) + (middle * SIZEM) + (width % TILE64 * SIZEBLK) + (me % TILE64);
@@ -809,7 +865,12 @@ void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 //****************************************************************************************
 
 // NOTE: I hven't studied best padding/swizzling/memory layout for 32-bit values.  I'm assuming the 64-bit values scheme will be pretty good.
-#if INPLACE == 1                                               // nVidia friendly padding
+#if INPLACE == 3                                               // Padded, not swizzled (see INPLACE=3 above)
+#define SIZEBLK32 (SMALL_HEIGHT + ROWPAD / 8)                  // Pads in bytes, 8-byte values
+#define SIZEW32   (TILE32 * SIZEBLK32 + BLKPAD / 8)
+#define SIZEM32   (WIDTH / TILE32 * SIZEW32 + MIDPAD / 8)
+#define SWIZ32(a,m) (m)
+#elif INPLACE == 1                                               // nVidia friendly padding
 // Place middle rows after first 16 rows
 //#define SIZEBLK32 (SMALL_HEIGHT + 16)                          // Pad 128 bytes
 //#define SIZEW32   (16 * SIZEA + 16)                            // Pad 128 bytes
@@ -851,6 +912,31 @@ void OVERLOAD writeCarryFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) 
   for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / TILE32 * SIZEW32], u[i]); }
 }
 
+// The same for all WMUL lines of carryFused workgroup gr, see readCarryFusedLines above
+void OVERLOAD readCarryFusedLines(CP(F2_GF31) in, F2_GF31 *u, u32 gr, u32 me, u32 line, u32 lowMe) {
+  if (INPLACE == 3 && TILE32 % WMUL == 0) {
+    u32 line0 = gr * WMUL;
+    if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
+    in += line0 / SMALL_HEIGHT * SIZEM32 + line0 % TILE32 * SIZEBLK32 + line0 % SMALL_HEIGHT / TILE32 * TILE32;
+    in += me / G_W * SIZEBLK32 + me % G_W / TILE32 * SIZEW32 + me % G_W % TILE32;
+    for (u32 i = 0; i < NW; ++i) { u[i] = FFTLOAD(&in[i * G_W / TILE32 * SIZEW32]); }
+  } else {
+    readCarryFusedLine(in, u, line, lowMe);
+  }
+}
+
+void OVERLOAD writeCarryFusedLines(F2_GF31 *u, P(F2_GF31) out, u32 gr, u32 me, u32 line, u32 lowMe) {
+  if (INPLACE == 3 && TILE32 % WMUL == 0) {
+    u32 line0 = gr * WMUL;
+    if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
+    out += line0 / SMALL_HEIGHT * SIZEM32 + line0 % TILE32 * SIZEBLK32 + line0 % SMALL_HEIGHT / TILE32 * TILE32;
+    out += me / G_W * SIZEBLK32 + me % G_W / TILE32 * SIZEW32 + me % G_W % TILE32;
+    for (i32 i = 0; i < NW; ++i) { FFTSTORE(&out[i * G_W / TILE32 * SIZEW32], u[i]); }
+  } else {
+    writeCarryFusedLine(u, out, line, lowMe);
+  }
+}
+
 //****************************************************************************************
 // Pair of routines to read/write data to/from fftMiddleIn
 //****************************************************************************************
@@ -880,7 +966,15 @@ void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 //      line      ranges 0...MIDDLE*WIDTH-1 (multiples of SMALL_HEIGHT)
 
 // Read a line for tailSquare/Mul or fftHin
+// INPLACE=3: a tail line is one contiguous run
+#define TAIL_LINE_START32(line) ((line) / WIDTH * SIZEM32 + (line) % WIDTH * SIZEBLK32 + (line) % WIDTH / TILE32 * (BLKPAD / 8))
+
 void OVERLOAD readTailFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
+  if (INPLACE == 3) {
+    in += TAIL_LINE_START32(line) + me;
+    for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT / NH)]); }
+    return;
+  }
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
   in += (width / TILE32 * SIZEW32) + (middle * SIZEM32) + (width % TILE32 * SIZEBLK32) + (me % TILE32);
@@ -888,6 +982,11 @@ void OVERLOAD readTailFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 }
 
 void OVERLOAD writeTailFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {
+  if (INPLACE == 3) {
+    out += TAIL_LINE_START32(line) + me;
+    for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[i * (SMALL_HEIGHT / NH)], u[i]); }
+    return;
+  }
   u32 width = line % WIDTH;            // Multiples of BIG_HEIGHT
   u32 middle = line / WIDTH;           // Multiples of SMALL_HEIGHT
   out += (width / TILE32 * SIZEW32) + (middle * SIZEM32) + (width % TILE32 * SIZEBLK32) + (me % TILE32);

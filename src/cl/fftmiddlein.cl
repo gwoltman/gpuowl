@@ -323,7 +323,7 @@ KERNEL_CAP((TILE64*TILE64)) fftMiddleIn(PA_MI(T2) out, PA_MI(T2) in, u32 base, T
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = (MIDDLE >= TILE64) ? 0 : g / 131072;  // Rocm optimizer goes bonkers if zerohack used when MIDDLE=TILE64
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE64;
   u32 starty = g % N * TILE64;
   u32 startx = g / N * TILE64;
@@ -386,7 +386,7 @@ KERNEL_CAP((TILE32*TILE32)) fftMiddleIn(PA_MI(T2) out, PA_MI(T2) in, u32 base, T
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE32;
   u32 starty = g % N * TILE32;
   u32 startx = g / N * TILE32;
@@ -449,7 +449,7 @@ KERNEL_CAP((TILE32*TILE32)) fftMiddleInGF31(PA_MI(T2) out, PA_MI(T2) in, u32 bas
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = 0;                                // Need to test if g / 131072 is of any benefit
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE32;
   u32 starty = g % N * TILE32;
   u32 startx = g / N * TILE32;
@@ -512,7 +512,7 @@ KERNEL_CAP((TILE64*TILE64)) fftMiddleInGF61(PA_MI(T2) out, PA_MI(T2) in, u32 bas
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
   u32 zerohack = g / 131072;                       // Keeps the write addresses from being CSE'd with the read addresses (at MIDDLE=16 that spills on RDNA3)
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE64;
   u32 starty = g % N * TILE64;
   u32 startx = g / N * TILE64;

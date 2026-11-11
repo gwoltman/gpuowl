@@ -333,7 +333,7 @@ KERNEL_CAP((TILE64*TILE64)) fftMiddleOut(PA_MO(T2) out, PA_MO(T2) in, u32 base, 
 #if L2_STRIPING
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE64;
   u32 startx = g % N * TILE64;
   u32 starty = g / N * TILE64;
@@ -399,7 +399,7 @@ KERNEL_CAP((TILE32*TILE32)) fftMiddleOut(PA_MO(T2) out, PA_MO(T2) in, u32 base, 
 #if L2_STRIPING
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE32;
   u32 startx = g % N * TILE32;
   u32 starty = g / N * TILE32;
@@ -462,7 +462,7 @@ KERNEL_CAP((TILE32*TILE32)) fftMiddleOutGF31(PA_MO(T2) out, PA_MO(T2) in, u32 ba
 #if L2_STRIPING
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE32;
   u32 startx = g % N * TILE32;
   u32 starty = g / N * TILE32;
@@ -522,7 +522,7 @@ KERNEL_CAP((TILE64*TILE64)) fftMiddleOutGF61(PA_MO(T2) out, PA_MO(T2) in, u32 ba
 #if L2_STRIPING
   u32 startx, starty;
   map_striping_group_id(base, g, &startx, &starty);
-#elif INPLACE == 1                                 // nVidia friendly padding
+#elif INPLACE == 1 || INPLACE == 3                // nVidia friendly padding, and INPLACE=3 (timed on a Pro VII)
   u32 N = SMALL_HEIGHT / TILE64;
   u32 startx = g % N * TILE64;
   u32 starty = g / N * TILE64;

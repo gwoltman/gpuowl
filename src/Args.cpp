@@ -387,7 +387,8 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                      1 = calculate using one complex multiply from cached memory and uncached memory
                      0 = read trig values from memory
   -use INPLACE=n   : Perform tranforms in-place.  Great if the reduced memory usage fits in the GPU's L2 cache.
-                     0 = not in-place, 1 = nVidia friendly access pattern, 2 = AMD friendly access pattern.
+                     0 = not in-place, 1 = nVidia friendly access pattern, 2 = AMD friendly access pattern,
+                     3 = padded layout (fewer address calculations, 256-byte runs; tuned on a Radeon Pro VII).
                      Default 1 on nVidia, 2 on wave32 AMD (RDNA), 0 otherwise.
   -use PAD=<val>   : insert pad bytes to possibly improve memory access patterns.  Val is number bytes to pad.
   -use MIDDLE_IN_LDS_TRANSPOSE=0|1  : Transpose values in local memory before writing to global memory

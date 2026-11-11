@@ -118,6 +118,9 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define INPLACE 0
 #endif
 #endif
+#if INPLACE < 0 || INPLACE > 3
+#error INPLACE must be 0, 1, 2 or 3
+#endif
 
 // FFT variant is in 3 parts.  One digit for WIDTH, one digit for MIDDLE, one digit for HEIGHT.
 // For WIDTH and HEIGHT there are 3 variants:
@@ -1239,8 +1242,11 @@ void dependentLaunchWait() {
 // With INPLACE the middle kernels transpose TILE x TILE tiles, and the in-place memory layout (see middle.cl) is built from them.
 // The layout is shared by element size, so one tile serves both data types of a size: TILE64 is FP64's and GF61's, TILE32
 // FP32's and GF31's.
+// TILE64 is 16 on AMD (256-byte runs): on a Radeon Pro VII at 512:16:512 8x8 tiles doubled both middle kernels (INPLACE=1 and 3).
+// 8 elsewhere: 8 was as fast or faster than 16 on TITAN V and RTX 5080.  TILE32 16 was faster on the 5080.  Gpu.cpp and tune.cpp
+// have the same defaults.
 #ifndef TILE64
-#define TILE64 8                // 8 was faster than 16 on TITAN V, RTX 5080 and Radeon VII, TILE32 16 was faster on the 5080
+#define TILE64 (AMDGPU ? 16 : 8)
 #endif
 #ifndef TILE32
 #define TILE32 16
@@ -1250,4 +1256,21 @@ void dependentLaunchWait() {
 #endif
 #if (TILE64 != 16 || TILE32 != 16) && L2_STRIPING
 #error L2_STRIPING needs 16x16 tiles (-use TILE64=16)
+#endif
+
+// INPLACE=3's pads in bytes (see middle.cl).  Gpu.cpp sizes the buffers and passes the values it used, these are only for completeness.
+#ifndef ROWPAD
+#define ROWPAD 256
+#endif
+#ifndef BLKPAD
+#define BLKPAD 256
+#endif
+#ifndef MIDPAD
+#define MIDPAD 2048
+#endif
+
+// carryFused processes WMUL lines per workgroup.  Increasing WMUL to 2 reduces carryShuttle activity.  This led to a 1% speedup on
+// Titan V.  Testing on other GPUs is needed.  (Here rather than in carryfused.cl as middle.cl's INPLACE=3 carryFused helpers use it.)
+#ifndef WMUL
+#define WMUL 2
 #endif
