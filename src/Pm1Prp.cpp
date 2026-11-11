@@ -109,8 +109,9 @@ u32 Pm1Prp::chooseL(u64 bitsLeft, u64 itersLeft, u64 maxBufs) const {
   return pm1::inlineStage1(double(bitsLeft), double(itersLeft), double(checkStep(gpu)), maxBufs).L;
 }
 
-// The buckets for this PRP:  as many as the memory budget allows (as for stage 2:  the free memory of the device less 1 GB, or 90% of
-// its RAM less what prpll holds when the free memory can't be queried; -maxAlloc caps it), and no more than the cheapest L needs.
+// The buckets for this PRP:  as many as the memory budget allows (as for stage 2, Stage2::deviceBudget:  the free memory of the device
+// less 1 GB, or 90% of its RAM less what prpll holds when the free memory can't be queried, more kept back on Windows; -maxAlloc caps
+// it), and no more than the cheapest L needs.
 Pm1Prp::Budget Pm1Prp::budget(const Gpu& gpu) {
   size_t const bufBytes = size_t(gpu.N) * gpu.fft.WordSize;
   double const GB = double(1u << 30);
@@ -118,10 +119,10 @@ Pm1Prp::Budget Pm1Prp::budget(const Gpu& gpu) {
   double const budget = dev.bytes;
   bool const haveFree = dev.haveFree;
   u64 const maxBufs = budget > 0 ? u64(budget / bufBytes) : 0;
-  char why[160];
-  snprintf(why, sizeof(why), "%.2f GB of GPU memory (%s) is too little for %u buffers of %.0f MB", std::max(0.0, budget) / GB,
-           haveFree ? "free less 1 GB" : "90% of the RAM less what is held", u32(pm1::inlineBuffers(pm1::INLINE_MIN_L)),
-           bufBytes / double(1u << 20));
+  char why[200];
+  snprintf(why, sizeof(why), "%.2f GB of GPU memory (%s %.2f GB%s) is too little for %u buffers of %.0f MB", std::max(0.0, budget) / GB,
+           haveFree ? "free less" : "the RAM less", dev.keep / GB, haveFree ? "" : " and what is held",
+           u32(pm1::inlineBuffers(pm1::INLINE_MIN_L)), bufBytes / double(1u << 20));
   return {.maxBufs = maxBufs, .bytes = std::max(0.0, budget), .tooLittle = why};
 }
 
@@ -515,6 +516,7 @@ Pm1Prp::Outcome Pm1Prp::finish(u64 k, u64 prp64) {
   }
 
   Words g;
+  log("P-1 stage 1 GCD on the GPU (minutes at 100M+ bits)\n");
   try {
     Gcd gcd{gpu.shared};
     g = gcd.gcdMinus1(x, u32(E));

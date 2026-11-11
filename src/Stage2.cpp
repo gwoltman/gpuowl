@@ -267,7 +267,40 @@ public:
       else { i64 w; memcpy(&w, bytes + j, 8); expected += u64(w); }
     }
     lowA.write(pattern);
-    for (u32 i = 0; i < nT; ++i) { table[i] << lowA; }
+    // Each copy timed:  Windows (WDDM) pages GPU memory out to system RAM when the device is overcommitted, and the values hold, so only
+    // the time shows it.  SPILL_RUN copies in a row that take SPILL_FACTOR times the median of the first SPILL_BASE (and at least
+    // SPILL_MIN_SECS) limit the table to the first of them.
+    constexpr u32 SPILL_BASE = 8, SPILL_RUN = 3;
+    constexpr double SPILL_FACTOR = 10, SPILL_MIN_SECS = 0.002;
+    vector<double> firstSecs;
+    double baseSecs = 0;
+    u32 nSlow = 0;
+    g.queue.finish();
+    Timer timer;
+    for (u32 i = 0; i < nT; ++i) {
+      table[i] << lowA;
+      g.queue.finish();
+      double secs = timer.reset();
+#ifdef PRPLL_PM1_FAULTS
+      // TEST ONLY:  PRPLL_STAGE2_FAULT=memslow,<i> makes the copies into buffer i and above slow
+      if (i >= faultEntry("memslow")) { secs = 1; }
+#endif
+      if (i < SPILL_BASE) {
+        firstSecs.push_back(secs);
+        if (i + 1 == SPILL_BASE) {
+          std::sort(firstSecs.begin(), firstSecs.end());
+          baseSecs = firstSecs[SPILL_BASE / 2];
+        }
+        continue;
+      }
+      nSlow = secs > std::max(SPILL_FACTOR * baseSecs, SPILL_MIN_SECS) ? nSlow + 1 : 0;
+      if (nSlow == SPILL_RUN) {
+        u32 const first = i + 1 - SPILL_RUN;
+        log("EE stage 2: the copies into table buffers %u..%u are slow (%.1f ms, the first buffers' %.2f ms):  the GPU memory is "
+            "overcommitted (paged out to system RAM)\n", first, i, secs * 1000, baseSecs * 1000);
+        return first;
+      }
+    }
 #ifdef PRPLL_PM1_FAULTS
     // TEST ONLY:  PRPLL_STAGE2_FAULT=memtest,<i> fails buffer i (once per process)
     static bool memFaultDone = false;
@@ -502,6 +535,7 @@ bool Stage2::hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x) {
 }
 
 vector<string> Stage2::accFactor(Gcd& gcd, const vector<u32>& acc, u64 E, u64 B1, u64 B2) {
+  log("P-1 stage 2 GCD on the GPU (minutes at 100M+ bits)\n");
   Words const g = gcd.gcd(acc, u32(E));
   log("P-1 stage 2 GCD: %.1f s\n", gcd.lastStats().seconds);
   if (pm1::bitLength(g) >= E) {
@@ -739,13 +773,13 @@ struct Budget {
 Budget memoryBudget(GpuCommon shared, size_t bufBytes, size_t wordBytes, const char* what) {
   const Args& args = *shared.args;
   double const GB = double(1u << 30);
-  auto const [budget, haveFree, freeBytes, ramGB, held] = Stage2::deviceBudget(shared);
+  auto const [budget, haveFree, freeBytes, ramGB, held, keep] = Stage2::deviceBudget(shared);
   char memNote[256];
   if (haveFree) {
-    snprintf(memNote, sizeof(memNote), "free %.2f GB - headroom %.2f GB", freeBytes / GB, HEADROOM_BYTES / GB);
+    snprintf(memNote, sizeof(memNote), "free %.2f GB - headroom %.2f GB", freeBytes / GB, keep / GB);
   } else {
-    snprintf(memNote, sizeof(memNote), "free unknown: 90%% of %.2f GB RAM - held %.2f GB - reserve %.2f GB", ramGB, held / GB,
-             RESERVE_BYTES / GB);
+    snprintf(memNote, sizeof(memNote), "free unknown: %.2f GB RAM - kept back %.2f GB - held %.2f GB - reserve %.2f GB", ramGB,
+             keep / GB, held / GB, RESERVE_BYTES / GB);
   }
   char capNote[128] = "no cap";
   if (args.maxAlloc) {
@@ -773,10 +807,15 @@ Stage2::DeviceBudget Stage2::deviceBudget(GpuCommon shared) {
 #endif
   double const freeBytes = haveFree ? double(getFreeMem(dev)) : -1;
   float const ramGB = getGpuRamGB(dev);
-  double budget = haveFree ? freeBytes - HEADROOM_BYTES
-                : ramGB > 0 ? ramGB * GB * 0.9 - held - RESERVE_BYTES : 0;
+#ifdef _WIN32
+  double const keep = std::max(double(WIN_KEEP_MIN_BYTES), WIN_KEEP_FRACTION * ramGB * GB);
+#else
+  double const keep = haveFree ? double(HEADROOM_BYTES) : 0.1 * ramGB * GB;
+#endif
+  double budget = haveFree ? freeBytes - keep
+                : ramGB > 0 ? ramGB * GB - keep - held - RESERVE_BYTES : 0;
   if (args.maxAlloc) { budget = std::min(budget, double(args.maxAlloc) - held - RESERVE_BYTES); }
-  return {.bytes = budget, .haveFree = haveFree, .freeBytes = freeBytes, .ramGB = ramGB, .held = held};
+  return {.bytes = budget, .haveFree = haveFree, .freeBytes = freeBytes, .ramGB = ramGB, .held = held, .keep = keep};
 }
 
 u64 Stage2::tableCapacity(GpuCommon shared, const Gpu& g, u64 E) {
@@ -905,7 +944,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
   // Buffers the GPU can't hold:  a smaller table (from the start, as another plan).  The margin keeps clear of the buffers just below.
   auto const shrink = [&](u32 bad) {
     u64 const n = bad > std::max(8u, bad / 50) ? bad - std::max(8u, bad / 50) : 0;
-    log("EE stage 2: table buffer %u of %u does not hold its values: planning again with at most %" PRIu64 " table buffers\n", bad, nT, n);
+    log("EE stage 2: table buffer %u of %u is not usable: planning again with at most %" PRIu64 " table buffers\n", bad, nT, n);
     throw TableTooLarge{n};
   };
   if (u32 const bad = s2.memoryTest(); bad < nT) { shrink(bad); }

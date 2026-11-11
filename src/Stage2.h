@@ -59,9 +59,15 @@ public:
   // memory free on the device less HEADROOM_BYTES; where the free memory can't be queried (OpenCL without
   // CL_DEVICE_GLOBAL_FREE_MEMORY_AMD, e.g. Nvidia's or PoCL), 90% of the device RAM less what prpll holds and RESERVE_BYTES.  -maxAlloc,
   // when given, caps it (less what prpll holds and RESERVE_BYTES).  bytes can be negative; the rest is for the log lines.
+  // On Windows the GPU memory kept back (in place of HEADROOM_BYTES, and of the 10% of the RAM) is the larger of WIN_KEEP_FRACTION of
+  // the device RAM and WIN_KEEP_MIN_BYTES:  Windows (WDDM) does not refuse GPU memory beyond what the device has, it pages allocations
+  // out to system RAM, and the desktop's GPU memory grows after the free memory is read.  A 24 GB card at free - 1 GB paged, stage 2
+  // made no progress and the whole PC crawled until it was reset.
   static constexpr size_t RESERVE_BYTES = size_t(256) << 20;
   static constexpr size_t HEADROOM_BYTES = size_t(1) << 30;
-  struct DeviceBudget { double bytes; bool haveFree; double freeBytes, ramGB, held; };
+  static constexpr double WIN_KEEP_FRACTION = 0.15;
+  static constexpr size_t WIN_KEEP_MIN_BYTES = size_t(5) << 29;      // 2.5 GB
+  struct DeviceBudget { double bytes; bool haveFree; double freeBytes, ramGB, held, keep; };
   static DeviceBudget deviceBudget(GpuCommon shared);
 
   // The number of table buffers a stage 2 of E would have room for (pm1::Stage2Plan's table entries), estimated before stage 1 (for the bounds of a Pfactor line):  run()'s

@@ -419,6 +419,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     // There is no CPU GCD:  if the GPU one can't run (e.g. its kernels don't build), mprime can still run it
     Words g;
     string gcdError;
+    log("P-1 stage 1 GCD on the GPU (minutes at 100M+ bits)\n");
     try {
       g = gcd.gcdMinus1(x, u32(exponent));
     } catch (const std::exception& e) {

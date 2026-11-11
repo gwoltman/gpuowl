@@ -357,7 +357,8 @@ P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2
                      cap is the memory free on the GPU when prpll starts less 1 GB (90%% of its RAM if that can't be queried).
                      P-1 stage 2 uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more
                      of the primes) and fit in the memory free on the GPU when it starts less 1 GB (where the free memory
-                     can't be queried, 90%% of the GPU's RAM), and with -maxAlloc in no more than the cap.  It runs with as
+                     can't be queried, 90%% of the GPU's RAM; on Windows less 15%% of the GPU's RAM, at least 2.5 GB), and
+                     with -maxAlloc in no more than the cap.  It runs with as
                      few as 6 of them beside the GPU's own, more slowly.  The bounds of a Pfactor line are chosen for that
                      memory.
 -save <N>          : specify the number of savefiles to keep (default %u).
