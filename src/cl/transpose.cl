@@ -55,7 +55,7 @@ void transposeWords(bool toSeq, local Word2 *lds, global const Word2 *restrict i
   for (i32 i = 0; i < 64; ++i) {
     Word2 w = in[IN_POS(toSeq, i)];
     lds[i * 64 + me] = w;
-    sum += (long) w.x + (long) w.y;
+    sum += (i64) w.x + (i64) w.y;
   }
   bar();
   #pragma unroll 1
@@ -86,7 +86,7 @@ void transposeWords(bool toSeq, local Word *lds, global const Word2 *restrict in
   for (i32 i = 0; i < 64; ++i) {
     Word w = in[IN_POS(toSeq, i)].x;
     lds[i * 64 + me] = w;
-    sum += (long) w;
+    sum += (i64) w;
   }
   bar();
   #pragma unroll 1
@@ -98,7 +98,7 @@ void transposeWords(bool toSeq, local Word *lds, global const Word2 *restrict in
   for (i32 i = 0; i < 64; ++i) {
     Word w = in[IN_POS(toSeq, i)].y;
     lds[i * 64 + me] = w;
-    sum += (long) w;
+    sum += (i64) w;
   }
   bar();
   #pragma unroll 1
