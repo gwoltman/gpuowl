@@ -391,7 +391,6 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   initializer_list<string> const hiddenKeys = {
                               "NTT_WEIGHT_TABLE",       // NTT types: carryFused's weight shifts from a table, 1-3 (see base.cl), set by -tune
                               "TILE64","TILE32",        // INPLACE: transpose tile size 8 or 16 for FP64 and GF61 / FP32 and GF31 (see base.cl), set by -tune
-                              "NORESTRICT",             // Developer, INPLACE: bit mask of the kernels whose out/in pointers are not restrict (see base.cl)
                               "TUNE_EXP",               // Developer: -tune times every FFT at this exponent (those that handle it)
                               "BIGLIT",                 // Deprecated
                               "ENABLE_SUBBARRIER",      // Experimental, nVidia: LDSbar syncs only its sub-workgroup, 1 = each, 2 = four in pairs (see base.cl)

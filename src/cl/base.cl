@@ -461,58 +461,29 @@ ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2)
 #define P(x) global x * restrict
 #define CP(x) const P(x)
 
-// With INPLACE the out and in pointers of these kernels are the same buffer, so marking both restrict promises the compiler something false.
-// A compiler that acts on it computes wrong multiplications (seen on AMD Windows, PAL/LC, RX 7700 XT).  PA_xx/CPA_xx are P/CP without
-// restrict for the kernels whose bit is set in NORESTRICT:
-//    1  tailMul
-//    2  fftMiddleIn
-//    4  fftMiddleOut
-//    8  tailSquare
-//   16  carryFused
-//   32  fftHin and fftW
-// The default is the kernels the multiplication runs (1+2+4) when INPLACE; -use NORESTRICT=63 clears all, NORESTRICT=0 none.
-#if !defined(NORESTRICT)
+// With INPLACE the host passes the same buffer as out and in of tailMul, fftMiddleIn, fftMiddleOut, tailSquare and carryFused.
+// restrict on both is a lie, and a compiler that believes it (AMD Windows PAL/LC, RX 7700 XT) computes wrong multiplications.
+// fftHin and fftW are launched with distinct buffers even then, so they keep restrict.  INPLACE=0 is unchanged: every pointer stays restrict.
+// Reading and writing through one pointer would let the compiler share the address math, but that saving is tiny and can bloat registers.
 #if INPLACE
-#define NORESTRICT 7
-#else
-#define NORESTRICT 0
-#endif
-#endif
-#if INPLACE && (NORESTRICT & 1)
 #define PA_TM(x) global x *
-#else
-#define PA_TM(x) P(x)
-#endif
-#define CPA_TM(x) const PA_TM(x)
-#if INPLACE && (NORESTRICT & 2)
 #define PA_MI(x) global x *
-#else
-#define PA_MI(x) P(x)
-#endif
-#define CPA_MI(x) const PA_MI(x)
-#if INPLACE && (NORESTRICT & 4)
 #define PA_MO(x) global x *
-#else
-#define PA_MO(x) P(x)
-#endif
-#define CPA_MO(x) const PA_MO(x)
-#if INPLACE && (NORESTRICT & 8)
 #define PA_TS(x) global x *
-#else
-#define PA_TS(x) P(x)
-#endif
-#define CPA_TS(x) const PA_TS(x)
-#if INPLACE && (NORESTRICT & 16)
 #define PA_CF(x) global x *
 #else
+#define PA_TM(x) P(x)
+#define PA_MI(x) P(x)
+#define PA_MO(x) P(x)
+#define PA_TS(x) P(x)
 #define PA_CF(x) P(x)
 #endif
+#define CPA_TM(x) const PA_TM(x)
+#define CPA_MI(x) const PA_MI(x)
+#define CPA_MO(x) const PA_MO(x)
+#define CPA_TS(x) const PA_TS(x)
 #define CPA_CF(x) const PA_CF(x)
-#if INPLACE && (NORESTRICT & 32)
-#define PA_HW(x) global x *
-#else
 #define PA_HW(x) P(x)
-#endif
 #define CPA_HW(x) const PA_HW(x)
 
 #define KERNEL(x) kernel __attribute__((reqd_work_group_size(x, 1, 1))) void
