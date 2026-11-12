@@ -1793,7 +1793,7 @@ void Tune::pm1Tune(const Pm1Options& opt) {
   // The stage 2 settings of each new entry, one key at a time (the best value of a key is kept for the next):  INPLACE, TAIL_KERNELS
   // (11 and 13 are not tried:  their extra queues cost dearly on ROCm), for the types with more than one part MULTI_Q, and with INPLACE
   // and a power-of-two MIDDLE L2_STRIPING 1 and 2.  A value is
-  // written to the line only if it beats the one the entry ran with by 0.3%, in two more timings of each.  Keys given on the command line are not tuned (they would
+  // written to the line only if it beats the one the entry ran with in two more timings of each.  Keys given on the command line are not tuned (they would
   // win over the line anyway).  Not tuned on purpose:  TAIL_TRIGS and TABMUL_CHAIN (they trade accuracy, and stage 2 has no Gerbicz
   // check), the register limits.
   bool changed = false;
@@ -1829,7 +1829,7 @@ void Tune::pm1Tune(const Pm1Options& opt) {
         if (m.us < bestCost) { bestCost = m.us; bestValue = v; }
       }
       double nowCost = now.us;
-      if (bestValue != nowValue && bestCost < 0.997 * nowCost) {
+      if (bestValue != nowValue && bestCost < nowCost) {
         // Confirm the win:  single timings in a row of different settings differ by several % on the XTX (110M:  the same setting gave
         // 490 and 526 us a minute apart).  Two more timings of each, interleaved (best, now, now, best), and the means decide.
         vector<KeyVal> const bestUses = withUse(e.uses, key, to_string(bestValue));
@@ -1841,7 +1841,7 @@ void Tune::pm1Tune(const Pm1Options& opt) {
         nowCost = (n1 + n2) / 2;
         log("  %s=%u %.1f %.1f against %u %.1f %.1f\n", key.c_str(), bestValue, b1, b2, nowValue, n1, n2);
       }
-      if (bestValue != nowValue && bestCost < 0.997 * nowCost) {
+      if (bestValue != nowValue && bestCost < nowCost) {
         e.uses = withUse(e.uses, key, to_string(bestValue));
         e.cost = bestCost;
         changed = true;
@@ -2169,14 +2169,14 @@ TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) 
     return uses;
   };
 
-  // A new value of a setting that changes the kernels has to be faster by 0.3%: it costs the line's register limits
+  // A new value of a setting that changes the kernels must win again with register limits (kernelsChanged below)
   bool kernelsChanged = false;
   auto search = [&](const string& key, int builtIn, const vector<int>& values) {
     if (!retune.contains(key)) { return; }
     int const without = args->value(key, builtIn);
     int const current = lineValue(key).value_or(without);
     vector<KeyVal> const uses = usesBut(key);
-    double currentCost = numeric_limits<double>::infinity(), bestCost = currentCost;
+    double bestCost = numeric_limits<double>::infinity();
     int best = current;
     string times;
     for (int v : values) {
@@ -2184,10 +2184,8 @@ TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) 
       char buf[48];
       snprintf(buf, sizeof(buf), "%s%d: %.1f", times.empty() ? "" : ", ", v, cost);
       times += buf;
-      if (v == current) { currentCost = cost; }
       if (cost < bestCost) { bestCost = cost; best = v; }
     }
-    if (best != current && std::isfinite(currentCost) && bestCost > 0.997 * currentCost) { best = current; }
     log("%-18s %s %s us/iter (default registers): %s=%d%s\n", spec.c_str(), key.c_str(), times.c_str(), key.c_str(), best,
         best != current ? ", changed" : "");
     if (best != current) { kernelsChanged = true; }
