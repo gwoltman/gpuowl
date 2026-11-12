@@ -2222,6 +2222,10 @@ void OVERLOAD chainMul(GF61 *u, GF61 w) {
   if (RADIX == 8) chainMul8(u, w);
 }
 
+// cmulScaled by the scaled table parts (genSmallTrigGF61) with TABMUL_CHAIN61=2.  Not in fft_WIDTH at WIDTH 2048, which uses cmul there:
+// carryFused goes from 96 to 97 VGPRs and loses occupancy (14 -> 12 waves on gfx1100).  At WIDTH 4096 occupancy holds and it pays.
+#define TABMUL_SCALED61 (TABMUL_CHAIN61 == 2 && !(DOING_WIDTH && WIDTH == 2048))
+
 void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
   if (HOIST == 2) OPAQUE(me);       // Twiddle loads not issued before the butterflies preceding this call (see HOIST_W/H)
   u32 p = me & ~(f - 1);
@@ -2235,16 +2239,15 @@ void OVERLOAD tabMul(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
 // Use memory accesses (probably cached) to reduce complex muls.  Beneficial when memory bandwidth is not the bottleneck.
 
-  if (TABMUL_CHAIN61 == 2) {
-    // The second half of the table holds each twiddle's Karatsuba terms (genSmallTrigGF61):  four fewer 64-bit adds/subs per cmul
+  if (TABMUL_SCALED61) {
+    // The table's second and third parts hold each twiddle's scaled Karatsuba terms and scaled b.x (genSmallTrigGF61), see cmulScaled
     for (u32 i = 1; i < RADIX; ++i) {
-      GF61 w = TFLOAD(&trig[(i-1)*WG + p]);
-      u[i] = cmulPre(u[i], w.x, TFLOAD(&trig[WG*RADIX + (i-1)*WG + p]), 2);
+      u[i] = cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (i-1)*WG + p]), TFLOAD(&trig[WG*RADIX + (i-1)*WG + p]));
     }
     return;
   }
 
-  if (TABMUL_CHAIN61 == 0) {
+  if (TABMUL_CHAIN61 != 1) {          // TABMUL_CHAIN61=0, and =2 where TABMUL_SCALED61 is off
     for (u32 i = 1; i < RADIX; ++i) {
       u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*WG + p]));
     }
@@ -2262,7 +2265,8 @@ void OVERLOAD tabMul16(TrigGF61 trig, GF61 *u, u32 me) {
   u32 h = me / (WG / 2);
   for (u32 i = 0; i < 8; ++i) {
     if (i == 0 && h == 0) continue;
-    u[i] = cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
+    u[i] = TABMUL_SCALED61 ? cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (2 * i + h - 1) * 16 + q]), TFLOAD(&trig[WG*RADIX + (2 * i + h - 1) * 16 + q]))
+                           : cmul(u[i], TFLOAD(&trig[(2 * i + h - 1) * 16 + q]));
   }
 }
 
@@ -2294,7 +2298,8 @@ void OVERLOAD tabMul8_4a(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
 
     if (TABMUL_CHAIN61 != 1) {
       for (u32 i = 2; i < RADIX; ++i) {
-        u[i] = cmul(u[i], TFLOAD(&trig[(i-2)*WG + p]));
+        u[i] = TABMUL_SCALED61 ? cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (i-2)*WG + p]), TFLOAD(&trig[WG*RADIX + (i-2)*WG + p]))
+                               : cmul(u[i], TFLOAD(&trig[(i-2)*WG + p]));
       }
     }
   }
@@ -2359,7 +2364,8 @@ void OVERLOAD tabMul8_4b(TrigGF61 trig, GF61 *u, u32 f, u32 me) {
     trig += 6 * WG;                  // Skip over the trig values used in tabmul8_4a
 
     for (u32 i = 1; i < RADIX; ++i) {
-      u[i] = cmul(u[i], TFLOAD(&trig[(i-1)*(WG/4) + p]));
+      u[i] = TABMUL_SCALED61 ? cmulScaled(u[i], TFLOAD(&trig[2*WG*RADIX + (i-1)*(WG/4) + p]), TFLOAD(&trig[WG*RADIX + (i-1)*(WG/4) + p]))
+                             : cmul(u[i], TFLOAD(&trig[(i-1)*(WG/4) + p]));
     }
   }
 }
