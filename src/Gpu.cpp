@@ -4234,13 +4234,16 @@ CERTResult Gpu::isCERT(const Task& task) {
 #endif
 
         if (doLog && !blockEnd) {
+          u64 const res = dataResidue();      // waits for the squarings, so the timer below counts the GPU's time
           float const secsPerIt = iterationTimer.reset(k);
           queue.setSquareTime((int) (secsPerIt * 1'000'000));
-          log("%s\n", makeLogStr("", k, dataResidue(), secsPerIt, kEnd).c_str());
+          log("%s\n", makeLogStr("", k, res, secsPerIt, kEnd).c_str());
         }
       }
     }
 
+    // Wait for the squarings before reading the timer:  a short last block fits in the queue, and would time only its enqueueing
+    queue.finish();
     float const secsPerIt = iterationTimer.reset(k);
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
     bool const ok = !useCheck || certVerify(u0, sum1, L, k);
@@ -4415,6 +4418,7 @@ Words Gpu::expExp2(const Words& A, u32 n) {
       }
     }
 
+    queue.finish();                     // as in isCERT:  time the squarings, not their enqueueing
     float const secsPerIt = iterationTimer.reset(k);
     bool const ok = certVerify(u0, sum1, L, k);
     u64 const res = dataResidue();
