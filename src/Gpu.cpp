@@ -406,7 +406,16 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "CS_FENCE",               // Device-scope fences in carryFused's hand-offs (see carryfused.cl).  Required for Intel Arc GPUs.
                               "CS_ATOMIC",              // Experimental: carryFused's carry shuttle accessed with atomics (see carryfused.cl)
                               "PRPPM1",                 // Developer: PRPPM1=0, no P-1 inside PRP tests (Task.cpp, prpPm1Bounds)
-                              "PRPPM1_B1","PRPPM1_B2"   // Developer, tests: these P-1 bounds inside every PRP test, whatever its line says
+                              "PRPPM1_B1","PRPPM1_B2",  // Developer, tests: these P-1 bounds inside every PRP test, whatever its line says
+                              "MM_CHAIN","MM2_CHAIN",
+                              "SHUFL_BYTES_W","SHUFL_BYTES_H",
+                              "LDSMUL_W","LDSMUL_H",
+                              "SWIZ_RECOMPUTE",
+                              "FUSE_WEIGHT_BUTTERFLY",
+                              "OLD_FENCE",
+                              "ENABLE_RESTRICT",
+                              "CARRY_SUB_X",            // FFT323161 only
+                              "ROUNDOFF_LIMIT"          // Only acts under DEBUG
                             };
   for (const auto& [k, v] : config) {
     bool const isCudaOnly = isInList(k, cudaOnlyKeys);
