@@ -2800,15 +2800,19 @@ static string makeLogStr(const string& status, u64 k, u64 res, float secsPerIt, 
 void Gpu::doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors) {
   auto [roeSq, roeMul] = readROE();
   double const z = roeSq.z();
-  zAvg.update(z, roeSq.N);
-  if (roeSq.max > 0.005)
+  // With every roundoff error near zero (an NTT has none) the Gumbel fit divides by about zero:  Z is inf or noise, so leave it out
+  bool const hasRoe = roeSq.max > 0.005;
+  if (hasRoe) {
+    zAvg.update(z, roeSq.N);
     log("%sZ=%.0f (avg %.1f), ROEmax=%.3f, ROEavg=%.3f. %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
         z, zAvg.avg(), roeSq.max, roeSq.mean, (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
-  else
-    log("%sZ=%.0f (avg %.1f) %s\n", makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters).c_str(),
-        z, zAvg.avg(), (nErrors ? " "s + to_string(nErrors) + " errors"s : ""s).c_str());
+  } else {
+    string line = makeLogStr(checkOK ? "OK" : "EE", k, res, secsPerIt, nIters);
+    line.resize(line.size() - 2);       // its "; " led into Z
+    log("%s%s\n", line.c_str(), (nErrors ? ", "s + to_string(nErrors) + " errors"s : ""s).c_str());
+  }
 
-  if (roeSq.N > 2 && (z < 6 || (fft.shape.fft_type == FFT64 && z < 20))) {
+  if (hasRoe && roeSq.N > 2 && (z < 6 || (fft.shape.fft_type == FFT64 && z < 20))) {
     log("Danger ROE! Z=%.1f is too small, increase precision or FFT size!\n", z);
   }
 
