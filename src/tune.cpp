@@ -1950,6 +1950,18 @@ void Tune::regTune(int quick, const vector<FFTShape>& onlyShapes, const set<stri
     return;
   }
   RegLimits const sm = canRegs ? regLimits(shared.context->deviceId()) : RegLimits{};
+  // Leave out what this build and GPU never tune:  L2PERSIST is CUDA only and needs persisting L2, and WMUL (its odd-blocks WMUL=1)
+  // is tuned only in the CUDA build
+#ifdef CUDA_BACKEND
+  if (sm.maxPersistingL2 <= 0) { retune.erase("L2PERSIST"); }
+#else
+  retune.erase("L2PERSIST");
+  retune.erase("WMUL");
+#endif
+  if (retune.empty()) {
+    log("-tune regs: none of the selected settings are tuned on this GPU\n");
+    return;
+  }
   log("\n");
   if (!canRegs) {
     log("Tuning MULTI_Q of %stune.txt entries.\n", onlySpecs ? "new " : "");
