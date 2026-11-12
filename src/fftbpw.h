@@ -276,12 +276,12 @@
 { "52:4K:16:512", {7.83f, 7.83f, 7.83f, 7.83f, 7.83f, 7.83f}},
 {  "52:4K:16:1K", {7.56f, 7.56f, 7.56f, 7.56f, 7.56f, 7.56f}},
 {  "52:4K:16:2K", {7.22f, 7.22f, 7.22f, 7.22f, 7.22f, 7.22f}},  // One run (ROEmax 0.35 at 7.23); an earlier run at 7.02 had a Gerbicz error at ROEmax 0.26
-// FFT32 - With zero-mean words (ZEROMEAN, the default for type 53, see carryutil.cl).  Computed by targeting maxROE of ~0.35 over
+// FFT32 - With zero-mean words (ZEROMEAN, always on for type 53, see carryutil.cl).  Computed by targeting maxROE of ~0.35 over
 // 2000 iterations (-roe: every iteration sampled) on a Radeon RX 7900 XTX and an RTX 5090: each row is the lower of the two (they agree
 // within ~0.05 bpw; a shape fitted on the XTX only takes the 5090's value for its size when that is lower).  Checked on the 5090 at 50000
 // iterations on three exponents at the table value (ROEmax <= 0.43) and one 1.25 bpw below it, all clean (256M: two exponents, 20000
 // iterations; the low end from 64M 10000-20000 iterations); XTX spot checks give the same residues.  Variants 000..212 give the same ROE.  With the old [-2^(b-1), 2^(b-1))
-// words (-use ZEROMEAN=0) their -1/2 mean makes an ROE floor proportional to the size (0.12 at 256K words, 0.5 from 1M) and these
+// words (before zero-mean words) their -1/2 mean makes an ROE floor proportional to the size (0.12 at 256K words, 0.5 from 1M) and these
 // limits do not hold: from 768K words no bpw works.
 { "53:256:1:256", {5.54f, 5.54f, 5.54f, 5.54f, 5.54f, 5.54f}},
 { "53:256:2:256", {5.21f, 5.21f, 5.21f, 5.21f, 5.21f, 5.21f}},
