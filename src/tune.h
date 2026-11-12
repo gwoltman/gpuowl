@@ -39,6 +39,10 @@ private:
   std::map<std::string, TailAltRecord> tailAltResults;
   // The settings of a tune.txt line that retuneEntry (re)tunes, see Args::retuneKeys: -tune regs=<val>, short for the FFTs -tune adds
   std::set<std::string> retune;
+  // The MULTI_Q and L2PERSIST that won for an FFT whose data is well under (at most half) or well over (at least twice) the L2 cache, for
+  // the rest of the tune, by whether the FFT has more than one number type and whether it is over.  ratio:  the FFT's data / L2.
+  struct L2Choice { int multiQ, l2persist; double ratio; };
+  std::map<std::pair<bool, bool>, L2Choice> l2Choices;
   // -tune inplace (the default on nVidia): only in-place FFTs, so retuneEntry tries INPLACE 1 and 2, not 0
   bool inplaceOnly = false;
 
@@ -61,7 +65,8 @@ private:
                          const std::map<std::string, int>* fwdOcc = nullptr, int fwdDir = 0);
 
   // Retune the settings of one tune.txt entry that retune selects: first those that change the kernels (INPLACE, NTT_WEIGHT_TABLE,
-  // TILE64, TILE32), then the register limits with WMUL and TAIL_KERNELS (regTuneEntry), then (CUDA) L2PERSIST.  Returns the new entry.
+  // TILE64, TILE32), then MULTI_Q with (CUDA) L2PERSIST, then the register limits with WMUL and TAIL_KERNELS (regTuneEntry).  Returns
+  // the new entry.
   TuneEntry retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm);
 
 public:

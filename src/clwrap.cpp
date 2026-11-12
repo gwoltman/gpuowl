@@ -226,6 +226,16 @@ u64 getLocalMemSize(cl_device_id id) {
   return size;
 }
 
+u64 getL2CacheSize(cl_device_id id) {
+  try {
+    u64 size = 0;
+    GET_INFO(id, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE, size);
+    return size >= (1 << 20) ? size : 0;      // ROCm reports a Radeon VII's 16KB L1 (its L2 is 4MB)
+  } catch (const gpu_error& err) {
+    return 0;
+  }
+}
+
 u32 getAmdSimdPerComputeUnit(cl_device_id id) {
   try {
     u32 n = 0;

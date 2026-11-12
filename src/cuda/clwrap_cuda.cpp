@@ -1227,6 +1227,14 @@ int clGetDeviceInfo(cl_device_id dev, cl_device_info info, size_t size, void* va
     if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
     break;
   }
+  case CL_DEVICE_GLOBAL_MEM_CACHE_SIZE: {
+    int l2 = 0;
+    cuDeviceGetAttribute(&l2, CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE, dev->dev);
+    u64 val = l2;
+    if (sizeRet) *sizeRet = sizeof(val);
+    if (value && size >= sizeof(val)) memcpy(value, &val, sizeof(val));
+    break;
+  }
   case CL_DEVICE_GLOBAL_MEM_SIZE: {
     size_t mem = 0;
     cuDeviceTotalMem(&mem, dev->dev);

@@ -1263,28 +1263,6 @@ void Tune::tune() {
       args->flags["WMUL"] = to_string(best_wmul);
     }
 
-    // Find best MULTI_Q setting (MULTI_Q can only be advantageous when using multiple data types such as FFT3161, FFT6431, etc).
-    // Since FFT6431 is rarely used and FFT3161 is very common, we case off the time_NTTs boolean.
-    if (time_NTTs) {
-      FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
-      if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
-      u64 exponent = primes.prevPrime(fft.maxExp());
-      u32 best_multi_q = 0;
-      u32 current_multi_q = args->value("MULTI_Q", 0);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 multi_q : {0, 1}) {
-        args->flags["MULTI_Q"] = to_string(multi_q);
-        double cost = timeOption(exponent, fft, quick);
-        log("Time for %12s using MULTI_Q=%u is %6.1f\n", fft.spec().c_str(), multi_q, cost);
-        if (multi_q == current_multi_q) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_multi_q = multi_q; }
-      }
-      log("Best MULTI_Q is %u.  Default MULTI_Q is 0.\n", best_multi_q);
-      configsUpdate(current_cost, best_cost, 0.000, "MULTI_Q", best_multi_q, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["MULTI_Q"] = to_string(best_multi_q);
-    }
-
     // Find best CUDA compiler options
 #if CUDA_BACKEND
     // Find best L1CUDA setting.
@@ -1354,9 +1332,9 @@ void Tune::tune() {
 
 #endif
 
-    // Find best TAIL_KERNELS setting.  After MULTI_Q and GRAPHS: 11 and 13 add queues (one per tail queue, see Gpu::replay_one), whose cost
-    // depends on the queues already in use and on whether graphs hide the extra kernel launches.  On a Radeon VII (ROCm) every extra
-    // queue costs dearly; on nVidia 13 matched 2 for a PFA NTT.
+    // Find best TAIL_KERNELS setting.  After GRAPHS: 11 and 13 add queues (one per tail queue, see Gpu::replay_one), whose cost depends on
+    // the queues already in use (MULTI_Q, here config.txt's:  retuneEntry tunes it per tune.txt line) and on whether graphs hide the extra
+    // kernel launches.  On a Radeon VII (ROCm) every extra queue costs dearly; on nVidia 13 matched 2 for a PFA NTT.
     if (true) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
@@ -1956,25 +1934,32 @@ bool Tune::canTuneRegs() {
 }
 
 void Tune::regTune(int quick, const vector<FFTShape>& onlyShapes, const set<string>* onlySpecs, u64 minExp, u64 maxExp) {
-  if (!canTuneRegs()) {
-    // Only -tune regs says so: after -tune, on such a device, there is nothing to do
+  // Where the register limits can't be tuned, only MULTI_Q is
+  bool const canRegs = canTuneRegs();
+  if (!canRegs) {
+    // Only -tune regs says so
     if (!onlySpecs) { log("-tune regs: register limits are only tuned in the CUDA build and on AMD GPUs whose runtime reports VGPRs\n"); }
-    return;
+    if (!retune.contains("MULTI_Q")) { return; }
+    retune = {"MULTI_Q"};
   }
   vector<TuneEntry> const entries = TuneEntry::readTuneFile(*shared.args);
   if (entries.empty()) {
     log("-tune regs: tune.txt has no entries to tune\n");
     return;
   }
-  RegLimits const sm = regLimits(shared.context->deviceId());
+  RegLimits const sm = canRegs ? regLimits(shared.context->deviceId()) : RegLimits{};
   log("\n");
+  if (!canRegs) {
+    log("Tuning MULTI_Q of %stune.txt entries.\n", onlySpecs ? "new " : "");
+  } else {
 #ifdef CUDA_BACKEND
-  log("Tuning register usage of %stune.txt entries.  Per SM: %d registers, %d threads, %d blocks, %d bytes shared memory.\n",
-      onlySpecs ? "new " : "", sm.regsPerSM, sm.maxThreadsPerSM, sm.maxBlocksPerSM, sm.sharedPerSM);
+    log("Tuning register usage of %stune.txt entries.  Per SM: %d registers, %d threads, %d blocks, %d bytes shared memory.\n",
+        onlySpecs ? "new " : "", sm.regsPerSM, sm.maxThreadsPerSM, sm.maxBlocksPerSM, sm.sharedPerSM);
 #else
-  log("Tuning register usage of %stune.txt entries.  Per SIMD: %d VGPRs (allocated by %d), %d waves; %d bytes LDS per CU.\n",
-      onlySpecs ? "new " : "", sm.vgprs, sm.granule, sm.maxWaves, sm.ldsPerCU);
+    log("Tuning register usage of %stune.txt entries.  Per SIMD: %d VGPRs (allocated by %d), %d waves; %d bytes LDS per CU.\n",
+        onlySpecs ? "new " : "", sm.vgprs, sm.granule, sm.maxWaves, sm.ldsPerCU);
 #endif
+  }
   string keys;
   for (const string& k : retune) { keys += (keys.empty() ? "" : ", ") + k; }
   log("Retuning %s\n", keys.c_str());
@@ -2157,9 +2142,9 @@ string regValueName(int v, bool amd) {
 
 // The settings selected by retune, in the order they depend on each other.  First those that change the kernels whose register limits
 // are tuned: INPLACE (the tiles apply to its in-place transforms), NTT_WEIGHT_TABLE, TILE64 and TILE32 (the in-place middle kernels'
-// threads per block), each timed with the compiler's default registers.  Then the register limits with WMUL and TAIL_KERNELS
-// (regTuneEntry), also when one of the first changed: the line's limits were tuned for the old kernels.  Then, CUDA, L2PERSIST with the
-// final registers.  A setting not selected keeps its value on the line.  A setting is written to the line only where it differs from
+// threads per block), each timed with the compiler's default registers.  Then MULTI_Q with (CUDA) L2PERSIST, also with the default
+// registers if they are tuned next.  Then the register limits with WMUL and TAIL_KERNELS (regTuneEntry), also when one of the first
+// changed: the line's limits were tuned for the old kernels.  A setting not selected keeps its value on the line.  A setting is written to the line only where it differs from
 // what the FFT gets without it (config.txt or the default), so that a later change of the default reaches the line.
 TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) {
   Args* args = shared.args;
@@ -2220,6 +2205,89 @@ TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) 
   if (inPlace && (e.fft.FFT_FP32 || e.fft.NTT_GF31)) { search("TILE32", 16, {8, 16}); }
 
   bool const regs = retune.contains("REGS") || retune.contains("WMUL") || retune.contains("TAIL_KERNELS");
+
+  // MULTI_Q (FFTs with more than one number type) and, in the CUDA build on a GPU with persisting L2, L2PERSIST (0 or 1, the main data
+  // buffer).  Both are about what stays in the L2 cache, and they interact (RTX 5080, type 1 512:7:512: MULTI_Q=1 was only faster with
+  // L2PERSIST=1), so all their combinations are timed, before the register limits, which depend on MULTI_Q (it changes the kernel that
+  // runs before each one and what that leaves in the L2).  The winner of an FFT whose data (FFT size times 4, 8 or 12 bytes) is well
+  // under (at most half) or well over (at least twice) the L2 is remembered for the rest of the tune and used untimed for the FFTs on
+  // the same side, except that an FFT at twice the remembered ratio over the L2 or more is timed again (a TITAN V, far over its L2,
+  // wants MULTI_Q=1; a 5080 at 1.5 times its L2 wants 0).
+  {
+    u32 types = 0, bytesPerWord = 0;
+    if (e.fft.FFT_FP64) { ++types; bytesPerWord += 8; }
+    if (e.fft.FFT_FP32) { ++types; bytesPerWord += 4; }
+    if (e.fft.NTT_GF61) { ++types; bytesPerWord += 8; }
+    if (e.fft.NTT_GF31) { ++types; bytesPerWord += 4; }
+    bool const multiPart = types > 1;
+    vector<int> const mqValues = multiPart && retune.contains("MULTI_Q") ? vector{0, 1} : vector<int>{};
+    vector<int> l2Values;
+#ifdef CUDA_BACKEND
+    if (retune.contains("L2PERSIST") && sm.maxPersistingL2 > 0) { l2Values = {0, 1}; }
+#endif
+    if (!mqValues.empty() || !l2Values.empty()) {
+      int const mqWithout = args->value("MULTI_Q", 0), l2Without = args->value("L2PERSIST", 0);
+      int const mqCurrent = lineValue("MULTI_Q").value_or(mqWithout), l2Current = lineValue("L2PERSIST").value_or(l2Without);
+      u64 const l2Size = getL2CacheSize(shared.context->deviceId());
+      double const ratio = l2Size ? double(e.fft.size()) * bytesPerWord / l2Size : 0;
+      bool const under = l2Size && ratio <= 0.5, over = l2Size && ratio >= 2;
+      auto const known = l2Choices.find({multiPart, over});
+      // The line's other settings
+      vector<KeyVal> uses;
+      for (const KeyVal& kv : out.uses) { if (kv.first != "MULTI_Q" && kv.first != "L2PERSIST") { uses.push_back(kv); } }
+      int mq = mqCurrent, l2 = l2Current;
+      // The keys timed, for the log
+      bool const bothKeys = !mqValues.empty() && !l2Values.empty();
+      auto const names = [&] { return bothKeys ? string("MULTI_Q/L2PERSIST") : mqValues.empty() ? string("L2PERSIST") : string("MULTI_Q"); };
+      auto const chosen = [&] {
+        return (mqValues.empty() ? string() : "MULTI_Q=" + to_string(mq)) + (bothKeys ? " " : "")
+               + (l2Values.empty() ? string() : "L2PERSIST=" + to_string(l2));
+      };
+      if ((under || over) && known != l2Choices.end() && (under || ratio < 2 * known->second.ratio)) {
+        if (!mqValues.empty()) { mq = known->second.multiQ; }
+        if (!l2Values.empty()) { l2 = known->second.l2persist; }
+        log("%-18s data %.2f times the L2: %s, as the FFT %s the L2 at %.2f\n", spec.c_str(), ratio, chosen().c_str(),
+            under ? "under" : "over", known->second.ratio);
+        // The line's cost was for its old settings:  without a register tune to follow, time the new ones
+        if (!regs) {
+          double const cost = timeConfig(exponent, shared, e.fft, {{"MULTI_Q", to_string(mq)}, {"L2PERSIST", to_string(l2)}}, quick, nullptr,
+                                         uses);
+          if (std::isfinite(cost)) { out.cost = cost; }
+        }
+      } else {
+        vector<int> const mqs = mqValues.empty() ? vector{mqCurrent} : mqValues, l2s = l2Values.empty() ? vector{l2Current} : l2Values;
+        double bestCost = numeric_limits<double>::infinity();
+        string times;
+        for (int m : mqs) {
+          for (int p : l2s) {
+            // Default registers when they are tuned next, else the line's
+            vector<KeyVal> with{{"MULTI_Q", to_string(m)}, {"L2PERSIST", to_string(p)}};
+            if (regs) { with.emplace_back("NOREG", "1"); }
+            double const cost = timeConfig(exponent, shared, e.fft, with, quick, nullptr, uses);
+            char buf[64];
+            if (bothKeys) {
+              snprintf(buf, sizeof(buf), "%s%d/%d: %.1f", times.empty() ? "" : ", ", m, p, cost);
+            } else {
+              snprintf(buf, sizeof(buf), "%s%d: %.1f", times.empty() ? "" : ", ", mqValues.empty() ? p : m, cost);
+            }
+            times += buf;
+            if (cost < bestCost) { bestCost = cost; mq = m; l2 = p; }
+          }
+        }
+        char size[48];
+        snprintf(size, sizeof(size), l2Size ? "data %.2f times the L2" : "L2 size unknown", ratio);
+        log("%-18s %s; %s %s us/iter%s: %s\n", spec.c_str(), size, names().c_str(), times.c_str(), regs ? " (default registers)" : "",
+            chosen().c_str());
+        if (std::isfinite(bestCost)) {
+          if (under || over) { l2Choices[{multiPart, over}] = {mq, l2, ratio}; }
+          if (!regs) { out.cost = bestCost; }
+        }
+      }
+      if (!mqValues.empty()) { setOnLine("MULTI_Q", mq, mqWithout); }
+      if (!l2Values.empty()) { setOnLine("L2PERSIST", l2, l2Without); }
+    }
+  }
+
   if (kernelsChanged) {
     // The new kernels won with the compiler's default registers, which flatters a setting that saves registers (on a TITAN V
     // NTT_WEIGHT_TABLE=1 was 7% faster so, but no faster once the limits were tuned).  So the new kernels with their own register
@@ -2239,29 +2307,6 @@ TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) 
     out = regTuneEntry(out, quick, sm);
   }
 
-#ifdef CUDA_BACKEND
-  // L2PERSIST is a bitmask of buffers; only 0 and 1 (the main data buffer) are tried.  The difference is small, so each is timed twice
-  // (ABBA order) and the line's value is kept unless the other is faster by 0.3%.
-  if (retune.contains("L2PERSIST") && sm.maxPersistingL2 > 0) {
-    int const without = args->value("L2PERSIST", 0);
-    int const current = lineValue("L2PERSIST").value_or(without);
-    vector<KeyVal> const uses = usesBut("L2PERSIST");
-    auto timeL2 = [&](int v) { return timeConfig(exponent, shared, e.fft, {{"L2PERSIST", to_string(v)}}, quick, nullptr, uses); };
-    double const a1 = timeL2(0), b1 = timeL2(1), b2 = timeL2(1), a2 = timeL2(0);
-    double const off = (a1 + a2) / 2, on = (b1 + b2) / 2;
-    int best = on < off ? 1 : 0;
-    if (current == 0 || current == 1) {
-      double const cur = current ? on : off, other = current ? off : on;
-      if (!(other < 0.997 * cur)) { best = current; }
-    }
-    double const bestCost = best ? on : off;
-    log("%-18s L2PERSIST 0: %.1f, 1: %.1f us/iter: L2PERSIST=%d\n", spec.c_str(), off, on, best);
-    if (std::isfinite(bestCost)) {
-      setOnLine("L2PERSIST", best, without);
-      out.cost = bestCost;
-    }
-  }
-#endif
   return out;
 }
 

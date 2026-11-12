@@ -74,6 +74,8 @@ bool isRusticl(cl_device_id id);
 u32 getNvidiaComputeCapability(cl_device_id id);
 u32 getMaxWorkGroupSize(cl_device_id id);
 u64 getLocalMemSize(cl_device_id id);
+// The global memory cache (the L2) in bytes; 0 if the device does not say, or reports less than 1MB (an L1, as ROCm does).
+u64 getL2CacheSize(cl_device_id id);
 // AMD only (cl_amd_device_attribute_query); 0 when not available (e.g. not AMD, or an older driver).
 u32 getAmdSimdPerComputeUnit(cl_device_id id);
 u32 getAmdWavefrontWidth(cl_device_id id);
