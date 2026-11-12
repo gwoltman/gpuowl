@@ -1299,11 +1299,13 @@ void Tune::tune() {
         args->flags["GRAPHS"] = to_string(graphs);
         args->flags["GRAPH_BATCH"] = to_string(batch);
         double cost = timeOption(exponent, fft, quick);
-        log("Time for %12s using GRAPHS=%u, GRAPH_BATCH=%u is %6.1f\n", fft.spec().c_str(), graphs, batch, cost);
+        string const batchText = graphs ? ", GRAPH_BATCH=" + to_string(batch) : "";    // GRAPH_BATCH means nothing without graphs
+        log("Time for %12s using GRAPHS=%u%s is %6.1f\n", fft.spec().c_str(), graphs, batchText.c_str(), cost);
         if (graphs == current_graphs && batch == current_batch) current_cost = cost;
         if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_graphs = graphs; best_batch = batch; }
       }
-      log("Best GRAPHS is %u, GRAPH_BATCH %u.  Default GRAPHS is 1, GRAPH_BATCH 1.\n", best_graphs, best_batch);
+      string const bestBatchText = best_graphs ? ", GRAPH_BATCH " + to_string(best_batch) : "";
+      log("Best GRAPHS is %u%s.  Default GRAPHS is 1, GRAPH_BATCH 1.\n", best_graphs, bestBatchText.c_str());
       if (best_graphs != current_graphs) configsUpdate(current_cost, best_cost, 0.003, "GRAPHS", best_graphs, newConfigKeyVals, suggestedConfigKeyVals);
       if (best_batch != current_batch) configsUpdate(current_cost, best_cost, 0.003, "GRAPH_BATCH", best_batch, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["GRAPHS"] = to_string(best_graphs);
