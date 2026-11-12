@@ -226,8 +226,6 @@ private:
   u32 l2_striping;
   bool graphs;
   bool zero_q;          // TAIL_KERNELS 11 or 13: the tail*Zero kernels run in their own queue(s), see replay_one
-  bool zero_mean;       // ZEROMEAN: FP32 words with the kernels' tie-bit ranges (carryutil.cl); the host writes its words in that form
-
   // Twiddles: trigonometry constant buffers, used in FFTs.
   // The twiddles depend only on FFT config and do not depend on the exponent.
   // It is important to generate the height trigs before the width trigs because width trigs can be a subset of the height trigs
