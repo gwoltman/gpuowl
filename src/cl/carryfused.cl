@@ -33,7 +33,13 @@ void spin() {
 // without them for years, so they stay off there.  Elsewhere (Intel, whose L1 caches are not coherent with each other) they are on.
 // On an Intel Arc A770 the fences alone were not enough (see CS_ATOMIC below); they stay on there to order CS_ATOMIC's relaxed atomics.
 #if !defined(CS_FENCE)
+#if defined(CS_RING) && CS_RING
+// CS_RING (see below) reuses shuttle slots within one launch, so a reader's L0/L1 cache can hold a slot's line from the previous
+// round: the device-scope acquire is what drops it (on AMD buffer_gl0_inv/buffer_wbinvl1).
+#define CS_FENCE 1
+#else
 #define CS_FENCE (!AMDGPU && !NVIDIAGPU)
+#endif
 #endif
 
 // The two sides of a hand-off between workgroups (see CS_FENCE above).  Every work-item that wrote shared data calls
@@ -136,6 +142,73 @@ void OVERLOAD csLoad(P(i64) cs, u32 pos, i96 *c) {
 // So group 0 raises a flag once it has read its lines, and the last group waits for that flag (and clears it) before writing.  The flag
 // uses the first ready[] slot past those of the carry hand-off.
 #define LINES_READ_FLAG (BIG_HEIGHT / WMUL * READY_PER_LINE)
+
+// CS_RING=R (a power of 2, default 0 = off): the carry shuttle and its ready flags are a ring of R groups' slots, group gr using slot
+// gr % R, instead of one slot per group.  Every group writes fresh shuttle addresses otherwise, 8-17 MB per iteration, and each line is
+// written back to DRAM when the data stream evicts it from a small L2 (4 MB on a Radeon VII or TITAN V); a ring small enough to stay
+// in L2 avoids that.  A slot is reused only after its reader is done with it: the ready flag of a slot counts its uses, 2k+1 = round
+// k's carries are in, 2k+2 = round k's carries have been read (0 after the last round, so the flags are all 0 again for the next launch).
+#if !defined(CS_RING)
+#define CS_RING 0
+#endif
+#if CS_RING == 1 || (CS_RING & (CS_RING - 1))
+#error CS_RING must be a power of 2, at least 2 (with 1 a group would wait for its own read)
+#endif
+#if CS_RING && CS_RING < BIG_HEIGHT / WMUL
+#define CS_SLOT(g)          ((g) % CS_RING)
+#define CS_FULL(g)          (2 * ((g) / CS_RING) + 1)
+#define CS_FREED(g)         ((g) + CS_RING < BIG_HEIGHT / WMUL ? 2 * ((g) / CS_RING) + 2 : 0)
+#define CS_NOT_FULL(v, g)   ((v) != CS_FULL(g))
+#else
+#undef CS_RING
+#define CS_RING 0
+#define CS_SLOT(g)          (g)
+#define CS_FULL(g)          1
+#define CS_NOT_FULL(v, g)   (!(v))
+#endif
+
+// CS_RING: before group gr writes its carries, wait until the reader of the slot's previous round (group gr - CS_RING + 1) is done.
+void csWaitSlotFree(P(u32) ready, u32 gr, u32 lowMe) {
+#if CS_RING
+#if OLD_FENCE
+  u32 pos = CS_SLOT(gr);
+#else
+  u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+#endif
+  if (lowMe % READY_LANES == 0) {
+    while (atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) != 2 * (gr / CS_RING)) { spin(); }
+  }
+  sync();
+  csAcquireFence();
+#endif
+}
+
+// CS_RING: group gr has loaded the carries of group gr - 1; free their slot.  With rotated carries a lane reads another lane's carries,
+// possibly another wavefront's, so the whole workgroup must be done.  Every work-item of the workgroup calls this.
+void csFreeSlot(P(u32) ready, u32 gr, u32 me, bool rotated) {
+#if CS_RING
+  u32 g = gr - 1;
+#if OLD_FENCE
+  rotated = true;                     // One flag per group
+#endif
+  if (rotated) {
+    barrier(CLK_GLOBAL_MEM_FENCE);    // every work-item's carry loads are done
+#if OLD_FENCE
+    if (me == 0) { atomic_store_explicit((global atomic_uint *) &ready[CS_SLOT(g)], CS_FREED(g), memory_order_release, memory_scope_device); }
+#else
+    if (me < G_W && me % READY_LANES == 0) {
+      atomic_store_explicit((global atomic_uint *) &ready[CS_SLOT(g) * READY_PER_LINE + me / READY_LANES], CS_FREED(g), memory_order_release, memory_scope_device);
+    }
+#endif
+  } else if (me < G_W) {
+    csReleaseFence();
+    sync();                           // every lane of the wavefront has loaded its carries
+    if (me % READY_LANES == 0) {
+      atomic_store_explicit((global atomic_uint *) &ready[CS_SLOT(g) * READY_PER_LINE + me / READY_LANES], CS_FREED(g), memory_order_release, memory_scope_device);
+    }
+  }
+#endif
+}
 
 void signalLinesRead(P(u32) ready) {
   if (!INPLACE) return;
@@ -359,15 +432,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -379,9 +453,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -428,23 +502,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -463,13 +537,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -479,6 +553,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
       }
     }
   }
+  csFreeSlot(ready, gr, me, gr >= H / WMUL);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Then apply the weights -- or if FUSE_WEIGHT_BUTTERFLY apply weights only for the "low" i indices.
   #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
@@ -617,15 +692,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i6
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) { 
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -637,9 +713,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i6
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -662,23 +738,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i6
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -697,13 +773,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i6
     if (gr < H / WMUL) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -713,6 +789,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(F2) out, CPA_CF(F2) in, u32 posROE, P(i6
       }
     }
   }
+  csFreeSlot(ready, gr, me, gr >= H / WMUL);
 
   // Apply each 32 or 64 bit carry to the 2 words
   F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
@@ -875,15 +952,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -895,9 +973,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -928,23 +1006,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -962,13 +1040,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -978,6 +1056,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
       }
     }
   }
+  csFreeSlot(ready, gr, me, rotatedCarries);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   if (NTT_WEIGHT_TABLE == 2) { OPAQUE(ntwIdx); }
@@ -1141,15 +1220,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -1161,9 +1241,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -1194,23 +1274,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -1229,13 +1309,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -1245,6 +1325,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
       }
     }
   }
+  csFreeSlot(ready, gr, me, rotatedCarries);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   if (NTT_WEIGHT_TABLE == 2) { OPAQUE(ntwIdx); }
@@ -1430,15 +1511,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -1450,9 +1532,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -1494,23 +1576,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -1529,13 +1611,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -1545,6 +1627,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
       }
     }
   }
+  csFreeSlot(ready, gr, me, rotatedCarries);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   if (NTT_WEIGHT_TABLE == 2) { OPAQUE(ntwIdx); }
@@ -1761,15 +1844,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -1781,9 +1865,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -1813,23 +1897,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -1848,13 +1932,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -1864,6 +1948,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
       }
     }
   }
+  csFreeSlot(ready, gr, me, rotatedCarries);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
@@ -2092,15 +2177,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -2112,9 +2198,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -2144,23 +2230,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -2179,13 +2265,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -2195,6 +2281,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
       }
     }
   }
+  csFreeSlot(ready, gr, me, rotatedCarries);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
@@ -2414,15 +2501,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[gr * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { CSSTORE(&carryShuttlePtr[CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i)], carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -2434,9 +2522,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -2467,23 +2555,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -2502,13 +2590,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i)]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        carry[i] = CSLOAD(&carryShuttlePtr[(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
+        carry[i] = CSLOAD(&carryShuttlePtr[CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i) /* ((me!=0) + NW - 1 + i) % NW*/]);
       }
 
       if (me == 0) {
@@ -2518,6 +2606,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
       }
     }
   }
+  csFreeSlot(ready, gr, me, rotatedCarries);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   if (NTT_WEIGHT_TABLE == 2) { OPAQUE(ntwIdx); }
@@ -2759,15 +2848,16 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #else
   if (gr < H / WMUL && me >= (WMUL-1) * G_W) {
 #endif
-    for (i32 i = 0; i < NW; ++i) { csStore(carryShuttle, gr * WIDTH + CarryShuttleAccess(lowMe, i), carry[i]); }
+    csWaitSlotFree(ready, gr, lowMe);
+    for (i32 i = 0; i < NW; ++i) { csStore(carryShuttle, CS_SLOT(gr) * WIDTH + CarryShuttleAccess(lowMe, i), carry[i]); }
 
     // Tell next group that its carries are ready
     csReleaseFence();
 #if !OLD_FENCE
     sync();   // Make sure all lanes have completed the CSSTORE
     if (lowMe % READY_LANES == 0) {
-      u32 pos = gr * READY_PER_LINE + lowMe / READY_LANES;
-      atomic_store((global atomic_uint *) &ready[pos], 1);
+      u32 pos = CS_SLOT(gr) * READY_PER_LINE + lowMe / READY_LANES;
+      atomic_store((global atomic_uint *) &ready[pos], CS_FULL(gr));
     }
 #endif
   }
@@ -2779,9 +2869,9 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   if (gr < H / WMUL) {
     bar(G_W);
 #if WMUL == 1
-    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #else
-    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[gr], 1); }
+    if (me >= (WMUL-1) * G_W && lowMe == 0) { atomic_store((global atomic_uint *) &ready[CS_SLOT(gr)], CS_FULL(gr)); }
 #endif
   }
 #endif
@@ -2811,23 +2901,23 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   // Wait until our carries are ready.  The barrier below must be reached by every work-item of the
   // workgroup, so the spin-wait and the barrier sit outside the "me < G_W" guard.
 #if OLD_FENCE
-  if (me == 0) { do { spin(); } while(!atomic_load_explicit((global atomic_uint *) &ready[gr - 1], memory_order_relaxed, memory_scope_device)); }
+  if (me == 0) { do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[CS_SLOT(gr - 1)], memory_order_relaxed, memory_scope_device), gr - 1)); }
   bar();
 #endif
   if (me < G_W) {
 #if OLD_FENCE
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me == 0) ready[gr - 1] = 0;
+    if (!CS_RING && me == 0) ready[gr - 1] = 0;     // CS_RING: freed after the carries are loaded
 #else
-    u32 pos = (gr - 1) * READY_PER_LINE + me / READY_LANES;
+    u32 pos = CS_SLOT(gr - 1) * READY_PER_LINE + me / READY_LANES;
     if (me % READY_LANES == 0) {
-      do { spin(); } while(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device) == 0);
+      do { spin(); } while(CS_NOT_FULL(atomic_load_explicit((global atomic_uint *) &ready[pos], memory_order_relaxed, memory_scope_device), gr - 1));
     }
     sync();
     csAcquireFence();
     // Clear carry ready flag for next iteration
-    if (me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;
+    if (!CS_RING && me % READY_LANES == 0) ready[(gr - 1) * READY_PER_LINE + me / READY_LANES] = 0;     // CS_RING: freed after the carries are loaded
 #endif
     setPriority(1);
   }
@@ -2846,13 +2936,13 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
     if (!rotatedCarries) {
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        csLoad(carryShuttle, (gr - 1) * WIDTH + CarryShuttleAccess(me, i), &carry[i]);
+        csLoad(carryShuttle, CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess(me, i), &carry[i]);
       }
     } else {
 
       #pragma unroll  // A rolled loop indexes the per-pair arrays at run time, which puts them in local memory
       for (i32 i = 0; i < NW; ++i) {
-        csLoad(carryShuttle, (gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i), &carry[i]);
+        csLoad(carryShuttle, CS_SLOT(gr - 1) * WIDTH + CarryShuttleAccess((me + G_W - 1) % G_W, i), &carry[i]);
       }
 
       if (me == 0) {
@@ -2862,6 +2952,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
       }
     }
   }
+  csFreeSlot(ready, gr, me, rotatedCarries);
 
   // Apply each 32 or 64 bit carry to the 2 words.  Apply weights.
   F base = weights.y, baseHalf = base * 0.5f;              // Pre-halved: fancyMul(a/2, b) is exactly fancyMul(a, b) / 2
