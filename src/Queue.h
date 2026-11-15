@@ -65,6 +65,12 @@ public:
     CHECK1(clGraphLaunch(graph));
     // Keep the existing queue-drain cadence in units of squarings.
     for (unsigned i = 0; i < count; ++i) add(EventHolder{}, NULL);
+    // Graphs contain multiple kernel launches: the normal queue limit can let
+    // cuGraphLaunch hit driver backpressure and busy-wait before we sleep.
+    // Reuse the marker wait with smaller batches. Count squarings, not graph
+    // launches; a repeated graph may exceed this threshold in a single launch.
+    constexpr int MAX_GRAPH_QUEUE_COUNT = 32;
+    if (queueCount >= MAX_GRAPH_QUEUE_COUNT) queueMarkerEvent();
   }
 
 private:                            // This replaces the "call queue->finish every 400 squarings" code in Gpu.cpp.  Solves the busy wait on nVidia GPUs.
