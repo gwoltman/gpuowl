@@ -1607,19 +1607,34 @@ typedef struct { Z61q x, y; } GF61q;
 Z61q OVERLOAD makeZ61q(u128 v) { Z61q r; r.v = v; return r; }
 GF61q OVERLOAD makeGF61q(Z61q x, Z61q y) { GF61q r; r.x = x; r.y = y; return r; }
 
+// Q61X8:  the constants are stored times 8 (as with CMUL61's tens digit 1, nVidia's default), so each sum is 8 times the true one and
+// weakModM61x8 returns bit for bit what weakModM61(true sum, 125) does, two instructions fewer on nVidia.  Only for sums whose true value
+// is below 7 M61^2 (n <= 7):  times 8 a 128-bit one would overflow, so a row reduced with n > 7 is built with x8 = false.  Unscaled, the
+// products use mul64s/mad64s:  a quick value (below 4 M61) plus a constant (below M61) is below 2^64.  Scaled they need the full ones
+// (the same on nVidia).
+#define Q61X8 (CMUL61_K == 1)
+
 // x * c, x a quick Z61 (non-negative)
-Z61q OVERLOAD mulq(Z61 x, Z61 c) { return makeZ61q(mul64(x, c)); }
-GF61q OVERLOAD mulq(GF61 a, Z61 c) { return makeGF61q(mulq(a.x, c), mulq(a.y, c)); }
+Z61q OVERLOAD mulq(Z61 x, Z61 c, const bool x8) { return makeZ61q(x8 ? mul64(x, X8(c)) : mul64s(x, c)); }
+Z61q OVERLOAD mulq(Z61 x, Z61 c) { return mulq(x, c, Q61X8); }
+GF61q OVERLOAD mulq(GF61 a, Z61 c, const bool x8) { return makeGF61q(mulq(a.x, c, x8), mulq(a.y, c, x8)); }
+GF61q OVERLOAD mulq(GF61 a, Z61 c) { return mulq(a, c, Q61X8); }
 
-// acc + x * c, acc unreduced or a Z61
-Z61q OVERLOAD madq(Z61 x, Z61 c, Z61q acc) { return makeZ61q(mad64(x, c, acc.v)); }
-Z61q OVERLOAD madq(Z61 x, Z61 c, Z61 acc) { return makeZ61q(mad64(x, c, acc)); }
-GF61q OVERLOAD madq(GF61 a, Z61 c, GF61q acc) { return makeGF61q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
-GF61q OVERLOAD madq(GF61 a, Z61 c, GF61 acc) { return makeGF61q(madq(a.x, c, acc.x), madq(a.y, c, acc.y)); }
+// acc + x * c, acc unreduced (scaled as the row) or a Z61 (scaled here:  it may pass 2^61, so times 8 it takes 128 bits)
+Z61q OVERLOAD madq(Z61 x, Z61 c, Z61q acc, const bool x8) { return makeZ61q(x8 ? mad64(x, X8(c), acc.v) : mad64s(x, c, acc.v)); }
+Z61q OVERLOAD madq(Z61 x, Z61 c, Z61 acc, const bool x8) {
+  return makeZ61q(x8 ? mad64(x, X8(c), make_u128(acc >> 61, acc << 3)) : mad64s(x, c, acc));
+}
+Z61q OVERLOAD madq(Z61 x, Z61 c, Z61q acc) { return madq(x, c, acc, Q61X8); }
+Z61q OVERLOAD madq(Z61 x, Z61 c, Z61 acc) { return madq(x, c, acc, Q61X8); }
+GF61q OVERLOAD madq(GF61 a, Z61 c, GF61q acc, const bool x8) { return makeGF61q(madq(a.x, c, acc.x, x8), madq(a.y, c, acc.y, x8)); }
+GF61q OVERLOAD madq(GF61 a, Z61 c, GF61 acc, const bool x8) { return makeGF61q(madq(a.x, c, acc.x, x8), madq(a.y, c, acc.y, x8)); }
+GF61q OVERLOAD madq(GF61 a, Z61 c, GF61q acc) { return madq(a, c, acc, Q61X8); }
+GF61q OVERLOAD madq(GF61 a, Z61 c, GF61 acc) { return madq(a, c, acc, Q61X8); }
 
-// The caller passes n indicating a is below n * M61^2.  n <= 7 uses the cheaper 125-bit weakModM61, result below (n + 1) * M61; a larger n uses the
-// 128-bit one, result below 3 * M61.
-Z61 OVERLOAD weakModM61q(Z61q a, const u32 n) { return weakModM61(a.v, n <= 7 ? 125 : 128); }
+// The caller passes n indicating the true sum is below n * M61^2.  n <= 7 uses the cheaper 125-bit weakModM61 (weakModM61x8 on a Q61X8
+// sum), result below (n + 1) * M61; a larger n uses the 128-bit one on an unscaled sum, result below 3 * M61.
+Z61 OVERLOAD weakModM61q(Z61q a, const u32 n) { return Q61X8 && n <= 7 ? weakModM61x8(a.v) : weakModM61(a.v, n <= 7 ? 125 : 128); }
 GF61 OVERLOAD weakModM61q(GF61q a, const u32 n) { return U2(weakModM61q(a.x, n), weakModM61q(a.y, n)); }
 
 #endif

@@ -341,22 +341,22 @@ void OVERLOAD fft11(GF61 *u) {
   u[0] = modM61q(u[0] + sum, 0);              // 0..2+ before the mod
   GF61 dsum = modM61q(u[10] + u[9] + u[8], -2);  // the sum of the differences:  3 (1-..3+) - 2 = 1-..7+ before the mod
   dsum = modM61q(dsum + u[7] + u[6], 0);         // 1-..7+ before the mod
-  GF61q sbase = mulq(dsum, S5);                  // s5 * dsum
+  GF61q sbase = mulq(dsum, S5, false);           // s5 * dsum, unscaled as the sin rows (see Q61X8)
 
   // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  The sin rows start from
   // sbase = s5 * dsum:  each row's s5 term cancels (a row whose s5 term is negative computes its negated sines and swaps its outputs),
   // saving one multiply per row.  Each product of a quick value (sums below 2 M61, differences below 3 M61, dsum below 1+) and a constant
   // gives the n passed to weakModM61q, which keeps pc + qs and pc - qs + K M61 below 2^64 for modM61q.  The sin rows use the 128-bit
-  // reduction (n >= 8).
+  // reduction (n >= 8), so they are never scaled (see Q61X8).
   GF61q tmp211a = cbase;
   GF61q tmp211b = sbase;
   tmp211a = madq(u[1], C1_C4, tmp211a);
-  tmp211b = madq(u[10], S1_S5, tmp211b);
+  tmp211b = madq(u[10], S1_S5, tmp211b, false);
   tmp211a = madq(u[2], C2_C4, tmp211a);
-  tmp211b = madq(u[9], S2_S5, tmp211b);
+  tmp211b = madq(u[9], S2_S5, tmp211b, false);
   tmp211a = madq(u[3], C3_C4, tmp211a);
-  tmp211b = madq(u[8], S3_S5, tmp211b);
-  tmp211b = madq(u[7], S4_S5, tmp211b);
+  tmp211b = madq(u[8], S3_S5, tmp211b, false);
+  tmp211b = madq(u[7], S4_S5, tmp211b, false);
   tmp211a = madq(u[5], C5_C4, tmp211a);
   GF61 pc1 = weakModM61q(tmp211a, 3), qs1 = weakModM61q(tmp211b, 8);   // below 4 M61 and 3 M61
   GF61 y1 = modM61q(pc1 + qs1, 0), y10 = modM61q(pc1 - qs1, 3);   // below 7 M61 before the mods
@@ -364,39 +364,39 @@ void OVERLOAD fft11(GF61 *u) {
   GF61q tmp310a = cbase;
   GF61q tmp310b = sbase;
   tmp310a = madq(u[1], C2_C4, tmp310a);
-  tmp310b = madq(u[10], NS2_S5, tmp310b);
-  tmp310b = madq(u[9], NS4_S5, tmp310b);
+  tmp310b = madq(u[10], NS2_S5, tmp310b, false);
+  tmp310b = madq(u[9], NS4_S5, tmp310b, false);
   tmp310a = madq(u[3], C5_C4, tmp310a);
   tmp310a = madq(u[4], C3_C4, tmp310a);
-  tmp310b = madq(u[7], S3_S5, tmp310b);
+  tmp310b = madq(u[7], S3_S5, tmp310b, false);
   tmp310a = madq(u[5], C1_C4, tmp310a);
-  tmp310b = madq(u[6], S1_S5, tmp310b);
+  tmp310b = madq(u[6], S1_S5, tmp310b, false);
   GF61 pc2 = weakModM61q(tmp310a, 3), qs2 = weakModM61q(tmp310b, 8);   // below 4 M61 and 3 M61
   GF61 y9 = modM61q(pc2 + qs2, 0), y2 = modM61q(pc2 - qs2, 3);   // below 7 M61 before the mods  (sines negated)
 
   GF61q tmp49a = cbase;
   GF61q tmp49b = sbase;
   tmp49a = madq(u[1], C3_C4, tmp49a);
-  tmp49b = madq(u[10], NS3_S5, tmp49b);
+  tmp49b = madq(u[10], NS3_S5, tmp49b, false);
   tmp49a = madq(u[2], C5_C4, tmp49a);
   tmp49a = madq(u[3], C2_C4, tmp49a);
-  tmp49b = madq(u[8], S2_S5, tmp49b);
+  tmp49b = madq(u[8], S2_S5, tmp49b, false);
   tmp49a = madq(u[4], C1_C4, tmp49a);
-  tmp49b = madq(u[7], NS1_S5, tmp49b);
-  tmp49b = madq(u[6], NS4_S5, tmp49b);
+  tmp49b = madq(u[7], NS1_S5, tmp49b, false);
+  tmp49b = madq(u[6], NS4_S5, tmp49b, false);
   GF61 pc3 = weakModM61q(tmp49a, 3), qs3 = weakModM61q(tmp49b, 8);   // below 4 M61 and 3 M61
   GF61 y8 = modM61q(pc3 + qs3, 0), y3 = modM61q(pc3 - qs3, 3);   // below 7 M61 before the mods  (sines negated)
 
   GF61q tmp58a = cbase;
   GF61q tmp58b = sbase;
-  tmp58b = madq(u[10], S4_S5, tmp58b);
+  tmp58b = madq(u[10], S4_S5, tmp58b, false);
   tmp58a = madq(u[2], C3_C4, tmp58a);
-  tmp58b = madq(u[9], NS3_S5, tmp58b);
+  tmp58b = madq(u[9], NS3_S5, tmp58b, false);
   tmp58a = madq(u[3], C1_C4, tmp58a);
-  tmp58b = madq(u[8], S1_S5, tmp58b);
+  tmp58b = madq(u[8], S1_S5, tmp58b, false);
   tmp58a = madq(u[4], C5_C4, tmp58a);
   tmp58a = madq(u[5], C2_C4, tmp58a);
-  tmp58b = madq(u[6], NS2_S5, tmp58b);
+  tmp58b = madq(u[6], NS2_S5, tmp58b, false);
   GF61 pc4 = weakModM61q(tmp58a, 3), qs4 = weakModM61q(tmp58b, 8);   // below 4 M61 and 3 M61
   GF61 y4 = modM61q(pc4 + qs4, 0), y7 = modM61q(pc4 - qs4, 3);   // below 7 M61 before the mods
 
@@ -404,12 +404,12 @@ void OVERLOAD fft11(GF61 *u) {
   GF61q tmp67b = sbase;
   tmp67a = madq(u[1], C5_C4, tmp67a);
   tmp67a = madq(u[2], C1_C4, tmp67a);
-  tmp67b = madq(u[9], NS1_S5, tmp67b);
-  tmp67b = madq(u[8], S4_S5, tmp67b);
+  tmp67b = madq(u[9], NS1_S5, tmp67b, false);
+  tmp67b = madq(u[8], S4_S5, tmp67b, false);
   tmp67a = madq(u[4], C2_C4, tmp67a);
-  tmp67b = madq(u[7], NS2_S5, tmp67b);
+  tmp67b = madq(u[7], NS2_S5, tmp67b, false);
   tmp67a = madq(u[5], C3_C4, tmp67a);
-  tmp67b = madq(u[6], S3_S5, tmp67b);
+  tmp67b = madq(u[6], S3_S5, tmp67b, false);
   GF61 pc5 = weakModM61q(tmp67a, 3), qs5 = weakModM61q(tmp67b, 8);   // below 4 M61 and 3 M61
   GF61 y5 = modM61q(pc5 + qs5, 0), y6 = modM61q(pc5 - qs5, 3);   // below 7 M61 before the mods
 
