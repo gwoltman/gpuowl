@@ -186,6 +186,12 @@ With `-mprimeDir`, PRPLL writes the stage 1 residue as a Prime95 savefile in `<d
 
 `-mprimeDir` is optional: without it, PRPLL does all the work it can itself.
 
+`-mprimeStage2` (with `-mprimeDir`) hands every stage 2 to mprime, also when it could run on the GPU: mprime's polynomial stage 2
+with lots of system RAM is much faster at a large B2 than PRPLL's pairing stage 2, whose cost grows with B2. PRPLL runs stage 1 and
+hands off right after it, without its own stage 1 GCD (mprime runs that GCD on its way into stage 2). A line with B2 <= B1 is not
+handed off. Without `-mprimeDir`, a P-1 line stops with an error. The bounds of `Pfactor=` lines are still chosen for the GPU's
+stage 2 memory.
+
 ## FFT choice
 
 - **No `-fft`:** stage 2 uses the fastest fitting line of `tune-pm1.txt` (written by `-tune pm1`), then of `tune.txt`, then the
