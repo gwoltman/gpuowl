@@ -39,6 +39,26 @@ u32 parseInt(const string& s) {
   return u32(strtod(s.c_str(), nullptr) * multiple);
 }
 
+// The max bpw of an FFT32 shape fftbpw.h does not list, from the rows it does list:  FFT32's limit depends mostly on the size.
+// Interpolates in log2(size) between the nearest smaller and larger listed sizes, taking the lowest row of each size.  Checked
+// against the listed rows with a non power of two middle:  53:256:3:256, :5:256 and :6:256 come within 0.02 of the interpolation
+// from the power of two sizes around them, 53:256:7:256 0.08 below it.  Returns false if the size is outside the listed range.
+bool fft32TableBpw(u32 size, float* bpw) {
+  float loBpw = 0, hiBpw = 0;
+  u32 loSize = 0, hiSize = 0;
+  for (const auto& [spec, b] : BPW) {
+    vector<string> const v = split(spec, ':');
+    if (v.size() != 4 || parseInt(v[0]) != 53) { continue; }
+    u32 const n = parseInt(v[1]) * parseInt(v[2]) * parseInt(v[3]) * 2;
+    if (n <= size && (n > loSize || (n == loSize && b[0] < loBpw))) { loSize = n; loBpw = b[0]; }
+    if (n >= size && (!hiSize || n < hiSize || (n == hiSize && b[0] < hiBpw))) { hiSize = n; hiBpw = b[0]; }
+  }
+  if (!loSize || !hiSize) { return false; }
+  float const f = hiSize == loSize ? 0.0f : float(log2(double(size) / loSize) / log2(double(hiSize) / loSize));
+  *bpw = loBpw + f * (hiBpw - loBpw);
+  return true;
+}
+
 } // namespace
 
 // Accepts:
@@ -170,6 +190,11 @@ FFTShape::FFTShape(enum FFT_TYPES t, u32 w, u32 m, u32 h) :
     FFTShape const lo{t, w, m0, h}, hi{t, w, 2 * m0, h};
     float const f = float(log2(double(m) / m0));
     for (u32 j = 0; j < NUM_BPW_ENTRIES; ++j) bpw[j] = lo.bpw[j] + f * (hi.bpw[j] - lo.bpw[j]);
+  } else if (float b; t == FFT32 && fft32TableBpw(size(), &b)) {
+    // Assume this fft spec is worse than measured fft specs (as below), an odd middle more so (53:256:7:256 above)
+    b -= (middle % 2) ? 0.10f : 0.05f;
+    bpw = {b, b, b, b, b, b};
+    log("BPW info for %s not found, using %.2f from the listed sizes around it.\n", s.c_str(), double(b));
   } else {
     if (height > width) {
       bpw = FFTShape{t, h, m, w}.bpw;
