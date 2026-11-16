@@ -1136,7 +1136,7 @@ KERNEL(G_H) tailSquareZeroGF61(PA_TS(T2) out, CPA_TS(T2) in, Trig smallTrig) {
 #else
   GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + tline]);
 #endif
-  trig = cmul(trig, mult);
+  trig = cmulTwid(trig, mult);
 #else
 #if SINGLE_WIDE
   GF61 trig = TOLOAD(&smallTrig61[height_trigs + TAIL_TRIG_LINE(line)*G_H + me]);
@@ -1193,7 +1193,7 @@ KERNEL_CAP(G_H) tailSquareGF61(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig smal
   // Read a hopefully cached line of data and one non-cached GF61 per line
   GF61 trig = TFLOAD(&smallTrig61[height_trigs + me]);                    // Trig values for line zero, should be cached
   GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + TAIL_TRIG_LINE(line1)]);           // Line multiplier
-  trig = cmul(trig, mult);
+  trig = cmulTwid(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
 #else
@@ -1281,7 +1281,7 @@ KERNEL_CAP(G_H * 2) tailSquareGF61(PA_TS(T2) out, CPA_TS(T2) in, u32 base, Trig 
   // Read a hopefully cached line of data and one non-cached GF61 per line
   GF61 trig = TFLOAD(&smallTrig61[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
   GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + TAIL_TRIG_LINE(line_u)*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
-  trig = cmul(trig, mult);
+  trig = cmulTwid(trig, mult);
 
   // On consumer-grade GPUs, it is likely beneficial to read all trig values.
 #else

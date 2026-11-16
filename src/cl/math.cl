@@ -1241,6 +1241,54 @@ u64 OVERLOAD weakModM61(u128 a, u32 num_bits) {
 #endif
 }
 
+// weakModM61(a / 8, 125) for a multiple of 8:  a / 8 = hi * 2^61 + (lo >> 3), so the result is hi + (lo >> 3) -- bit for bit what the 125-bit
+// weakModM61 returns for a / 8, without its AND.  A product has the form when one factor is a constant or table value stored times 8 (below
+// 2^61 before the shift, so nothing is lost).  Idea from cphysics2001's scaledot fork and Mark Rose's pull #201.
+u64 OVERLOAD weakModM61x8(u128 a) {
+#if HAS_PTX >= 320        // shf instruction requires sm_32 support or higher
+  uint2 l = as_uint2(u128_lo64(a));
+  uint2 h = as_uint2(u128_hi64(a));
+  uint2 r;
+  __asm("{.reg .u32 f0, f1;\n\t"
+        "shf.r.clamp.b32 f0, %2, %3, 3;\n\t"       // bits 3..34 of a
+        "shr.b32         f1, %3, 3;\n\t"           // bits 35..63
+        "add.cc.u32      %0, %4, f0;\n\t"
+        "addc.u32        %1, %5, f1;}"
+        : "=r"(r.x), "=r"(r.y) : "r"(l.x), "r"(l.y), "r"(h.x), "r"(h.y));
+  return as_ulong(r);
+#elif AMDGPU && defined(__has_builtin) && __has_builtin(__builtin_amdgcn_alignbit)
+  uint2 l = as_uint2(u128_lo64(a));
+  return u128_hi64(a) + as_ulong((uint2)(__builtin_amdgcn_alignbit(l.y, l.x, 3), l.y >> 3));
+#else
+  return u128_hi64(a) + (u128_lo64(a) >> 3);
+#endif
+}
+// A constant below 2^61, times 8 for weakModM61x8
+#define X8(c) ((u64) (c) << 3)
+
+// weakModM61(a / 4, 125) for a multiple of 4 below 2^126:  a / 4 = hi * 2^62 + (lo >> 2), so the result is 2 * hi + (lo >> 2), 0..2^63.6.  One
+// instruction more than weakModM61x8 and one less than weakModM61(a, 125) on NVIDIA.  For twiddles stored times 4 (CMUL61, see cmul4).
+u64 OVERLOAD weakModM61x4(u128 a) {
+#if HAS_PTX >= 320        // shf instruction requires sm_32 support or higher.  Hi << 1 by a funnel shift:  ptxas makes it a LEA plus LEA.HI.X
+  uint2 l = as_uint2(u128_lo64(a));
+  uint2 h = as_uint2(u128_hi64(a));
+  uint2 r;
+  __asm("{.reg .u32 f0, f1, g0, g1;\n\t"
+        "shf.r.clamp.b32 f0, %2, %3, 2;\n\t"       // bits 2..33 of a
+        "shr.b32         f1, %3, 2;\n\t"           // bits 34..63
+        "shf.l.clamp.b32 g1, %4, %5, 1;\n\t"
+        "shl.b32         g0, %4, 1;\n\t"
+        "add.cc.u32      %0, g0, f0;\n\t"
+        "addc.u32        %1, g1, f1;}"
+        : "=r"(r.x), "=r"(r.y) : "r"(l.x), "r"(l.y), "r"(h.x), "r"(h.y));
+  return as_ulong(r);
+#else                     // On gfx906 the 64-bit shifts take fewer instructions than funnel shifts of the halves
+  return (u128_hi64(a) << 1) + (u128_lo64(a) >> 2);
+#endif
+}
+// A constant below 2^61, times 4 for weakModM61x4
+#define X4(c) ((u64) (c) << 2)
+
 // Returns a * b not modded by M61.  Max value of result depends on the m61_counts of the inputs.
 // Let n = (a_m61_count - 1) * (b_m61_count - 1).  This is the maximum value in the highest 6 bits of a * b.
 // If n <= 6 result will be at most (n+1)*M61+epsilon.
@@ -1334,6 +1382,45 @@ GF61 OVERLOAD cmulPre(GF61 a, Z61 bx, GF61 pre, const u32 pre_m61_count) {
   return U2(modM61(k1k3), modM61(k1k2));
 }
 GF61 OVERLOAD cmul(GF61 a, GF61 b) { return cmulPre(a, b.x, U2(b.y + neg(b.x, 2), neg(b.y + b.x, 3)), 4); }
+// cmulPre with b.x and the two terms each stored times 8 (and below M61 before that):  the same sums times 8, reduced by weakModM61x8.  Same
+// results and ranges as cmulPre with pre_m61_count = 2.  The products need the full mul64:  bx8 is not small enough for mul64s.
+GF61 OVERLOAD cmulPre8(GF61 a, Z61 bx8, GF61 pre8) {
+  u128 k1 = mul64(bx8, a.x + a.y);                            // max value is 8 * (2*M61^2+epsilon)
+  Z61 k1k2 = weakModM61x8(mad64(a.x, pre8.x, k1));            // max value is 4*M61+epsilon
+  Z61 k1k3 = weakModM61x8(mad64(a.y, pre8.y, k1));
+  return U2(modM61(k1k3), modM61(k1k2));
+}
+// cmulPre with b.x and the two terms each stored times 4 (and below M61 before that) and a doubled:  the sums are 8 times
+// cmulPre's, so the cheap x8 reduction hi + (lo >> 3) applies while the factors stay small enough for mul64s and mad64s (cheaper on AMD).
+// From Mark Rose's pull #201.  Bounds for a.x, a.y <= M61+7:  2 a.x + 4 K < 2^64; 2 (a.x + a.y) can pass 2^63, but its high word is then
+// 2^31 with a low word <= 24, which keeps mul64s's middle sum below 2^64 (the high word of 4 b.x is below 2^31); each sum is below 2^127;
+// the reduction is below 2^63 + 2^61.  The reduction is plain C:  on gfx906 one 64-bit shift takes fewer instructions than funnel shifts.
+GF61 OVERLOAD cmulPre4(GF61 a, Z61 bx4, GF61 pre4) {
+  Z61 x2 = a.x + a.x, y2 = a.y + a.y;
+  u128 k1 = mul64s(x2 + y2, bx4);
+  u128 k1k2 = mad64s(x2, pre4.x, k1), k1k3 = mad64s(y2, pre4.y, k1);
+  return U2(modM61(u128_hi64(k1k3) + (u128_lo64(k1k3) >> 3)), modM61(u128_hi64(k1k2) + (u128_lo64(k1k2) >> 3)));
+}
+// cmul by a twiddle stored times 4 (b.x, b.y below M61 before that):  the Karatsuba terms made from it as in cmul,
+// 4 (b.y - b.x) + 4 M61 and 8 M61 - 4 (b.x + b.y), are below 2^64; the sums of products are 4 times cmul's.  The term products need the full
+// mad64 (mad64s on NVIDIA is the same):  a term near 2^64 is too large for mad64s.
+GF61 OVERLOAD cmul4(GF61 a, GF61 b4) {
+  Z61 t1 = b4.y + (X4(M61) - b4.x), t2 = X8(M61) - (b4.x + b4.y);
+  u128 k1 = mul64s(b4.x, a.x + a.y);                          // max value is 4 * (2*M61^2+epsilon)
+  Z61 k1k2 = weakModM61x4(mad64(a.x, t1, k1));                // max value is 2^63.6
+  Z61 k1k3 = weakModM61x4(mad64(a.y, t2, k1));
+  return U2(modM61(k1k3), modM61(k1k2));
+}
+// a times a twiddle b read from a table, stored as CMUL61 says (see base.cl):  b alone, or b with its Karatsuba terms pre
+GF61 OVERLOAD cmulTwid(GF61 a, GF61 b) { return CMUL61_ONE == 1 ? cmul4(a, b) : cmul(a, b); }
+GF61 OVERLOAD cmulTwid(GF61 a, GF61 b, GF61 pre) {
+  return CMUL61_K == 1 ? cmulPre8(a, b.x, pre) : CMUL61_K == 2 ? cmulPre4(a, b.x, pre) : cmulPre(a, b.x, pre, 2);
+}
+// a times trig[i], with its Karatsuba terms read from trig[i + pre] if karatsuba (the table's CMUL61WHERE digit)
+GF61 OVERLOAD cmulTwid(GF61 a, TrigGF61 trig, u32 i, u32 pre, bool karatsuba) {
+  GF61 w = TFLOAD(&trig[i]);
+  return karatsuba ? cmulTwid(a, w, TFLOAD(&trig[i + pre])) : cmulTwid(a, w);
+}
 #else
 GF61 OVERLOAD cmul(GF61 a, GF61 b) {
   u128 ayby = mul64(a.y, neg(b.y, 2));                        // max value is 2*M61^2+epsilon
@@ -1431,8 +1518,11 @@ GF61 OVERLOAD mul_9t16(GF61 a) { return cmul(a, U2(M61 - 22027337052962166ULL, M
 #define T16C1  22027337052962166ULL
 #define T16S1  1693317751237720973ULL
 GF61 OVERLOAD mul_t16q(GF61 a) {         // k1 = C1 * (ax + ay):  re = k1 + ay * (M61 - S1 - C1) is 0..1.28+,  im = k1 + ax * (S1 - C1) is 0..1.74+
-  u128 k1 = mul64s(T16C1, a.x + a.y);                  // mul64s/mad64s:  a.x + a.y and the constants are far below 2^64
-  return U2(weakModM61(mad64s(a.y, M61 - T16S1 - T16C1, k1), 125), weakModM61(mad64s(a.x, T16S1 - T16C1, k1), 125));
+  // The constants are stored times 8, so each sum is 8 times the unscaled one and weakModM61x8 returns exactly what weakModM61(sum, 125)
+  // returns for the unscaled sum.  mul64s and mad64s apply:  a.x and a.y are modM61 outputs (0..1+), so each factor plus its constant times
+  // 8 is below 2^64 (the closest is a.x + 8 (S1 - C1), with 1.2 M61 to spare).
+  u128 k1 = mul64s(X8(T16C1), a.x + a.y);
+  return U2(weakModM61x8(mad64s(a.y, X8(M61 - T16S1 - T16C1), k1)), weakModM61x8(mad64s(a.x, X8(T16S1 - T16C1), k1)));
 }
 
 // Return a+b and a-b

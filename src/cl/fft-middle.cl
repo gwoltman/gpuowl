@@ -1157,6 +1157,10 @@ void OVERLOAD fft_MIDDLE(GF61 *u) {
 #endif
 }
 
+// The Karatsuba terms of the middle table's twiddle trig[k] are at trig[MIDDLE_PRE61 + k], read where CMUL61WHERE says so (see
+// genMiddleTrigGF61)
+#define MIDDLE_PRE61 (SMALL_HEIGHT * MIDDLE + WIDTH)
+
 void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
   assert(s < SMALL_HEIGHT);
   if (MIDDLE == 1) return;
@@ -1166,7 +1170,7 @@ void OVERLOAD middleMul(GF61 *u, u32 s, TrigGF61 trig) {
   // Left to itself ROCm keeps this loop and the one in middleMul2 rolled at MIDDLE=16, which puts u[] in scratch
   #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
-    WADD(k, TFLOAD(&trig[s]));
+    u[k] = cmulTwid(u[k], trig, s, MIDDLE_PRE61, CMUL61_MID);
     s += SMALL_HEIGHT;
   }
 
@@ -1249,14 +1253,14 @@ void OVERLOAD pfaRotate(GF61 *a, u32 t, bool right) {
 GF61 OVERLOAD pfaTwiddle(u32 x, u32 b, TrigGF61 trig) {
   TrigGF61 trig1 = trig + SMALL_HEIGHT * (MIDDLE - 1);
   u32 desired_root = x * b;
-  return cmul(TFLOAD(&trig[desired_root % PFA_BH]), TFLOAD(&trig1[desired_root / PFA_BH]));
+  return cmulTwid(TFLOAD(&trig[desired_root % PFA_BH]), trig1, desired_root / PFA_BH, MIDDLE_PRE61, CMUL61_MID2);
 }
 // pfaTwiddle times 1/PFA (fftMiddleOut's normalization) from the copy of trig2 times 1/PFA at SMALL_HEIGHT * (2 * PFA_M2 - 1)
 GF61 OVERLOAD pfaTwiddleInv(u32 x, u32 b, TrigGF61 trig) {
   TrigGF61 trig1 = trig + SMALL_HEIGHT * (MIDDLE - 1);
   TrigGF61 trig2inv = trig + SMALL_HEIGHT * (2 * PFA_M2 - 1);
   u32 desired_root = x * b;
-  return cmul(TFLOAD(&trig2inv[desired_root % PFA_BH]), TFLOAD(&trig1[desired_root / PFA_BH]));
+  return cmulTwid(TFLOAD(&trig2inv[desired_root % PFA_BH]), trig1, desired_root / PFA_BH, MIDDLE_PRE61, CMUL61_MID2);
 }
 
 // The middle step of a row: radix-PFA_M2 on u[0..PFA_M2-1], then the twiddles w^(WIDTH*y*k), as fft_MIDDLE + middleMul of a
@@ -1264,13 +1268,13 @@ GF61 OVERLOAD pfaTwiddleInv(u32 x, u32 b, TrigGF61 trig) {
 void OVERLOAD pfaRowMiddle(GF61 *u, u32 y, TrigGF61 trig, bool inverse) {
 #if PFA_M2 > 1
   TrigGF61 mm = trig + PFA_BH;
-  if (inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmul(u[k], TFLOAD(&mm[(k - 1) * SMALL_HEIGHT + y])); } }
+  if (inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmulTwid(u[k], mm, (k - 1) * SMALL_HEIGHT + y, MIDDLE_PRE61, CMUL61_MID); } }
 #if PFA_M2 == 2
   X2(u[0], u[1]);
 #else
   fft4(u);
 #endif
-  if (!inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmul(u[k], TFLOAD(&mm[(k - 1) * SMALL_HEIGHT + y])); } }
+  if (!inverse) { for (u32 k = 1; k < PFA_M2; ++k) { u[k] = cmulTwid(u[k], mm, (k - 1) * SMALL_HEIGHT + y, MIDDLE_PRE61, CMUL61_MID); } }
 #endif
 }
 
@@ -1338,17 +1342,18 @@ void OVERLOAD middleMul2(GF61 *u, u32 x, u32 y, TrigGF61 trig) {
   // First trig table comes after the MiddleMul trig table.  Second trig table comes after the first MiddleMul2 trig table.
   TrigGF61 trig1 = trig + SMALL_HEIGHT * (MIDDLE - 1);
   TrigGF61 trig2 = trig1 + WIDTH;
-  // The first trig table can be shared with MiddleMul trig table if WIDTH = HEIGHT.
-  if (WIDTH == SMALL_HEIGHT) trig1 = trig;
+  // The first trig table can be shared with MiddleMul trig table if WIDTH = HEIGHT and both are stored alike (see genMiddleTrigGF61).
+  if (WIDTH == SMALL_HEIGHT && !MIDDLE_CHAIN61 && CMUL61_MID == CMUL61_MID2) trig1 = trig;
 
   GF61 w = TFLOAD(&trig1[x]);                      // x / (MIDDLE * WIDTH)
+  GF61 wpre = CMUL61_MID2 ? TFLOAD(&trig1[MIDDLE_PRE61 + x]) : U2((Z61) 0, (Z61) 0);
   u32 desired_root = x * y;
-  GF61 base = cmul(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), TFLOAD(&trig1[desired_root / SMALL_HEIGHT]));
+  GF61 base = cmulTwid(TFLOAD(&trig2[desired_root % SMALL_HEIGHT]), trig1, desired_root / SMALL_HEIGHT, MIDDLE_PRE61, CMUL61_MID2);
 
   WADD(0, base);
   #pragma unroll
   for (u32 k = 1; k < MIDDLE; ++k) {
-    base = cmul(base, w);
+    base = CMUL61_MID2 ? cmulTwid(base, w, wpre) : cmulTwid(base, w);
     WADD(k, base);
   }
 }

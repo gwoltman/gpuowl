@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include "TrigBufCache.h"
+#include "clwrap.h"
 
 enum {
 SAVE_ONE_MORE_WIDTH_MUL =  0,      // I want to make saving the only option -- but rocm optimizer is inexplicably making it slower in carryfused
@@ -960,7 +961,38 @@ ulong2 root1GF61(u32 N, u32 k) {
   return root1GF61(root1N, k);
 }
 
-static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix) {
+// How a GF61 twiddle table section is stored (CMUL61 and CMUL61WHERE in base.cl):  read alone 0 as is, 1 times 4 (cmul4);  read with the
+// Karatsuba terms 2 as is (cmulPre), 3 b.x and the terms times 8 (cmulPre8), 4 b.x and the terms times 4 (cmulPre4).  place is the
+// section's CMUL61WHERE digit (1, 10 or 100), terms_ok false where the kernels read the twiddles alone regardless.
+static u32 formatGF61(Args *args, bool amd, u32 place, bool terms_ok = true) {
+  u32 const cmul61 = args->value("CMUL61", cmul61Default(amd));
+  bool const terms = terms_ok && args->value("CMUL61WHERE", cmul61WhereDefault(amd)) / place % 10 != 0;
+  u32 const k = cmul61 / 10 % 10;
+  return terms ? (k == 1 ? 3 : k == 2 ? 4 : 2) : (cmul61 % 10 == 1 ? 1 : 0);
+}
+// The width and height tables:  as is with TABMUL_CHAIN61=1 (chainMul needs the twiddles as is)
+static u32 tabFormatGF61(Args *args, bool amd) { return args->value("TABMUL_CHAIN61", 0) == 1 ? 0 : formatGF61(args, amd, 1); }
+// The tail line multipliers, read alone and only with TAIL_TRIGS61 >= 1
+static u32 tailFormatGF61(Args *args, bool amd) { return args->value("TAIL_TRIGS61", 0) >= 1 ? formatGF61(args, amd, 1, false) : 0; }
+
+// Stores tab[k], begin <= k < end, in format fmt (see formatGF61).  The formats with Karatsuba terms put those of tab[k],
+// (b.y - b.x, -(b.x + b.y)) reduced to 0..M61-1 before any scaling, at tab[pre + k - begin].
+static void formatTableGF61(vector<ulong2>& tab, u32 begin, u32 end, u32 pre, u32 fmt) {
+  u64 const M61 = (u64(1) << 61) - 1;
+  if (fmt >= 2 && tab.size() < pre + end - begin) { tab.resize(pre + end - begin); }
+  u32 const sh = fmt == 1 || fmt == 4 ? 2 : fmt == 3 ? 3 : 0;
+  for (u32 k = begin; k < end; ++k) {
+    u64 const bx = tab[k].first % M61, by = tab[k].second % M61;
+    if (fmt == 1) { tab[k] = ulong2{bx << sh, by << sh}; }
+    if (fmt >= 2) {
+      u64 const sum = (bx + by) % M61;
+      tab[pre + k - begin] = ulong2{(by >= bx ? by - bx : by + M61 - bx) << sh, (sum ? M61 - sum : 0) << sh};
+      tab[k].first = bx << sh;
+    }
+  }
+}
+
+static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix, u32 fmt) {
   u32 const WG = size / radix;
   vector<ulong2> tab;
   GF61 const root1size = GF61::root_one(size);
@@ -998,17 +1030,11 @@ static vector<ulong2> genSmallTrigGF61(u32 size, u32 radix) {
     }
   }
 
-  // Second half:  for each twiddle b of the standard lines, cmul's Karatsuba terms (b.y - b.x, -(b.x + b.y)), reduced to 0..M61-1, read by
-  // tabMul's cmulPre (TABMUL_CHAIN61=2)
+  // Second half:  the Karatsuba terms of the first half's twiddles, for the formats that read them (tabMul's cmulTwid)
+  u32 const n = tab.size();
+  assert(n <= size);
   tab.resize(2 * size);
-  if (!(size == 256 && radix == 8)) {
-    u64 const M61 = (u64(1) << 61) - 1;
-    for (u32 k = 0; k < (radix - 1) * WG; ++k) {
-      u64 const bx = tab[k].first % M61, by = tab[k].second % M61;
-      u64 const sum = (bx + by) % M61;
-      tab[size + k] = ulong2{by >= bx ? by - bx : by + M61 - bx, sum ? M61 - sum : 0};
-    }
-  }
+  formatTableGF61(tab, 0, n, size, fmt);
   return tab;
 }
 
@@ -1027,8 +1053,7 @@ u64 pfaRootOfUnity(u32 q, u32 R) {
   return pfaPowMod(q, q == 61 ? 37 : 7, (p - 1) / R);
 }
 
-static vector<ulong2> genSmallTrigComboGF61(Args *args, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
-  vector<ulong2> tab = genSmallTrigGF61(size, radix);
+static vector<ulong2> genSmallTrigComboRawGF61(Args *args, vector<ulong2> tab, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
 
   u32 const tail_trigs = args->value("TAIL_TRIGS61", 0);          // Default is reading all trigs from memory
 
@@ -1092,7 +1117,22 @@ static vector<ulong2> genSmallTrigComboGF61(Args *args, u32 width, u32 middle, u
   return tab;
 }
 
-static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
+// The tail line multipliers (TAIL_TRIGS61 >= 1) follow the height table and line 0's G_H trig values (always read alone)
+static vector<ulong2> genSmallTrigComboGF61(Args *args, bool amd, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+  vector<ulong2> tab = genSmallTrigComboRawGF61(args, genSmallTrigGF61(size, radix, tabFormatGF61(args, amd)), width, middle, size, radix, tail_single_wide);
+  u32 const mstart = 2 * size + size / radix;
+  if (tab.size() > mstart) { formatTableGF61(tab, mstart, tab.size(), 0, tailFormatGF61(args, amd)); }
+  return tab;
+}
+
+// The middle table sections read by middleMul and pfaRowMiddle (as is when middleMul chains), and by middleMul2 and pfaTwiddle(Inv)
+static u32 midFormatGF61(Args *args, bool amd, bool pfa) {
+  bool const chain = args->value("MIDDLE_CHAIN61", 0) != 0;
+  return chain && !pfa ? 0 : formatGF61(args, amd, 10, !chain);
+}
+static u32 mid2FormatGF61(Args *args, bool amd) { return formatGF61(args, amd, 100); }
+
+static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width, u32 fmt, u32 fmt2) {
   vector<ulong2> tab;
   if (middle & (middle - 1)) {
     // PFA, see pfaTwiddle.  A row has bh = smallH * m2 lines and w is a root of order width*bh:
@@ -1112,6 +1152,10 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
     tab.resize(smallH * (middle - 1));
     GF61 const root1w = GF61::root_one(width);
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF61(root1w, k)); }
+    // The twiddles pfaRowMiddle and pfaTwiddle(Inv) multiply by, the Karatsuba terms of entry k at smallH * middle + width + k (MIDDLE_PRE61)
+    u32 const pre = smallH * middle + width;
+    formatTableGF61(tab, bh, bh + smallH * (m2 - 1), pre + bh, fmt);
+    formatTableGF61(tab, smallH * (middle - 1), smallH * (middle - 1) + width, pre + smallH * (middle - 1), fmt2);
   } else {
     GF61 const root1hm = GF61::root_one(smallH * middle);
     for (u32 m = 1; m < middle; ++m) {
@@ -1121,6 +1165,10 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
     for (u32 k = 0; k < width; ++k)  { tab.push_back(root1GF61(root1mw, k)); }
     GF61 const root1wmh = GF61::root_one(width * middle * smallH);
     for (u32 k = 0; k < smallH; ++k)  { tab.push_back(root1GF61(root1wmh, k)); }
+    // The twiddles middleMul and middleMul2 multiply by, the Karatsuba terms of entry k at smallH * middle + width + k (MIDDLE_PRE61)
+    u32 const pre = smallH * middle + width;
+    formatTableGF61(tab, 0, smallH * (middle - 1), pre, fmt);
+    formatTableGF61(tab, smallH * (middle - 1), smallH * (middle - 1) + width, pre + smallH * (middle - 1), fmt2);
   }
   return tab;
 }
@@ -1130,7 +1178,7 @@ static vector<ulong2> genMiddleTrigGF61(u32 smallH, u32 middle, u32 width) {
 /*  Build all the needed trig values into one big buffer  */
 /**********************************************************/
 
-static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix, bool chain31) {
+static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix, bool chain31, u32 fmt61) {
   vector<double2> tab;
   size_t tabsize;
 
@@ -1158,7 +1206,7 @@ static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix, bool cha
   }
 
   if (fft.NTT_GF61) {
-    vector<ulong2> tab3 = genSmallTrigGF61(size, radix);
+    vector<ulong2> tab3 = genSmallTrigGF61(size, radix, fmt61);
     tab3.resize(SMALLTRIG_GF61_SIZE(size, 0, 0, 0, 0));
     // Append tab3 to tab
     tabsize = tab.size();
@@ -1169,7 +1217,7 @@ static vector<double2> genSmallTrig(FFTConfig fft, u32 size, u32 radix, bool cha
   return tab;
 }
 
-static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
+static vector<double2> genSmallTrigCombo(Args *args, bool amd, FFTConfig fft, u32 width, u32 middle, u32 size, u32 radix, bool tail_single_wide) {
   vector<double2> tab;
   size_t tabsize;
 
@@ -1197,7 +1245,7 @@ static vector<double2> genSmallTrigCombo(Args *args, FFTConfig fft, u32 width, u
   }
 
   if (fft.NTT_GF61) {
-    vector<ulong2> tab3 = genSmallTrigComboGF61(args, width, middle, size, radix, tail_single_wide);
+    vector<ulong2> tab3 = genSmallTrigComboGF61(args, amd, width, middle, size, radix, tail_single_wide);
     tab3.resize(SMALLTRIGCOMBO_GF61_SIZE(width, middle, size, radix));
     // Append tab3 to tab
     tabsize = tab.size();
@@ -1224,7 +1272,7 @@ static vector<T2> genPfaMiddleTrigFP(u32 smallH, u32 middle, u32 width, Root roo
   return tab;
 }
 
-static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width, bool chain31) {
+static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width, bool chain31, u32 fmt61, u32 fmt61b) {
   vector<double2> tab;
   size_t tabsize;
 
@@ -1252,8 +1300,8 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
   }
 
   if (fft.NTT_GF61) {
-    vector<ulong2> tab3 = genMiddleTrigGF61(smallH, middle, width);
-    tab3.resize(MIDDLETRIG_GF61_SIZE(width, middle, smallH));
+    vector<ulong2> tab3 = genMiddleTrigGF61(smallH, middle, width, fmt61, fmt61b);
+    if (tab3.size() < MIDDLETRIG_GF61_SIZE(width, middle, smallH)) { tab3.resize(MIDDLETRIG_GF61_SIZE(width, middle, smallH)); }   // Terms may follow:  no part follows the GF61 one
     // Append tab3 to tab
     tabsize = tab.size();
     tab.resize(tabsize + tab3.size());
@@ -1290,7 +1338,10 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
   u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
   bool const chain31 = chainTablesGF31(args, false);
+  bool const amd = isAmdGpu(context->deviceId());
+  u32 const fmt61 = fft.NTT_GF61 ? tabFormatGF61(args, amd) : 0, fmt61tail = fft.NTT_GF61 ? tailFormatGF61(args, amd) : 0;
   u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31)
+                       | fmt61 << 21 | fmt61tail << 24     // How the GF61 width/height twiddles and tail multipliers are stored
                        | u32(fft.isPfa()) << 20;     // PFA lays out the FP tail trig values differently (a 212 and a 232 FFT64 share the shape)
 
   // See if there is an existing smallTrigCombo that we can return (using only a subset of the data)
@@ -1308,7 +1359,7 @@ TrigPtr TrigBufCache::smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u3
   if (it != m.end() && (p = it->second.lock())) return p;
 
   // Create a new non-combo
-  p = make_shared<TrigBuf>(context, genSmallTrig(fft, width, nW, chain31));
+  p = make_shared<TrigBuf>(context, genSmallTrig(fft, width, nW, chain31, fmt61));
   m[key] = p;
   smallCache.add(p);
   return p;
@@ -1320,7 +1371,10 @@ TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 m
   u32 const tail_trigs32 = args->value("TAIL_TRIGS32", 2);             // Default is calculating FP32 trigs from scratch, no memory accesses
   u32 const tail_trigs61 = args->value("TAIL_TRIGS61", 2);             // Default is reading GF61 trigs from memory
   bool const chain31 = chainTablesGF31(args, false);
+  bool const amd = isAmdGpu(context->deviceId());
+  u32 const fmt61 = fft.NTT_GF61 ? tabFormatGF61(args, amd) : 0, fmt61tail = fft.NTT_GF61 ? tailFormatGF61(args, amd) : 0;
   u32 const key_part = make_key_part(fft.FFT_FP64, tail_trigs, fft.NTT_GF31, tail_trigs31, fft.FFT_FP32, tail_trigs32, fft.NTT_GF61, tail_trigs61, tail_single_wide, chain31)
+                       | fmt61 << 21 | fmt61tail << 24     // How the GF61 width/height twiddles and tail multipliers are stored
                        | u32(fft.isPfa()) << 20;     // PFA lays out the FP tail trig values differently (a 212 and a 232 FFT64 share the shape)
 
   // If there are no pre-computed trig values we might be able to share this trig table with fft_WIDTH
@@ -1334,7 +1388,7 @@ TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 m
   TrigPtr p{};
   auto it = m.find(key);
   if (it == m.end() || !(p = it->second.lock())) {
-    p = make_shared<TrigBuf>(context, genSmallTrigCombo(args, fft, width, middle, height, nH, tail_single_wide));
+    p = make_shared<TrigBuf>(context, genSmallTrigCombo(args, amd, fft, width, middle, height, nH, tail_single_wide));
     m[key] = p;
     smallCache.add(p);
   }
@@ -1345,13 +1399,16 @@ TrigPtr TrigBufCache::middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MID
   std::scoped_lock const lock{mut};
   auto& m = middle;
   bool const chain31 = chainTablesGF31(args, true);
-  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, fft.isPfa(), chain31);   // FFT64 may or may not be PFA
+  bool const amd = isAmdGpu(context->deviceId());
+  u32 const fmt61 = fft.NTT_GF61 ? midFormatGF61(args, amd, fft.isPfa()) : 0, fmt61b = fft.NTT_GF61 ? mid2FormatGF61(args, amd) : 0;
+  u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, fft.isPfa(), chain31)   // FFT64 may or may not be PFA
+                       | fmt61 << 20 | fmt61b << 23;        // How the GF61 twiddles are stored
   decay_t<decltype(m)>::key_type const key{SMALL_H, MIDDLE, width, key_part};
 
   TrigPtr p{};
   auto it = m.find(key);
   if (it == m.end() || !(p = it->second.lock())) {
-    p = make_shared<TrigBuf>(context, genMiddleTrig(fft, SMALL_H, MIDDLE, width, chain31));
+    p = make_shared<TrigBuf>(context, genMiddleTrig(fft, SMALL_H, MIDDLE, width, chain31, fmt61, fmt61b));
     m[key] = p;
     middleCache.add(p);
   }

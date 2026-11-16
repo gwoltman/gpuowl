@@ -10,6 +10,7 @@
 #include "timeutil.h"
 #include "File.h"
 #include "CycleFile.h"
+#include "TrigBufCache.h"
 #include "TuneEntry.h"
 #include "Signal.h"
 #include "Stage2.h"
@@ -1078,25 +1079,34 @@ void Tune::tune() {
       args->flags["TABMUL_CHAIN32"] = to_string(best_tabmul_chain);
     }
 
-    // Find best TABMUL_CHAIN61 setting
+    // Find best CMUL61WHERE setting:  time 0 and each table's digit alone (1, 10, 100).  Taking the digits as independent, the best setting
+    // is the sum of those that beat 0, and a setting's cost is 0's cost plus each of its digits' gains.
     if (time_NTTs) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
-      u32 best_tabmul_chain = 0;
-      u32 const current_tabmul_chain = args->value("TABMUL_CHAIN61", isAmdGpu(shared.context->deviceId()) ? 2 : 0);
-      double best_cost = -1.0;
-      double current_cost = -1.0;
-      for (u32 const tabmul_chain : {0, 1, 2}) {
-        args->flags["TABMUL_CHAIN61"] = to_string(tabmul_chain);
+      u32 const current_where = args->value("CMUL61WHERE", cmul61WhereDefault(isAmdGpu(shared.context->deviceId())));
+      auto timeWhere = [&](u32 where) {
+        args->flags["CMUL61WHERE"] = to_string(where);
         double const cost = timeOption(exponent, fft, quick);
-        log("Time for %12s using TABMUL_CHAIN61=%u is %6.1f\n", fft.spec().c_str(), tabmul_chain, cost);
-        if (tabmul_chain == current_tabmul_chain) current_cost = cost;
-        if (best_cost < 0.0 || cost < best_cost) { best_cost = cost; best_tabmul_chain = tabmul_chain; }
+        log("Time for %12s using CMUL61WHERE=%u is %6.1f\n", fft.spec().c_str(), where, cost);
+        return cost;
+      };
+      double const cost0 = timeWhere(0);
+      double gain[3];
+      u32 best_where = 0;
+      for (u32 d = 0, place = 1; d < 3; ++d, place *= 10) {
+        gain[d] = timeWhere(place) - cost0;
+        if (gain[d] < 0) best_where += place;
       }
-      log("Best TABMUL_CHAIN61 is %u.  Default TABMUL_CHAIN61 is %u.\n", best_tabmul_chain, current_tabmul_chain);
-      configsUpdate(current_cost, best_cost, 0.003, "TABMUL_CHAIN61", best_tabmul_chain, newConfigKeyVals, suggestedConfigKeyVals);
-      args->flags["TABMUL_CHAIN61"] = to_string(best_tabmul_chain);
+      auto estimate = [&](u32 where) {
+        double cost = cost0;
+        for (u32 d = 0, place = 1; d < 3; ++d, place *= 10) { if (where / place % 10) cost += gain[d]; }
+        return cost;
+      };
+      log("Best CMUL61WHERE is %u.  Default CMUL61WHERE is %u.\n", best_where, current_where);
+      configsUpdate(estimate(current_where), estimate(best_where), 0.0, "CMUL61WHERE", best_where, newConfigKeyVals, suggestedConfigKeyVals);
+      args->flags["CMUL61WHERE"] = to_string(best_where);
     }
 
     // Find best MODM31 setting

@@ -58,6 +58,10 @@ float2 root1FP32(u32 N, u32 k);
 uint2 root1GF31(u32 N, u32 k);
 ulong2 root1GF61(u32 N, u32 k);
 
+// The defaults of the -use keys CMUL61 and CMUL61WHERE, as in base.cl
+inline u32 cmul61Default(bool amd) { return amd ? 20 : 11; }
+inline u32 cmul61WhereDefault(bool amd) { return amd ? 1 : 0; }
+
 // PFA (see base.cl): arithmetic mod p = 2^q - 1 (q = 31 or 61), and the primitive R-th root of unity in Z/pZ that the radix-R
 // between the rows uses, g^((p - 1) / R) with g a primitive root mod p (37 for M61, 7 for M31).  Kernels and tables must agree on it.
 u64 pfaMulMod(u32 q, u64 a, u64 b);

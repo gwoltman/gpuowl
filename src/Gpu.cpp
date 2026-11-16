@@ -403,6 +403,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 			      "L2_STRIPING",
 			      "MIDDLE_CHAIN31",
                               "MIDDLE_CHAIN61",
+                              "TABMUL_CHAIN61",         // 1: tabMul's GF61 twiddles chained (see base.cl)
+                              "CMUL61",                 // How the GF61 twiddle tables are stored (see base.cl), to be tuned
                               "CS_FENCE",               // Device-scope fences in carryFused's hand-offs (see carryfused.cl).  Required for Intel Arc GPUs.
                               "CS_ATOMIC",              // Experimental: carryFused's carry shuttle accessed with atomics (see carryfused.cl)
                               "PRPPM1",                 // Developer: PRPPM1=0, no P-1 inside PRP tests (Task.cpp, prpPm1Bounds)
@@ -437,7 +439,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "TABMUL_CHAIN",
                               "TABMUL_CHAIN31",
                               "TABMUL_CHAIN32",
-                              "TABMUL_CHAIN61",
+                              "CMUL61WHERE",
                               "MODM31",
                               "LOADS","STORES",
                               "WMUL",
@@ -456,6 +458,9 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 #endif
     } else if (!isValid) {
       log("Warning: unrecognized -use key '%s'\n", k.c_str());
+    }
+    if (k == "TABMUL_CHAIN61" && v != "0" && v != "1") {
+      log("Warning: -use TABMUL_CHAIN61=%s:  only 0 and 1 now.  The Karatsuba terms (2) and the scaled tables are CMUL61WHERE and CMUL61\n", v.c_str());
     }
 #if !CUDA_BACKEND
     if (isCudaOnly) { log("Note: -use %s has no effect in this OpenCL build (CUDA only)\n", k.c_str()); }

@@ -1119,7 +1119,7 @@ KERNEL(G_H) tailMulZeroGF61(PA_TM(T2) out, CPA_TM(T2) in, CP(T2) a, Trig smallTr
 #else
   GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + tline]);
 #endif
-  trig = cmul(trig, mult);
+  trig = cmulTwid(trig, mult);
 #else
 #if SINGLE_WIDE
   GF61 trig = TOLOAD(&smallTrig61[height_trigs + TAIL_TRIG_LINE(line)*G_H + me]);
@@ -1189,7 +1189,7 @@ KERNEL_CAP(G_H) tailMulGF61(PA_TM(T2) out, CPA_TM(T2) in, CP(T2) a, u32 base, Tr
 #if TAIL_TRIGS61 >= 1
   GF61 trig = TFLOAD(&smallTrig61[height_trigs + me]);                    // Trig values for line zero, should be cached
   GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + TAIL_TRIG_LINE(line1)]);
-  trig = cmul(trig, mult);
+  trig = cmulTwid(trig, mult);
 #else
   GF61 trig = TOLOAD(&smallTrig61[height_trigs + TAIL_TRIG_LINE(line1)*G_H + me]);
 #endif
@@ -1281,7 +1281,7 @@ KERNEL_CAP(G_H * 2) tailMulGF61(PA_TM(T2) out, CPA_TM(T2) in, CP(T2) a, u32 base
 #if TAIL_TRIGS61 >= 1
   GF61 trig = TFLOAD(&smallTrig61[height_trigs + lowMe]);                                 // Trig values for line zero, should be cached
   GF61 mult = TSLOAD(&smallTrig61[height_trigs + G_H + TAIL_TRIG_LINE(line_u)*2 + isSecondHalf]);         // Two multipliers.  One for line u, one for line v.
-  trig = cmul(trig, mult);
+  trig = cmulTwid(trig, mult);
 #else
   GF61 trig = TOLOAD(&smallTrig61[height_trigs + TAIL_TRIG_LINE(line_u)*G_H*2 + me]);
 #endif

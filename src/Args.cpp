@@ -396,8 +396,10 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
   -use TABMUL_CHAIN=<val>: Controls how trig values are obtained in WIDTH and HEIGHT when FFT-spec is 1.
                      0 = All trig values are pre-computed and read from memory.
                      1 = Read one trig value and compute the next 3 or 7 (chained multiplies, slightly less accurate).
-                     TABMUL_CHAIN31, TABMUL_CHAIN32 and TABMUL_CHAIN61 do the same for the M31, FP32 and M61 parts.
-                     TABMUL_CHAIN61=2 reads the trig values plus, for each, the terms its complex multiply would otherwise compute (default on AMD).
+                     TABMUL_CHAIN31 and TABMUL_CHAIN32 do the same for the M31 and FP32 parts.
+  -use CMUL61WHERE=n: which M61 trig tables also hold, for each value, the terms its complex multiply would otherwise compute.
+                     The sum of:  1 = WIDTH and HEIGHT (default on AMD), 10 = middleMul (and PFA rows), 100 = middleMul2 (and PFA
+                     twiddles).  Default 0 elsewhere.
   -use PM1_JACOBI=1: P-1 stage 1: also check a loaded savefile and the final residue with a Jacobi symbol on the GPU (about
                      as long as the GCD: two minutes at 100M bits).  The Gerbicz check already covers the arithmetic.
   -use CERT_GEC=0  : CERT: turn off the Gerbicz check of the squarings (on by default; the log gives its overhead, under 1%%

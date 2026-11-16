@@ -201,12 +201,34 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #define TABMUL_CHAIN32 0
 #endif
 #if !defined(TABMUL_CHAIN61)
+#define TABMUL_CHAIN61 0        // 1:  tabMul reads one twiddle and chains the others (raw tables, CMUL61WHERE's ones digit is ignored)
+#endif
+// GF61 complex multiplies by a twiddle read from a table (cmulTwid in math.cl).  CMUL61 is how the tables store the twiddles:
+//   ones digit, a twiddle read alone:                 0 as is (cmul), 1 times 4 (cmul4)
+//   tens digit, a twiddle read with its Karatsuba terms:  0 as is (cmulPre), 1 b.x and the terms times 8 (cmulPre8),
+//                                                     2 b.x and the terms times 4, the data doubled (cmulPre4, keeps mad64s)
+// CMUL61WHERE picks, per table, whether its twiddles are read alone (digit 0) or with their Karatsuba terms (digit 1):
+//   ones:  tabMul (fft_WIDTH, fft_HEIGHT);  tens:  middleMul, pfaRowMiddle;  hundreds:  middleMul2, pfaTwiddle(Inv).
+// The tail line multipliers (TAIL_TRIGS61 >= 1) are always read alone.
+#if !defined(CMUL61)
 #if AMDGPU
-#define TABMUL_CHAIN61 2        // Karatsuba terms from the table:  timed faster on AMD (PR #190)
+#define CMUL61 20
 #else
-#define TABMUL_CHAIN61 0
+#define CMUL61 11
 #endif
 #endif
+#if !defined(CMUL61WHERE)
+#if AMDGPU
+#define CMUL61WHERE 1           // Karatsuba terms from the table:  timed faster on AMD (PR #190)
+#else
+#define CMUL61WHERE 0
+#endif
+#endif
+#define CMUL61_ONE (CMUL61 % 10)
+#define CMUL61_K (CMUL61 / 10 % 10)
+#define CMUL61_TAB (TABMUL_CHAIN61 != 1 && CMUL61WHERE % 10 != 0)
+#define CMUL61_MID (!MIDDLE_CHAIN61 && CMUL61WHERE / 10 % 10 != 0)
+#define CMUL61_MID2 (CMUL61WHERE / 100 % 10 != 0)
 #if !defined(MODM31)
 #if AMDGPU && WAVEFRONT == 32
 #define MODM31 3      // Timed 1.5-2.8 % faster than 0 on an RX 7900 XTX.  Not on wave64 AMD:  on gfx906 it takes the 1K-wide carryFused of
