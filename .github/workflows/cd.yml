@@ -61,6 +61,7 @@ jobs:
           README.*
           LICENSE
           tools/*
+          docs/*
           build-release/*
 
   Linux-CUDA:
@@ -122,6 +123,7 @@ jobs:
           README.*
           LICENSE
           tools/*
+          docs/*
           build-cuda/*
 
   Windows-OpenCL:
@@ -155,6 +157,7 @@ jobs:
           README.*
           LICENSE
           tools/*
+          docs/*
           build-msvc/OpenCL/Release/*
 
   Windows-CUDA:
@@ -190,6 +193,7 @@ jobs:
           README.*
           LICENSE
           tools/*
+          docs/*
           build-msvc/CUDA/Release/*
 
   deploy:
@@ -211,10 +215,10 @@ jobs:
             (
                 cd "$DIR"
                 if [[ $DIR == PRPLL-NTT_Windows_* ]]; then
-                    zip -r "../${DIR%/}.zip" -- README.* LICENSE tools/
+                    zip -r "../${DIR%/}.zip" -- README.* LICENSE tools/ docs/
                     zip -j "../${DIR%/}.zip" -- build-msvc/*/Release/*
                 else
-                    tar -czf "../${DIR%/}.tar.gz" --transform='s|^build-[^/]*/||' README.* LICENSE tools/ build-*/*
+                    tar -czf "../${DIR%/}.tar.gz" --transform='s|^build-[^/]*/||' README.* LICENSE tools/ docs/ build-*/*
                 fi
             )
         done
