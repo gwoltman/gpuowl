@@ -941,9 +941,11 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
   }
   Stage2Run& s2 = *s2Ptr;
 
-  // Buffers the GPU can't hold:  a smaller table (from the start, as another plan).  The margin keeps clear of the buffers just below.
+  // Buffers the GPU can't hold:  a smaller table (from the start, as another plan).  The margin keeps clear of the buffers just below:
+  // 8 (2% from 400 buffers up), but at most a quarter of the good ones, so a bad buffer 9 leaves 7 rather than the 1 that declines.
   auto const shrink = [&](u32 bad) {
-    u64 const n = bad > std::max(8u, bad / 50) ? bad - std::max(8u, bad / 50) : 0;
+    u32 const margin = std::min(std::max(8u, bad / 50), std::max(1u, bad / 4));
+    u64 const n = bad > margin ? bad - margin : 0;
     log("EE stage 2: table buffer %u of %u is not usable: planning again with at most %" PRIu64 " table buffers\n", bad, nT, n);
     throw TableTooLarge{n};
   };
