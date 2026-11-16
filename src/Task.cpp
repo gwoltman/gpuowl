@@ -309,7 +309,8 @@ std::optional<std::pair<u64, u64>> prpPm1SavedBounds(const Args& args, u64 E) {
 // The bounds are chosen once, as for a Pfactor line, but for stage 1 inside the PRP (its cost, its buffers) and with -pm1TestsSaved,
 // not the line's value.  A test with accumulator savefiles keeps their bounds; a test started without P-1 can't have it.  P-1 never stops the PRP test:  when it can't be done (no memory for
 // its buffers, no saving), the PRP goes on without it.  Hidden -use keys, for debugging and tests:  PRPPM1=0, no P-1;
-// PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>], these bounds in every PRP test whose line has no prefix.
+// PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>], these bounds in every PRP test whose line has no prefix.  -B1/-B2 replace the chosen bounds of a
+// line that wants P-1.
 void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   const Args& args = *shared.args;
   u64 const E = task.exponent;
@@ -369,6 +370,15 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
     log("P-1 in the PRP test: the PRP test was started without P-1 (it needs the PRP residues from iteration 1 on): no P-1\n");
     return;
   }
+  if (args.pm1B1) {
+    // -B1/-B2 replace the choice of the bounds, not of whether the line wants P-1 (above).  Without the memory for its buffers, the
+    // P-1 is given up when it starts (Pm1Prp::alloc).
+    task.B1 = args.pm1B1;
+    task.B2 = args.pm1B2;
+    log("P-1 in the PRP test: bounds from -B1/-B2: B1=%" PRIu64 "%s\n", task.B1,
+        task.B2 ? (" B2=" + to_string(task.B2)).c_str() : " (stage 1 only)");
+    return;
+  }
   Pm1Prp::Budget const mem = Pm1Prp::budget(gpu);
   if (mem.maxBufs < pm1::inlineBuffers(pm1::INLINE_MIN_L)) {
     log("P-1 in the PRP test: %s: no P-1\n", mem.tooLittle.c_str());
@@ -411,6 +421,11 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     B1 = lineB1;
     B2 = lineB2;
     log("P-1 bounds from the worktodo line: B1=%" PRIu64 "%s\n", B1, B2 ? (" B2=" + to_string(B2)).c_str() : " (stage 1 only)");
+  } else if (pfactor && args.pm1B1) {
+    // -B1/-B2, below the line's prefix:  the same
+    B1 = args.pm1B1;
+    B2 = args.pm1B2;
+    log("P-1 bounds from -B1/-B2: B1=%" PRIu64 "%s\n", B1, B2 ? (" B2=" + to_string(B2)).c_str() : " (stage 1 only)");
   } else if (pfactor && !B1 && !pfactorBounds(*this, shared, *gpu)) {
     Worktodo::deleteTask(*this, instance);
     return;
