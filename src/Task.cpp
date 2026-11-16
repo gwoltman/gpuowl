@@ -413,8 +413,12 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
 
   // A stage 2 savefile for this residue means that this stage 1 GCD already ran and found nothing (stage 2 starts only then)
   bool const stage2Started = B2 > B1 && Stage2::hasSavefile(exponent, B1, B2, x);
+  // The stage 1 savefiles' folder also notes a GCD of this residue that found no factor (stage1GcdMarkNone)
+  fs::path const p1Dir = fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent));
   if (stage2Started) {
     log("P-1 stage 1 GCD skipped: stage 2 was started from this residue, so it found no factor\n");
+  } else if (pm1::stage1GcdFoundNone(p1Dir, exponent, B1, x)) {
+    log("P-1 stage 1 GCD skipped: an earlier run's GCD of this residue found no factor (B1=%" PRIu64 ")\n", B1);
   } else {
     // There is no CPU GCD:  if the GPU one can't run (e.g. its kernels don't build), mprime can still run it
     Words g;
@@ -436,7 +440,10 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     }
     log("P-1 stage 1 GCD: %.1f s\n", gcd.lastStats().seconds);
     addFactor(g, 1);
-    if (factors.empty()) { log("P-1 stage 1 found no factor (B1=%" PRIu64 ")\n", B1); }
+    if (factors.empty()) {
+      log("P-1 stage 1 found no factor (B1=%" PRIu64 ")\n", B1);
+      pm1::stage1GcdMarkNone(p1Dir, exponent, B1, x);
+    }
   }
   if (nJacobi) { log("P-1 stage 1 had %u Jacobi check failures\n", nJacobi); }
 
