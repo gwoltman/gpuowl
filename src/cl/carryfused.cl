@@ -279,6 +279,11 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 
   setPriority(3);
 
+  // With PDL on and a non-PFA middle, the weights and the frac_bits setup below are computed before waiting on the previous
+  // kernel: they read only THREAD_WEIGHTS, which no kernel writes, so they overlap fftMiddleOutFP64's tail.  A PFA middle
+  // computes its weights after fft_WIDTH1 instead, so there is little to hoist, and without PDL the wait is a no-op.
+#define CF_PDL_HOIST (CUDA_BACKEND && HAS_PTX >= 900 && PDL && !PFA)
+#if !CF_PDL_HOIST
   dependentLaunchWait();   // Previous kernel was fftMiddleOutFP64
 
   readCarryFusedLines(in, u, gr, me, line, lowMe);
@@ -289,6 +294,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
   fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
 
+#endif
   Word2 wu[NW];
 #if !NVIDIAGPU || CUDA_BACKEND
   T2 weights = fancyMul(TFLOAD(&THREAD_WEIGHTS[lowMe]), TSLOAD(&THREAD_WEIGHTS[G_W + line]));
@@ -310,6 +316,18 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
   u32 frac_bits = fracBits(word_index) + FRAC_BPW_HI;
   const u32 frac_bits_bigstep = fracBits(G_W * H * 2);
   u32 starting_frac_bits = frac_bits;
+
+#if CF_PDL_HOIST
+  dependentLaunchWait();   // Previous kernel was fftMiddleOutFP64
+
+  readCarryFusedLines(in, u, gr, me, line, lowMe);
+
+// Try this weird FFT_width call that adds a "hidden zero" when unrolling.  This prevents the compiler from finding
+// common sub-expressions to re-use in the second fft_WIDTH call.  Re-using this data requires dozens of VGPRs
+// which causes a terrible reduction in occupancy.
+  u32 zerohack = ZEROHACK_W * (u32) get_group_id(0) / 131072;
+  fft_WIDTH1(lds + zerohack, u, smallTrig + zerohack, WMUL, lowMe);
+#endif
 
   // Apply the inverse weights and carry propagate pairs to generate the output carries
 
