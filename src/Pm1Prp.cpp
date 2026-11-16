@@ -62,7 +62,7 @@ struct Pm1Prp::Val {
   bool one = true;
 };
 
-std::unique_ptr<Pm1Prp> Pm1Prp::make(Gpu& gpu, u64 B1, u64 B2, Pm1Report report) {
+std::unique_ptr<Pm1Prp> Pm1Prp::make(Gpu& gpu, u64 B1, u64 B2, Pm1Report report, const string& AID) {
   u64 const E = gpu.E;
   if (B1 < 2) { return {}; }
   Saver<P1PrpState> dirOnly{E, 1000, 1};
@@ -74,21 +74,30 @@ std::unique_ptr<Pm1Prp> Pm1Prp::make(Gpu& gpu, u64 B1, u64 B2, Pm1Report report)
         " itself; no P-1 in this test\n", B1, hiBit, E);
     return {};
   }
-  return std::unique_ptr<Pm1Prp>{new Pm1Prp(gpu, B1, B2, std::move(report), std::move(exp), hiBit)};
+  return std::unique_ptr<Pm1Prp>{new Pm1Prp(gpu, B1, B2, std::move(report), std::move(exp), hiBit, AID)};
 }
 
-Pm1Prp::Pm1Prp(Gpu& gpu, u64 B1, u64 B2, Pm1Report report, vector<u32> exp, u64 hiBit) :
+Pm1Prp::Pm1Prp(Gpu& gpu, u64 B1, u64 B2, Pm1Report report, vector<u32> exp, u64 hiBit, const string& AID) :
   gpu{gpu},
   E{gpu.E},
   B1{B1},
   B2{B2},
   report{std::move(report)},
+  AID{AID},
   exp{std::move(exp)},
   hiBit{hiBit},
   saver{E, 1000, gpu.args.nSavefiles + 2}
 {
   log("P-1 in the PRP test: B1=%" PRIu64 "%s, %" PRIu64 " bits, done when the PRP passes iteration %" PRIu64 "\n", B1,
       B2 > B1 ? (" B2=" + to_string(B2)).c_str() : "", hiBit + 1, hiBit);
+  if (gpu.args.mprimeStage2 && B2 > B1) {
+    fs::path const& dir = gpu.args.mprimeDir;
+    if (dir.empty() || !fs::is_directory(dir)) {
+      log("P-1 in the PRP test: -mprimeStage2 needs -mprimeDir <an existing directory>; without it stage 2 will run on the GPU\n");
+    } else {
+      log("P-1 in the PRP test: stage 2 goes to mprime in '%s' (-mprimeStage2); the PRP test does not wait for it\n", dir.string().c_str());
+    }
+  }
 }
 
 // The background thread may still have a savefile of this object's to write
@@ -184,6 +193,8 @@ void Pm1Prp::startSegment(u64 at) {
   }
 }
 
+// The stages of an accumulator savefile:  0 accumulating, 1 stage 1 done and stage 2 due, 2 finished (the result is written),
+// 3 given up, 4 stage 2 handed to mprime (which writes the result)
 // With a PRP check (k, prp64), the accumulator savefile records it (stage 3):  a restart does not try again
 void Pm1Prp::giveUp(const string& why, u64 k, u64 prp64) {
   log("P-1 in the PRP test is given up: %s.  The PRP test goes on.\n", why.c_str());
@@ -217,6 +228,9 @@ PRPState Pm1Prp::sync(PRPState state) {
       done = true;
       if (last->stage == 3) {
         log("P-1 in the PRP test was given up at iteration %" PRIu64 " (see the log of that run)\n", last->k);
+      } else if (last->stage == 4) {
+        log("P-1 in the PRP test: stage 1 is done (at iteration %" PRIu64 ") and stage 2 (B2=%" PRIu64 ") was handed to mprime\n",
+            last->k, last->B2);
       } else if (last->B1 != B1 || last->B2 != B2) {
         log("P-1 in the PRP test: already done with B1=%" PRIu64 " B2=%" PRIu64 " (not B1=%" PRIu64 " B2=%" PRIu64 ")\n",
             last->B1, last->B2, B1, B2);
@@ -549,12 +563,52 @@ Pm1Prp::Outcome Pm1Prp::finish(u64 k, u64 prp64) {
   return CONTINUE;
 }
 
+// Stage 2 to mprime, as Task.cpp does for a P-1 line:  the stage 1 residue as a Prime95 savefile and a "Pminus1=" line in
+// <-mprimeDir>/worktodo.add.  The GPU's stage 1 GCD is already done (finish), so that a stage 1 factor stops the PRP test now and not
+// when mprime gets to the line;  mprime runs that GCD again on its way into stage 2.  No result line is written here:  mprime's is the
+// result of the P-1.  False (logged) when the files can't be written.
+bool Pm1Prp::handOffStage2(const Words& x) {
+  fs::path const& dir = gpu.args.mprimeDir;
+  if (dir.empty()) {
+    log("P-1 in the PRP test: -mprimeStage2 needs -mprimeDir; stage 2 runs on the GPU\n");
+    return false;
+  }
+  string const work = pm1::mprimePminus1Line(AID, E, B1, B2);
+  string error;
+  try {
+    pm1::writeMprimeStage1(dir, E, B1, x);
+    pm1::appendMprimeWork(dir, work);
+  } catch (const std::exception& e) {
+    error = e.what();
+  } catch (const string& mes) {
+    error = mes;
+  } catch (const char* mes) {
+    error = mes;
+  }
+  if (!error.empty()) {
+    log("P-1 in the PRP test: the hand-off of stage 2 to mprime in '%s' failed (%s); stage 2 runs on the GPU\n", dir.string().c_str(),
+        error.c_str());
+    return false;
+  }
+  log("P-1 in the PRP test: stage 1 residue handed to mprime for stage 2 (-mprimeStage2): %s in '%s', %u accumulator errors; %s",
+      pm1::mprimeSaveName(E).c_str(), dir.string().c_str(), nErrors, work.c_str());
+  log("P-1 in the PRP test: mprime writes the P-1 result.  The PRP test goes on and stops if mprime's results give a factor.\n");
+  if (B1 < 50000) { log("Note: mprime rejects P-1 lines with B1 < 50000 unless its prime.txt has AllowLowB1=1\n"); }
+  save(doneK, done64, 4);
+  gpu.background->waitEmpty();
+  Saver<P2State>::clear(E);      // of a stage 2 begun on the GPU by a run without the option
+  return true;
+}
+
 Pm1Prp::Outcome Pm1Prp::afterSave() {
   if (!stage2Due) { return CONTINUE; }
   stage2Due = false;
   // The PRP savefile of this check must be on disk:  a stop in stage 2 resumes the PRP from it, and stage 2 from its own savefile
   gpu.background->waitEmpty();
   Words const x = X.empty() ? makeWords(E, 1) : X;
+  // -mprimeStage2:  mprime runs stage 2 and reports the result, and the PRP test goes on.  If the hand-off can't be written, stage 2
+  // runs here as without the option.
+  if (gpu.args.mprimeStage2 && handOffStage2(x)) { return CONTINUE; }
   log("P-1 in the PRP test: stage 2 to B2=%" PRIu64 " (the PRP test waits)\n", B2);
   u64 doneB2 = 0;
   vector<string> factors;

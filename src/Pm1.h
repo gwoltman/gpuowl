@@ -114,6 +114,34 @@ string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2);
 // Appends a line to <dir>/worktodo.add in one write.
 void appendMprimeWork(const fs::path& dir, const string& line);
 
+// The number with these decimal digits as little-endian 32-bit words;  empty when the string is empty or has another character.
+vector<u32> fromDecimal(const string& digits);
+
+// What mprime (or Prime95) wrote about one exponent in the JSON results file of its directory:  results.json.txt, or the name its
+// prime.txt gives ("results.json.txt=<name>").  The lines are as ecm.cpp and commonb.cpp write them:
+//   {"status":"F", "exponent":45581713, "worktype":"P-1", "factors":["430639100587696027847"], "b1":50000, "b2":5000000, ...}
+//   {"status":"NF", "exponent":45581713, "worktype":"P-1", "b1":50000, "b2":5000000, ...}
+// poll() reads what was appended since the last call (the whole file the first time, and again if it shrank), so a watch costs one
+// small read per call.  A factor counts from a line of any work type (P-1, P+1, ECM, TF), and only if it divides 2^p - 1:  a file is
+// not trusted more than a GCD.
+class MprimeResults {
+public:
+  explicit MprimeResults(const fs::path& dir);
+
+  struct Found {
+    vector<string> factors;       // new verified factors of 2^p - 1, in decimal
+    bool noFactor = false;        // a new P-1 result without a factor
+    u64 b1 = 0, b2 = 0;           // its bounds
+  };
+  Found poll(u64 p);
+
+  [[nodiscard]] const fs::path& path() const { return file; }
+
+private:
+  fs::path file;
+  u64 offset = 0;
+};
+
 // ---- Stage 2 (paired "n^2" form, with a table of n^2 for every odd n < M coprime to D) ----
 // The table holds B_n = x^(n^2) for the n in S = {n < M : gcd(n, D) = 1} (D even, so every n in S is odd), and the run steps
 // A_k = x^((kD)^2).  Since (kD)^2 - n^2 = (kD - n)(kD + n), one accumulator multiplication by A_k - B_n ("an item (k, n)") covers both

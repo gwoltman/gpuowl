@@ -3327,7 +3327,25 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   // P-1 stage 1 from this test's squarings (see Pm1Prp.h), with the bounds of the task (Task.cpp, prpPm1Bounds).  Without
   // them there is nothing:  pm1 stays null.
   std::unique_ptr<Pm1Prp> pm1;
-  if (task.B1) { pm1 = Pm1Prp::make(*this, task.B1, task.B2, pm1Report); }
+  if (task.B1) { pm1 = Pm1Prp::make(*this, task.B1, task.B2, pm1Report, task.AID); }
+
+  // With -mprimeDir, mprime's results file is watched for a factor of this exponent, at the start and at every verified check:  the
+  // result of a P-1 stage 2 handed to mprime (from this test with -mprimeStage2, or from a P-1 line before it).  A factor there
+  // (checked to divide 2^p - 1) ends the test as one from the P-1 inside it does.
+  std::optional<pm1::MprimeResults> mprimeResults;
+  if (!args.mprimeDir.empty()) { mprimeResults.emplace(args.mprimeDir); }
+  auto mprimeFactor = [&] {
+    if (!mprimeResults) { return false; }
+    pm1::MprimeResults::Found const found = mprimeResults->poll(E);
+    if (found.noFactor) {
+      log("mprime's results ('%s'): P-1 of %" PRIu64 " found no factor, B1=%" PRIu64 " B2=%" PRIu64 "\n",
+          mprimeResults->path().string().c_str(), E, found.b1, found.b2);
+    }
+    for (const string& f : found.factors) {
+      log("mprime's results ('%s'): %" PRIu64 " has the factor %s\n", mprimeResults->path().string().c_str(), E, f.c_str());
+    }
+    return !found.factors.empty();
+  };
 
   // This timer is used to measure total elapsed time to be written to the savefile.
   Timer elapsedTimer;
@@ -3396,6 +3414,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   }
 
   if (pm1 && pm1->foundFactor()) { return pm1FactorResult(); }
+  if (mprimeFactor()) { return pm1FactorResult(); }
 
   assert(blockSize > 0 && logStep % blockSize == 0);
 
@@ -3612,6 +3631,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
 
         if (pm1 && pm1->afterSave() == Pm1Prp::FACTOR) { return pm1FactorResult(); }
+        if (mprimeFactor()) { return pm1FactorResult(); }
 
         if (k >= kEndEnd) {
           // The test is complete; nothing after this point may lose the result.  Make sure the final proof residue,

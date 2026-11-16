@@ -192,6 +192,26 @@ hands off right after it, without its own stage 1 GCD (mprime runs that GCD on i
 handed off. Without `-mprimeDir`, a P-1 line stops with an error. The bounds of `Pfactor=` lines are still chosen for the GPU's
 stage 2 memory.
 
+**In a PRP test** (the P-1 that runs inside it, see [P-1 inside a PRP test](#p-1-inside-a-prp-test)), `-mprimeStage2` sends stage 2
+to mprime too:
+- PRPLL runs stage 1 from the PRP's squarings and the stage 1 GCD on the GPU, so a stage 1 factor ends the PRP test at once.
+- With no factor, it writes the residue and the `Pminus1=` line (with the PRP line's AID) into `<dir>` as above, and the PRP test
+  goes on without waiting. PRPLL writes no P-1 result: mprime's is the result. mprime runs the stage 1 GCD again on its way into
+  stage 2.
+- If the files can't be written, or `-mprimeDir` is missing, stage 2 runs on the GPU as without the option, and the log says so.
+- A restart does not hand off again.
+
+**Watching mprime's results.** With `-mprimeDir`, every PRP test reads mprime's JSON results file in `<dir>` at its start and at
+each verified check (`results.json.txt`, or the name set by `results.json.txt=<name>` in mprime's `prime.txt`):
+- A result with a factor of the exponent ends the PRP test: the worktodo line is deleted and no PRP result is written. Any work
+  type counts (P-1, P+1, ECM, TF). The factor must divide 2^p - 1; otherwise the line is logged and ignored.
+- A P-1 result without a factor is logged, and the test goes on.
+- Only what was appended since the last check is read. Lines for other exponents and a line still being written are skipped.
+- This covers a stage 2 handed off from the PRP test itself and one handed off earlier from a `Pfactor=` or `Pminus1=` line.
+- LL tests do not watch the file.
+
+"mprime" here also means Prime95. The hand-off and the watch are tested with mprime 31.7 on Linux only.
+
 ## FFT choice
 
 - **No `-fft`:** stage 2 uses the fastest fitting line of `tune-pm1.txt` (written by `-tune pm1`), then of `tune.txt`, then the
@@ -309,7 +329,8 @@ iterations, which are not saved.
   possible and continues.
 - **Developers:** `-use PRPPM1=0` turns it off; `-use PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>]` gives these bounds to every PRP test.
 - **Result:** at completion the GPU GCD runs and a P-1 result line is written with `"integrated":true`. A factor ends the PRP test
-  and deletes the worktodo line. With B2 > B1 and no factor, stage 2 runs while the PRP test waits; a failure in stage 2 gives a B1-only
+  and deletes the worktodo line. With B2 > B1 and no factor, stage 2 runs while the PRP test waits (with `-mprimeStage2` it goes to mprime instead and the PRP
+  test goes on, see [Hand-off to mprime](#hand-off-to-mprime--mprimedir-dir)); a failure in stage 2 gives a B1-only
   result and the PRP goes on.
 - LL tests get no automatic P-1: LL has no P-1 inside the test, and a P-1 run before it would have to rewrite the LL line (tests
   saved 0) so that a restart does not redo it.

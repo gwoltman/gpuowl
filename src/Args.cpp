@@ -343,17 +343,23 @@ named "config.txt" in the prpll run directory.
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
                      the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
                      result.  Without it such a line is reported for B1 alone.
+                     Also, every PRP test watches mprime's results file in <dir> (results.json.txt, or the name its prime.txt
+                     gives) at its start and at each verified check: a factor of the exponent there (checked to divide
+                     2^p-1) ends the PRP test.  mprime here also means Prime95.
 -mprimeStage2      : with -mprimeDir, hand every P-1 stage 2 to mprime, also when it could run on the GPU (mprime's
                      polynomial stage 2 with lots of system RAM is much faster at large B2).  prpll runs stage 1; mprime
                      runs the stage 1 GCD on its way into stage 2.  Pfactor= bounds are still chosen for this GPU's memory.
+                     For the P-1 inside a PRP test: after stage 1 and its GCD on the GPU, stage 2 goes to mprime the same
+                     way, mprime reports the P-1 result, and the PRP test goes on without waiting (a factor mprime finds
+                     later ends it, see -mprimeDir).
 P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2,p,-1,<tf>,<tests saved>: PrimeNet
                      wants P-1 done) gets P-1 from the PRP's own squarings, with bounds chosen for <tf>, -pm1TestsSaved
                      (not the line's value) and this GPU's memory; with tests saved 0, none.  A line without the two
                      fields gets it with <tf> assumed from the exponent; a -prp test does not.
                      Stage 1 costs about 15%% of a stage 1 run on its own, and GPU memory for 2^L residue buffers (with
                      too little, or -maxAlloc too low, there is no P-1) until the PRP passes iteration 1.44 * B1.  Then
-                     the P-1 result is written ("integrated":true) and stage 2 runs while the PRP test waits.  A factor
-                     ends the PRP test.  Only for PRP tests started with it; a restart keeps the bounds (p1prp-<p>).
+                     the P-1 result is written ("integrated":true) and stage 2 runs while the PRP test waits (or goes to
+                     mprime, -mprimeStage2).  A factor ends the PRP test.  Only for PRP tests started with it; a restart keeps the bounds (p1prp-<p>).
 -pm1TestsSaved <x> : the primality tests a factor saves, for the bounds of the P-1 inside PRP tests (default 1.02: the PRP
                      test plus its proof and the certificate).  Pfactor= lines use their own field.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  Without it the

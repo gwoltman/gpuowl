@@ -155,6 +155,49 @@ forced() {
 forced  forced-stage2  400381  500   1000   671839319     2
 forced  forced-stage1  400381  1000  2000   671839319     1           # 839 <= B1: the factor comes from mprime's stage 1 GCD
 
+# inPrp <name> <p> <B1> <B2> <expected factor or NF>:  -mprimeStage2 in a PRP test (stage 1 from the PRP's squarings, bounds from the
+# hidden PRPPM1 keys):  prpll runs stage 1 and its GCD, hands stage 2 to mprime and goes on with the PRP;  mprime runs stage 2 from the
+# residue;  the PRP test, restarted, reads mprime's result:  a factor ends it, no factor lets it go on
+inPrp() {
+  local name=$1 p=$2 B1=$3 B2=$4 want=$5
+  local d=$WORK/$name
+  rm -rf "$d"; mkdir -p "$d/run"; mprimeDir "$d/mp"
+  echo "PRP=0123456789ABCDEF0123456789ABCDEF,1,2,$p,-1,70,0" > "$d/run/worktodo-0.txt"
+  (cd "$d/run" && "$PRPLL" -device "$DEVICE" -use PRPPM1_B1="$B1",PRPPM1_B2="$B2" -mprimeDir ../mp -mprimeStage2 -log 1000 -iters 3000 -noclean > out 2>&1)
+  runMprime "$d/mp"
+  (cd "$d/run" && "$PRPLL" -device "$DEVICE" -use PRPPM1_B1="$B1",PRPPM1_B2="$B2" -mprimeDir ../mp -mprimeStage2 -log 1000 -iters 2000 -noclean >> out 2>&1)
+  local res got ok=1; res=$(cat "$d/mp/results.json.txt" 2>/dev/null)
+  grep -q "stage 1 residue handed to mprime for stage 2 (-mprimeStage2)" "$d/run/out" || ok=0
+  grep -q "stage 2 to B2" "$d/run/out" && ok=0                              # no stage 2 on the GPU
+  grep -q '"worktype":"P-1"' "$d/run/results-0.txt" 2>/dev/null && ok=0     # the P-1 result is mprime's
+  grep -qE " OK +3000 [0-9a-f]{16}" "$d/run/out" || ok=0                    # the PRP went on after the hand-off
+  echo "$res" | grep -q "\"exponent\":$p, \"worktype\":\"P-1\"" || ok=0
+  local b2; b2=$(echo "$res" | grep -o '"b2":[0-9]*' | grep -o '[0-9]*' | tail -1)      # mprime may go beyond the line's B2
+  echo "$res" | grep -q "\"b1\":$B1, " && [[ -n "$b2" ]] && [[ "$b2" -ge "$B2" ]] || ok=0
+  echo "$res" | grep -q '"aid":"0123456789ABCDEF0123456789ABCDEF"' || ok=0
+  if [[ "$want" = NF ]]; then
+    echo "$res" | grep -q '"status":"NF"' || ok=0
+    grep -q "P-1 of $p found no factor, B1=$B1 B2=$b2" "$d/run/out" || ok=0
+    grep -qE " OK +5000 [0-9a-f]{16}" "$d/run/out" || ok=0
+    [[ -s "$d/run/worktodo-0.txt" ]] || ok=0
+    got=NF
+  else
+    got=$(echo "$res" | grep -o '"factors":\["[0-9]*"' | grep -o '[0-9]*' | tail -1)
+    [[ -n "$got" ]] && python3 -c "import sys; sys.exit(int($got) % $want != 0)" || ok=0
+    grep -q "$p has the factor $got" "$d/run/out" || ok=0
+    grep -q "the PRP test is not needed" "$d/run/out" || ok=0
+    [[ -s "$d/run/worktodo-0.txt" ]] && ok=0
+    grep -q '"worktype":"PRP' "$d/run/results-0.txt" 2>/dev/null && ok=0
+  fi
+  if [[ "$ok" = 1 ]]; then
+    pass "$name: p=$p B1=$B1 B2=$B2 in a PRP test with -mprimeStage2: mprime ran stage 2 from prpll's residue ($got); the PRP test $([[ "$want" = NF ]] && echo "went on to 5000" || echo "stopped on mprime's factor")"
+  else
+    fail "$name (see $d)"
+  fi
+}
+inPrp   prp-stage2-factor  400381  500   1000   671839319
+inPrp   prp-stage2-nf      400033  1000  2000   NF
+
 # -mprimeStage2 without -mprimeDir:  the line is not started
 d=$WORK/forced-nodir
 rm -rf "$d"; mkdir -p "$d"

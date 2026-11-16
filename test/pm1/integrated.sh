@@ -2,7 +2,7 @@
 # End-to-end tests of the P-1 inside a PRP test (here with the bounds of the hidden -use PRPPM1_B1[,PRPPM1_B2] keys, src/Pm1Prp.cpp), with GMP (stage1_oracle) as the oracle for every accumulator
 # savefile (its residue must be 3^(E mod 2^next), its prp64 the res64 of 3^(2^k)) and for the factor.
 #
-#   test/pm1/integrated.sh [factor|nf|carry|resume|fault|onoff|crash|stage2|stage2fail|all]      (default all)
+#   test/pm1/integrated.sh [factor|nf|carry|resume|fault|onoff|crash|stage2|stage2fail|watch|handoff|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-integrated), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built with -DPRPLL_PM1_FAULTS if missing).
 
@@ -254,6 +254,98 @@ stage2fail_tests() {
   fi
 }
 
+watch_tests() {
+  # The watch of mprime's results file (-mprimeDir), without mprime:  a PRP line that asks for no P-1 stops at the start on a factor line
+  # for its exponent, ignores a "factor" that does not divide 2^p - 1 and lines of other exponents, and reads the file named in prime.txt
+  local d=$WORK/watch-factor
+  setup "$d" 400381; mkdir -p "$d/mp"
+  echo '{"status":"F", "exponent":400381, "worktype":"P-1", "factors":["671839319"], "b1":500, "b2":1000, "fft-length":20480}' > "$d/mp/results.json.txt"
+  run "$d" "$PRPLL" -mprimeDir mp -iters 2000
+  if grep -q "400381 has the factor 671839319" "$d/out" && grep -q "the PRP test is not needed" "$d/out" && [[ ! -s "$d/worktodo-0.txt" ]] \
+     && [[ ! -e "$d/results-0.txt" ]]; then
+    pass "watch: a P-1 factor in mprime's results ends the PRP test (line removed, no PRP result)"
+  else
+    fail "watch: factor (see $d)"
+  fi
+
+  d=$WORK/watch-bogus
+  setup "$d" 400381; mkdir -p "$d/mp"
+  { echo '{"status":"F", "exponent":400381, "worktype":"P-1", "factors":["671839321"], "b1":500, "b2":1000}'
+    echo '{"status":"F", "exponent":400033, "worktype":"P-1", "factors":["671839319"], "b1":500, "b2":1000}'
+    echo '{"status":"NF", "exponent":400381, "worktype":"P-1", "b1":500, "b2":1000, "fft-length":20480}'
+    printf '{"status":"F", "exponent":400381, "worktype":"P-1", "factors":["6718393'; } > "$d/mp/results.json.txt"
+  run "$d" "$PRPLL" -mprimeDir mp -iters 2000
+  if grep -q "gives 671839321 as a factor of M400381, which it is not: ignored" "$d/out" && ! grep -q "has the factor" "$d/out" \
+     && grep -q "P-1 of 400381 found no factor, B1=500 B2=1000" "$d/out" && grep -qE " OK +2000 [0-9a-f]{16}" "$d/out" \
+     && [[ -s "$d/worktodo-0.txt" ]]; then
+    pass "watch: a wrong factor, another exponent's line and an unfinished line are ignored; the no-factor result is logged; the PRP goes on"
+  else
+    fail "watch: bogus lines (see $d)"
+  fi
+  # The rest of the unfinished line arrives:  the next check reads it
+  echo '19"], "b1":500, "b2":1000}' >> "$d/mp/results.json.txt"
+  run "$d" "$PRPLL" -mprimeDir mp -iters 2000
+  if grep -q "400381 has the factor 671839319" "$d/out" && [[ ! -s "$d/worktodo-0.txt" ]]; then
+    pass "watch: the factor line completed later is found on the next run"
+  else
+    fail "watch: completed line (see $d)"
+  fi
+
+  d=$WORK/watch-renamed
+  setup "$d" 400381; mkdir -p "$d/mp"
+  printf 'UsePrimenet=0\r\nresults.json.txt=other.json\r\n' > "$d/mp/prime.txt"
+  echo '{"status":"F", "exponent":400381, "worktype":"ECM", "factors":["671839319"], "b1":50000}' > "$d/mp/other.json"
+  run "$d" "$PRPLL" -mprimeDir mp -iters 2000
+  if grep -q "other.json'): 400381 has the factor 671839319" "$d/out" && [[ ! -s "$d/worktodo-0.txt" ]]; then
+    pass "watch: the results file named in prime.txt is read, and a factor from another work type counts"
+  else
+    fail "watch: renamed results file (see $d)"
+  fi
+
+  # A factor that appears while the test runs is found at the next verified check
+  d=$WORK/watch-during
+  setup "$d" 400381; mkdir -p "$d/mp"
+  run "$d" "$PRPLL" -mprimeDir mp &
+  local pid=$!
+  for _ in $(seq 60); do grep -qE " OK +[0-9]+000 [0-9a-f]{16}" "$d/out" 2>/dev/null && break; sleep 1; done
+  echo '{"status":"F", "exponent":400381, "worktype":"P-1", "factors":["671839319"], "b1":500, "b2":1000}' > "$d/mp/results.json.txt"
+  wait "$pid"
+  if grep -qE " OK +[0-9]+000 [0-9a-f]{16}" "$d/out" && grep -q "400381 has the factor 671839319" "$d/out" && [[ ! -s "$d/worktodo-0.txt" ]] \
+     && ! grep -q '"worktype":"PRP' "$d/results-0.txt" 2>/dev/null; then
+    pass "watch: a factor written while the test runs ends it at the next check (iteration $(grep -oE " OK +[0-9]+ " "$d/out" | tail -1 | tr -dc 0-9) of 400381)"
+  else
+    fail "watch: factor during the test (see $d)"
+  fi
+}
+
+handoff_tests() {
+  # -mprimeStage2 in the PRP test, without mprime:  after stage 1 and its GCD on the GPU the residue and the Pminus1 line are in the
+  # mprime directory, no P-1 result is written here, stage 2 does not run on the GPU, and the PRP test goes on;  a restart does not
+  # hand off again
+  local d=$WORK/handoff
+  setup "$d" 400381; mkdir -p "$d/mp"
+  run "$d" "$PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=1000 -mprimeDir mp -mprimeStage2 -iters 3000
+  run "$d" "$PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=1000 -mprimeDir mp -mprimeStage2 -iters 2000
+  if grep -q "stage 1 residue handed to mprime for stage 2 (-mprimeStage2)" "$d/out" && grep -q "P-1 stage 1 GCD:" "$d/out" \
+     && [[ "$(cat "$d/mp/worktodo.add")" = "Pminus1=0123456789ABCDEF0123456789ABCDEF,1,2,400381,-1,500,1000" ]] \
+     && [[ -s "$d/mp/m0400381" ]] && ! grep -q "stage 2 to B2" "$d/out" && ! grep -q '"worktype":"P-1"' "$d/results-0.txt" 2>/dev/null \
+     && grep -q "stage 2 (B2=1000) was handed to mprime" "$d/out" && grep -qE " OK +5000 [0-9a-f]{16}" "$d/out" && [[ -s "$d/worktodo-0.txt" ]]; then
+    pass "hand-off: stage 2 of the P-1 in the PRP test goes to the mprime directory once, with the GPU GCD done, and the PRP went on to 5000"
+  else
+    fail "hand-off (see $d)"
+  fi
+
+  # Without -mprimeDir the option changes nothing but a log line:  stage 2 runs on the GPU and finds the factor
+  d=$WORK/handoff-nodir
+  setup "$d" 400381
+  run "$d" "$PRPLL" -use PRPPM1_B1=500,PRPPM1_B2=1000 -mprimeStage2 -iters 3000
+  if grep -q -- "-mprimeStage2 needs -mprimeDir" "$d/out" && resultOK "$d" 400381 500 1000 671839319; then
+    pass "hand-off without -mprimeDir: logged, and stage 2 ran on the GPU (factor 671839319)"
+  else
+    fail "hand-off without -mprimeDir (see $d)"
+  fi
+}
+
 case $WHAT in
   factor) factor_tests ;;
   nf) nf_tests ;;
@@ -264,7 +356,9 @@ case $WHAT in
   crash) crash_tests ;;
   stage2) stage2_tests ;;
   stage2fail) stage2fail_tests ;;
-  all) factor_tests; nf_tests; carry_tests; resume_tests; fault_tests; onoff_tests; crash_tests; stage2_tests; stage2fail_tests ;;
+  watch) watch_tests ;;
+  handoff) handoff_tests ;;
+  all) factor_tests; nf_tests; carry_tests; resume_tests; fault_tests; onoff_tests; crash_tests; stage2_tests; stage2fail_tests; watch_tests; handoff_tests ;;
   *) echo "unknown test set '$WHAT'"; exit 2 ;;
 esac
 echo "$fails failure(s)"

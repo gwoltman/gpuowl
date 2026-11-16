@@ -22,6 +22,9 @@
 //
 // When all the bits of E are in X (the PRP is at about iteration log2(E) = 1.44 B1), the next PRP check is the last fold, and then:
 // the GCD on the GPU, the P-1 result line ("integrated":true), stage 2 if B2 > B1 (the PRP waits for it), and a factor ends the PRP.
+// With -mprimeStage2 (and -mprimeDir) stage 2 goes to mprime instead, after the GPU's GCD:  the stage 1 residue and a "Pminus1=" line
+// are written into mprime's directory as for a P-1 line (Task.cpp), mprime reports the result, and the PRP test goes on at once.  A
+// factor that mprime finds later ends the PRP test through the watch of mprime's results file (Gpu::isPrimePRP).
 // Without P-1 in the test none of this exists:  no buffers, no savefiles, no kernels; the PRP loop is unchanged.
 
 #include "AllocTrac.h"
@@ -42,7 +45,8 @@ using Pm1Report = std::function<void(u64 B1, u64 B2, const vector<string>& facto
 class Pm1Prp {
 public:
   // Null when the P-1 can't be done in this PRP test (B1 too large for the exponent:  it is logged)
-  static std::unique_ptr<Pm1Prp> make(Gpu& gpu, u64 B1, u64 B2, Pm1Report report);
+  // AID: the assignment ID of the PRP line, for the "Pminus1=" line of a stage 2 handed to mprime
+  static std::unique_ptr<Pm1Prp> make(Gpu& gpu, u64 B1, u64 B2, Pm1Report report, const string& AID = {});
   ~Pm1Prp();
 
   // The residue buffers this PRP test's GPU has room for (the free memory less 1 GB, -maxAlloc caps it), as the buckets are allocated;
@@ -73,19 +77,20 @@ public:
   // writes the accumulator savefile; when stage 1 is complete, its GCD and result.  RELOAD:  the accumulator check failed.
   // FACTOR:  the result line is written and the PRP must stop.
   Outcome verified(u64 k, u64 prp64);
-  // After the PRP savefile of that check is queued:  stage 2 when it is due (it may throw "stop requested").
+  // After the PRP savefile of that check is queued:  stage 2 when it is due (it may throw "stop requested"), or its hand-off to mprime.
   Outcome afterSave();
 
   [[nodiscard]] bool foundFactor() const { return factor; }
 
 private:
-  Pm1Prp(Gpu& gpu, u64 B1, u64 B2, Pm1Report report, vector<u32> exp, u64 hiBit);
+  Pm1Prp(Gpu& gpu, u64 B1, u64 B2, Pm1Report report, vector<u32> exp, u64 hiBit, const string& AID);
 
   struct Val;
 
   Gpu& gpu;
   u64 const E, B1, B2;
   Pm1Report report;
+  string const AID;
   vector<u32> const exp;      // the bits of E
   u64 const hiBit;            // its highest set bit
   Saver<P1PrpState> saver;
@@ -127,4 +132,5 @@ private:
   Outcome finish(u64 k, u64 prp64);
   void giveUp(const string& why, u64 k = u64(-1), u64 prp64 = 0);
   void save(u64 k, u64 prp64, u32 stage);
+  bool handOffStage2(const Words& x);
 };

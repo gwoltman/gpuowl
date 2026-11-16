@@ -12,6 +12,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <string_view>
 
 namespace pm1 {
 
@@ -516,6 +517,127 @@ string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2) {
 
 void appendMprimeWork(const fs::path& dir, const string& line) {
   File::append(dir / "worktodo.add", line);
+}
+
+vector<u32> fromDecimal(const string& digits) {
+  vector<u32> n;
+  for (char c : digits) {
+    if (c < '0' || c > '9') { return {}; }
+    u64 carry = u64(c - '0');
+    for (u32& w : n) {
+      u64 const cur = u64(w) * 10 + carry;
+      w = u32(cur);
+      carry = cur >> 32;
+    }
+    if (carry) { n.push_back(u32(carry)); }
+  }
+  return n;
+}
+
+namespace {
+
+// The text of the value of "key" in a one-line JSON object (after the colon and any spaces), empty when the key is not there
+std::string_view jsonValue(std::string_view line, const string& key) {
+  string const quoted = '"' + key + '"';
+  size_t pos = line.find(quoted);
+  if (pos == std::string_view::npos) { return {}; }
+  pos += quoted.size();
+  while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t')) { ++pos; }
+  if (pos >= line.size() || line[pos] != ':') { return {}; }
+  ++pos;
+  while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t')) { ++pos; }
+  return line.substr(pos);
+}
+
+// A non-negative integer value, u64(-1) when it is not one
+u64 jsonU64(std::string_view line, const string& key) {
+  std::string_view const v = jsonValue(line, key);
+  if (v.empty() || v[0] < '0' || v[0] > '9') { return u64(-1); }
+  u64 n = 0;
+  for (char c : v) {
+    if (c < '0' || c > '9') { break; }
+    n = n * 10 + u64(c - '0');
+  }
+  return n;
+}
+
+bool jsonIs(std::string_view line, const string& key, const string& value) {
+  return jsonValue(line, key).starts_with('"' + value + '"');
+}
+
+// The strings of the array value of "factors"
+vector<string> jsonFactors(std::string_view line) {
+  vector<string> out;
+  std::string_view v = jsonValue(line, "factors");
+  if (v.empty() || v[0] != '[') { return out; }
+  size_t const end = v.find(']');
+  if (end == std::string_view::npos) { return out; }
+  v = v.substr(1, end - 1);
+  for (size_t pos = 0; (pos = v.find('"', pos)) != std::string_view::npos;) {
+    size_t const close = v.find('"', pos + 1);
+    if (close == std::string_view::npos) { break; }
+    out.emplace_back(v.substr(pos + 1, close - pos - 1));
+    pos = close + 1;
+  }
+  return out;
+}
+
+}
+
+MprimeResults::MprimeResults(const fs::path& dir) : file{dir / "results.json.txt"} {
+  // prime.txt may rename the file:  "results.json.txt=<name>" (commonc.c, nameAndReadIniFiles)
+  std::ifstream ini{dir / "prime.txt"};
+  string const key = "results.json.txt=";
+  for (string line; std::getline(ini, line);) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) { line.pop_back(); }
+    if (line.starts_with(key) && line.size() > key.size()) {
+      fs::path const name{line.substr(key.size())};
+      file = name.is_absolute() ? name : dir / name;
+    }
+  }
+}
+
+MprimeResults::Found MprimeResults::poll(u64 p) {
+  Found found;
+  std::error_code ec;
+  u64 const size = fs::file_size(file, ec);
+  if (ec) { return found; }                 // no results yet
+  if (size < offset) { offset = 0; }        // replaced by a shorter file:  read it all again
+  if (size == offset) { return found; }
+  std::ifstream in{file, std::ios::binary};
+  if (!in) { return found; }
+  in.seekg(std::streamoff(offset));
+  string text(size - offset, '\0');
+  in.read(text.data(), std::streamsize(text.size()));
+  text.resize(size_t(in.gcount()));
+  // Whole lines only:  a line mprime is still writing is read by the next call
+  size_t const lastNewline = text.rfind('\n');
+  if (lastNewline == string::npos) { return found; }
+  text.resize(lastNewline + 1);
+  offset += text.size();
+
+  for (size_t start = 0; start < text.size();) {
+    size_t const end = text.find('\n', start);
+    std::string_view const line{text.data() + start, end - start};
+    start = end + 1;
+    if (jsonU64(line, "exponent") != p) { continue; }
+    if (jsonIs(line, "status", "F")) {
+      for (const string& f : jsonFactors(line)) {
+        vector<u32> const words = fromDecimal(f);
+        if (!words.empty() && !isOne(words) && dividesMersenne(words, p) == 1) {
+          found.factors.push_back(f);
+        } else {
+          log("'%s' gives %s as a factor of M%" PRIu64 ", which it is not: ignored\n", file.string().c_str(), f.c_str(), p);
+        }
+      }
+    } else if (jsonIs(line, "status", "NF") && jsonIs(line, "worktype", "P-1")) {
+      found.noFactor = true;
+      found.b1 = jsonU64(line, "b1");
+      u64 const b2 = jsonU64(line, "b2");
+      found.b2 = b2 == u64(-1) ? 0 : b2;
+    }
+  }
+  return found;
 }
 
 // ---- Stage 2 plan ----
