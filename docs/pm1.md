@@ -90,7 +90,7 @@ exponent chunk that sub-block consumes, checksum 1 is the running product u_0 * 
 
 **GCD.** After stage 1, PRPLL computes gcd(x - 1, 2^p - 1) on the GPU. This is a quadratic GCD; on the XTX it takes 1.3 s at 10M
 bits, 10 s at 41M and 51 s at 100M. A factor ends the assignment. There is no CPU GCD: if the GPU GCD can't run, the residue goes
-to mprime when `-mprimeDir` is given, and otherwise the run stops with an error.
+to mprime or Mlucas when `-mprimeDir` or `-mlucasDir` is given, and otherwise the run stops with an error.
 
 ## Stage 2
 
@@ -204,7 +204,7 @@ transformed form, and C_k half transformed) and two residue buffers. The table s
   6.4 GB is scaled from 110000017's 0.20 GB (3 big and 3 residue buffers and a little more).
 
 **When stage 2 declines** (too little memory, or no FFT that can run it):
-- With `-mprimeDir`, the stage 1 residue goes to mprime (next section).
+- With `-mprimeDir`, the stage 1 residue goes to mprime; with `-mlucasDir`, to Mlucas (next sections).
 - Without it, the result is written for B1 alone (no `b2`) and the `p1-<p>/` savefile is kept.
 
 **Stopping.** `-iters <N>` stops stage 1 after N iterations, or stage 2 after about N multiplications. A signal also stops the run.
@@ -230,6 +230,57 @@ with lots of system RAM is much faster at a large B2 than PRPLL's pairing stage 
 hands off right after it, without its own stage 1 GCD (mprime runs that GCD on its way into stage 2). A line with B2 <= B1 is not
 handed off. Without `-mprimeDir`, a P-1 line stops with an error. The bounds of `Pfactor=` lines are still chosen for the GPU's
 stage 2 memory.
+
+## Hand-off to Mlucas: `-mlucasDir <dir>`
+
+`-mlucasDir` works as `-mprimeDir`, for Mlucas (v21): it is for exponents beyond Prime95's range, where Mlucas can still run stage 2
+in system RAM. When stage 2 can't run on the GPU (or its GCD can't), PRPLL writes two files into `<dir>` and appends the
+`Pminus1=` line to `<dir>/worktodo.txt`; Mlucas then runs the stage 1 GCD and stage 2 and writes the result to its `results.txt`.
+PRPLL deletes its own line and writes no result.
+- `p<p>`, the savefile of a finished stage 1 (Mlucas.c `read_ppm1_savefiles`, `read_ppm1_residue`): test type 3 (P-1), modulus type
+  1 (Mersenne), the iteration count (8 bytes), the residue as (p + 7) / 8 little-endian bytes, its Res64 and its residues mod 2^35 - 1
+  and 2^36 - 1 (8, 5 and 5 bytes, all checked by Mlucas), the FFT length in K (3 bytes, 0: Mlucas's default), the residue shift (8
+  bytes, 0), and two 4-byte error counts (0). Mlucas has no Gerbicz check in P-1, so there is no second residue. Mlucas's backup copy
+  `q<p>` is not needed.
+- `p<p>.s1_prod`, Mlucas's stage 1 product file (pm1.c `read_pm1_s1_prod`), holding PRPLL's E (see [Stage 1](#stage-1)): test type,
+  modulus type, B1 (4 bytes), the bit count of E below its leading bit (4 bytes), those bits reversed in (count + 7) / 8 bytes, and
+  the sum of their 64-bit words.
+- Mlucas takes a savefile as a finished stage 1 when its iteration count is the bit count of Mlucas's stage 1 product (`ilo ==
+  PM1_S1_PROD_BITS`, Mlucas.c); a smaller count makes it go on with stage 1 from the residue, a larger one stops it on an assertion.
+  Mlucas's own product is not E: its seed is 4p rather than 2p, its prime-power loop (`pm1_s1_ppow_prod`) takes primes in groups of
+  64 / bitlength(B1) and so runs a few primes past B1 (B1 = 10000: 10007, 10009, 10037, 40 bits), and the prime test of released
+  versions up to 21.0.2 (`next_prime`) took base-2 pseudoprimes divisible by 3 or 5 (561, 645, 1105, ...) for primes. Its count
+  therefore depends on the Mlucas version. Mlucas reads its product from `p<p>.s1_prod` when the file's B1 matches, so with
+  PRPLL's file its stage 1 exponent is E and the counts match with any version. E covers every prime power up to B1, so the residue
+  3^E is a valid stage 1 for Mlucas's stage 2, which starts at B1.
+- Mlucas runs the stage 1 GCD of such a savefile whatever the line's B2 is, and stage 2 if B2 > B1, so a hand-off for the GCD alone
+  asks for B2 = B1.
+- Mlucas raises a B1 below 10000 to 10000 (pm1.c `pm1_check_bounds`), and keeps B1 in 32 bits. It would then not find the product
+  file, and would go on with stage 1 from PRPLL's residue with its own product. So a line with B1 < 10000 (or B1 >= 2^32) is not
+  handed off: it is reported for B1 alone, as without `-mlucasDir`.
+- Mlucas finds its files by the exponent alone. If `<dir>` already has `p<p>`, `q<p>` (a stage 1 savefile, perhaps of a running
+  Mlucas), `p<p>.s2` (a stage 2 savefile, which Mlucas would resume) or `p<p>.stat` (Mlucas's log: a GCD line in it makes Mlucas skip
+  the stage 1 GCD), the hand-off stops with an error. The worktodo line and PRPLL's stage 1 savefile stay: after those files are moved
+  away, the next run loads the finished stage 1 and hands it off without the GCD again. A `p<p>.s1_prod` is only Mlucas's cache, and
+  is replaced.
+- Mlucas has no `worktodo.add`. It reads the first line of `worktodo.txt` when it starts an assignment and, when it finishes one,
+  copies the other lines to a new file that replaces `worktodo.txt`: a line appended at that moment is lost. Mlucas exits when it runs
+  out of work. So it is safest to start Mlucas after PRPLL has handed the work off; PRPLL logs every line it hands off.
+- Mlucas needs an `mlucas.cfg` in `<dir>` (made by its self-tests), as for any Mlucas run. It self-tests an FFT length that is not in
+  the file by itself.
+- Mlucas runs the stage 1 GCD (GMP, on the CPU) again even when PRPLL's found nothing, as mprime does. Its result line has "B1", and
+  "B2" when stage 2 ran (`generate_JSON_report`).
+
+`-mlucasStage2` (with `-mlucasDir`) is `-mprimeStage2` for Mlucas: every stage 2 that goes to Mlucas is handed to it, also when it
+could run on the GPU, without PRPLL's stage 1 GCD. When the line can't go to Mlucas (B1 below its minimum), stage 2 runs on the GPU.
+
+**Both `-mprimeDir` and `-mlucasDir`.** An exponent up to 920,800,000 goes to mprime and a larger one to Mlucas (and, with B1 < 10000,
+nowhere). Prime95's limit depends on the CPU (gwnum.h): 595,800,000 with SSE2, 920,800,000 with AVX, 922,668,300 with FMA3 and
+1,169,000,000 with AVX-512. 920,800,000 is the lowest of these on any CPU with AVX; with AVX-512, mprime could take exponents up to
+1,169,000,000 that go to Mlucas here, and on a CPU with SSE2 only it can't take those above 595,800,000. `-mprimeStage2` and
+`-mlucasStage2` each apply to the exponents that go to their program.
+
+PRPLL's tests of the hand-off: test/pm1/mlucas.sh (with `MLUCAS=/path/to/Mlucas`).
 
 ## FFT choice
 

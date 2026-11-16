@@ -3,7 +3,8 @@
 #pragma once
 
 // P-1 helpers that need no bignum library:  a prime sieve, the exponent of P-1 stage 1, and the files by which a stage 1
-// result is handed to mprime (a Prime95 P-1 savefile and a "Pminus1=" line in mprime's worktodo.add).
+// result is handed to mprime (a Prime95 P-1 savefile and a "Pminus1=" line in mprime's worktodo.add) or to Mlucas (an Mlucas
+// savefile and the same line in its worktodo.txt).
 
 #include "common.h"
 
@@ -113,6 +114,36 @@ string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2);
 
 // Appends a line to <dir>/worktodo.add in one write.
 void appendMprimeWork(const fs::path& dir, const string& line);
+
+// ---- Hand-off to Mlucas (v21; Mlucas.c read_ppm1_savefiles / write_ppm1_savefiles) ----
+// Mlucas resets B1 < 10000 to 10000 (pm1.c pm1_check_bounds) and keeps B1 in 32 bits:  it would then not find the stage 1 product
+// file of our B1, and would go on with stage 1 from our residue with its own product.
+constexpr u64 MLUCAS_MIN_B1 = 10000;
+constexpr u64 MLUCAS_MAX_B1 = 0xffffffffu;
+
+// With both -mprimeDir and -mlucasDir, exponents up to this go to mprime:  Prime95's limit with AVX (gwnum.h MAX_PRIME_AVX), the
+// lowest of its limits on any CPU with AVX (FMA3 922668300, AVX-512 1169000000; only SSE2 is lower, 595800000).
+constexpr u64 MPRIME_MAX_EXPONENT = 920800000;
+
+// Mlucas's savefile name for 2^p-1:  "p<p>" (its backup copy is "q<p>")
+string mlucasSaveName(u64 p);
+
+// The first of Mlucas's files for p in dir that a hand-off must not meet, or "":  p<p> and q<p> (a stage 1 savefile, perhaps of a
+// running Mlucas), p<p>.s2 (a stage 2 savefile, which Mlucas would resume) and p<p>.stat (its log:  a "GCD" line in it makes Mlucas
+// skip the stage 1 GCD).  A p<p>.s1_prod is only a cache of Mlucas's and is replaced.
+string mlucasStaleFile(const fs::path& dir, u64 p);
+
+// Writes <dir>/<mlucasSaveName(p)> as an Mlucas P-1 savefile of a finished stage 1, and <dir>/<mlucasSaveName(p)>.s1_prod as
+// Mlucas's stage 1 product file holding E = stage1Exponent(p, B1):  Mlucas takes its stage 1 exponent, and with it the iteration
+// count that must match the savefile's, from that file.  The savefile:  test type P-1, nsquares = bitLength(E) - 1, the residue x as
+// (p + 7) / 8 little-endian bytes with its Res64, Res35m1 and Res36m1 checksums, FFT length 0 (Mlucas's default), shift 0 and no
+// error counts.  Mlucas takes it as "stage 1 already done", runs the stage 1 GCD and then stage 2.  Each file is written to a ".new"
+// file and renamed, the savefile last.
+void writeMlucasStage1(const fs::path& dir, u64 p, u64 B1, const vector<u32>& E, const vector<u32>& x);
+
+// Appends a line to <dir>/worktodo.txt in one write (Mlucas has no worktodo.add).  The line is mprimePminus1Line's:  Mlucas reads
+// the same "Pminus1=[AID,]1,2,p,-1,B1,B2" syntax.
+void appendMlucasWork(const fs::path& dir, const string& line);
 
 // ---- Stage 2 (paired "n^2" form, with a table of n^2 for every odd n < M coprime to D) ----
 // The table holds B_n = x^(n^2) for the n in S = {n < M : gcd(n, D) = 1} (D even, so every n in S is odd), and the run steps

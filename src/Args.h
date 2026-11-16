@@ -86,6 +86,8 @@ public:
   fs::path cacheDir = "kernel-cache";
   bool mprimeStage2 = false;   // P-1: always hand stage 2 to mprime (needs -mprimeDir), even when the GPU could run it
   fs::path mprimeDir;       // P-1: where the stage 1 residue and the "Pminus1=" line go for mprime to finish
+  bool mlucasStage2 = false;   // P-1: always hand stage 2 to Mlucas (needs -mlucasDir), even when the GPU could run it
+  fs::path mlucasDir;       // P-1: where the stage 1 residue and the "Pminus1=" line go for Mlucas to finish
   double pm1TestsSaved = 1.02;  // -pm1TestsSaved:  the tests a factor saves, for the bounds of the P-1 inside PRP tests
   u64 pm1B1 = 0, pm1B2 = 0;     // -B1, -B2:  these P-1 bounds where prpll would choose them (0:  not given; B2 = 0:  stage 1 only)
   // fs::path tuneFile = "tune.txt";
