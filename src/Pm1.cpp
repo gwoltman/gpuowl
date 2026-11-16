@@ -227,6 +227,32 @@ vector<u32> stage1ExponentCached(const fs::path& dir, u64 p, u64 B1) {
   return words;
 }
 
+namespace {
+constexpr const char* GCD1_HEADER = "OWL P1GCD 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " res64=%016" PRIx64 " crc=%08x no factor\n";
+fs::path gcd1Path(const fs::path& dir, u64 B1) { return dir / ("B1-" + to_string(B1) + ".gcd1"); }
+}
+
+bool stage1GcdFoundNone(const fs::path& dir, u64 p, u64 B1, const vector<u32>& x) {
+  File fi = File::openRead(gcd1Path(dir, B1));
+  if (!fi) { return false; }
+  char want[160];
+  snprintf(want, sizeof(want), GCD1_HEADER, p, B1, res64(x), crc32(x));
+  try {
+    return fi.readLine() == want;
+  } catch (const ReadError&) {
+    return false;      // a damaged file:  the GCD runs again
+  }
+}
+
+void stage1GcdMarkNone(const fs::path& dir, u64 p, u64 B1, const vector<u32>& x) {
+  try {
+    CycleFile fo{gcd1Path(dir, B1)};
+    fo->printf(GCD1_HEADER, p, B1, res64(x), crc32(x));
+  } catch (const std::exception& e) {
+    log("Can't write '%s' (%s); continuing without it\n", gcd1Path(dir, B1).string().c_str(), e.what());
+  }
+}
+
 void addBits(vector<u32>& acc, const vector<u32>& words, u64 lo, u32 len) {
   if (acc.size() < (len + 31) / 32 + 1) { acc.resize((len + 31) / 32 + 1, 0); }
   u64 carry = 0;

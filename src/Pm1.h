@@ -67,6 +67,12 @@ vector<u32> stage1Exponent(u64 p, u64 B1);
 // minute at 50M).  A missing or damaged file is recomputed and written again.
 vector<u32> stage1ExponentCached(const fs::path& dir, u64 p, u64 B1);
 
+// Whether a stage 1 GCD of x (the stage 1 residue of B1) already found no factor:  <dir>/B1-<B1>.gcd1 names x by its res64 and CRC.
+// stage1GcdMarkNone writes that file after such a GCD, so that a restart (e.g. to run stage 2, or to hand it to mprime) does not run
+// the GCD again (minutes at 100M+ bits).  A write that fails only costs the GCD again.
+bool stage1GcdFoundNone(const fs::path& dir, u64 p, u64 B1, const vector<u32>& x);
+void stage1GcdMarkNone(const fs::path& dir, u64 p, u64 B1, const vector<u32>& x);
+
 u64 bitLength(const vector<u32>& words);
 bool testBit(const vector<u32>& words, u64 i);
 
