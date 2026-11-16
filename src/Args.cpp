@@ -343,6 +343,9 @@ named "config.txt" in the prpll run directory.
                      an FFT type it does not support), write the stage 1 residue as an mprime savefile into <dir> and append
                      the assignment to <dir>/worktodo.add, so that mprime (30.10 or later) runs stage 2 and reports the
                      result.  Without it such a line is reported for B1 alone.
+-mprimeStage2      : with -mprimeDir, hand every P-1 stage 2 to mprime, also when it could run on the GPU (mprime's
+                     polynomial stage 2 with lots of system RAM is much faster at large B2).  prpll runs stage 1; mprime
+                     runs the stage 1 GCD on its way into stage 2.  Pfactor= bounds are still chosen for this GPU's memory.
 P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2,p,-1,<tf>,<tests saved>: PrimeNet
                      wants P-1 done) gets P-1 from the PRP's own squarings, with bounds chosen for <tf>, -pm1TestsSaved
                      (not the line's value) and this GPU's memory; with tests saved 0, none.  A line without the two
@@ -656,6 +659,9 @@ void Args::parse(const string& line) {
     }
     else if (key == "-binary") {         // used to load a precompiled kernel binary from a given file.
       log("-binary is deprecated and ignored; use -cache for a persistent kernel cache instead\n");
+    }
+    else if (key == "-mprimeStage2") {
+      mprimeStage2 = true;
     }
     else if (key == "-mprimeDir") {
       // Relative to -dir, like every other path (main parses the arguments again once it is in -dir).  Whether it is a directory

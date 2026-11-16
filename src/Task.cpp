@@ -407,6 +407,12 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     if (args.clean) { Saver<P1State>::clear(exponent); }
   };
 
+  // -mprimeStage2:  mprime runs stage 2, and the stage 1 GCD on its way into it, so the GPU's GCD would only repeat it
+  if (args.mprimeStage2 && B2 > B1) {
+    handOff(B2, "the GCD and stage 2 (-mprimeStage2)");
+    return;
+  }
+
   // The GCD, as a factor (empty when it is 1)
   vector<string> factors;
   auto addFactor = [&](const Words& g, int stage) { factors = pm1::gcdFactor(g, stage, exponent); };
@@ -514,6 +520,10 @@ void Task::execute(GpuCommon shared, u32 instance) {
     if (!dir.empty() && !fs::is_directory(dir, ec)) {
       log("-mprimeDir '%s' is not a directory: \"%s\"\n", dir.string().c_str(), rstripNewline(line).c_str());
       throw "-mprimeDir is not a directory";
+    }
+    if (shared.args->mprimeStage2 && dir.empty()) {
+      log("-mprimeStage2 needs -mprimeDir: \"%s\"\n", rstripNewline(line).c_str());
+      throw "-mprimeStage2 needs -mprimeDir";
     }
   }
 

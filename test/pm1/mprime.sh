@@ -129,6 +129,43 @@ alone   stage1-B1-500  400381  500   NF                               # 839 > 50
 handoff stage2-factor  400381  500   1000   671839319     2           # 839 in (B1, B2]: mprime's stage 2 finds it
 handoff stage2-1M      1000099 50000 150000 1872347344039 2
 
+# forced <name> <p> <B1> <B2> <expected factor> <stage>:  -mprimeStage2 with the GPU's memory free:  prpll runs stage 1 alone (no
+# GCD, no stage 2) and mprime runs the GCD and stage 2, finding the factor in <stage>
+forced() {
+  local name=$1 p=$2 B1=$3 B2=$4 want=$5 stage=$6
+  local d=$WORK/$name
+  rm -rf "$d"; mkdir -p "$d/run"; mprimeDir "$d/mp"
+  echo "Pminus1=1,2,$p,-1,$B1,$B2" > "$d/run/worktodo-0.txt"
+  (cd "$d/run" && "$PRPLL" -device "$DEVICE" -mprimeDir ../mp -mprimeStage2 -log 10000 > out 2>&1)
+  runMprime "$d/mp"
+  local res got ok=1; res=$(cat "$d/mp/results.json.txt" 2>/dev/null)
+  grep -q "handed to mprime for the GCD and stage 2 (-mprimeStage2)" "$d/run/out" || ok=0
+  grep -q -E "stage 1 GCD|Stage 2 " "$d/run/out" && ok=0                  # neither the GPU's GCD nor its stage 2
+  [[ -e "$d/run/results-0.txt" ]] && ok=0
+  [[ -s "$d/run/worktodo-0.txt" ]] && ok=0
+  got=$(echo "$res" | grep -o '"factors":\["[0-9]*"' | grep -o '[0-9]*' | tail -1)
+  [[ -n "$got" ]] && python3 -c "import sys; sys.exit(int($got) % $want != 0)" || ok=0
+  grep -q "P-1 found a factor in stage #$stage" "$d/mp/mp.out" || ok=0
+  if [[ "$ok" = 1 ]]; then
+    pass "$name: p=$p B1=$B1 B2=$B2 -mprimeStage2: prpll ran stage 1 only and handed $(grep -o 'Pminus1=.*' "$d/run/out" | head -1); mprime found $got in stage $stage"
+  else
+    fail "$name (see $d)"
+  fi
+}
+forced  forced-stage2  400381  500   1000   671839319     2
+forced  forced-stage1  400381  1000  2000   671839319     1           # 839 <= B1: the factor comes from mprime's stage 1 GCD
+
+# -mprimeStage2 without -mprimeDir:  the line is not started
+d=$WORK/forced-nodir
+rm -rf "$d"; mkdir -p "$d"
+echo "Pminus1=1,2,400381,-1,500,1000" > "$d/worktodo-0.txt"
+(cd "$d" && "$PRPLL" -device "$DEVICE" -mprimeStage2 -log 10000 > out 2>&1)
+if grep -q -- "-mprimeStage2 needs -mprimeDir" "$d/out" && ! grep -q "P-1 stage 1 B1=" "$d/out"; then
+  pass "-mprimeStage2 without -mprimeDir stops before stage 1"
+else
+  fail "-mprimeStage2 without -mprimeDir (see $d)"
+fi
+
 # Why a hand-off for the GCD alone (only when the GPU GCD fails) asks for B2 = B1 + 1:  with B2 <= the B1 in the savefile mprime
 # reports "already tested" and runs no GCD
 d=$WORK/b2-equals-b1
