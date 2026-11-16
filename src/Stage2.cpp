@@ -881,9 +881,14 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
   }
   if (!D || !pm1::stage2DFits(D, B1) || M < D / 2 || pm1::stage2TableSize(D, M) > maxN) {
     char why[320];
-    int const n = snprintf(why, sizeof(why), "%.2f GB of GPU memory allow %" PRIu64 " buffers of %.1f MB (and %u of %.1f MB), stage 2 needs "
-                           "at least %" PRIu64 " + %u", std::max(0.0, budget) / double(1u << 30), maxN + (maxN ? EXTRA_BUFS : 0),
-                           bufBytes / double(1u << 20), WORD_BUFS, wordBytes / double(1u << 20), pm1::stage2MinTable(), EXTRA_BUFS);
+    // A table the memory test limited (maxNCap) is not the budget's doing:  say so, with the budget's own count
+    int const n = maxN < maxNFree
+      ? snprintf(why, sizeof(why), "the GPU memory test left room for %" PRIu64 " table buffers of %.1f MB (%.2f GB of GPU memory "
+                 "would allow %" PRIu64 "), stage 2 needs at least %" PRIu64, maxN, bufBytes / double(1u << 20),
+                 std::max(0.0, budget) / double(1u << 30), maxNFree, pm1::stage2MinTable())
+      : snprintf(why, sizeof(why), "%.2f GB of GPU memory allow %" PRIu64 " buffers of %.1f MB (and %u of %.1f MB), stage 2 needs "
+                 "at least %" PRIu64 " + %u", std::max(0.0, budget) / double(1u << 30), maxN + (maxN ? EXTRA_BUFS : 0),
+                 bufBytes / double(1u << 20), WORD_BUFS, wordBytes / double(1u << 20), pm1::stage2MinTable(), EXTRA_BUFS);
     if (D && !pm1::stage2DFits(D, B1)) {
       snprintf(why + n, sizeof(why) - n, "; D=%u has a prime factor above B1", D);
     } else if (D && M) {
