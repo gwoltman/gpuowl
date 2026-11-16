@@ -2,10 +2,11 @@
 # End-to-end tests of P-1 with stage 2 in prpll, from "Pminus1=" worktodo lines:  stage 1, its GCD, stage 2 and its GCD, the result
 # line, the hand-off to mprime when stage 2 declines, resume across the stage 1 / stage 2 boundary and inside stage 2, and the stage 2
 # checks under simulated faults; and "Pfactor=" lines (pfactor:  the bounds prpll chooses equal check_bounds' for the stage 2 room it
-# logged, kept across a restart, stage 1 alone without memory, no P-1 when it can't pay).  GMP (stage1_oracle, check_stage2) is the
+# logged, kept across a restart, stage 1 alone without memory, no P-1 when it can't pay; pfprefix:  the bounds of a "B1=...;" prefix
+# instead).  GMP (stage1_oracle, check_stage2) is the
 # oracle; prpll links neither.
 #
-#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|all]      (default all)
+#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|pfprefix|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), SIGINT_DELAY (seconds from the
 #               stage 2 table to the SIGINT of the resume test, default 3), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built here with -DPRPLL_PM1_FAULTS if missing).
@@ -498,6 +499,30 @@ pfactor_tests() {
   done
 }
 
+pfprefix_tests() {
+  # The line's "B1=<B1>[,B2=<B2>];" prefix:  these bounds, not prpll's choice (which for tests saved 0 is no P-1 at all)
+  local d p=400381 f=671839319
+  d=$WORK/pfp-stage2
+  rm -rf "$d"; mkdir -p "$d/mp"; echo "B1=500,B2=200000;Pfactor=N/A,1,2,$p,-1,25,0" > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -maxAlloc 1G
+  if grep -q "P-1 bounds from the worktodo line: B1=500 B2=200000" "$d/out" && ! grep -q "P-1 bounds (no factor" "$d/out" \
+     && stage2Oracle "$d" "$p" 500 200000 && [[ "$(cat "$d/gcd2")" = "$f" ]] && result "$d" "$p" 500 200000 "$f"; then
+    pass "pfp-stage2: B1=500,B2=200000;Pfactor (tests saved 0) -> factor $f in stage 2 (= GMP gcd(acc)), result b1=500 b2=200000, line deleted"
+  else
+    fail "pfp-stage2 (see $d)"
+  fi
+  # B1 alone:  stage 1 only, no stage 2 although there is room for it
+  d=$WORK/pfp-stage1
+  rm -rf "$d"; mkdir -p "$d/mp"; echo "B1=500;Pfactor=N/A,1,2,$p,-1,25,1" > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -maxAlloc 1G
+  if grep -q "P-1 bounds from the worktodo line: B1=500 (stage 1 only)" "$d/out" && grep -q "P-1 stage 1 found no factor (B1=500)" "$d/out" \
+     && ! grep -q "Stage 2 B1=" "$d/out" && result "$d" "$p" 500 0 NF; then
+    pass "pfp-stage1: B1=500;Pfactor -> stage 1 only, NF for b1=500 without b2, line deleted"
+  else
+    fail "pfp-stage1 (see $d)"
+  fi
+}
+
 case $WHAT in
   factor) factor_tests ;;
   decline) decline_tests ;;
@@ -506,7 +531,8 @@ case $WHAT in
   fft) fft_tests ;;
   tunefile) tunefile_tests ;;
   pfactor) pfactor_tests ;;
-  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests; pfactor_tests ;;
+  pfprefix) pfprefix_tests ;;
+  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests; pfactor_tests; pfprefix_tests ;;
 esac
 
 echo "$fails failure(s)"
