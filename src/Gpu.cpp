@@ -1014,11 +1014,8 @@ string toHex(const vector<u32>& v) {
 string formatSecsPerIter(float secsPerIter) {
   char buf[64];
   float const usecsPerIter = secsPerIter * 1.0e6f;    // Convert to micro-seconds
-  if (usecsPerIter > 1000.0f) {
-    snprintf(buf, sizeof(buf), "%4.0f", usecsPerIter);
-  } else {
-    snprintf(buf, sizeof(buf), "%6.1f", usecsPerIter);
-  }
+  // Six columns:  one decimal up to 9999.9 us, none from 10000 (it then fits too)
+  snprintf(buf, sizeof(buf), usecsPerIter < 9999.95f ? "%6.1f" : "%6.0f", usecsPerIter);
   return string(buf);  
 }
 
