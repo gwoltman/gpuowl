@@ -9,6 +9,7 @@
 #include "version.h"
 #include "Pm1Bounds.h"
 
+#include <set>
 #include <vector>
 #include <string>
 #include <cstdio>
@@ -354,7 +355,8 @@ P-1 factoring (see docs/pm1.md):
 
 
 The configuration options listed below can be passed on the command line or can be put in a file
-named "config.txt" in the prpll run directory.
+named "config.txt" in the prpll run directory.  The options for one run are command line only:  -h, -info, -version,
+-dir, -prp, -ll, -verify, -iters, -fft, -B1, -B2, -time, -roe, -tune, -ztune and -carryTune.
 
 
 -h                 : print general help, list of FFTs, list of devices
@@ -369,7 +371,7 @@ named "config.txt" in the prpll run directory.
                      or PTX (CUDA) in the kernel-dump directory.  -v 11 does so for every kernel.
 -version           : print only the version and exit
 -user <name>       : specify the mersenne.org user name (for result reporting)
--workers <N>       : specify the number of parallel PRP tests to run (default 1)
+-workers <N>       : specify the number of parallel PRP tests to run (default 1; always 1 with -prp, -ll, -verify)
 
 -fft <spec>        : specify FFT or FFTs to use:
                      - a specific configuration: 256:13:1K
@@ -389,7 +391,7 @@ named "config.txt" in the prpll run directory.
                      It is only needed at very low bits/word, which PRPLL detects and handles itself.  short is the default.
 -prp <exponent>    : run a single PRP test and exit, ignoring worktodo.txt
 -ll <exponent>     : run a single LL test and exit, ignoring worktodo.txt
--verify <file>     : verify PRP-proof contained in <file>
+-verify <file>     : verify the PRP proof contained in <file> and exit, ignoring worktodo.txt
 -smallest          : work on smallest exponent in worktodo.txt rather than the first exponent in worktodo.txt    
 -proof <power>     : generate proof of power <power> (default: optimal depending on exponent).
                      A lower power reduces disk space requirements but increases the verification cost.
@@ -433,8 +435,7 @@ P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2
                      test plus its proof and the certificate).  Pfactor= lines use their own field.
 -B1 <n> [-B2 <m>]  : P-1 with these bounds wherever prpll would choose them:  Pfactor= lines, and the P-1 inside PRP tests
                      whose line wants P-1 (not tests saved 0, not -prp).  B1 alone: stage 1 only; -B2 needs -B1.  Pminus1=
-                     lines keep their own bounds, and a line's B1=...; prefix comes first.  The command line overrides
-                     config.txt, option by option (-B1 0 or -B2 0 takes a value back).  Also -b1, -b2.
+                     lines keep their own bounds, and a line's B1=...; prefix comes first.  Also -b1, -b2.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  Without it the
                      cap is the memory free on the GPU when prpll starts less 1 GB (90%% of its RAM if that can't be queried).
                      P-1 stage 2 uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more
@@ -607,6 +608,17 @@ Device selection : use one of -uid <UID>, -pci <BDF>, -device <N>, see the list 
   }
 }
 
+// The options for one run:  in config.txt they would apply to every run, so there they are not understood (see parse).
+static bool isCommandLineOnly(const string& key) {
+  static const std::set<string> keys{
+    "-h", "--help", "-version", "-info", "-dir",
+    "-prp", "-PRP", "-ll", "-LL", "-verify", "-iters", "-fft",
+    "-B1", "-b1", "-B2", "-b2",
+    "-time", "-roe", "-tune", "-ztune", "-carryTune",
+  };
+  return keys.contains(key);
+}
+
 void Args::parse(const string& line) {
   if (line.empty() || line[0] == '#') { return; }
 
@@ -622,6 +634,12 @@ void Args::parse(const string& line) {
 
   for (const auto& [key, s] : args) {
     // log("key '%s'\n", key.c_str());
+    if (readingConfig && isCommandLineOnly(key)) {
+      // Options for one run (a single test, a tuning or timing run, help) are rejected in config.txt, where they would apply to
+      // every run.
+      log("Config.txt setting '%s%s%s' not allowed (command line only)\n", key.c_str(), s.empty() ? "" : " ", s.c_str());
+      throw "args";
+    }
     if (key == "-h" || key == "--help") {
       printHelp();
       throw "help";
@@ -705,6 +723,7 @@ void Args::parse(const string& line) {
         throw "-verify without proof-file";
       }
       verifyPath = s;
+      singleRun = true;
     }
     else if (key == "-pool") {
       masterDir = s;
@@ -759,8 +778,8 @@ void Args::parse(const string& line) {
       mlucasDir = fs::absolute(s).lexically_normal();
     }
     else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2") {
-      // The bounds of the P-1 that prpll would choose them for (Pfactor lines, the P-1 inside PRP tests).  Each source (config.txt,
-      // then the command line) overrides the one before; 0 takes back a value given earlier.  Checked together in setDefaults.
+      // The bounds of the P-1 that prpll would choose them for (Pfactor lines, the P-1 inside PRP tests).  Checked together in
+      // setDefaults.
       double x = -1;
       try { size_t n = 0; x = stod(s, &n); if (n != s.size()) { x = -1; } } catch (const std::logic_error&) { x = -1; }
       if (!(x >= 0 && x < 9e15)) {
@@ -797,8 +816,8 @@ void Args::parse(const string& line) {
       said = true;
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
-    else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); }
-    else if (key == "-ll" || key == "-LL") { llExp = stoll(s); }
+    else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); singleRun = true; }
+    else if (key == "-ll" || key == "-LL") { llExp = stoll(s); singleRun = true; }
     else if (key == "-smallest") { smallest = true; }
     else if (key == "-fft") {
       // Old gpuowl also accepted a "+N"/"-N" relative offset ("nudge the auto-selected FFT by N steps"),
@@ -895,6 +914,9 @@ void Args::parse(const string& line) {
 }
 
 void Args::setDefaults() {
+  // -prp, -ll, -verify run their tasks on worker 0 and exit (Worktodo::getTask):  one worker, whatever -workers says
+  if (singleRun) { workers = 1; }
+
   // -B1/-B2 as they stand after every source, with the limits of a worktodo line's B1=...; prefix.  B2 alone is not taken:  there is
   // no rule for a B1 under a given B2.
   if (pm1B2 && !pm1B1) {

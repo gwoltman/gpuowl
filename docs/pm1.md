@@ -52,15 +52,12 @@ When the work is done, PRPLL deletes the line and appends a JSON result to `resu
 
 ## -B1 and -B2
 
-`-B1 <B1>` and `-B2 <B2>` (also `-b1`, `-b2`), on the command line or in `config.txt`, fix the bounds wherever PRPLL would
-choose them: on `Pfactor=` lines and for the P-1 inside PRP tests. `Pminus1=` lines keep their own bounds.
+`-B1 <B1>` and `-B2 <B2>` (also `-b1`, `-b2`), on the command line, fix the bounds wherever PRPLL would choose them: on
+`Pfactor=` lines and for the P-1 inside PRP tests. `Pminus1=` lines keep their own bounds.
 
-- The order is: a line's [bounds prefix](#worktodo-lines), then the command line, then `config.txt`, then PRPLL's own choice.
-  `config.txt` is read before the command line, and each option given later overrides the same option given earlier, one option
-  at a time: with `-B1 1e6 -B2 3e7` in `config.txt` and `-B1 2e6` on the command line, the bounds are B1 = 2000000, B2 = 30000000.
-  `-B1 0` or `-B2 0` takes back a value given earlier.
-- `-B1` alone means stage 1 only. `-B2` without `-B1` is an error, as are B1 < 2, B2 <= B1 and B2 >= 2^32 - 8192 (checked once every
-  source is read).
+- The order is: a line's [bounds prefix](#worktodo-lines), then the command line, then PRPLL's own choice.
+- They are for the command line only. In `config.txt` they are not allowed, and PRPLL exits.
+- `-B1` alone means stage 1 only. `-B2` without `-B1` is an error, as are B1 < 2, B2 <= B1 and B2 >= 2^32 - 8192.
 - They replace the choice of the bounds, not the choice of whether to run P-1. A `PRP=` line with tests saved 0 (P-1 is done)
   still gets none, and neither does a PRP test started without P-1, or a `-prp <p>` test. A `Pfactor=` line, which asks for P-1,
   runs with these bounds as a `Pminus1=` line with them would, even where PRPLL would find that P-1 does not pay. Without GPU memory

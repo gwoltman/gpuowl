@@ -394,6 +394,8 @@ std::optional<Task> Worktodo::getTask(Args &args, i32 instance) {
       return Task{.kind=Task::VERIFY, .verifyPath=path};
     }
   }
+  // -prp, -ll, -verify:  those tasks only (above), then exit;  worktodo.txt is not read (and there is one worker, Args::setDefaults)
+  if (args.singleRun) { return {}; }
   return getWork(args, instance);
 }
 

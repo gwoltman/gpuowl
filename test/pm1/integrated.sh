@@ -311,7 +311,7 @@ prefix_tests() {
 }
 
 options_tests() {
-  # -B1/-B2 (command line, config.txt) on a line that wants P-1 (tests saved 1):  these bounds rather than prpll's choice
+  # -B1/-B2 (command line) on a line that wants P-1 (tests saved 1):  these bounds rather than prpll's choice
   local A=0123456789ABCDEF0123456789ABCDEF
   local line="PRP=$A,1,2,400381,-1,70,1"
   local d=$WORK/options-cmdline
@@ -323,32 +323,33 @@ options_tests() {
   else
     fail "options -B1 1000 (see $d)"
   fi
-  # config.txt alone, with -B2:  stage 2 finds the factor that stage 1 at B1=500 misses
-  d=$WORK/options-config
-  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"; echo "-B1 500 -b2 2e5" > "$d/config.txt"
-  run "$d" "$PRPLL"
+  # The command line with -B2:  stage 2 finds the factor that stage 1 at B1=500 misses
+  d=$WORK/options-b2
+  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -B1 500 -b2 2e5
   if grep -q "bounds from -B1/-B2: B1=500 B2=200000" "$d/out" && accOK "$d" 400381 500 && [[ "$(cat "$d/gcd")" = 1 ]] \
      && resultOK "$d" 400381 500 200000 671839319 && factorEnd "$d"; then
-    pass "options config.txt -B1 500 -b2 2e5: stage 1 gcd 1 (GMP), stage 2 found 671839319"
+    pass "options -B1 500 -b2 2e5: stage 1 gcd 1 (GMP), stage 2 found 671839319"
   else
-    fail "options config.txt (see $d)"
+    fail "options -B1 500 -b2 2e5 (see $d)"
   fi
-  # The command line overrides config.txt option by option:  -B1 1000 over 500, -B2 0 takes 200000 back (stage 1 only)
-  d=$WORK/options-override
-  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"; echo "-B1 500 -B2 200000" > "$d/config.txt"
-  run "$d" "$PRPLL" -B1 1000 -B2 0
-  if grep -q "bounds from -B1/-B2: B1=1000 (stage 1 only)" "$d/out" && resultOK "$d" 400381 1000 0 671839319 && factorEnd "$d"; then
-    pass "options config.txt -B1 500 -B2 200000, command line -B1 1000 -B2 0: B1=1000 stage 1 only, factor 671839319"
+  # config.txt:  not allowed (command line only);  nothing runs
+  d=$WORK/options-config
+  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"; echo "-B1 500" > "$d/config.txt"
+  run "$d" "$PRPLL" -B1 1000
+  if grep -q "Config.txt setting '-B1 500' not allowed" "$d/out" && grep -q 'Exiting because "args"' "$d/out" \
+     && [[ ! -e "$d/results-0.txt" ]] && [[ ! -e "$d/400381" ]]; then
+    pass "options config.txt -B1 500: not allowed, rejected"
   else
-    fail "options override (see $d)"
+    fail "options config.txt rejected (see $d)"
   fi
-  # The line's prefix beats both
+  # The line's prefix beats the command line
   d=$WORK/options-prefix
-  rm -rf "$d"; mkdir -p "$d"; echo "B1=1000;$line" > "$d/worktodo-0.txt"; echo "-B1 500" > "$d/config.txt"
+  rm -rf "$d"; mkdir -p "$d"; echo "B1=1000;$line" > "$d/worktodo-0.txt"
   run "$d" "$PRPLL" -B1 20000 -B2 200000
   if grep -q "bounds from the worktodo line: B1=1000 (stage 1 only)" "$d/out" && ! grep -q "bounds from -B1/-B2" "$d/out" \
      && resultOK "$d" 400381 1000 0 671839319 && factorEnd "$d"; then
-    pass "options under a B1=1000; prefix (config.txt -B1 500, command line -B1 20000 -B2 200000): the prefix's B1=1000, stage 1 only"
+    pass "options under a B1=1000; prefix (command line -B1 20000 -B2 200000): the prefix's B1=1000, stage 1 only"
   else
     fail "options under a prefix (see $d)"
   fi
@@ -376,15 +377,6 @@ options_tests() {
       fail "options-bad: '$bad' (see $d)"
     fi
   done
-  # In config.txt as well
-  d=$WORK/options-bad
-  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"; echo "-B2 200000" > "$d/config.txt"
-  run "$d" "$PRPLL"
-  if grep -q 'Exiting because "-B2 without -B1"' "$d/out" && [[ ! -e "$d/results-0.txt" ]] && [[ ! -e "$d/400381" ]]; then
-    pass "options-bad: config.txt '-B2 200000' rejected"
-  else
-    fail "options-bad: config.txt -B2 alone (see $d)"
-  fi
 }
 
 case $WHAT in

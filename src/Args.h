@@ -103,6 +103,7 @@ public:
 
   u64 prpExp = 0;
   u64 llExp = 0;
+  bool singleRun = false;   // -prp, -ll or -verify:  run those tasks (worker 0) and exit, without worktodo.txt
   
   size_t maxAlloc = 0;
 
