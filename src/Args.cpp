@@ -2,6 +2,7 @@
 
 #include "Args.h"
 #include "File.h"
+#include "CycleFile.h"
 #include "clwrap.h"
 #include "gpuid.h"
 #include "Proof.h"
@@ -205,21 +206,80 @@ static void checkTuneOptions(const string& options) {
   }
 }
 
+// TABMUL_CHAIN61=2 (the Karatsuba terms from the WIDTH and HEIGHT tables) is now CMUL61WHERE=1.  In one comma-separated -use list:
+// TABMUL_CHAIN61=2 becomes CMUL61WHERE=1, or is dropped if the list already sets CMUL61WHERE.
+static string migrateUseList(const string& word) {
+  vector<string> items;
+  for (size_t start = 0;;) {
+    size_t const comma = word.find(',', start);
+    items.push_back(word.substr(start, comma == string::npos ? string::npos : comma - start));
+    if (comma == string::npos) { break; }
+    start = comma + 1;
+  }
+  bool hasWhere = std::ranges::any_of(items, [](const string& s) { return s.starts_with("CMUL61WHERE="); });
+  bool changed = false;
+  string out;
+  for (const string& item : items) {
+    string s = item;
+    if (s == "TABMUL_CHAIN61=2") {
+      changed = true;
+      if (hasWhere) { continue; }
+      s = "CMUL61WHERE=1";
+      hasWhere = true;
+    }
+    out += (out.empty() ? "" : ",") + s;
+  }
+  return changed ? out : word;
+}
+
+// A config.txt line with TABMUL_CHAIN61=2 migrated (see migrateUseList), whitespace kept.  Comment lines too, so a setting -tune
+// suggested there is right when uncommented.
+static string migrateConfigLine(const string& line) {
+  string out;
+  for (size_t i = 0; i < line.size();) {
+    if (isspace(u8(line[i]))) { out += line[i++]; continue; }
+    size_t j = i;
+    while (j < line.size() && !isspace(u8(line[j]))) { ++j; }
+    out += migrateUseList(line.substr(i, j - i));
+    i = j;
+  }
+  return out;
+}
+
 void Args::readConfig(const fs::path& path) {
+  vector<string> lines;              // As read, with each line's own line ending, and migrated
+  bool migrated = false;
   if (File file = File::openRead(path)) {
     file.allowUnterminatedLastLine();
-    readingConfig = true;
-    try {
-      for (string line : file) {
-        line = rstripNewline(line);
-        parse(line);
+    for (string line : file) {
+      string const s = rstripNewline(line);
+      if (string const m = migrateConfigLine(s); m != s) {
+        line = m + line.substr(s.size());
+        migrated = true;
       }
-    } catch (...) {
-      readingConfig = false;
-      throw;
+      lines.push_back(line);
     }
-    readingConfig = false;
   }
+
+  // The silent early passes in main() (before the log file is open) migrate only in memory; the main pass logs it and rewrites the file
+  if (migrated && !silent) {
+    log("%s: TABMUL_CHAIN61=2 is now CMUL61WHERE=1; updating the file\n", path.string().c_str());
+    try {
+      CycleFile out{path};
+      for (const string& line : lines) { if (!line.empty()) { out->write(line); } }
+    } catch (...) {
+      log("Could not rewrite %s; running with CMUL61WHERE=1 for TABMUL_CHAIN61=2 anyway\n", path.string().c_str());
+    }
+  }
+
+  readingConfig = true;
+  try {
+    for (const string& line : lines) { parse(rstripNewline(line)); }
+  } catch (...) {
+    readingConfig = false;
+    throw;
+  }
+  readingConfig = false;
 }
 
 // Same priority as clDefines: these args' flags (command line, config.txt, tune.txt)
