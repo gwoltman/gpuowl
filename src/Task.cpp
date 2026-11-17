@@ -410,12 +410,11 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
 
 // P-1:  stage 1 on the GPU, then the stage 1 GCD on the GPU.  A factor ends the assignment, and so does B2 <= B1.  Otherwise stage 2
 // (Stage2) and its GCD run on the GPU too, and the result has "b2".  When stage 2 declines (too little GPU memory, an FFT type it
-// does not support), -mprimeDir hands the stage 1 residue to mprime for it (and mprime writes the result); without -mprimeDir the
-// result is written for B1 alone (no "b2") and the stage 1 savefile is kept.  A stop (signal, -iters) in stage 2 keeps the worktodo
-// line and the savefiles:  the next run loads the finished stage 1 and resumes stage 2 from its savefile.
+// does not support), -mprimeDir hands the stage 1 residue to mprime for it, or -mlucasDir to Mlucas (which then writes the result);
+// without either the result is written for B1 alone (no "b2") and the stage 1 savefile is kept.  A stop (signal, -iters) in stage 2
+// keeps the worktodo line and the savefiles:  the next run loads the finished stage 1 and resumes stage 2 from its savefile.
 void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<Gpu> gpu) {
   const Args& args = *shared.args;
-  fs::path const& dir = args.mprimeDir;
   if (pfactor && lineB1) {
     // The line's "B1=...;" prefix:  these bounds, as on a Pminus1 line (a stage 1 savefile for another B1 is set aside)
     B1 = lineB1;
@@ -430,6 +429,18 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     Worktodo::deleteTask(*this, instance);
     return;
   }
+
+  // Where a stage 2 (or GCD) that can't run here goes.  With both directories, mprime takes the exponents that it can run, Mlucas
+  // the larger ones.  Mlucas can't take a B1 below its minimum (it would raise B1 and go on with stage 1 from our residue).
+  enum class To { NONE, MPRIME, MLUCAS };
+  bool const mlucasB1 = B1 >= pm1::MLUCAS_MIN_B1 && B1 <= pm1::MLUCAS_MAX_B1;
+  To const to = !args.mprimeDir.empty() && (args.mlucasDir.empty() || exponent <= pm1::MPRIME_MAX_EXPONENT) ? To::MPRIME
+              : !args.mlucasDir.empty() && mlucasB1 ? To::MLUCAS : To::NONE;
+  string const noHandOff = to != To::NONE ? ""
+                         : args.mlucasDir.empty() ? "there is no -mprimeDir or -mlucasDir to hand it to"
+                         : "Mlucas can't take it: B1=" + to_string(B1) + " is outside Mlucas's " + to_string(pm1::MLUCAS_MIN_B1) +
+                           ".." + to_string(pm1::MLUCAS_MAX_B1);
+  if (args.mlucasStage2 && to == To::NONE) { log("-mlucasStage2: %s; stage 2 runs here\n", noHandOff.c_str()); }
   Gcd gcd{shared};
   // Named members rather than a structured binding:  clang before 16 cannot capture a structured binding in the lambdas below
   PM1Result const stage1 = gpu->pm1Stage1(*this, gcd);
@@ -444,22 +455,48 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     throw "P-1 stage 1 residue is 1";
   }
 
+  // The stage 1 savefiles' folder (it also notes a GCD of this residue that found no factor, stage1GcdMarkNone)
+  fs::path const p1Dir = fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent));
+
   // mprime runs the stage 1 GCD only on its way into stage 2: only if the line's B2 is above the B1 in the savefile (otherwise it
-  // reports "already tested" and stops), so a hand-off for the GCD alone asks for B2 = B1 + 1.
+  // reports "already tested" and stops), so a hand-off for the GCD alone asks for B2 = B1 + 1.  Mlucas runs the stage 1 GCD of a
+  // finished stage 1 savefile whatever B2 is (unless its p<p>.stat log already has a GCD line:  mlucasStaleFile), and stage 2 if
+  // B2 > B1.
   auto handOff = [&](u64 handB2, const char* why) {
-    pm1::writeMprimeStage1(dir, exponent, B1, x);
     string const work = pm1::mprimePminus1Line(AID, exponent, B1, handB2);
-    pm1::appendMprimeWork(dir, work);
-    log("P-1 stage 1 residue handed to mprime for %s: %s in '%s', %u Gerbicz errors; %s", why, pm1::mprimeSaveName(exponent).c_str(),
-        dir.string().c_str(), nErrors, work.c_str());
-    if (B1 < 50000) { log("Note: mprime rejects P-1 lines with B1 < 50000 unless its prime.txt has AllowLowB1=1\n"); }
+    if (to == To::MPRIME) {
+      fs::path const& dir = args.mprimeDir;
+      pm1::writeMprimeStage1(dir, exponent, B1, x);
+      pm1::appendMprimeWork(dir, work);
+      log("P-1 stage 1 residue handed to mprime for %s: %s in '%s', %u Gerbicz errors; %s", why, pm1::mprimeSaveName(exponent).c_str(),
+          dir.string().c_str(), nErrors, work.c_str());
+      if (B1 < 50000) { log("Note: mprime rejects P-1 lines with B1 < 50000 unless its prime.txt has AllowLowB1=1\n"); }
+    } else {
+      assert(to == To::MLUCAS);
+      fs::path const& dir = args.mlucasDir;
+      // Mlucas finds its files by the exponent alone:  an earlier run's would be resumed (p<p>.s2) or would skip the GCD (p<p>.stat)
+      string const stale = pm1::mlucasStaleFile(dir, exponent);
+      if (!stale.empty()) {
+        log("P-1 stage 1 residue not handed to Mlucas: '%s' already has %s from an earlier Mlucas run of %" PRIu64 ".  Move Mlucas's "
+            "files of %" PRIu64 " (p%" PRIu64 "*, q%" PRIu64 ") away and run again: the stage 1 savefile is kept\n",
+            dir.string().c_str(), stale.c_str(), exponent, exponent, exponent, exponent);
+        throw "the -mlucasDir has Mlucas files of this exponent";
+      }
+      pm1::writeMlucasStage1(dir, exponent, B1, pm1::stage1ExponentCached(p1Dir, exponent, B1), x);
+      pm1::appendMlucasWork(dir, work);
+      log("P-1 stage 1 residue handed to Mlucas for %s: %s in '%s', %u Gerbicz errors; %s", why, pm1::mlucasSaveName(exponent).c_str(),
+          dir.string().c_str(), nErrors, work.c_str());
+      log("Note: the line went to Mlucas's worktodo.txt (Mlucas has no worktodo.add): a running Mlucas that finishes an assignment at "
+          "that moment can drop it\n");
+    }
     Worktodo::deleteTask(*this, instance);
     if (args.clean) { Saver<P1State>::clear(exponent); }
   };
 
-  // -mprimeStage2:  mprime runs stage 2, and the stage 1 GCD on its way into it, so the GPU's GCD would only repeat it
-  if (args.mprimeStage2 && B2 > B1) {
-    handOff(B2, "the GCD and stage 2 (-mprimeStage2)");
+  // -mprimeStage2 / -mlucasStage2:  mprime or Mlucas runs stage 2, and the stage 1 GCD on its way into it, so the GPU's GCD would
+  // only repeat it
+  if (B2 > B1 && ((to == To::MPRIME && args.mprimeStage2) || (to == To::MLUCAS && args.mlucasStage2))) {
+    handOff(B2, to == To::MPRIME ? "the GCD and stage 2 (-mprimeStage2)" : "the GCD and stage 2 (-mlucasStage2)");
     return;
   }
 
@@ -469,29 +506,27 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
 
   // A stage 2 savefile for this residue means that this stage 1 GCD already ran and found nothing (stage 2 starts only then)
   bool const stage2Started = B2 > B1 && Stage2::hasSavefile(exponent, B1, B2, x);
-  // The stage 1 savefiles' folder also notes a GCD of this residue that found no factor (stage1GcdMarkNone)
-  fs::path const p1Dir = fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent));
   if (stage2Started) {
     log("P-1 stage 1 GCD skipped: stage 2 was started from this residue, so it found no factor\n");
   } else if (pm1::stage1GcdFoundNone(p1Dir, exponent, B1, x)) {
     log("P-1 stage 1 GCD skipped: an earlier run's GCD of this residue found no factor (B1=%" PRIu64 ")\n", B1);
   } else {
-    // There is no CPU GCD:  if the GPU one can't run (e.g. its kernels don't build), mprime can still run it
+    // There is no CPU GCD:  if the GPU one can't run (e.g. its kernels don't build), mprime or Mlucas can still run it
     Words g;
     string gcdError;
     log("P-1 stage 1 GCD on the GPU (minutes at 100M+ bits)\n");
     try {
       g = gcd.gcdMinus1(x, u32(exponent));
     } catch (const std::exception& e) {
-      if (dir.empty()) { throw; }
+      if (to == To::NONE) { throw; }
       gcdError = e.what();
     } catch (const string& mes) {
-      if (dir.empty()) { throw; }
+      if (to == To::NONE) { throw; }
       gcdError = mes;
     }
     if (!gcdError.empty()) {
       log("P-1 stage 1 GCD failed on the GPU (%s)\n", gcdError.c_str());
-      handOff(B2 > B1 ? B2 : B1 + 1, "the GCD and stage 2");
+      handOff(B2 > B1 ? B2 : to == To::MPRIME ? B1 + 1 : B1, B2 > B1 ? "the GCD and stage 2" : "the GCD");
       return;
     }
     log("P-1 stage 1 GCD: %.1f s\n", gcd.lastStats().seconds);
@@ -513,14 +548,13 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     if (r.status == Stage2Result::DONE) {
       factors = Stage2::accFactor(gcd, r.acc, exponent, B1, B2);
       doneB2 = B2;
-    } else if (!dir.empty()) {
+    } else if (to != To::NONE) {
       log("P-1 stage 2 is not run here (%s)\n", r.why.c_str());
       handOff(B2, "stage 2");
       return;
     } else {
-      log("P-1 stage 2 (B2=%" PRIu64 ") is not run (%s) and there is no -mprimeDir to hand it to.  The result is for B1=%" PRIu64
-          " only; the stage 1 residue is kept in '%s'\n", B2, r.why.c_str(), B1,
-          (fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent))).string().c_str());
+      log("P-1 stage 2 (B2=%" PRIu64 ") is not run (%s) and %s.  The result is for B1=%" PRIu64 " only; the stage 1 residue is kept "
+          "in '%s'\n", B2, r.why.c_str(), noHandOff.c_str(), B1, p1Dir.string().c_str());
     }
   }
   writeResultPM1(fft, args, instance, B1, doneB2, factors, nErrors, nJacobi);
@@ -570,17 +604,22 @@ void Task::execute(GpuCommon shared, u32 instance) {
 
   LogContext const pushContext(std::to_string(exponent));
 
-  // A -mprimeDir that is not there would only be found at the end of stage 1:  fail before any GPU work
+  // A -mprimeDir or -mlucasDir that is not there would only be found at the end of stage 1:  fail before any GPU work
   if (kind == PM1) {
-    fs::path const& dir = shared.args->mprimeDir;
-    std::error_code ec;
-    if (!dir.empty() && !fs::is_directory(dir, ec)) {
-      log("-mprimeDir '%s' is not a directory: \"%s\"\n", dir.string().c_str(), rstripNewline(line).c_str());
-      throw "-mprimeDir is not a directory";
+    for (auto [dir, name] : {std::pair{&shared.args->mprimeDir, "-mprimeDir"}, std::pair{&shared.args->mlucasDir, "-mlucasDir"}}) {
+      std::error_code ec;
+      if (!dir->empty() && !fs::is_directory(*dir, ec)) {
+        log("%s '%s' is not a directory: \"%s\"\n", name, dir->string().c_str(), rstripNewline(line).c_str());
+        throw string(name) + " is not a directory";
+      }
     }
-    if (shared.args->mprimeStage2 && dir.empty()) {
+    if (shared.args->mprimeStage2 && shared.args->mprimeDir.empty()) {
       log("-mprimeStage2 needs -mprimeDir: \"%s\"\n", rstripNewline(line).c_str());
       throw "-mprimeStage2 needs -mprimeDir";
+    }
+    if (shared.args->mlucasStage2 && shared.args->mlucasDir.empty()) {
+      log("-mlucasStage2 needs -mlucasDir: \"%s\"\n", rstripNewline(line).c_str());
+      throw "-mlucasStage2 needs -mlucasDir";
     }
   }
 

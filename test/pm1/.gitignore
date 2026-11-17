@@ -3,6 +3,7 @@ stage1_oracle
 savefile-test/
 work/
 work-mprime/
+work-mlucas/
 check_gcd
 p1flip
 work-stage2/

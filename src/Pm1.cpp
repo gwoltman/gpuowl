@@ -518,6 +518,121 @@ void appendMprimeWork(const fs::path& dir, const string& line) {
   File::append(dir / "worktodo.add", line);
 }
 
+string mlucasSaveName(u64 p) { return "p" + to_string(p); }
+
+string mlucasStaleFile(const fs::path& dir, u64 p) {
+  string const base = mlucasSaveName(p);
+  for (const string& name : {base, "q" + to_string(p), base + ".s2", base + ".stat"}) {
+    std::error_code ec;
+    if (fs::exists(dir / name, ec)) { return name; }
+  }
+  return {};
+}
+
+namespace {
+
+// words (little-endian 32-bit) mod 2^k - 1, for 32 < k < 64:  as 2^k = 1, multiplying by 2^32 rotates the k bits.  The result is
+// in [0, 2^k - 2], as Mlucas's mi64_div_by_scalar64 gives it.
+u64 modMersenne(const vector<u32>& words, u32 k) {
+  u64 const m = (u64(1) << k) - 1;
+  u64 r = 0;
+  for (size_t i = words.size(); i-- > 0;) {
+    r = (((r & ((u64(1) << (k - 32)) - 1)) << 32) | (r >> (k - 32))) + words[i];
+    while (r >= m) { r -= m; }
+  }
+  return r;
+}
+
+}  // namespace
+
+namespace {
+
+// Writes bytes to path through a ".new" file and a rename, so that a reader never sees half a file
+void writeFileAtomic(const fs::path& path, const vector<char>& bytes, const char* what) {
+  fs::path const tmp = fs::path(path.string() + ".new");
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    out.write(bytes.data(), std::streamsize(bytes.size()));
+    out.flush();
+    if (!out) { throw string(what) + ": can't write " + tmp.string(); }
+  }
+  std::error_code ec;
+  fs::rename(tmp, path, ec);
+  if (ec) { throw string(what) + ": can't rename to " + path.string() + ": " + ec.message(); }
+}
+
+void putLE(vector<char>& f, u64 v, u32 nBytes) {
+  for (u32 i = 0; i < nBytes; ++i) { f.push_back(char(v >> (8 * i))); }
+}
+
+}  // namespace
+
+void writeMlucasStage1(const fs::path& dir, u64 p, u64 B1, const vector<u32>& E, const vector<u32>& x) {
+  constexpr u8 TEST_TYPE_PM1 = 3;
+  constexpr u8 MODULUS_TYPE_MERSENNE = 1;
+
+  if (bitLength(x) == 0 || isOne(x)) { throw "Mlucas savefile: the stage 1 residue is 0 or 1"; }
+  if (bitLength(x) > p) { throw "Mlucas savefile: the stage 1 residue has more than p bits"; }
+  if (B1 < MLUCAS_MIN_B1 || B1 > MLUCAS_MAX_B1) { throw "Mlucas savefile: B1 out of Mlucas's range"; }
+  // The left-to-right steps of the powering:  the bits of E below its leading one (Mlucas's PM1_S1_PROD_BITS)
+  u64 const nBits = bitLength(E) - 1;
+  if (nBits < 2 || nBits > 0xffffffffu) { throw "Mlucas savefile: stage 1 exponent out of range"; }
+
+  // p<p>.s1_prod (pm1.c read_pm1_s1_prod):  Mlucas reads its stage 1 product from this file when its B1 matches, and takes the
+  // iteration count of stage 1 from it.  Mlucas's own product is not ours (its prime-power loop runs a few primes past B1, and the
+  // primes of released versions up to 21.0.2 include base-2 pseudoprimes such as 561), so the savefile's iteration count would not
+  // match it; with this file Mlucas works with our E.  Test type, modulus type, B1 (4 bytes), nBits (4 bytes), E without its
+  // leading bit and bit-reversed (bit j is bit nBits - 1 - j of E) in (nBits + 7) / 8 bytes, then the sum of its 64-bit limbs.
+  {
+    vector<char> f;
+    putLE(f, TEST_TYPE_PM1, 1);
+    putLE(f, MODULUS_TYPE_MERSENNE, 1);
+    putLE(f, B1, 4);
+    putLE(f, nBits, 4);
+    u64 const nBytes = (nBits + 7) / 8;
+    vector<u64> limbs((nBytes + 7) / 8);
+    for (u64 j = 0; j < nBits; ++j) {
+      if (testBit(E, nBits - 1 - j)) { limbs[j / 64] |= u64(1) << (j % 64); }
+    }
+    u64 sum = 0;
+    for (u64 limb : limbs) { sum += limb; }
+    for (u64 i = 0; i < nBytes; ++i) { f.push_back(char(limbs[i / 8] >> (8 * (i % 8)))); }
+    putLE(f, sum, 8);
+    writeFileAtomic(dir / (mlucasSaveName(p) + ".s1_prod"), f, "Mlucas stage 1 product file");
+  }
+
+  // p<p> (Mlucas.c read_ppm1_savefiles), the savefile of a finished stage 1:  nsquares = PM1_S1_PROD_BITS makes Mlucas take
+  // stage 1 as done ("already done -- proceeding to stage 2"); a smaller one would make it go on with stage 1.
+  vector<char> f;
+  putLE(f, TEST_TYPE_PM1, 1);
+  putLE(f, MODULUS_TYPE_MERSENNE, 1);
+  putLE(f, nBits, 8);                // nsquares
+  u64 const nBytes = (p + 7) / 8;
+  for (u64 i = 0; i < nBytes; ++i) { f.push_back(char(i / 4 < x.size() ? x[i / 4] >> (8 * (i % 4)) : 0)); }
+  putLE(f, (x.size() > 1 ? u64(x[1]) << 32 : 0) | x[0], 8);    // Res64
+  putLE(f, modMersenne(x, 35), 5);   // Res35m1
+  putLE(f, modMersenne(x, 36), 5);   // Res36m1
+  putLE(f, 0, 3);                    // FFT length in K:  0 lets Mlucas use its default
+  putLE(f, 0, 8);                    // residue shift:  Mlucas runs P-1 unshifted
+  putLE(f, 0, 4);                    // roundoff error count
+  putLE(f, 0, 4);                    // Gerbicz error count (Mlucas's P-1 stage 1 has no Gerbicz check)
+  writeFileAtomic(dir / mlucasSaveName(p), f, "Mlucas savefile");
+}
+
+void appendMlucasWork(const fs::path& dir, const string& line) {
+  fs::path const path = dir / "worktodo.txt";
+  // A hand-edited worktodo.txt may lack its final newline:  the line must not be glued to the last one
+  bool newline = false;
+  {
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (in && in.tellg() > 0) {
+      in.seekg(-1, std::ios::end);
+      newline = in.get() != '\n';
+    }
+  }
+  File::append(path, (newline ? "\n" : "") + line);
+}
+
 // ---- Stage 2 plan ----
 
 const vector<u32>& stage2Ds() {

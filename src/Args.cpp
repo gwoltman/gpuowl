@@ -411,6 +411,15 @@ named "config.txt" in the prpll run directory.
 -mprimeStage2      : with -mprimeDir, hand every P-1 stage 2 to mprime, also when it could run on the GPU (mprime's
                      polynomial stage 2 with lots of system RAM is much faster at large B2).  prpll runs stage 1; mprime
                      runs the stage 1 GCD on its way into stage 2.  Pfactor= bounds are still chosen for this GPU's memory.
+-mlucasDir <dir>   : as -mprimeDir, for Mlucas (v21):  write the stage 1 residue as an Mlucas savefile p<exponent> (and its
+                     stage 1 exponent as p<exponent>.s1_prod) into <dir> and append the assignment to <dir>/worktodo.txt,
+                     so that Mlucas runs the stage 1 GCD and stage 2 and reports the result.  Mlucas has no worktodo.add:
+                     a line appended at the moment a running Mlucas finishes an assignment can be lost.  Needs B1 >= 10000
+                     (Mlucas's minimum); earlier Mlucas files of the exponent in <dir> (p<p>, q<p>, p<p>.s2, p<p>.stat)
+                     stop the hand-off.  With both -mprimeDir and -mlucasDir, exponents up to 920800000 (Prime95's limit
+                     with AVX) go to mprime, larger ones to Mlucas.
+-mlucasStage2      : with -mlucasDir, hand every P-1 stage 2 that goes to Mlucas to it, also when it could run on the GPU
+                     (as -mprimeStage2).
 P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2,p,-1,<tf>,<tests saved>: PrimeNet
                      wants P-1 done) gets P-1 from the PRP's own squarings, with bounds chosen for <tf>, -pm1TestsSaved
                      (not the line's value) and this GPU's memory; with tests saved 0, none.  A line without the two
@@ -740,6 +749,14 @@ void Args::parse(const string& line) {
       // is checked when a P-1 assignment starts.
       if (s.empty()) { throw "-mprimeDir needs a directory"; }
       mprimeDir = fs::absolute(s).lexically_normal();
+    }
+    else if (key == "-mlucasStage2") {
+      mlucasStage2 = true;
+    }
+    else if (key == "-mlucasDir") {
+      // As -mprimeDir
+      if (s.empty()) { throw "-mlucasDir needs a directory"; }
+      mlucasDir = fs::absolute(s).lexically_normal();
     }
     else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2") {
       // The bounds of the P-1 that prpll would choose them for (Pfactor lines, the P-1 inside PRP tests).  Each source (config.txt,
