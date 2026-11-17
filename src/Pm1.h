@@ -108,9 +108,8 @@ string mprimeSaveName(u64 p);
 // x, the stage 1 residue of 2^p-1 as little-endian 32-bit words.  Written to a ".new" file and renamed.
 void writeMprimeStage1(const fs::path& dir, u64 p, u64 B1, const vector<u32>& x);
 
-// "Pminus1=[AID,]1,2,p,-1,B1,B2\n", or with B2start > B1 "Pminus1=[AID,]1,2,p,-1,B1,B2,tfBits,B2start\n":  Prime95 reads B2_start only
-// as the field after the trial factoring depth
-string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2, u64 B2start = 0, double tfBits = 0);
+// "Pminus1=[AID,]1,2,p,-1,B1,B2\n"
+string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2);
 
 // Appends a line to <dir>/worktodo.add in one write.
 void appendMprimeWork(const fs::path& dir, const string& line);
@@ -135,7 +134,7 @@ void appendMprimeWork(const fs::path& dir, const string& line);
 struct Stage2Plan {
   static constexpr u32 VERSION = 2;    // of the pairing:  a savefile of another version is not resumed (version 1 is M = D/2:  the same)
 
-  u64 B1{}, B2{};              // the range (B1, B2]:  B1 is the start bound (B2_start) of a stage 2 that has one
+  u64 B1{}, B2{};
   u32 D{}, M{};
   vector<u32> ns;              // S, increasing
   vector<u32> indexOf;         // odd n < M -> its position in ns (at (n - 1) / 2), or u32(-1) when gcd(n, D) > 1

@@ -2,11 +2,10 @@
 # End-to-end tests of P-1 with stage 2 in prpll, from "Pminus1=" worktodo lines:  stage 1, its GCD, stage 2 and its GCD, the result
 # line, the hand-off to mprime when stage 2 declines, resume across the stage 1 / stage 2 boundary and inside stage 2, and the stage 2
 # checks under simulated faults; and "Pfactor=" lines (pfactor:  the bounds prpll chooses equal check_bounds' for the stage 2 room it
-# logged, kept across a restart, stage 1 alone without memory, no P-1 when it can't pay); and "Pminus1=" lines with B2_start (b2start:
-# stage 2 of (B2_start, B2] only, Prime95's field rules, resume, the hand-off line).  GMP (stage1_oracle, check_stage2) is the oracle;
-# prpll links neither.
+# logged, kept across a restart, stage 1 alone without memory, no P-1 when it can't pay).  GMP (stage1_oracle, check_stage2) is the
+# oracle; prpll links neither.
 #
-#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|b2start|all]      (default all)
+#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), SIGINT_DELAY (seconds from the
 #               stage 2 table to the SIGINT of the resume test, default 3), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built here with -DPRPLL_PM1_FAULTS if missing).
@@ -32,10 +31,10 @@ make -s -C "$HERE" stage1_oracle check_stage2 || exit 1
 [[ -x "$PRPLL" ]] || { echo "no $PRPLL (run make)"; exit 1; }
 mkdir -p "$WORK"
 
-# setup <dir> <p> <B1> <B2> [more fields]:  a fresh run directory with one Pminus1 line (and an empty mprime directory mp)
+# setup <dir> <p> <B1> <B2>:  a fresh run directory with one Pminus1 line (and an empty mprime directory mp)
 setup() {
   rm -rf "$1"; mkdir -p "$1/mp"
-  echo "Pminus1=1,2,$2,-1,$3,$4${5:+,$5}" > "$1/worktodo-0.txt"
+  echo "Pminus1=1,2,$2,-1,$3,$4" > "$1/worktodo-0.txt"
 }
 
 # run <dir> <prpll> <args...>:  runs prpll in <dir>, appending to <dir>/out
@@ -46,35 +45,34 @@ run() {
 
 # planOf <log>:  "D M kWindow" of the last stage 2 plan logged
 planOf() {
-  grep -o 'Stage 2 B1=[0-9]*\( B2_start=[0-9]*\)\? B2=[0-9]*: D=[0-9]* M=[0-9]* .* windows of [0-9]*' "$1" | tail -1 | sed 's/.*D=\([0-9]*\) M=\([0-9]*\) .* windows of \([0-9]*\).*/\1 \2 \3/'
+  grep -o 'Stage 2 B1=[0-9]* B2=[0-9]*: D=[0-9]* M=[0-9]* .* windows of [0-9]*' "$1" | tail -1 | sed 's/.*D=\([0-9]*\) M=\([0-9]*\) .* windows of \([0-9]*\).*/\1 \2 \3/'
 }
 
 # shellcheck disable=SC2012  # the names are prpll's own savefile names: no spaces or newlines
 lastSave() { ls -v "$1/$2-$3/"*."$2" 2>/dev/null | tail -1; }      # <dir> <p1|p2> <p>
 
-# stage2Oracle <dir> <p> <B1> <B2> [B2_start]:  GMP's stage 1 residue equal to prpll's (final p1 savefile), the final stage 2
-# accumulator (p2 savefile) equal to GMP's product for the D prpll used over (B1, B2], or (B2_start, B2] when given (check_stage2 acc
-# then checks that the items cover every prime of that range), and GMP's gcd(acc, 2^p-1) in <dir>/gcd2.  Needs -noclean.
+# stage2Oracle <dir> <p> <B1> <B2>:  GMP's stage 1 residue equal to prpll's (final p1 savefile), the final stage 2 accumulator (p2
+# savefile) equal to GMP's product for the D prpll used, and GMP's gcd(acc, 2^p-1) in <dir>/gcd2.  Needs -noclean.
 stage2Oracle() {
-  local d=$1 p=$2 B1=$3 B2=$4 lo=${5:-$3} D M KW
+  local d=$1 p=$2 B1=$3 B2=$4 D M KW
   "$ORACLE" "$p" "$B1" "$(lastSave "$d" p1 "$p")" > "$d/oracle1" 2>&1
   grep -q "residue EQUAL" "$d/oracle1" || return 1
   "$CHECK" savefile "$p" "$(lastSave "$d" p1 "$p")" "$d/x.bin" > /dev/null || return 1
   "$CHECK" savefile "$p" "$(lastSave "$d" p2 "$p")" "$d/acc.bin" > "$d/oracle2" || return 1
   read -r D M KW <<< "$(planOf "$d/out")"
-  "$CHECK" acc "$p" "$lo" "$B2" "$D" "$M" "$d/x.bin" "$d/acc.bin" "$KW" >> "$d/oracle2" || return 1
+  "$CHECK" acc "$p" "$B1" "$B2" "$D" "$M" "$d/x.bin" "$d/acc.bin" "$KW" >> "$d/oracle2" || return 1
   "$CHECK" gcd "$p" "$d/acc.bin" | cut -d' ' -f2 > "$d/gcd2"
 }
 
-# result <dir> <p> <B1> <B2 or 0> <factor or NF> [B2_start]:  exactly one P-1 result line, with "b2" iff B2 > 0 (and "b2-start" right
-# after it iff B2_start is given), and that status/factor; the worktodo line gone
+# result <dir> <p> <B1> <B2 or 0> <factor or NF>:  exactly one P-1 result line, with "b2" iff B2 > 0, and that status/factor;
+# the worktodo line gone
 result() {
-  local d=$1 p=$2 B1=$3 B2=$4 want=$5 start=${6:-} r
+  local d=$1 p=$2 B1=$3 B2=$4 want=$5 r
   [[ -s "$d/worktodo-0.txt" ]] && return 1
   r=$(cat "$d/results-0.txt" 2>/dev/null)
   [[ "$(echo "$r" | grep -c .)" = 1 ]] || return 1
   if [[ "$B2" != 0 ]]; then
-    echo "$r" | grep -q "\"exponent\":$p, \"worktype\":\"P-1\", \"b1\":$B1, \"b2\":$B2, ${start:+\"b2-start\":$start, }\"fft-length\"" || return 1
+    echo "$r" | grep -q "\"exponent\":$p, \"worktype\":\"P-1\", \"b1\":$B1, \"b2\":$B2, \"fft-length\"" || return 1
   else
     echo "$r" | grep -q "\"exponent\":$p, \"worktype\":\"P-1\", \"b1\":$B1, \"fft-length\"" || return 1
     echo "$r" | grep -q '"b2"' && return 1
@@ -500,146 +498,6 @@ pfactor_tests() {
   done
 }
 
-# ---- Pminus1 lines with B2_start (Prime95's field after the trial factoring depth):  stage 2 of (B2_start, B2] only ----
-
-# primeCount <lo> <hi>:  the primes in (lo, hi]
-primeCount() { python3 -c "
-lo, hi = $1, $2
-s = bytearray([1]) * (hi + 1); s[0] = s[1] = 0
-for i in range(2, int(hi ** 0.5) + 1):
-    if s[i]: s[i * i::i] = bytearray(len(s[i * i::i]))
-print(sum(s[lo + 1:]))"; }
-
-# planPrimes <log>:  the number of primes of the last stage 2 plan logged
-planPrimes() { grep -o 'Stage 2 B1=.* windows of [0-9]*), [0-9]* primes' "$1" | tail -1 | grep -o '[0-9]* primes$' | cut -d' ' -f1; }
-
-# factorsCheck <dir> <p> <lo> <B2> <f>:  check_stage2 factors (GMP, the order of x mod f) agrees that f is found by stage 2 of (lo, B2]
-# exactly when its order is a prime in that range;  the expectation ("found"/"not found") on stdout
-factorsCheck() {
-  "$CHECK" factors "$2" "$3" "$4" "$1/x.bin" "$1/acc.bin" "$5" > "$1/oracle3" || return 1
-  grep -q '^OK factor' "$1/oracle3" || return 1
-  if grep -q ' found by stage 2' "$1/oracle3" && ! grep -q 'not found by stage 2' "$1/oracle3"; then echo found; else echo "not found"; fi
-}
-
-b2start_tests() {
-  local d p=400381 B1=500 f=671839319 g n want
-  # M400381's factor 671839319 = 2 * 839 * 400381 + 1:  its stage 2 prime 839 is in (B1, B2] = (500, 3000].
-  # (a) B2_start=700:  839 in (700, 3000] is covered and found; acc = GMP's product over the items covering (700, 3000]
-  d=$WORK/b2s-found
-  setup "$d" "$p" "$B1" 3000 0,700
-  run "$d" "$PRPLL"
-  n=$(planPrimes "$d/out"); want=$(primeCount 700 3000)
-  if grep -q "Stage 2 B1=$B1 B2_start=700 B2=3000: " "$d/out" && [[ "$n" = "$want" ]] && stage2Oracle "$d" "$p" "$B1" 3000 700 \
-     && [[ "$(cat "$d/gcd2")" = "$f" ]] && [[ "$(factorsCheck "$d" "$p" 700 3000 "$f")" = found ]] && result "$d" "$p" "$B1" 3000 "$f" 700 \
-     && head -1 "$(lastSave "$d" p2 "$p")" | grep -q "^OWL P2 3 N=1\*2^$p-1 k=[0-9]* B1=$B1 S=700 B2=3000 "; then
-    pass "b2s-found: B1=$B1 B2_start=700 B2=3000 -> $f (= GMP gcd(acc)); plan of $n primes = the primes in (700, 3000]; acc = GMP's product ($(grep -o '[0-9]* primes, [0-9]* multiplications' "$d/oracle2")); result has \"b2-start\":700; p2 savefile version 3"
-  else
-    fail "b2s-found (see $d)"
-  fi
-  # (b) B2_start=1000:  839 is in the skipped (500, 1000]:  not found (GMP's gcd(acc) agrees, and check_stage2 factors says the
-  # order of x mod f is not a prime of (1000, 3000]); the same line without B2_start finds it
-  d=$WORK/b2s-skipped
-  setup "$d" "$p" "$B1" 3000 0,1000
-  run "$d" "$PRPLL"
-  n=$(planPrimes "$d/out"); want=$(primeCount 1000 3000)
-  if stage2Oracle "$d" "$p" "$B1" 3000 1000 && g=$(cat "$d/gcd2") && [[ "$n" = "$want" ]] \
-     && [[ "$(factorsCheck "$d" "$p" 1000 3000 "$f")" = "not found" ]] && python3 -c "import sys; sys.exit(int('$g') % $f == 0)" \
-     && result "$d" "$p" "$B1" 3000 "$(sed 's/^1$/NF/' "$d/gcd2")" 1000; then
-    pass "b2s-skipped: B1=$B1 B2_start=1000 B2=3000 -> $(sed 's/^1$/NF/' "$d/gcd2") (= GMP gcd(acc), not a multiple of $f: 839 is skipped); plan of $n primes = the primes in (1000, 3000]"
-  else
-    fail "b2s-skipped (see $d)"
-  fi
-  d=$WORK/b2s-without
-  setup "$d" "$p" "$B1" 3000
-  run "$d" "$PRPLL"
-  if ! grep -q B2_start "$d/out" && stage2Oracle "$d" "$p" "$B1" 3000 && [[ "$(cat "$d/gcd2")" = "$f" ]] && result "$d" "$p" "$B1" 3000 "$f"; then
-    pass "b2s-without: the same line without B2_start finds $f; plan of $(planPrimes "$d/out") primes, result without \"b2-start\""
-  else
-    fail "b2s-without (see $d)"
-  fi
-
-  # Prime95's field rules:  a B2_start <= B1 is none; a single field after B2 is the trial factoring depth, never B2_start (here 1000,
-  # above Prime95's 300, so not a depth either); both lines then find the factor as without B2_start
-  local extra
-  for extra in 0,400 1000; do
-    d=$WORK/b2s-rule-${extra/,/-}
-    setup "$d" "$p" "$B1" 3000 "$extra"
-    run "$d" "$PRPLL"
-    if ! grep -q B2_start "$d/out" && stage2Oracle "$d" "$p" "$B1" 3000 && [[ "$(cat "$d/gcd2")" = "$f" ]] && result "$d" "$p" "$B1" 3000 "$f"; then
-      pass "b2s-rule: '...,$B1,3000,$extra' has no start bound (as in Prime95), finds $f"
-    else
-      fail "b2s-rule '$extra' (see $d)"
-    fi
-  done
-  # B2_start at or above B2:  an empty stage 2, the line is not run
-  d=$WORK/b2s-empty
-  setup "$d" "$p" "$B1" 3000 0,3000
-  run "$d" "$PRPLL"
-  if grep -q "worktodo.txt line ignored, its stage 2 from B2_start=3000 to B2=3000 is empty" "$d/out" && grep -q "No work to do" "$d/out" \
-     && [[ ! -e "$d/results-0.txt" ]] && [[ -s "$d/worktodo-0.txt" ]]; then
-    pass "b2s-empty: B2_start=3000 = B2 -> line ignored, not run"
-  else
-    fail "b2s-empty (see $d)"
-  fi
-
-  # (d) Resume:  stage 2 from B2_start stopped twice by -iters and resumed from its version 3 savefile; acc = GMP's over (50000, 200000]
-  local B2=200000 S=50000
-  d=$WORK/b2s-resume
-  setup "$d" "$p" "$B1" "$B2" "0,$S"
-  run "$d" "$PRPLL" -iters 4000
-  run "$d" "$PRPLL" -iters 4000
-  run "$d" "$PRPLL"
-  if [[ "$(grep -c 'Stage 2 stopped at k=' "$d/out")" = 2 ]] && [[ "$(grep -c 'Stage 2 resuming at k=' "$d/out")" = 2 ]] \
-     && [[ "$(grep -c 'P-1 stage 1 GCD skipped: stage 2 was started' "$d/out")" = 2 ]] && ! grep -q "not this stage 2" "$d/out" \
-     && stage2Oracle "$d" "$p" "$B1" "$B2" "$S" && result "$d" "$p" "$B1" "$B2" "$(sed 's/^1$/NF/' "$d/gcd2")" "$S"; then
-    pass "b2s-resume: B2_start=$S stopped twice by -iters, resumed ($(grep -o 'resuming at k=[0-9]*' "$d/out" | paste -sd,)), acc = GMP's over ($S, $B2], $(sed 's/^1$/NF/' "$d/gcd2")"
-  else
-    fail "b2s-resume (see $d)"
-  fi
-  # A stage 2 savefile of (B1, B2] (no start bound) is not resumed by the same line with a B2_start:  it starts over;  and the finished
-  # stage 1 of that run is loaded, not redone
-  d=$WORK/b2s-mismatch
-  setup "$d" "$p" "$B1" "$B2"
-  run "$d" "$PRPLL" -iters 4000
-  echo "Pminus1=1,2,$p,-1,$B1,$B2,0,$S" > "$d/worktodo-0.txt"
-  run "$d" "$PRPLL"
-  if grep -q "Stage 2 stopped at k=" "$d/out" && grep -q "Stage 2 savefile is for B1=$B1 B2_start=0 B2=$B2 .*, not this stage 2 (B2_start=$S): starting over" "$d/out" \
-     && ! grep -q "Stage 2 resuming" "$d/out" && grep -q "P-1 stage 1 already done" "$d/out" \
-     && stage2Oracle "$d" "$p" "$B1" "$B2" "$S" && result "$d" "$p" "$B1" "$B2" "$(sed 's/^1$/NF/' "$d/gcd2")" "$S"; then
-    pass "b2s-mismatch: a (B1, B2] stage 2 savefile is not resumed for B2_start=$S (started over), stage 1 loaded; acc = GMP's over ($S, $B2]"
-  else
-    fail "b2s-mismatch (see $d)"
-  fi
-  # Extending a finished run:  B2=3000 with -noclean, then B2_start=3000 B2=$B2 loads the finished stage 1 (and its GCD's marker) and
-  # covers (3000, B2] only
-  d=$WORK/b2s-extend
-  setup "$d" 400033 1000 3000
-  run "$d" "$PRPLL"
-  rm -f "$d/results-0.txt"
-  echo "Pminus1=1,2,400033,-1,1000,30000,0,3000" > "$d/worktodo-0.txt"
-  run "$d" "$PRPLL"
-  if grep -q "P-1 stage 1 already done" "$d/out" && grep -q "P-1 stage 1 GCD skipped: an earlier run's GCD" "$d/out" \
-     && grep -q "Stage 2 savefile is for B1=1000 B2_start=0 B2=3000 .*starting over" "$d/out" \
-     && [[ "$(planPrimes "$d/out")" = "$(primeCount 3000 30000)" ]] && stage2Oracle "$d" 400033 1000 30000 3000 \
-     && result "$d" 400033 1000 30000 "$(sed 's/^1$/NF/' "$d/gcd2")" 3000; then
-    pass "b2s-extend: after B2=3000, B2_start=3000 B2=30000 reuses stage 1 and its GCD, covers (3000, 30000] ($(planPrimes "$d/out") primes), acc = GMP"
-  else
-    fail "b2s-extend (see $d)"
-  fi
-
-  # Hand-off:  the line passed to mprime keeps B2_start after the trial factoring depth (0 when the line has none)
-  for extra in "0,1000" "65,1000"; do
-    d=$WORK/b2s-handoff-${extra/,/-}
-    setup "$d" "$p" "$B1" "$B2" "$extra"
-    run "$d" "$PRPLL" "${TINY[@]}" -mprimeDir mp
-    if grep -q "Stage 2 declined" "$d/out" && grep -q "^Pminus1=1,2,$p,-1,$B1,$B2,$extra\$" "$d/mp/worktodo.add" && [[ ! -e "$d/results-0.txt" ]]; then
-      pass "b2s-handoff: '...,$B2,$extra' handed to mprime as $(cat "$d/mp/worktodo.add")"
-    else
-      fail "b2s-handoff '$extra' (see $d)"
-    fi
-  done
-}
-
 case $WHAT in
   factor) factor_tests ;;
   decline) decline_tests ;;
@@ -648,8 +506,7 @@ case $WHAT in
   fft) fft_tests ;;
   tunefile) tunefile_tests ;;
   pfactor) pfactor_tests ;;
-  b2start) b2start_tests ;;
-  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests; pfactor_tests; b2start_tests ;;
+  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests; pfactor_tests ;;
 esac
 
 echo "$fails failure(s)"

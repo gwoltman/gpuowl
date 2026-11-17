@@ -528,13 +528,13 @@ vector<Pm1Fft> Stage2::chooseFFTs(const Args& args, u64 E) {
   return ffts;
 }
 
-bool Stage2::hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x, u64 start) {
+bool Stage2::hasSavefile(u64 E, u64 B1, u64 B2, const vector<u32>& x) {
   if (!fs::exists(fs::current_path() / (string(P2State::KIND) + '-' + to_string(E)))) { return false; }
   P2State const s = Saver<P2State>{E, 1000, 4}.load();
-  return !s.acc.empty() && s.B1 == B1 && s.B2 == B2 && s.start == (start > B1 ? start : 0) && s.x64 == res64(x);
+  return !s.acc.empty() && s.B1 == B1 && s.B2 == B2 && s.x64 == res64(x);
 }
 
-vector<string> Stage2::accFactor(Gcd& gcd, const vector<u32>& acc, u64 E, u64 B1, u64 B2, u64 start) {
+vector<string> Stage2::accFactor(Gcd& gcd, const vector<u32>& acc, u64 E, u64 B1, u64 B2) {
   log("P-1 stage 2 GCD on the GPU (minutes at 100M+ bits)\n");
   Words const g = gcd.gcd(acc, u32(E));
   log("P-1 stage 2 GCD: %.1f s\n", gcd.lastStats().seconds);
@@ -543,11 +543,7 @@ vector<string> Stage2::accFactor(Gcd& gcd, const vector<u32>& acc, u64 E, u64 B1
     throw "P-1 stage 2 accumulator is zero";
   }
   vector<string> factors = pm1::gcdFactor(g, 2, E);
-  if (factors.empty() && start > B1) {
-    log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2_start=%" PRIu64 " B2=%" PRIu64 ")\n", B1, start, B2);
-  } else if (factors.empty()) {
-    log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2=%" PRIu64 ")\n", B1, B2);
-  }
+  if (factors.empty()) { log("P-1 stage 2 found no factor (B1=%" PRIu64 " B2=%" PRIu64 ")\n", B1, B2); }
   return factors;
 }
 
@@ -692,12 +688,10 @@ void Stage2::rankUntuned(GpuCommon shared, u64 E, vector<Pm1Fft>& ffts) {
   ffts = std::move(ranked);
 }
 
-Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, u32 M, u64 start) {
+Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, u32 M) {
   const Args& args = *shared.args;
-  if (start <= B1) { start = 0; }      // as Prime95:  a start bound not above B1 is none
-  u64 const lo = std::max(B1, start);  // stage 2 covers (lo, B2]
-  if (B1 < 5 || B2 <= lo || B2 > (u64(1) << 32) - 8192) {
-    return {.status = Stage2Result::DECLINED, .why = "stage 2 needs 5 <= B1 < B2 < 2^32 - 8192, and B2 above B2_start"};
+  if (B1 < 5 || B2 <= B1 || B2 > (u64(1) << 32) - 8192) {
+    return {.status = Stage2Result::DECLINED, .why = "stage 2 needs 5 <= B1 < B2 < 2^32 - 8192"};
   }
   if (x.size() != nWords(E) || isZero(x)) {
     return {.status = Stage2Result::DECLINED, .why = "bad stage 1 residue"};
@@ -718,7 +712,7 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
   Memlock memlock{args.masterDir.empty() ? fs::current_path() : args.masterDir, args.uid.empty() ? to_string(args.device) : args.uid};
 
   // Untuned (no -fft, no tune-pm1.txt or tune.txt line for E):  the order of the types depends on the size and the GPU, so time them
-  if (ffts.size() > 1 && ffts.front().source == Pm1Fft::UNTUNED && primesIn(lo, B2) >= PROBE_MIN_PRIMES) { rankUntuned(shared, E, ffts); }
+  if (ffts.size() > 1 && ffts.front().source == Pm1Fft::UNTUNED && primesIn(B1, B2) >= PROBE_MIN_PRIMES) { rankUntuned(shared, E, ffts); }
 
   // Kernels compile on first use, so a build failure can come at any point; the next FFT resumes from the last checkpoint (the
   // savefile holds words, whatever the FFT).  Only the FFTs of an -fft spec are tried when there is one.
@@ -740,7 +734,7 @@ Stage2Result Stage2::run(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u
       // A table the GPU could not hold (runOn throws TableTooLarge):  again with a smaller one
       for (u64 maxN = u64(-1); ; ) {
         try {
-          return runOn(shared, E, B1, B2, start, x, D, M, ffts[i].fft, ffts[i].uses, maxN);
+          return runOn(shared, E, B1, B2, x, D, M, ffts[i].fft, ffts[i].uses, maxN);
         } catch (const TableTooLarge& t) {
           maxN = t.maxN;
         }
@@ -839,23 +833,18 @@ u64 Stage2::tableCapacity(GpuCommon shared, const Gpu& g, u64 E) {
   return maxN;
 }
 
-Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, u64 start, const vector<u32>& x, u32 D, u32 M, const FFTConfig& fft,
+Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector<u32>& x, u32 D, u32 M, const FFTConfig& fft,
                            const vector<KeyVal>& uses, u64 maxNCap) {
   const Args& args = *shared.args;
-  // The plan, its cost model and its D (whose primes must be at most the range's start, so that none of them is in the range) take the
-  // start of the range, B1 or the start bound:  the pairing of the primes of (lo, B2] does not depend on how lo was reached
-  u64 const lo = std::max(B1, start);
   auto gpuPtr = Gpu::make(E, shared, fft, {}, true, uses);
   Gpu& g = *gpuPtr;
   u64 const x64 = res64(x);
 
   auto saverPtr = std::make_unique<Saver<P2State>>(E, 1000, 4);
   P2State saved = saverPtr->load();
-  // A savefile of another range (another B1, B2 or start bound) is not this stage 2's:  its accumulator holds other primes
-  bool resume = !saved.acc.empty() && saved.B1 == B1 && saved.B2 == B2 && saved.start == start && saved.x64 == x64;
+  bool resume = !saved.acc.empty() && saved.B1 == B1 && saved.B2 == B2 && saved.x64 == x64;
   if (!saved.acc.empty() && !resume) {
-    log("Stage 2 savefile is for B1=%" PRIu64 " B2_start=%" PRIu64 " B2=%" PRIu64 " x=%016" PRIx64 ", not this stage 2 (B2_start=%"
-        PRIu64 "): starting over\n", saved.B1, saved.start, saved.B2, saved.x64, start);
+    log("Stage 2 savefile is for B1=%" PRIu64 " B2=%" PRIu64 " x=%016" PRIx64 ", not this stage 2: starting over\n", saved.B1, saved.B2, saved.x64);
   }
 
   size_t const bufBytes = allocBytes(Stage2Run::bufDoubles(g) * sizeof(double));
@@ -867,7 +856,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, u64 start, c
   // for
   if (resume) {
     bool const samePlan = saved.plan == pm1::Stage2Plan::VERSION || (saved.plan == 1 && saved.M == saved.D / 2);
-    bool const fits = saved.D % 2 == 0 && saved.M >= saved.D / 2 && pm1::stage2DFits(saved.D, lo) &&
+    bool const fits = saved.D % 2 == 0 && saved.M >= saved.D / 2 && pm1::stage2DFits(saved.D, B1) &&
                       pm1::stage2TableSize(saved.D, saved.M) <= maxN;
     if (samePlan && fits && (!D || D == saved.D) && (!M || M == saved.M)) {
       D = saved.D;
@@ -886,11 +875,11 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, u64 start, c
   }
   Saver<P2State>& saver = *saverPtr;
   if (!M) {
-    pm1::Stage2Choice const c = pm1::chooseStage2(lo, B2, maxN, D);
+    pm1::Stage2Choice const c = pm1::chooseStage2(B1, B2, maxN, D);
     D = c.D;
     M = c.M;
   }
-  if (!D || !pm1::stage2DFits(D, lo) || M < D / 2 || pm1::stage2TableSize(D, M) > maxN) {
+  if (!D || !pm1::stage2DFits(D, B1) || M < D / 2 || pm1::stage2TableSize(D, M) > maxN) {
     char why[320];
     // A table the memory test limited (maxNCap) is not the budget's doing:  say so, with the budget's own count
     int const n = maxN < maxNFree
@@ -900,8 +889,8 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, u64 start, c
       : snprintf(why, sizeof(why), "%.2f GB of GPU memory allow %" PRIu64 " buffers of %.1f MB (and %u of %.1f MB), stage 2 needs "
                  "at least %" PRIu64 " + %u", std::max(0.0, budget) / double(1u << 30), maxN + (maxN ? EXTRA_BUFS : 0),
                  bufBytes / double(1u << 20), WORD_BUFS, wordBytes / double(1u << 20), pm1::stage2MinTable(), EXTRA_BUFS);
-    if (D && !pm1::stage2DFits(D, lo)) {
-      snprintf(why + n, sizeof(why) - n, "; D=%u has a prime factor above %s", D, start ? "B2_start" : "B1");
+    if (D && !pm1::stage2DFits(D, B1)) {
+      snprintf(why + n, sizeof(why) - n, "; D=%u has a prime factor above B1", D);
     } else if (D && M) {
       snprintf(why + n, sizeof(why) - n, "; the table asked for (D=%u M=%u) has %u entries", D, M, M >= D / 2 ? pm1::stage2TableSize(D, M) : 0);
     }
@@ -915,37 +904,31 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, u64 start, c
   // TEST ONLY (fault build):  PRPLL_STAGE2_KWINDOW=<k per window> makes the pairing windows small (pairs are never formed across them)
   if (const char* kw = getenv("PRPLL_STAGE2_KWINDOW")) { kWindow = stoull(kw); }
 #endif
-  pm1::Stage2Plan const plan = pm1::planStage2(lo, B2, D, M, kWindow);
+  pm1::Stage2Plan const plan = pm1::planStage2(B1, B2, D, M, kWindow);
   u32 const nT = plan.nTable();
   u64 const nK = plan.kEnd - plan.kBegin;
   u64 const mulsTotal = plan.nNeeded + 2 * nK;
   double const planSecs = timer.reset();
-  pm1::Stage2Choice const est = pm1::stage2Estimate(lo, B2, D, M);
+  pm1::Stage2Choice const est = pm1::stage2Estimate(B1, B2, D, M);
   // The plan b3807834 made (M = D/2, the D of 210 ... 4620 with the least D/2 + 2 (B2 - B1) / D that fits, 24 + 5 buffers at least):
   // its multiplications as the model estimates them
   u32 oldD = 0;
   for (u32 d : {210, 330, 420, 462, 630, 770, 840, 1050, 1260, 1470, 2310, 4620}) {
     if (pm1::stage2TableSize(d, d / 2) + 5 > maxN + EXTRA_BUFS) { continue; }
-    if (!oldD || d / 2.0 + 2.0 * double(B2 - lo) / d < oldD / 2.0 + 2.0 * double(B2 - lo) / oldD) { oldD = d; }
+    if (!oldD || d / 2.0 + 2.0 * double(B2 - B1) / d < oldD / 2.0 + 2.0 * double(B2 - B1) / oldD) { oldD = d; }
   }
   char oldNote[160] = "the old plan (M = D/2, 24 + 5 buffers) would not fit";
   if (oldD) {
     // Its k step cost 3.4 multiplications and its table was built twice (Pm1Bounds.cpp)
-    double const items = pm1::stage2Items(double(lo), double(B2), oldD, oldD / 2), nKOld = double(B2 - lo) / oldD;
+    double const items = pm1::stage2Items(double(B1), double(B2), oldD, oldD / 2), nKOld = double(B2 - B1) / oldD;
     snprintf(oldNote, sizeof(oldNote), "the old plan would be D=%u: ~%.0f multiplications, est. cost %.0f", oldD, items + 2 * nKOld,
              (items + 3.4 * nKOld) * (1 + 1.0 / 32) + 2 * (oldD / 4 * 2.9 + 0.8 * pm1::stage2TableSize(oldD, oldD / 2)));
   }
-  char range[80];
-  if (start) {
-    snprintf(range, sizeof(range), "B1=%" PRIu64 " B2_start=%" PRIu64 " B2=%" PRIu64, B1, start, B2);
-  } else {
-    snprintf(range, sizeof(range), "B1=%" PRIu64 " B2=%" PRIu64, B1, B2);
-  }
-  log("Stage 2 %s: D=%u M=%u (L=%.2f), %u table buffers + %u of %.0f MB, k %" PRIu64 "..%" PRIu64
+  log("Stage 2 B1=%" PRIu64 " B2=%" PRIu64 ": D=%u M=%u (L=%.2f), %u table buffers + %u of %.0f MB, k %" PRIu64 "..%" PRIu64
       " (%" PRIu64 " windows of %" PRIu64 "), %" PRIu64 " primes, %" PRIu64 " pairs (%.1f%% of the primes paired, %" PRIu64
       " across sections), %" PRIu64 " multiplications (%" PRIu64 " for the primes, %" PRIu64 " for the k steps); est. cost %.0f (%.0f for "
       "the primes); %s; plan %.1fs\n",
-      range, D, M, 2.0 * M / D, nT, EXTRA_BUFS, bufBytes / double(1u << 20), plan.kBegin, plan.kEnd - 1, plan.nWindows(), plan.kWindow,
+      B1, B2, D, M, 2.0 * M / D, nT, EXTRA_BUFS, bufBytes / double(1u << 20), plan.kBegin, plan.kEnd - 1, plan.nWindows(), plan.kWindow,
       plan.nPrimes, plan.nPairs, plan.nPrimes ? 200.0 * plan.nPairs / plan.nPrimes : 0.0, plan.nCross, mulsTotal, plan.nNeeded, 2 * nK,
       est.cost, est.items, oldNote, planSecs);
 
@@ -973,7 +956,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, u64 start, c
   };
   if (u32 const bad = s2.memoryTest(); bad < nT) { shrink(bad); }
 
-  P2State state = resume ? saved : P2State{.exponent = E, .k = plan.kBegin, .B1 = B1, .B2 = B2, .start = start, .D = D, .M = M,
+  P2State state = resume ? saved : P2State{.exponent = E, .k = plan.kBegin, .B1 = B1, .B2 = B2, .D = D, .M = M,
                                            .plan = pm1::Stage2Plan::VERSION, .x64 = x64, .nMul = 0, .acc = makeWords(E, 1), .elapsed = 0};
   state.plan = pm1::Stage2Plan::VERSION;
   if (resume) { log("Stage 2 resuming at k=%" PRIu64 " (%" PRIu64 " multiplications done)\n", state.k, state.nMul); }
@@ -1039,7 +1022,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, u64 start, c
         if (!s2.tableOK()) { ok = false; break; }
         if (!s2.aOK(k)) { log("EE stage 2: A_k differs from x^((kD)^2) at k=%" PRIu64 "\n", k); ok = false; break; }
         double const elapsed = elapsedAtStart + sinceCheckpoint.at();
-        state = P2State{.exponent = E, .k = k, .B1 = B1, .B2 = B2, .start = start, .D = D, .M = M, .plan = pm1::Stage2Plan::VERSION, .x64 = x64,
+        state = P2State{.exponent = E, .k = k, .B1 = B1, .B2 = B2, .D = D, .M = M, .plan = pm1::Stage2Plan::VERSION, .x64 = x64,
                         .nMul = nMul, .acc = a, .elapsed = elapsed};
         saver.save(state);
         elapsedAtStart = elapsed;
@@ -1144,15 +1127,14 @@ void stage2Test(GpuCommon shared, const char* spec) {
     if (!comma) { break; }
     spec = comma + 1;
   }
-  if (f.size() < 5) { throw "PRPLL_STAGE2_TEST=E,B1,B2,x.bin,acc.bin[,D[,M[,start]]]"; }
+  if (f.size() < 5) { throw "PRPLL_STAGE2_TEST=E,B1,B2,x.bin,acc.bin[,D[,M]]"; }
   u64 const E = stoull(f[0]), B1 = stoull(f[1]), B2 = stoull(f[2]);
   u32 const D = f.size() > 5 ? u32(stoul(f[5])) : 0;
   u32 const M = f.size() > 6 ? u32(stoul(f[6])) : 0;
-  u64 const start = f.size() > 7 ? stoull(f[7]) : 0;
 
   vector<u32> const x = File::openReadThrow(f[3]).read<u32>(nWords(E));
   LogContext const pushContext(std::to_string(E));
-  Stage2Result const r = Stage2::run(shared, E, B1, B2, x, D, M, start);
+  Stage2Result const r = Stage2::run(shared, E, B1, B2, x, D, M);
   log("stage2Test: %s, %" PRIu64 " multiplications\n", r.status == Stage2Result::DONE ? "done" : r.status == Stage2Result::STOPPED ? "stopped" : r.why.c_str(), r.nMul);
   if (r.status == Stage2Result::DONE) {
     File fo = File::openWrite(f[4]);

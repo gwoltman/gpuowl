@@ -34,8 +34,6 @@ static constexpr const char *P1_v1 = "OWL P1 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 
 static constexpr const char *P1_v2 = "OWL P1 2 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " bits=%" PRIu64 " err=%u time=%lf\n";
 static constexpr const char *P2_v1 = "OWL P2 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
 static constexpr const char *P2_v2 = "OWL P2 2 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u plan=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
-// v3:  a stage 2 with a start bound (B2_start of the worktodo line), S
-static constexpr const char *P2_v3 = "OWL P2 3 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " B1=%" PRIu64 " S=%" PRIu64 " B2=%" PRIu64 " D=%u M=%u plan=%u x64=%016" SCNx64 " muls=%" PRIu64 " time=%lf\n";
 static constexpr const char *P1PRP_v1 = "OWL P1PRP 1 N=1*2^%" PRIu64 "-1 B1=%" PRIu64 " B2=%" PRIu64 " k=%" PRIu64 " prp64=%016" SCNx64 " next=%" PRIu64 " stage=%u err=%u\n";
 static constexpr const char *CERT_v1 = "OWL CERT 1 N=1*2^%" PRIu64 "-1 k=%" PRIu64 " squarings=%" PRIu64 " time=%lf\n";
 // v2 adds the count of failed Gerbicz checks;  only a residue that passed its check is saved
@@ -212,13 +210,6 @@ void writeState(const File& fo, const ProofVerifyState& state) {
 P2State readState(const P2State& expected, File fi) {
   P2State s{};
   string const header = fi.readLine();
-  if (sscanf(header.c_str(), P2_v3, &s.exponent, &s.k, &s.B1, &s.start, &s.B2, &s.D, &s.M, &s.plan, &s.x64, &s.nMul, &s.elapsed) == 11
-      && s.start) {
-    checkExponent(s.exponent, expected.exponent, header);
-    s.acc = fi.readChecked<u32>(nWords(s.exponent));
-    return s;
-  }
-  s.start = 0;
   if (sscanf(header.c_str(), P2_v2, &s.exponent, &s.k, &s.B1, &s.B2, &s.D, &s.M, &s.plan, &s.x64, &s.nMul, &s.elapsed) == 10) {
     checkExponent(s.exponent, expected.exponent, header);
     s.acc = fi.readChecked<u32>(nWords(s.exponent));
@@ -237,11 +228,9 @@ P2State readState(const P2State& expected, File fi) {
 
 void writeState(const File& fo, const P2State& state) {
   assert(state.acc.size() == nWords(state.exponent));
-  int const n = state.start
-    ? fo.printf(P2_v3, state.exponent, state.k, state.B1, state.start, state.B2, state.D, state.M, state.plan, state.x64, state.nMul,
-                state.elapsed)
-    : fo.printf(P2_v2, state.exponent, state.k, state.B1, state.B2, state.D, state.M, state.plan, state.x64, state.nMul, state.elapsed);
-  if (n <= 0) { throw WriteError{fo.name}; }
+  if (fo.printf(P2_v2, state.exponent, state.k, state.B1, state.B2, state.D, state.M, state.plan, state.x64, state.nMul, state.elapsed) <= 0) {
+    throw WriteError{fo.name};
+  }
   fo.writeChecked(state.acc);
 }
 
@@ -350,7 +339,7 @@ template<> LLVerifiedState Saver<LLVerifiedState>::initState() {
 }
 
 template<> P2State Saver<P2State>::initState() {
-  return {.exponent=exponent, .k=0, .B1=0, .B2=0, .start=0, .D=0, .M=0, .plan=0, .x64=0, .nMul=0, .acc={}, .elapsed=0};   // no checkpoint
+  return {.exponent=exponent, .k=0, .B1=0, .B2=0, .D=0, .M=0, .plan=0, .x64=0, .nMul=0, .acc={}, .elapsed=0};   // no checkpoint
 }
 
 template<> CERTState Saver<CERTState>::initState() {
