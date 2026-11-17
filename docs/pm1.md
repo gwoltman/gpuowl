@@ -12,7 +12,9 @@ Put the lines in `worktodo-<N>.txt`, the same file that holds PRP work. The assi
     Pfactor=[AID,]1,2,<p>,-1,<tfBits>,<testsSaved>[,...]
 
 - **`Pminus1=`** runs P-1 with the bounds given. With `B2 <= B1`, including `B2 = 0`, only stage 1 runs. B1 must be at least 2.
-  PRPLL reads but does not use the fields Prime95 allows after B2 (the trial-factoring depth, `B2_start`, and the list of known factors).
+  PRPLL reads but does not use the trial-factoring depth and the list of known factors that Prime95 allows after B2. A line with a
+  `B2_start` (the field after the depth: `Pminus1=1,2,<p>,-1,<B1>,<B2>,<depth>,<B2_start>`, with `B2_start` above B1) is not run and
+  the log says so: PRPLL has no stage 2 that starts above B1.
 - **`Pfactor=`** runs P-1 with bounds that PRPLL chooses (see [Bounds](#bounds-of-pfactor-lines)).
   - `tfBits` is the depth of trial factoring already done: no factor is below 2^tfBits. It must be in [0, 100).
   - `testsSaved` is the number of primality tests a factor would save. It means the same as in Prime95's Pfactor lines (for
@@ -418,7 +420,7 @@ iterations, which are not saved.
   D-sections and give the pairing more partners.
 - **The table chosen for its pairs:** n with small prime factors outside D pair more often (Hardy-Littlewood); the table is all n < M.
 - **CPU fallbacks:** no CPU GCD or bignum fallback, by design.
-- **Unused line fields:** the known factors and `B2_start` of the worktodo lines.
+- **Line fields:** the known factors of the worktodo lines are not used, and a `Pminus1=` line with a `B2_start` is rejected.
 - **Factor splitting:** a composite GCD is not split into its factors.
 - **Certificates:** no P-1 certificate. None exists in mprime or Mlucas either.
 - **CUDA:** CUDA graphs do not cover the multiplication by 3, so stage 1 runs below PRP speed under CUDA.

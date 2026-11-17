@@ -6,7 +6,7 @@
 # or of -B1/-B2 instead).  GMP (stage1_oracle, check_stage2) is the
 # oracle; prpll links neither.
 #
-#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|pfprefix|all]      (default all)
+#   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|pfprefix|b2start|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-stage2), SIGINT_DELAY (seconds from the
 #               stage 2 table to the SIGINT of the resume test, default 3), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built here with -DPRPLL_PM1_FAULTS if missing).
@@ -543,6 +543,35 @@ pfprefix_tests() {
   fi
 }
 
+b2start_tests() {
+  # B2_start is not supported:  a Pminus1 line that has one (found by Prime95's rule:  the field after the trial factoring depth, and
+  # above B1) is not run;  a lone field after B2 is the depth, and a B2_start that is not above B1 is none:  those lines run as usual
+  local d p=400381 f=671839319
+  d=$WORK/b2s-reject
+  rm -rf "$d"; mkdir -p "$d/mp"
+  { echo "Pminus1=N/A,1,2,$p,-1,500,3000,0,700"; echo "Pminus1=1,2,$p,-1,500,3000,65,1e3,\"$f\""; } > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -maxAlloc 1G
+  if [[ "$(grep -c "line ignored, B2_start" "$d/out")" = 2 ]] && grep -q "B2_start (700) is not supported" "$d/out" \
+     && grep -q "B2_start (1000) is not supported" "$d/out" && ! grep -q "P-1 stage 1 B1=" "$d/out" && [[ ! -e "$d/results-0.txt" ]] \
+     && [[ "$(grep -c . "$d/worktodo-0.txt")" = 2 ]]; then
+    pass "b2s-reject: Pminus1 lines with B2_start=700 and 1e3 (after the depth) are not run, with a log line each, and stay in worktodo"
+  else
+    fail "b2s-reject (see $d)"
+  fi
+  d=$WORK/b2s-none
+  rm -rf "$d"; mkdir -p "$d/mp"
+  { echo "Pminus1=N/A,1,2,$p,-1,500,3000,700"; echo "Pminus1=N/A,1,2,400033,-1,500,0,0,400"; } > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -maxAlloc 1G
+  if ! grep -q "B2_start" "$d/out" && [[ "$(grep -c . "$d/results-0.txt")" = 2 ]] \
+     && grep -q "\"status\":\"F\", \"exponent\":$p, \"worktype\":\"P-1\", \"b1\":500, \"b2\":3000, .*\"factors\":\[\"$f\"\]" "$d/results-0.txt" \
+     && grep -q '"status":"NF", "exponent":400033, "worktype":"P-1", "b1":500, "fft-length"' "$d/results-0.txt" \
+     && [[ ! -s "$d/worktodo-0.txt" ]]; then
+    pass "b2s-none: a lone field after B2 is the depth (factor $f found with B2=3000), and B2_start=400 <= B1 is none: both lines run"
+  else
+    fail "b2s-none (see $d)"
+  fi
+}
+
 case $WHAT in
   factor) factor_tests ;;
   decline) decline_tests ;;
@@ -552,7 +581,8 @@ case $WHAT in
   tunefile) tunefile_tests ;;
   pfactor) pfactor_tests ;;
   pfprefix) pfprefix_tests ;;
-  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests; pfactor_tests; pfprefix_tests ;;
+  b2start) b2start_tests ;;
+  all) factor_tests; decline_tests; resume_tests; fault_tests; fft_tests; tunefile_tests; pfactor_tests; pfprefix_tests; b2start_tests ;;
 esac
 
 echo "$fails failure(s)"
