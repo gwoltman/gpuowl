@@ -346,6 +346,10 @@ P-1 factoring (see docs/pm1.md):
                                              logged and kept in the P-1 savefile; with too little memory for stage 2, B2 = B1.  A
                                              line whose P-1 can't save more than it costs, even with stage 2's largest table, is
                                              removed without a result.
+  B1=<B1>[,B2=<B2>];<PRP or Pfactor line>  : as in old gpuowl, P-1 with these bounds rather than prpll's choice:  the P-1 inside
+                                             that PRP test (also with tests saved 0), or the Pfactor line's.  B1 alone: stage 1
+                                             only.  B1 >= 2 and B2, when given, above B1.  A line with a bad prefix, or with one
+                                             on another kind of line, is ignored.
 
 
 The configuration options listed below can be passed on the command line or can be put in a file
@@ -409,7 +413,8 @@ named "config.txt" in the prpll run directory.
 P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2,p,-1,<tf>,<tests saved>: PrimeNet
                      wants P-1 done) gets P-1 from the PRP's own squarings, with bounds chosen for <tf>, -pm1TestsSaved
                      (not the line's value) and this GPU's memory; with tests saved 0, none.  A line without the two
-                     fields gets it with <tf> assumed from the exponent; a -prp test does not.
+                     fields gets it with <tf> assumed from the exponent; a -prp test does not.  A line with a B1=...;
+                     prefix gets it with those bounds.
                      Stage 1 costs about 15%% of a stage 1 run on its own, and GPU memory for 2^L residue buffers (with
                      too little, or -maxAlloc too low, there is no P-1) until the PRP passes iteration 1.44 * B1.  Then
                      the P-1 result is written ("integrated":true) and stage 2 runs while the PRP test waits.  A factor

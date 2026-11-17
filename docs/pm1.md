@@ -19,6 +19,25 @@ Put the lines in `worktodo-<N>.txt`, the same file that holds PRP work. The assi
     example 1 or 2). It must be at least 0, and values above 100 are capped at 100, as Prime95 caps them.
 - Only k=1, b=2, c=-1 (Mersenne numbers) is accepted. The exponent must be prime and must fit an FFT. Any other line is ignored.
 
+**Bounds prefix.** As in old gpuowl, a `PRP=`, `PRPDC=` or `Pfactor=` line can start with the bounds to use:
+
+    B1=<B1>[,B2=<B2>];<line>
+    B1=1000000,B2=30000000;PRP=AID,1,2,124647911,-1,77,1
+    B1=2e6;Pfactor=N/A,1,2,124647911,-1,77,1
+
+- On a `PRP=` or `PRPDC=` line these are the bounds of the [P-1 inside that PRP test](#p-1-inside-a-prp-test). The prefix asks
+  for P-1, so it runs even when the line's tests-saved field is 0.
+- On a `Pfactor=` line PRPLL runs P-1 with these bounds instead of choosing them, as for a `Pminus1=` line with the same bounds.
+- `B1` alone means stage 1 only. `B2` alone is not accepted (PRPLL has no rule for choosing B1 under a given B2).
+- B1 must be at least 2, and B2, when given, above B1 and below 2^32 - 8192. The numbers are written as in `Pminus1=` lines
+  (`1000000` or `1e6`); the keys may be lower case (`b1=`). Each key may appear once.
+- The prefix beats every other source of bounds for that line (the hidden `-use PRPPM1_B1` key included). Only `-use PRPPM1=0`
+  still turns the P-1 inside PRP tests off.
+- A line whose prefix does not follow these rules is ignored with a log line, so that it never runs with other bounds than
+  the ones meant. So is a prefix on a `Pminus1=` line (it gives its bounds itself) or on a `Test=`, `DoubleCheck=` or `Cert=`
+  line (no P-1).
+- The prefix is part of the line: PRPLL deletes the whole line when the work is done.
+
 When the work is done, PRPLL deletes the line and appends a JSON result to `results-<N>.txt`:
 
     {"status":"NF", "exponent":41000083, "worktype":"P-1", "b1":126000, "b2":2790000, "fft-length":1835008, "errors":{"gerbicz":0}, ...}
@@ -278,6 +297,9 @@ P-1 runs inside a PRP test, on the PRP test's own squarings, when the worktodo l
 - A line without these two fields (`PRP=<p>`, `PRP=AID,1,2,p,-1`): yes, with no factor assumed below 2^tf, tf from the exponent
   (Prime95's trial factoring table plus 4, GIMPS's GPU target, less 1 bit: 76 at 141M, 78 at 206M). The log says so.
 - `-prp <p>` on the command line: no.
+- A line with a `B1=<B1>[,B2=<B2>];` prefix (see [Worktodo lines](#worktodo-lines)): yes, with these bounds, whatever its
+  tests-saved field says. As with chosen bounds, a test whose P-1 is under way keeps the bounds of its savefiles (a prefix edited
+  later is logged and not used), and a PRP test started without P-1 can't have it.
 
 The bounds are chosen as for `Pfactor=` lines (see [Bounds](#bounds-of-pfactor-lines)), with `tf` from the line but with PRPLL's own
 tests saved, `-pm1TestsSaved` (default 1.02: the PRP test plus about 1.5% for its proof, its verification and the certificate), and
@@ -307,7 +329,8 @@ iterations, which are not saved.
   otherwise P-1 is given up with a log line).
 - **Only for a PRP test started with it** (from iteration 0). A PRP test started by a build without it logs that P-1 is not
   possible and continues.
-- **Developers:** `-use PRPPM1=0` turns it off; `-use PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>]` gives these bounds to every PRP test.
+- **Developers:** `-use PRPPM1=0` turns it off; `-use PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>]` gives these bounds to every PRP test
+  whose line has no bounds prefix (also to `-prp <p>`).
 - **Result:** at completion the GPU GCD runs and a P-1 result line is written with `"integrated":true`. A factor ends the PRP test
   and deletes the worktodo line. With B2 > B1 and no factor, stage 2 runs while the PRP test waits; a failure in stage 2 gives a B1-only
   result and the PRP goes on.

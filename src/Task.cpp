@@ -23,6 +23,8 @@
 #include <cmath>
 #include <cassert>
 #include <cstdio>
+#include <optional>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -288,16 +290,52 @@ u64 useValue(const Args& args, const string& key) {
   return it == args.flags.end() ? 0 : strtoull(it->second.c_str(), nullptr, 10);
 }
 
+// The bounds of a P-1 inside the PRP test of E that is under way or done, from its accumulator savefiles (p1prp-<E>).  Nothing when
+// there is none.
+std::optional<std::pair<u64, u64>> prpPm1SavedBounds(const Args& args, u64 E) {
+  if (fs::exists(fs::current_path() / (string(P1PrpState::KIND) + '-' + to_string(E)))) {
+    Saver<P1PrpState> const saver{E, 1000, args.nSavefiles + 2};
+    vector<u64> const ks = saver.listK();
+    for (auto it = ks.rbegin(); it != ks.rend(); ++it) {
+      if (std::optional<P1PrpState> const s = saver.loadAt(*it)) { return std::pair{s->B1, s->B2}; }
+    }
+  }
+  return {};
+}
+
 // The bounds of the P-1 inside a PRP test (Pm1Prp), into task.B1 and task.B2 (B1 = 0:  none).  It runs for a worktodo line that asks
-// for it (tests saved above 0, or no tf and tests-saved fields at all).
+// for it (tests saved above 0, or no tf and tests-saved fields at all), and for a line with a "B1=<B1>[,B2=<B2>];" prefix, whose
+// bounds it takes whatever the tests-saved field says.
 // The bounds are chosen once, as for a Pfactor line, but for stage 1 inside the PRP (its cost, its buffers) and with -pm1TestsSaved,
 // not the line's value.  A test with accumulator savefiles keeps their bounds; a test started without P-1 can't have it.  P-1 never stops the PRP test:  when it can't be done (no memory for
 // its buffers, no saving), the PRP goes on without it.  Hidden -use keys, for debugging and tests:  PRPPM1=0, no P-1;
-// PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>], these bounds in every PRP test whatever its line says.
+// PRPPM1_B1=<B1>[,PRPPM1_B2=<B2>], these bounds in every PRP test whose line has no prefix.
 void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   const Args& args = *shared.args;
+  u64 const E = task.exponent;
   task.B1 = task.B2 = 0;
   if (args.value("PRPPM1", 1) == 0) { return; }
+  if (task.lineB1) {
+    // Stage 1 rides on the PRP squarings from iteration 1, so the bounds of a P-1 under way can't change:  an edited prefix applies
+    // only to a test that has not started
+    if (auto const saved = prpPm1SavedBounds(args, E)) {
+      std::tie(task.B1, task.B2) = *saved;
+      bool const same = task.B1 == task.lineB1 && task.B2 == task.lineB2;
+      log("P-1 in the PRP test: bounds from its savefile: B1=%" PRIu64 " B2=%" PRIu64 "%s\n", task.B1, task.B2,
+          same ? "" : " (not those of the worktodo line, which apply only to a test started with them)");
+      return;
+    }
+    if (prpStarted(E)) {
+      log("P-1 in the PRP test: the PRP test was started without P-1 (it needs the PRP residues from iteration 1 on): no P-1, "
+          "whatever the worktodo line's bounds\n");
+      return;
+    }
+    task.B1 = task.lineB1;
+    task.B2 = task.lineB2;
+    log("P-1 in the PRP test: bounds from the worktodo line: B1=%" PRIu64 "%s\n", task.B1,
+        task.B2 ? (" B2=" + to_string(task.B2)).c_str() : " (stage 1 only)");
+    return;
+  }
   if (u64 const b1 = useValue(args, "PRPPM1_B1")) {
     u64 const b2 = useValue(args, "PRPPM1_B2");
     if (b1 < 2 || (b2 && b2 <= b1) || b2 >= pm1::MAX_B2) {
@@ -309,20 +347,12 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
     task.B2 = b2;
     return;
   }
-  u64 const E = task.exponent;
   if (task.line.empty()) { return; }    // -prp <exponent> from the command line (often a timing run):  no P-1
   // A P-1 under way (or done) in this test keeps its bounds, whatever the line, the memory or -pm1TestsSaved say now
-  if (fs::exists(fs::current_path() / (string(P1PrpState::KIND) + '-' + to_string(E)))) {
-    Saver<P1PrpState> const saver{E, 1000, args.nSavefiles + 2};
-    vector<u64> const ks = saver.listK();
-    for (auto it = ks.rbegin(); it != ks.rend(); ++it) {
-      if (std::optional<P1PrpState> const s = saver.loadAt(*it)) {
-        task.B1 = s->B1;
-        task.B2 = s->B2;
-        log("P-1 in the PRP test: bounds from its savefile: B1=%" PRIu64 " B2=%" PRIu64 "\n", task.B1, task.B2);
-        return;
-      }
-    }
+  if (auto const saved = prpPm1SavedBounds(args, E)) {
+    std::tie(task.B1, task.B2) = *saved;
+    log("P-1 in the PRP test: bounds from its savefile: B1=%" PRIu64 " B2=%" PRIu64 "\n", task.B1, task.B2);
+    return;
   }
   if (!task.pm1Fields) {
     // A line without the fields (e.g. PRP=<p> or PRP=AID,1,2,p,-1):  P-1 is taken as needed, with an assumed trial factoring depth
@@ -376,7 +406,12 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
 void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<Gpu> gpu) {
   const Args& args = *shared.args;
   fs::path const& dir = args.mprimeDir;
-  if (pfactor && !B1 && !pfactorBounds(*this, shared, *gpu)) {
+  if (pfactor && lineB1) {
+    // The line's "B1=...;" prefix:  these bounds, as on a Pminus1 line (a stage 1 savefile for another B1 is set aside)
+    B1 = lineB1;
+    B2 = lineB2;
+    log("P-1 bounds from the worktodo line: B1=%" PRIu64 "%s\n", B1, B2 ? (" B2=" + to_string(B2)).c_str() : " (stage 1 only)");
+  } else if (pfactor && !B1 && !pfactorBounds(*this, shared, *gpu)) {
     Worktodo::deleteTask(*this, instance);
     return;
   }
