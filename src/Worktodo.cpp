@@ -93,8 +93,8 @@ std::optional<Task> parse(const std::string& line) {
       parts.erase(parts.begin());
     }
 
-    // "k,b,n,c," then B1,B2 (Pminus1) or the trial factoring depth and the number of tests saved (Pfactor), optionally followed by
-    // B2_start and a quoted list of known factors, which are not used yet.  Only 2^n-1 is ours.
+    // "k,b,n,c," then B1,B2 (Pminus1) or the trial factoring depth and the number of tests saved (Pfactor), optionally followed (Pminus1)
+    // by the trial factoring depth and B2_start, and by a quoted list of known factors, which is not used yet.  Only 2^n-1 is ours.
     if (parts.size() >= 6 && parts[0] == "1" && parts[1] == "2" && parts[3] == "-1") {
       u64 exp{};
       const char *end = parts[2].c_str() + parts[2].size();
@@ -114,6 +114,20 @@ std::optional<Task> parse(const std::string& line) {
           if (x >= 2) {    // B1 = 0 or 1 is not a bound; B2 = 0 means no stage 2
             task.B1 = u64(x);
             task.B2 = u64(y);
+            // Prime95's rules (commonc.c, parseWorkToDoLine):  the field after B2, unless it is the quoted factor list, is always
+            // the trial factoring depth (its value kept only up to 300), so B2_start is the field after that one; a B2_start that is
+            // not above B1 is no start bound.  The depth is kept for the hand-off to mprime.
+            auto const unquoted = [&](size_t i) { return parts.size() > i && !parts[i].starts_with('"'); };
+            double tf{}, start{};
+            if (unquoted(6) && parseNumber(parts[6], tf) && tf <= 300) { task.tfBits = tf; }
+            if (unquoted(6) && unquoted(7) && parseNumber(parts[7], start) && u64(start) > task.B1) {
+              task.B2start = u64(start);
+              if (task.B2 <= task.B2start) {
+                log("worktodo.txt line ignored, its stage 2 from B2_start=%" PRIu64 " to B2=%" PRIu64 " is empty: \"%s\"\n", task.B2start,
+                    task.B2, rstripNewline(line).c_str());
+                return {};
+              }
+            }
             return task;
           }
         } else if (x >= 0 && x < 100 && y >= 0) {

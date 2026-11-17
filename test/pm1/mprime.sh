@@ -80,12 +80,13 @@ alone() {
   fi
 }
 
-# handoff <name> <p> <B1> <B2> <expected factor or NF> <expected stage of the factor>:  B2 > B1, stage 2 by mprime
+# handoff <name> <p> <B1> <B2> <expected factor or NF> <expected stage of the factor> [B2_start]:  B2 > B1, stage 2 by mprime (of
+# (B2_start, B2] when given:  the line handed must carry it)
 handoff() {
-  local name=$1 p=$2 B1=$3 B2=$4 want=$5 stage=${6:-}
+  local name=$1 p=$2 B1=$3 B2=$4 want=$5 stage=${6:-} start=${7:-}
   local d=$WORK/$name
   rm -rf "$d"; mkdir -p "$d/run"; mprimeDir "$d/mp"
-  echo "Pminus1=1,2,$p,-1,$B1,$B2" > "$d/run/worktodo-0.txt"
+  echo "Pminus1=1,2,$p,-1,$B1,$B2${start:+,0,$start}" > "$d/run/worktodo-0.txt"
   (cd "$d/run" && "$PRPLL" -device "$DEVICE" -mprimeDir ../mp -maxAlloc 100M -log 10000 > out 2>&1)
   local f
   # shellcheck disable=SC2010  # mprime's savefile name (p<exponent>-style): no spaces or newlines
@@ -103,6 +104,7 @@ handoff() {
   [[ -e "$d/run/results-0.txt" ]] && ok=0                                 # mprime reports this assignment, not prpll
   if [[ -n "$theirs" ]]; then [[ -n "$ours" ]] && [[ "$ours" = "$theirs" ]] || ok=0; else echo "skipped: the residue comparison with mprime's own needs an mprime that can dump the stage 1 residue ($name)"; fi
   grep -i "error" "$d/mp/mp.out" | grep -v -i "error check" | grep -q . && ok=0
+  [[ -z "$start" ]] || grep -qE "Pminus1=1,2,$p,-1,$B1,$B2,0,$start\$" "$d/run/out" || ok=0
   if [[ "$want" = NF ]]; then
     echo "$res" | grep -q '"status":"NF"' || ok=0
   else
@@ -128,6 +130,10 @@ alone   no-factor      400033  1000  NF
 alone   stage1-B1-500  400381  500   NF                               # 839 > 500: stage 1 cannot find it
 handoff stage2-factor  400381  500   1000   671839319     2           # 839 in (B1, B2]: mprime's stage 2 finds it
 handoff stage2-1M      1000099 50000 150000 1872347344039 2
+# B2_start handed on (the line must carry it):  mprime's stage 2 from 700 finds 671839319 (839 above 700).  That mprime leaves out a
+# prime below B2_start can't be shown by its result:  its polynomial stage 2 rounds B2 up (89850 here, 14410110 for M1000099 at
+# B2=120000) and covers every number coprime to D in that range, so the multiples of the skipped prime find the factor anyway.
+handoff stage2-start   400381  500   1000   671839319     2  700
 
 # forced <name> <p> <B1> <B2> <expected factor> <stage>:  -mprimeStage2 with the GPU's memory free:  prpll runs stage 1 alone (no
 # GCD, no stage 2) and mprime runs the GCD and stage 2, finding the factor in <stage>

@@ -280,6 +280,8 @@ It is also possible to manually add exponents by adding lines of the form "PRP=1
 
 P-1 factoring (see docs/pm1.md):
   Pminus1=[AID,]1,2,<p>,-1,<B1>,<B2>       : P-1 with the given bounds (B2 <= B1: stage 1 only)
+  Pminus1=...,<B1>,<B2>,<tf>,<B2_start>    : as Prime95:  stage 2 covers (B2_start, B2] only, extending an earlier run's stage 2
+                                             (<tf>, the trial factoring depth, may be 0;  a B2_start <= B1 is ignored)
   Pfactor=[AID,]1,2,<p>,-1,<tf>,<saved>    : P-1 with bounds chosen by prpll for an exponent trial factored to 2^<tf>, where a
                                              factor saves <saved> primality tests (as in Prime95's Pfactor lines, e.g. 1 or 2).
                                              The bounds maximise the expected saving for the stage 2 memory this GPU has, are
