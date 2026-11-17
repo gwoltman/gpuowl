@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end tests of the P-1 inside a PRP test (here with the bounds of the hidden -use PRPPM1_B1[,PRPPM1_B2] keys, or of the line's
-# "B1=...;" prefix (prefix), src/Pm1Prp.cpp), with GMP (stage1_oracle) as the oracle for every accumulator
+# "B1=...;" prefix (prefix) or of -B1/-B2 (options), src/Pm1Prp.cpp), with GMP (stage1_oracle) as the oracle for every accumulator
 # savefile (its residue must be 3^(E mod 2^next), its prp64 the res64 of 3^(2^k)) and for the factor.
 #
-#   test/pm1/integrated.sh [factor|nf|carry|resume|fault|onoff|crash|stage2|stage2fail|prefix|all]      (default all)
+#   test/pm1/integrated.sh [factor|nf|carry|resume|fault|onoff|crash|stage2|stage2fail|prefix|options|all]      (default all)
 # Environment:  DEVICE (default 1, the CPU OpenCL device here), WORK (default test/pm1/work-integrated), PRPLL (default
 #               build-release/prpll), FAULT_PRPLL (default build-pm1faults/prpll, built with -DPRPLL_PM1_FAULTS if missing).
 
@@ -310,6 +310,83 @@ prefix_tests() {
   done
 }
 
+options_tests() {
+  # -B1/-B2 (command line, config.txt) on a line that wants P-1 (tests saved 1):  these bounds rather than prpll's choice
+  local A=0123456789ABCDEF0123456789ABCDEF
+  local line="PRP=$A,1,2,400381,-1,70,1"
+  local d=$WORK/options-cmdline
+  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -B1 1000
+  if grep -q "bounds from -B1/-B2: B1=1000 (stage 1 only)" "$d/out" && accOK "$d" 400381 1000 && [[ "$(cat "$d/gcd")" = 671839319 ]] \
+     && resultOK "$d" 400381 1000 0 671839319 && factorEnd "$d"; then
+    pass "options -B1 1000: factor 671839319 = GMP gcd, PRP stopped"
+  else
+    fail "options -B1 1000 (see $d)"
+  fi
+  # config.txt alone, with -B2:  stage 2 finds the factor that stage 1 at B1=500 misses
+  d=$WORK/options-config
+  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"; echo "-B1 500 -b2 2e5" > "$d/config.txt"
+  run "$d" "$PRPLL"
+  if grep -q "bounds from -B1/-B2: B1=500 B2=200000" "$d/out" && accOK "$d" 400381 500 && [[ "$(cat "$d/gcd")" = 1 ]] \
+     && resultOK "$d" 400381 500 200000 671839319 && factorEnd "$d"; then
+    pass "options config.txt -B1 500 -b2 2e5: stage 1 gcd 1 (GMP), stage 2 found 671839319"
+  else
+    fail "options config.txt (see $d)"
+  fi
+  # The command line overrides config.txt option by option:  -B1 1000 over 500, -B2 0 takes 200000 back (stage 1 only)
+  d=$WORK/options-override
+  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"; echo "-B1 500 -B2 200000" > "$d/config.txt"
+  run "$d" "$PRPLL" -B1 1000 -B2 0
+  if grep -q "bounds from -B1/-B2: B1=1000 (stage 1 only)" "$d/out" && resultOK "$d" 400381 1000 0 671839319 && factorEnd "$d"; then
+    pass "options config.txt -B1 500 -B2 200000, command line -B1 1000 -B2 0: B1=1000 stage 1 only, factor 671839319"
+  else
+    fail "options override (see $d)"
+  fi
+  # The line's prefix beats both
+  d=$WORK/options-prefix
+  rm -rf "$d"; mkdir -p "$d"; echo "B1=1000;$line" > "$d/worktodo-0.txt"; echo "-B1 500" > "$d/config.txt"
+  run "$d" "$PRPLL" -B1 20000 -B2 200000
+  if grep -q "bounds from the worktodo line: B1=1000 (stage 1 only)" "$d/out" && ! grep -q "bounds from -B1/-B2" "$d/out" \
+     && resultOK "$d" 400381 1000 0 671839319 && factorEnd "$d"; then
+    pass "options under a B1=1000; prefix (config.txt -B1 500, command line -B1 20000 -B2 200000): the prefix's B1=1000, stage 1 only"
+  else
+    fail "options under a prefix (see $d)"
+  fi
+  # A line with tests saved 0 (P-1 done) gets no P-1 from -B1
+  d=$WORK/options-saved0
+  setup "$d" 400381
+  run "$d" "$PRPLL" -B1 1000 -iters 3000
+  # shellcheck disable=SC2010,SC2143  # the names are prpll's own savefile names: no spaces or newlines
+  if grep -q "tests-saved field is 0" "$d/out" && ! grep -q "bounds from -B1/-B2" "$d/out" && [[ ! -e "$d/results-0.txt" ]] \
+     && [[ -z "$(ls "$d/p1prp-400381/" 2>/dev/null | grep p1prp)" ]] && prpLines "$d" 400381 | grep -q "^3000 "; then
+    pass "options -B1 1000 on a tests-saved-0 line: no P-1, the PRP runs"
+  else
+    fail "options on tests saved 0 (see $d)"
+  fi
+  # Rejected:  nothing runs
+  local bad
+  for bad in "-B2 200000" "-B1 1000 -B2 1000" "-B1 1" "-B1 1k" "-B1 1000 -B2 5e9" "-rB2 30" "-pm1 1" "-D 2310"; do
+    d=$WORK/options-bad
+    rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"
+    # shellcheck disable=SC2086  # bad is a list of arguments
+    run "$d" "$PRPLL" $bad
+    if grep -q "Exiting because" "$d/out" && [[ ! -e "$d/results-0.txt" ]] && [[ ! -e "$d/p1prp-400381" ]] && [[ ! -e "$d/400381" ]]; then
+      pass "options-bad: '$bad' rejected ($(grep -o 'Exiting because.*' "$d/out" | head -1))"
+    else
+      fail "options-bad: '$bad' (see $d)"
+    fi
+  done
+  # In config.txt as well
+  d=$WORK/options-bad
+  rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"; echo "-B2 200000" > "$d/config.txt"
+  run "$d" "$PRPLL"
+  if grep -q 'Exiting because "-B2 without -B1"' "$d/out" && [[ ! -e "$d/results-0.txt" ]] && [[ ! -e "$d/400381" ]]; then
+    pass "options-bad: config.txt '-B2 200000' rejected"
+  else
+    fail "options-bad: config.txt -B2 alone (see $d)"
+  fi
+}
+
 case $WHAT in
   factor) factor_tests ;;
   nf) nf_tests ;;
@@ -321,7 +398,8 @@ case $WHAT in
   stage2) stage2_tests ;;
   stage2fail) stage2fail_tests ;;
   prefix) prefix_tests ;;
-  all) factor_tests; nf_tests; carry_tests; resume_tests; fault_tests; onoff_tests; crash_tests; stage2_tests; stage2fail_tests; prefix_tests ;;
+  options) options_tests ;;
+  all) factor_tests; nf_tests; carry_tests; resume_tests; fault_tests; onoff_tests; crash_tests; stage2_tests; stage2fail_tests; prefix_tests; options_tests ;;
   *) echo "unknown test set '$WHAT'"; exit 2 ;;
 esac
 echo "$fails failure(s)"

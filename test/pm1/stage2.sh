@@ -3,7 +3,7 @@
 # line, the hand-off to mprime when stage 2 declines, resume across the stage 1 / stage 2 boundary and inside stage 2, and the stage 2
 # checks under simulated faults; and "Pfactor=" lines (pfactor:  the bounds prpll chooses equal check_bounds' for the stage 2 room it
 # logged, kept across a restart, stage 1 alone without memory, no P-1 when it can't pay; pfprefix:  the bounds of a "B1=...;" prefix
-# instead).  GMP (stage1_oracle, check_stage2) is the
+# or of -B1/-B2 instead).  GMP (stage1_oracle, check_stage2) is the
 # oracle; prpll links neither.
 #
 #   test/pm1/stage2.sh [factor|decline|resume|fault|fft|tunefile|pfactor|pfprefix|all]      (default all)
@@ -520,6 +520,26 @@ pfprefix_tests() {
     pass "pfp-stage1: B1=500;Pfactor -> stage 1 only, NF for b1=500 without b2, line deleted"
   else
     fail "pfp-stage1 (see $d)"
+  fi
+  # -B1/-B2:  the same as a prefix, for a line without one
+  d=$WORK/pfp-options
+  rm -rf "$d"; mkdir -p "$d/mp"; echo "Pfactor=N/A,1,2,$p,-1,25,0" > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -maxAlloc 1G -B1 500 -B2 200000
+  if grep -q "P-1 bounds from -B1/-B2: B1=500 B2=200000" "$d/out" && ! grep -q "P-1 bounds (no factor" "$d/out" \
+     && stage2Oracle "$d" "$p" 500 200000 && [[ "$(cat "$d/gcd2")" = "$f" ]] && result "$d" "$p" 500 200000 "$f"; then
+    pass "pfp-options: -B1 500 -B2 200000 on Pfactor (tests saved 0) -> factor $f in stage 2 (= GMP gcd(acc)), result b1=500 b2=200000"
+  else
+    fail "pfp-options (see $d)"
+  fi
+  # A prefix gives the whole bounds:  B1=500; with -B2 200000 is stage 1 only
+  d=$WORK/pfp-prefix-options
+  rm -rf "$d"; mkdir -p "$d/mp"; echo "B1=500;Pfactor=N/A,1,2,$p,-1,25,1" > "$d/worktodo-0.txt"
+  run "$d" "$PRPLL" -maxAlloc 1G -B1 1000 -B2 200000
+  if grep -q "P-1 bounds from the worktodo line: B1=500 (stage 1 only)" "$d/out" && ! grep -q "Stage 2 B1=" "$d/out" \
+     && result "$d" "$p" 500 0 NF; then
+    pass "pfp-prefix-options: B1=500;Pfactor with -B1 1000 -B2 200000 -> the prefix's B1=500, stage 1 only, NF"
+  else
+    fail "pfp-prefix-options (see $d)"
   fi
 }
 
