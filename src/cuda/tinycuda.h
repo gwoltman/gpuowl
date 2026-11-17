@@ -352,6 +352,7 @@ struct _cl_graph {
   CUgraph graph;
   CUgraphExec graphExec;
   cl_command_queue queue;               // Queue to launch the graph on (same as queue that graph was recorded on)
+  unsigned kernels = 0;                 // GPU commands (kernel, memcpy and memset nodes) in the graph, see clGraphKernelCount
   _cl_graph() : graph{}, graphExec{} {}
   ~_cl_graph() { if (graph) cuGraphDestroy(graph); if (graphExec) cuGraphExecDestroy(graphExec); }
 };
@@ -361,4 +362,5 @@ int clGraphBeginRecording(cl_command_queue);
 int clGraphEndRecording(cl_command_queue, cl_graph*);
 int clGraphLaunch(cl_graph);
 int clGraphRepeat(cl_graph, unsigned, cl_graph*);
+unsigned clGraphKernelCount(cl_graph);   // GPU commands (kernel, memcpy and memset nodes) one launch of the graph enqueues
 int clReleaseGraph(cl_graph);

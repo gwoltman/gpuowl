@@ -1686,6 +1686,21 @@ int clGraphEndRecording(cl_command_queue q, cl_graph* graph) {
 #else
   if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, nullptr, nullptr, 0);
 #endif
+  if (r == CUDA_SUCCESS) {
+    size_t n = 0;
+    if (cuGraphGetNodes(g->graph, nullptr, &n) == CUDA_SUCCESS && n) {
+      std::vector<CUgraphNode> nodes(n);
+      if (cuGraphGetNodes(g->graph, nodes.data(), &n) == CUDA_SUCCESS) {
+        for (size_t i = 0; i < n; ++i) {
+          CUgraphNodeType type;
+          if (cuGraphNodeGetType(nodes[i], &type) == CUDA_SUCCESS &&
+              (type == CU_GRAPH_NODE_TYPE_KERNEL || type == CU_GRAPH_NODE_TYPE_MEMCPY || type == CU_GRAPH_NODE_TYPE_MEMSET)) {
+            ++g->kernels;
+          }
+        }
+      }
+    }
+  }
   *graph = g;
   return clResult("clGraphEndRecording", r);
 }
@@ -1719,9 +1734,12 @@ int clGraphRepeat(cl_graph original, unsigned count, cl_graph* result) {
   if (r == CUDA_SUCCESS) r = cuGraphInstantiate(&g->graphExec, g->graph, nullptr, nullptr, 0);
 #endif
   if (r != CUDA_SUCCESS) { delete g; return clResult("clGraphRepeat", r); }
+  g->kernels = count * original->kernels;
   *result = g;
   return CL_SUCCESS;
 }
+
+unsigned clGraphKernelCount(cl_graph graph) { return graph ? graph->kernels : 0; }
 
 int clReleaseGraph(cl_graph graph) {
   delete graph;

@@ -31,6 +31,7 @@ class Queue : public QueueHolder {
   void flush();
   void print();
   void add(EventHolder &&e, TimeInfo* ti);
+  void addLaunch(unsigned squarings, unsigned kernels);
 
 public:
   const Context* context;
@@ -61,14 +62,17 @@ public:
 
   void beginRecording(void) { graphRecording = true; CHECK1(clGraphBeginRecording(get())); }
   void endRecording(cl_graph *graph) { graphRecording = false; CHECK1(clGraphEndRecording(get(), graph)); }
+  // A launch of a graph of count squarings counts the GPU commands it enqueues, as add() counts each command enqueued without a graph
+  // (see addLaunch).  0 kernels (no count from the graph) falls back to one per squaring.
   void playRecording(cl_graph graph, unsigned count = 1) {
     CHECK1(clGraphLaunch(graph));
-    // Keep the existing queue-drain cadence in units of squarings.
-    for (unsigned i = 0; i < count; ++i) add(EventHolder{}, NULL);
+    unsigned const kernels = clGraphKernelCount(graph);
+    addLaunch(count, kernels ? kernels : count);
   }
 
 private:                            // This replaces the "call queue->finish every 400 squarings" code in Gpu.cpp.  Solves the busy wait on nVidia GPUs.
-  int MAX_QUEUE_COUNT;              // Queue size before a marker will be enqueued.  Typically, 100 to 1000 squarings.
+  int MAX_QUEUE_COUNT;              // Queue size before a marker will be enqueued, in GPU commands (mostly kernels).  See the constructor.
+  static constexpr unsigned MAX_GRAPH_QUEUE_KERNELS = 1000;   // The same for CUDA graph launches, in the kernels they enqueue (see addLaunch)
   bool sleepWait;                   // Sleep-poll a marker event instead of calling finish when the queue is full
   EventHolder markerEvent;          // Event associated with an enqueued marker placed in the queue every MAX_QUEUE_COUNT entries and before r/w operations.
   bool markerQueued{false};                // TRUE if a marker and event have been queued

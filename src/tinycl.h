@@ -350,4 +350,5 @@ int clGraphBeginRecording(cl_command_queue);
 int clGraphEndRecording(cl_command_queue, cl_graph*);
 int clGraphLaunch(cl_graph);
 int clGraphRepeat(cl_graph, unsigned, cl_graph*);
+unsigned clGraphKernelCount(cl_graph);   // GPU commands (kernel, memcpy and memset nodes) one launch of the graph enqueues
 int clReleaseGraph(cl_graph);

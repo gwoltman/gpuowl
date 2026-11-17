@@ -673,5 +673,6 @@ int clGraphBeginRecording(cl_command_queue) { return CL_INVALID_VALUE; }
 int clGraphEndRecording(cl_command_queue, cl_graph*) { return CL_INVALID_VALUE; }
 int clGraphLaunch(cl_graph) { return CL_INVALID_VALUE; }
 int clGraphRepeat(cl_graph, unsigned, cl_graph*) { return CL_INVALID_VALUE; }
+unsigned clGraphKernelCount(cl_graph) { return 0; }
 int clReleaseGraph(cl_graph) { return CL_INVALID_VALUE; }
 #endif

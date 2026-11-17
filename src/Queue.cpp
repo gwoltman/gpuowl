@@ -8,6 +8,7 @@
 #include <chrono>
 #include <thread>
 #include <utility>
+#include <algorithm>
 
 void Events::clearCompleted() { while (!empty() && front().isComplete()) { pop_front(); } }
 
@@ -65,6 +66,19 @@ void Queue::add(EventHolder&& e, TimeInfo* ti) {
   if (isAuxQueue || graphRecording) return;
   queueCount++;
   if (queueCount >= MAX_QUEUE_COUNT) queueMarkerEvent();
+}
+
+// A CUDA graph launch of `squarings` squarings that enqueues `kernels` GPU commands.  The marker cadence for graph launches is in kernels
+// too, so it does not depend on GRAPH_BATCH, but at MAX_GRAPH_QUEUE_KERNELS rather than MAX_QUEUE_COUNT.  Timed on a TITAN V (Volta)
+// and an RTX 5080 (Blackwell):  marking every 500 squarings (2000 to 3500 kernels), as before, left the driver's launch queue full on
+// Volta, and the launches waited in the driver at about twice the CPU load;  every 32 squarings (PR #237) or 250 kernels starved the GPU
+// on small FFTs.  At least two launches are queued between markers, else with GRAPH_BATCH=256 (about 1800 kernels a launch) the GPU
+// ran dry while the CPU waited on the previous launch's marker:  7% slower at 5M on the 5080.
+void Queue::addLaunch(unsigned squarings, unsigned kernels) {
+  if (hasEvents) { for (unsigned i = 0; i < squarings; ++i) { events.emplace_back(EventHolder{}, nullptr); } }
+  if (isAuxQueue || graphRecording) return;
+  queueCount += kernels;
+  if (queueCount >= (int) std::max(MAX_GRAPH_QUEUE_KERNELS, 2 * kernels)) queueMarkerEvent();
 }
 
 void Queue::readSync(cl_mem buf, size_t size, void* out, TimeInfo* tInfo) {
@@ -137,7 +151,8 @@ void Queue::setSquareTime(int time) {
     firstSetTime = false;
     return;
   }
-  time = std::max(time, 30);           // Assume a minimum square time of 30us
+  time = std::max(time, 10);           // Assume a minimum square time of 10us.  30us made the 5080 at 5M (17us) sleep through
+                                       // most of what is queued between markers: 6% slower with GRAPH_BATCH=256.
   time = std::min(time, 3000);       // Assume a maximum square time of 3000us
   squareTime = time;
 }
