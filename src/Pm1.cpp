@@ -507,11 +507,17 @@ void writeMprimeStage1(const fs::path& dir, u64 p, u64 B1, const vector<u32>& x)
   if (ec) { throw "mprime savefile: can't rename to " + path.string() + ": " + ec.message(); }
 }
 
-string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2) {
+string mprimePminus1Line(const string& AID, u64 p, u64 B1, u64 B2, u64 B2start, double tfBits) {
   string line = "Pminus1=";
   if (!AID.empty() && AID != "N/A") { line += AID + ','; }
-  line += "1,2," + to_string(p) + ",-1," + to_string(B1) + ',' + to_string(B2) + '\n';
-  return line;
+  line += "1,2," + to_string(p) + ",-1," + to_string(B1) + ',' + to_string(B2);
+  if (B2start > B1) {
+    // The depth field is written even when it is 0 (Prime95 itself leaves it out then, and its own line would read B2_start as the depth)
+    char tf[32];
+    snprintf(tf, sizeof(tf), "%.15g", tfBits);
+    line += ","s + tf + ',' + to_string(B2start);
+  }
+  return line + '\n';
 }
 
 void appendMprimeWork(const fs::path& dir, const string& line) {
