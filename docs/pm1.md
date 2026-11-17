@@ -8,18 +8,11 @@ P-1 looks for a factor q = 2kp + 1 whose k is B1-smooth (stage 1), or B1-smooth 
 
 Put the lines in `worktodo-<N>.txt`, the same file that holds PRP work. The assignment ID (AID) is optional, as in Prime95.
 
-    Pminus1=[AID,]1,2,<p>,-1,<B1>,<B2>[,<tfBits>[,<B2_start>]][,"<known factors>"]
+    Pminus1=[AID,]1,2,<p>,-1,<B1>,<B2>[,...]
     Pfactor=[AID,]1,2,<p>,-1,<tfBits>,<testsSaved>[,...]
 
 - **`Pminus1=`** runs P-1 with the bounds given. With `B2 <= B1`, including `B2 = 0`, only stage 1 runs. B1 must be at least 2.
-  - **`B2_start`** extends the stage 2 of an earlier run that went up to `B2_start`: stage 2 covers only the primes in
-    (B2_start, B2]. The fields follow Prime95's rules (`parseWorkToDoLine` in `commonc.c`): the field after B2 is always the
-    trial-factoring depth, so `B2_start` is the field after that one (for example `Pminus1=1,2,<p>,-1,1000000,60000000,0,30000000`), and a
-    `B2_start` that is not above B1 is ignored. A line whose `B2_start` is at or above its B2 has an empty stage 2 and is not run.
-  - Stage 1 is the same as without `B2_start`. If `p1-<p>/` still holds the finished stage 1 of this B1 (the earlier run used
-    `-noclean`, or stopped before its result), it is loaded; otherwise stage 1 and its GCD run again.
-  - PRPLL does not check that an earlier run covered (B1, B2_start]. A factor whose largest prime is in that range is not found.
-  - PRPLL reads but does not use the list of known factors. The trial-factoring depth is only passed on to mprime (see the hand-off).
+  PRPLL reads but does not use the fields Prime95 allows after B2 (the trial-factoring depth, `B2_start`, and the list of known factors).
 - **`Pfactor=`** runs P-1 with bounds that PRPLL chooses (see [Bounds](#bounds-of-pfactor-lines)).
   - `tfBits` is the depth of trial factoring already done: no factor is below 2^tfBits. It must be in [0, 100).
   - `testsSaved` is the number of primality tests a factor would save. It means the same as in Prime95's Pfactor lines (for
@@ -32,9 +25,6 @@ When the work is done, PRPLL deletes the line and appends a JSON result to `resu
     {"status":"F", "exponent":1000099, "worktype":"P-1", "b1":4370, "b2":540000, ..., "factors":["155058493988826487335266033969"], ...}
 
 - `b1` and `b2` are the bounds that were actually covered. `b2` is present only when stage 2 ran.
-- After a stage 2 from `B2_start`, the result also has `"b2-start":<B2_start>`: this run covered (b2-start, b2] only. Prime95 reports
-  such a run with `b1` and `b2` alone, as if all of (B1, B2] had been covered; that is right only when an earlier run covered
-  (B1, B2_start].
 - Factors are given in decimal. A GCD that is a product of several factors is reported whole, as Prime95 does: it is not split.
 - `errors` holds the number of failed Gerbicz checks in stage 1. With `-use PM1_JACOBI=1` it also holds the number of failed Jacobi checks.
 
@@ -140,10 +130,6 @@ twice the range of n to build.
 A failed check goes back to the last checkpoint. Checkpoints are written to `p2-<p>/`, at least every 10 minutes. A checkpoint holds
 B1, B2, the residue's res64, D, M and the pairing's version. A version 1 checkpoint (no M) is the plan with M = D/2, so it is resumed
 as such.
-- A stage 2 with a `B2_start` writes checkpoints of version 3, which also hold the start bound (`S=`). Every other stage 2 still writes
-  version 2, which older builds of PRPLL read. A checkpoint is resumed only for the same B1, B2, start bound and residue, so a stage 2
-  from `B2_start` never continues the accumulator of a stage 2 of another range (it starts over, and removes that checkpoint).
-- The stage 2 plan, its cost estimate and the progress and ETA lines cover (B2_start, B2] only.
 
 **Memory and `-maxAlloc`.** Stage 2 needs, beyond the stage 2 GPU's own buffers, its table, three more big buffers (A_k and G, in
 transformed form, and C_k half transformed) and two residue buffers. The table size is the one with the least estimated cost that fits the budget.
@@ -190,8 +176,7 @@ savefile.
 
 With `-mprimeDir`, PRPLL writes the stage 1 residue as a Prime95 savefile in `<dir>` when stage 2 can't run on the GPU:
 - The file is version 8, state DONE, with B_done = C_done = B1, under Prime95's own file name (e.g. `m0400381`, or `mP000003` for 25000003).
-- PRPLL appends a `Pminus1=` line with the bounds to `<dir>/worktodo.add`. A line with `B2_start` is passed on with it, after the
-  trial-factoring depth of the line (0 when the line has none), since mprime reads `B2_start` only in that position.
+- PRPLL appends a `Pminus1=` line with the bounds to `<dir>/worktodo.add`.
 - mprime (30.10 or later) resumes such a file into stage 2 when the worktodo line's B2 is above C_done: it runs the stage 1 GCD and
   stage 2 and reports the result. PRPLL deletes its own line and writes no result.
 - A hand-off for the GCD alone asks for B2 = B1 + 1, because mprime runs the stage 1 GCD only on its way into stage 2.
@@ -336,9 +321,7 @@ iterations, which are not saved.
   D-sections and give the pairing more partners.
 - **The table chosen for its pairs:** n with small prime factors outside D pair more often (Hardy-Littlewood); the table is all n < M.
 - **CPU fallbacks:** no CPU GCD or bignum fallback, by design.
-- **Unused line fields:** the known factors of the worktodo lines.
-- **Extending a finished stage 2 by itself:** unlike mprime, a line with a larger B2 does not continue from the B2 of a finished stage
-  2 in `p2-<p>/`; give the old B2 as `B2_start`.
+- **Unused line fields:** the known factors and `B2_start` of the worktodo lines.
 - **Factor splitting:** a composite GCD is not split into its factors.
 - **Certificates:** no P-1 certificate. None exists in mprime or Mlucas either.
 - **CUDA:** CUDA graphs do not cover the multiplication by 3, so stage 1 runs below PRP speed under CUDA.

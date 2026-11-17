@@ -88,16 +88,12 @@ struct P1State {
 
 // P-1 stage 2 in progress: the accumulator after the k below `k` (see pm1::Stage2Plan).  x64 is the res64 of the stage 1 residue it
 // started from; D, M and plan (the pairing's version) define the plan.  A version 1 savefile (b3807834, no M) has M = D/2 and plan 1.
-// start:  the B2_start of the line (stage 2 of (start, B2]), 0 for none (stage 2 of (B1, B2]).  Only a stage 2 with a start bound writes
-// version 3 (version 2 with "S="), so that the savefiles of every other stage 2 stay readable by the builds before it; versions 1 and 2
-// have start 0.
 struct P2State {
   static const constexpr char* KIND = "p2";
 
   u64 exponent;
   u64 k;
   u64 B1, B2;
-  u64 start{};
   u32 D;
   u32 M;
   u32 plan;

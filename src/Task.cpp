@@ -216,9 +216,6 @@ void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1,
   // {"status":"NF", "exponent":45581713, "worktype":"P-1", "b1":50000, "b2":5000000, "fft-length":5120, ..., "factors":["..."]}
   vector<string> fields{json("b1", B1)};
   if (B2 > B1) { fields.push_back(json("b2", B2)); }
-  // A stage 2 from B2_start covered (B2start, B2] only.  Prime95 reports such a run with b1 and b2 alone, as if the whole of (B1, B2] had
-  // been covered (right when an earlier run covered (B1, B2start]); "b2-start" says what this run did.
-  if (B2 > B1 && B2start > B1) { fields.push_back(json("b2-start", B2start)); }
   fields.push_back(json("fft-length", fft.size()));
   vector<string> errors{json("gerbicz", nErrors)};
   if (nJacobi) { errors.push_back(json("jacobi", nJacobi)); }
@@ -401,8 +398,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
   // reports "already tested" and stops), so a hand-off for the GCD alone asks for B2 = B1 + 1.
   auto handOff = [&](u64 handB2, const char* why) {
     pm1::writeMprimeStage1(dir, exponent, B1, x);
-    // mprime's stage 2 keeps the line's start bound (a hand-off for the GCD alone has no stage 2)
-    string const work = pm1::mprimePminus1Line(AID, exponent, B1, handB2, handB2 > B2start ? B2start : 0, tfBits);
+    string const work = pm1::mprimePminus1Line(AID, exponent, B1, handB2);
     pm1::appendMprimeWork(dir, work);
     log("P-1 stage 1 residue handed to mprime for %s: %s in '%s', %u Gerbicz errors; %s", why, pm1::mprimeSaveName(exponent).c_str(),
         dir.string().c_str(), nErrors, work.c_str());
@@ -422,7 +418,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
   auto addFactor = [&](const Words& g, int stage) { factors = pm1::gcdFactor(g, stage, exponent); };
 
   // A stage 2 savefile for this residue means that this stage 1 GCD already ran and found nothing (stage 2 starts only then)
-  bool const stage2Started = B2 > B1 && Stage2::hasSavefile(exponent, B1, B2, x, B2start);
+  bool const stage2Started = B2 > B1 && Stage2::hasSavefile(exponent, B1, B2, x);
   // The stage 1 savefiles' folder also notes a GCD of this residue that found no factor (stage1GcdMarkNone)
   fs::path const p1Dir = fs::current_path() / (string(P1State::KIND) + '-' + to_string(exponent));
   if (stage2Started) {
@@ -459,14 +455,13 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
 
   u64 doneB2 = 0;     // the B2 of the result:  0 for a result of stage 1 alone
   if (factors.empty() && B2 > B1) {
-    if (B2start) { log("P-1 stage 2 from B2_start=%" PRIu64 " (the primes of (%" PRIu64 ", %" PRIu64 "] are left out)\n", B2start, B1, B2start); }
-    Stage2Result const r = Stage2::run(shared, exponent, B1, B2, x, 0, 0, B2start);
+    Stage2Result const r = Stage2::run(shared, exponent, B1, B2, x);
     if (r.status == Stage2Result::STOPPED) {
       // As in stage 1:  the worktodo line stays, and so do the savefiles
       throw "stop requested";
     }
     if (r.status == Stage2Result::DONE) {
-      factors = Stage2::accFactor(gcd, r.acc, exponent, B1, B2, B2start);
+      factors = Stage2::accFactor(gcd, r.acc, exponent, B1, B2);
       doneB2 = B2;
     } else if (!dir.empty()) {
       log("P-1 stage 2 is not run here (%s)\n", r.why.c_str());

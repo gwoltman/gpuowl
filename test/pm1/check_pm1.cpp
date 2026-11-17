@@ -143,10 +143,6 @@ static void testSaveFile() {
   check(mprimePminus1Line("ABCDEF0123456789ABCDEF0123456789", p, B1, 2 * B1) == "Pminus1=ABCDEF0123456789ABCDEF0123456789,1,2,9689,-1,123456789012,246913578024\n", "line with AID");
   check(mprimePminus1Line("", p, 1000000, 30000000) == "Pminus1=1,2,9689,-1,1000000,30000000\n", "line without AID");
   check(mprimePminus1Line("N/A", p, 1000000, 30000000) == "Pminus1=1,2,9689,-1,1000000,30000000\n", "line with N/A");
-  // B2_start:  Prime95 reads it only as the field after the trial factoring depth, so the depth is written too (0 included)
-  check(mprimePminus1Line("", p, 1000000, 30000000, 20000000, 70) == "Pminus1=1,2,9689,-1,1000000,30000000,70,20000000\n", "line with B2_start");
-  check(mprimePminus1Line("", p, 1000000, 30000000, 20000000) == "Pminus1=1,2,9689,-1,1000000,30000000,0,20000000\n", "B2_start, depth 0");
-  check(mprimePminus1Line("", p, 1000000, 30000000, 1000000, 70) == "Pminus1=1,2,9689,-1,1000000,30000000\n", "B2_start = B1 is none");
   appendMprimeWork(dir, mprimePminus1Line("", p, 1000000, 30000000));
   appendMprimeWork(dir, mprimePminus1Line("", p + 2, 1000000, 30000000));
   std::ifstream add(dir / "worktodo.add");

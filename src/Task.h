@@ -27,13 +27,10 @@ public:
   u32 squarings{};  // For CERTs
   string verifyPath{}; // For Verify
 
-  // For P-1 (Pminus1= and Pfactor= lines).  Pminus1 gives the bounds (and may give the trial factoring depth, only passed on to
-  // mprime).  Pfactor gives the trial factoring depth and the number of primality tests that a factor would save, and the bounds are
-  // chosen from those.  For PRP lines (pm1Fields:  the line has them) the same two fields, and B1, B2 are those of the P-1 inside the
-  // PRP test (0:  none).  B2start (Pminus1 lines only; 0:  none, else above B1 and below B2):  stage 2 covers the primes in
-  // (B2start, B2] only, extending an earlier run's stage 2 that ended at B2start.
+  // For P-1 (Pminus1= and Pfactor= lines).  Pminus1 gives the bounds.  Pfactor gives the trial factoring depth and the number of
+  // primality tests that a factor would save, and the bounds are chosen from those.  For PRP lines (pm1Fields:  the line has them)
+  // the same two fields, and B1, B2 are those of the P-1 inside the PRP test (0:  none).
   u64 B1{}, B2{};
-  u64 B2start{};
   double tfBits{}, testsSaved{};
   bool pfactor{};
   bool pm1Fields{};
