@@ -362,10 +362,7 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
     log("P-1 in the PRP test: the line has no trial factoring depth and tests-saved fields: P-1 is taken as needed, with no factor "
         "assumed below 2^%g\n", task.tfBits);
   }
-  if (task.testsSaved <= 0) {
-    log("P-1 in the PRP test: the line's tests-saved field is 0 (P-1 is done or not wanted): no P-1\n");
-    return;
-  }
+  if (task.testsSaved <= 0) { return; }    // The line's tests-saved field is 0 (P-1 is done or not wanted):  no P-1
   if (prpStarted(E)) {
     log("P-1 in the PRP test: the PRP test was started without P-1 (it needs the PRP residues from iteration 1 on): no P-1\n");
     return;
