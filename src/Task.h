@@ -34,9 +34,6 @@ public:
   double tfBits{}, testsSaved{};
   bool pfactor{};
   bool pm1Fields{};
-  // The line's "B1=<B1>[,B2=<B2>];" prefix (PRP and Pfactor lines; 0:  none, B2 = 0:  stage 1 only):  these bounds rather than
-  // prpll's choice
-  u64 lineB1{}, lineB2{};
 
   void execute(GpuCommon shared, u32 instance);
   void executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vector<KeyVal>& fftUses);   // execute's work on one FFT

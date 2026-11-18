@@ -9,7 +9,6 @@
 #include "fs.h"
 #include "Primes.h"
 #include "FFTConfig.h"
-#include "Pm1Bounds.h"
 
 #include <algorithm>
 #include <cassert>
@@ -55,7 +54,7 @@ bool isHex(const string& s) {
 // Cert=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,162105
 // Pminus1=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,1000000,30000000
 // Pfactor=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,76,1.3
-// The line is the verbatim worktodo line (task.line); body is the line without its "\n" and without a "B1=...;" prefix (parse).
+// The line is the verbatim worktodo line (task.line); body is the line without its "\n" (parse).
 std::optional<Task> parseBody(const std::string& line, const std::string& body) {
   vector<string> topParts = split(body, '=');
 
@@ -204,56 +203,10 @@ std::optional<Task> parseBody(const std::string& line, const std::string& body) 
   return {};
 }
 
-// The bounds prefix of old gpuowl, "B1=<B1>[,B2=<B2>]" (before the ';' of "B1=1000000,B2=30000000;PRP=..."), into B1 and B2 (0 when
-// not given).  False unless it is exactly that, with B1 >= 2 and B2, when given, above B1 and below pm1::MAX_B2:  the limits of the
-// P-1 inside a PRP test and of stage 2.
-bool parseBoundsPrefix(const string& prefix, u64& B1, u64& B2) {
-  B1 = B2 = 0;
-  for (const string& item : split(prefix, ',')) {
-    vector<string> const kv = split(item, '=');
-    double x{};
-    if (kv.size() != 2 || !parseNumber(kv[1], x) || u64(x) == 0) { return false; }
-    bool const isB1 = equalsIgnoreCase(kv[0], "b1");
-    if (!isB1 && !equalsIgnoreCase(kv[0], "b2")) { return false; }
-    u64& b = isB1 ? B1 : B2;
-    if (b) { return false; }      // given twice
-    b = u64(x);
-  }
-  return B1 >= 2 && (!B2 || (B2 > B1 && B2 < pm1::MAX_B2));
-}
-
 std::optional<Task> parse(const std::string& line) {
   if (line.empty() || line[0] == '#') { return {}; }
-
   // The line keeps its "\n" (or "\r\n"); strip it so that a last field such as the exponent parses.
-  string body = rstripNewline(line);
-
-  // "B1=<B1>[,B2=<B2>];<line>":  the P-1 bounds for this line, as old gpuowl took them.  Only a line that starts with B1= or B2=
-  // has one, so that any other line with a ';' is read as before.
-  size_t const semi = body.find(';');
-  bool const hasPrefix = semi != string::npos && body.size() >= 3 && body[2] == '=' && tolower(static_cast<unsigned char>(body[0])) == 'b'
-    && (body[1] == '1' || body[1] == '2');
-  if (!hasPrefix) { return parseBody(line, body); }
-
-  // A bad prefix must not run the line with other bounds than the ones meant:  ignore the line, as other malformed lines are
-  u64 B1{}, B2{};
-  if (!parseBoundsPrefix(body.substr(0, semi), B1, B2)) {
-    log("worktodo.txt line ignored, its bounds prefix must be B1=<B1>[,B2=<B2>]; with B1 at least 2 and B2, when given, above B1 and "
-        "below %" PRIu64 ": \"%s\"\n", pm1::MAX_B2, body.c_str());
-    return {};
-  }
-  optional<Task> task = parseBody(line, body.substr(semi + 1));
-  if (!task) { return {}; }
-  // The bounds replace those prpll would choose:  the P-1 inside a PRP test, or a Pfactor line's.  A Pminus1 line has its own, and
-  // LL and Cert have no P-1:  either way the prefix asks for something the line can't do, so the line is not run.
-  if (task->kind == Task::PRP || (task->kind == Task::PM1 && task->pfactor)) {
-    task->lineB1 = B1;
-    task->lineB2 = B2;
-    return task;
-  }
-  log("worktodo.txt line ignored, a bounds prefix (B1=...;) is only for PRP and Pfactor lines%s: \"%s\"\n",
-      task->kind == Task::PM1 ? " (a Pminus1 line gives its bounds itself)" : "", body.c_str());
-  return {};
+  return parseBody(line, rstripNewline(line));
 }
 
 // Whether Task::execute can run exponent E: FFTConfig::bestFit throws "No FFT" when E is above every FFT's maxExp,

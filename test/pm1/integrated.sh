@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# End-to-end tests of the P-1 inside a PRP test (here with the bounds of the hidden -use PRPPM1_B1[,PRPPM1_B2] keys, or of the line's
-# "B1=...;" prefix (prefix), src/Pm1Prp.cpp;  options:  old gpuowl's P-1 options rejected), with GMP (stage1_oracle) as the oracle for every accumulator
+# End-to-end tests of the P-1 inside a PRP test (here with the bounds of the hidden -use PRPPM1_B1[,PRPPM1_B2] keys, src/Pm1Prp.cpp;
+# prefix, options:  old gpuowl's "B1=...;" line prefix and P-1 options rejected), with GMP (stage1_oracle) as the oracle for every accumulator
 # savefile (its residue must be 3^(E mod 2^next), its prp64 the res64 of 3^(2^k)) and for the factor.
 #
 #   test/pm1/integrated.sh [factor|nf|carry|resume|fault|onoff|crash|stage2|stage2fail|prefix|options|all]      (default all)
@@ -26,10 +26,10 @@ make -s -C "$HERE" stage1_oracle || exit 1
 if [[ ! -x "$FAULT_PRPLL" ]]; then make -s -C "$ROOT" BIN=build-pm1faults CPPFLAGS=-DPRPLL_PM1_FAULTS || exit 1; fi
 mkdir -p "$WORK"
 
-# setup <dir> <p> [prefix]:  a fresh run directory with one PRP line (tests saved 0:  no P-1 unless asked for), after the prefix
+# setup <dir> <p>:  a fresh run directory with one PRP line (tests saved 0:  no P-1 unless asked for)
 setup() {
   rm -rf "$1"; mkdir -p "$1"
-  echo "${3:-}PRP=0123456789ABCDEF0123456789ABCDEF,1,2,$2,-1,70,0" > "$1/worktodo-0.txt"
+  echo "PRP=0123456789ABCDEF0123456789ABCDEF,1,2,$2,-1,70,0" > "$1/worktodo-0.txt"
 }
 
 # run <dir> <prpll> <args...>:  runs prpll in <dir>, appending to <dir>/out
@@ -256,56 +256,17 @@ stage2fail_tests() {
 }
 
 prefix_tests() {
-  # The line's "B1=<B1>[,B2=<B2>];" prefix:  P-1 with those bounds although the line's tests saved is 0, over -use PRPPM1_B1; the
-  # prefixed line is deleted at the end (tasks are matched by their line)
-  local d=$WORK/prefix-factor
-  setup "$d" 400381 "B1=1000;"
-  run "$d" "$PRPLL" -use PRPPM1_B1=20000
-  if grep -q "bounds from the worktodo line: B1=1000 (stage 1 only)" "$d/out" && accOK "$d" 400381 1000 && [[ "$(cat "$d/gcd")" = 671839319 ]] \
-     && resultOK "$d" 400381 1000 0 671839319 && factorEnd "$d"; then
-    pass "prefix B1=1000; on a tests-saved-0 line, over -use PRPPM1_B1=20000: factor 671839319 = GMP gcd, line deleted"
-  else
-    fail "prefix B1=1000 (see $d)"
-  fi
-  # Lower-case keys, a float, PRPDC, B2:  stage 2 finds the factor that stage 1 at B1=500 misses
-  d=$WORK/prefix-stage2
-  rm -rf "$d"; mkdir -p "$d"
-  echo "b1=500,b2=2e5;PRPDC=0123456789ABCDEF0123456789ABCDEF,1,2,400381,-1,70,0" > "$d/worktodo-0.txt"
-  run "$d" "$PRPLL"
-  if grep -q "bounds from the worktodo line: B1=500 B2=200000" "$d/out" && accOK "$d" 400381 500 && [[ "$(cat "$d/gcd")" = 1 ]] \
-     && resultOK "$d" 400381 500 200000 671839319 && factorEnd "$d"; then
-    pass "prefix b1=500,b2=2e5; on PRPDC: stage 1 gcd 1 (GMP), stage 2 found 671839319, line deleted"
-  else
-    fail "prefix stage 2 (see $d)"
-  fi
-  # A restart keeps the savefile's bounds, also when the prefix was edited in between (and the edited line is the one deleted)
-  d=$WORK/prefix-restart
-  setup "$d" 400381 "B1=20000;"
-  run "$d" "$PRPLL" -iters 3000
-  local first=0
-  [[ -s "$d/worktodo-0.txt" ]] && [[ ! -e "$d/results-0.txt" ]] && first=1
-  sed -i 's/^B1=20000;/B1=1000;/' "$d/worktodo-0.txt"
-  run "$d" "$PRPLL"
-  if [[ "$first" = 1 ]] && grep -q "bounds from its savefile: B1=20000 B2=0 (not those of the worktodo line" "$d/out" \
-     && accOK "$d" 400381 20000 && resultOK "$d" 400381 20000 0 671839319 && factorEnd "$d"; then
-    pass "prefix restart: stopped at 3000 with B1=20000, prefix edited to B1=1000: savefile bounds kept (logged), factor = GMP"
-  else
-    fail "prefix restart (see $d)"
-  fi
-  # Lines that must not run:  a bad prefix, or a prefix on a line that can't take it
-  local A=0123456789ABCDEF0123456789ABCDEF bad
-  for bad in "B2=200000;PRP=$A,1,2,400381,-1,70,0" "B1=1;PRP=$A,1,2,400381,-1,70,0" "B1=1000,B2=1000;PRP=$A,1,2,400381,-1,70,0" \
-             "B1=1000,B1=2000;PRP=$A,1,2,400381,-1,70,0" "B1=1000,B3=5;PRP=$A,1,2,400381,-1,70,0" "B1=1k;PRP=$A,1,2,400381,-1,70,0" \
-             "B1=1000,B2=5000000000;PRP=$A,1,2,400381,-1,70,0" "B1=1000;Pminus1=$A,1,2,400381,-1,1000,0" \
-             "B1=1000;DoubleCheck=$A,400381,70,1" "B1=1000;Cert=$A,1,2,400381,-1,5000"; do
-    d=$WORK/prefix-bad
-    rm -rf "$d"; mkdir -p "$d"; echo "$bad" > "$d/worktodo-0.txt"
+  # Old gpuowl's "B1=<B1>[,B2=<B2>];" bounds prefix is not supported:  such a line is not understood, like any other, and does not run
+  local A=0123456789ABCDEF0123456789ABCDEF d=$WORK/prefix line
+  for line in "B1=1000;PRP=$A,1,2,400381,-1,70,1" "B1=500,B2=200000;PRPDC=$A,1,2,400381,-1,70,0" \
+              "b1=2e6;Pfactor=N/A,1,2,400381,-1,70,1" "B1=1000;Pminus1=$A,1,2,400381,-1,1000,0"; do
+    rm -rf "$d"; mkdir -p "$d"; echo "$line" > "$d/worktodo-0.txt"
     run "$d" "$PRPLL"
-    if grep -q "worktodo.txt line ignored, .*prefix" "$d/out" && grep -q "No work to do" "$d/out" && [[ ! -e "$d/results-0.txt" ]] \
-       && [[ "$(cat "$d/worktodo-0.txt")" = "$bad" ]]; then
-      pass "prefix-bad: '$bad' ignored ($(grep -o 'line ignored, [^:]*' "$d/out" | head -1))"
+    if grep -qF "worktodo.txt line ignored: \"$line\"" "$d/out" && grep -q "No work to do" "$d/out" && [[ ! -e "$d/results-0.txt" ]] \
+       && [[ "$(cat "$d/worktodo-0.txt")" = "$line" ]]; then
+      pass "prefix: '$line' not understood, not run"
     else
-      fail "prefix-bad: '$bad' (see $d)"
+      fail "prefix: '$line' (see $d)"
     fi
   done
 }
