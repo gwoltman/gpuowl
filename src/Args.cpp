@@ -7,7 +7,6 @@
 #include "gpuid.h"
 #include "Proof.h"
 #include "version.h"
-#include "Pm1Bounds.h"
 
 #include <set>
 #include <vector>
@@ -356,7 +355,7 @@ P-1 factoring (see docs/pm1.md):
 
 The configuration options listed below can be passed on the command line or can be put in a file
 named "config.txt" in the prpll run directory.  The options for one run are command line only:  -h, -info, -version,
--dir, -prp, -ll, -verify, -iters, -fft, -B1, -B2, -time, -roe, -tune, -ztune and -carryTune.
+-dir, -prp, -ll, -verify, -iters, -fft, -time, -roe, -tune, -ztune and -carryTune.
 
 
 -h                 : print general help, list of FFTs, list of devices
@@ -433,9 +432,6 @@ P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2
                      ends the PRP test.  Only for PRP tests started with it; a restart keeps the bounds (p1prp-<p>).
 -pm1TestsSaved <x> : the primality tests a factor saves, for the bounds of the P-1 inside PRP tests (default 1.02: the PRP
                      test plus its proof and the certificate).  Pfactor= lines use their own field.
--B1 <n> [-B2 <m>]  : P-1 with these bounds wherever prpll would choose them:  Pfactor= lines, and the P-1 inside PRP tests
-                     whose line wants P-1 (not tests saved 0, not -prp).  B1 alone: stage 1 only; -B2 needs -B1.  Pminus1=
-                     lines keep their own bounds, and a line's B1=...; prefix comes first.  Also -b1, -b2.
 -maxAlloc <size>   : a cap on the GPU memory prpll allocates on its device (e.g. 8G; it is counted per device).  Without it the
                      cap is the memory free on the GPU when prpll starts less 1 GB (90%% of its RAM if that can't be queried).
                      P-1 stage 2 uses residue-sized buffers for its table, as many as pay for themselves (a larger table pairs more
@@ -613,7 +609,6 @@ static bool isCommandLineOnly(const string& key) {
   static const std::set<string> keys{
     "-h", "--help", "-version", "-info", "-dir",
     "-prp", "-PRP", "-ll", "-LL", "-verify", "-iters", "-fft",
-    "-B1", "-b1", "-B2", "-b2",
     "-time", "-roe", "-tune", "-ztune", "-carryTune",
   };
   return keys.contains(key);
@@ -777,22 +772,11 @@ void Args::parse(const string& line) {
       if (s.empty()) { throw "-mlucasDir needs a directory"; }
       mlucasDir = fs::absolute(s).lexically_normal();
     }
-    else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2") {
-      // The bounds of the P-1 that prpll would choose them for (Pfactor lines, the P-1 inside PRP tests).  Checked together in
-      // setDefaults.
-      double x = -1;
-      try { size_t n = 0; x = stod(s, &n); if (n != s.size()) { x = -1; } } catch (const std::logic_error&) { x = -1; }
-      if (!(x >= 0 && x < 9e15)) {
-        log("%s expects a number, e.g. %s 1000000 or %s 1e6 (found '%s')\n", key.c_str(), key.c_str(), key.c_str(), s.c_str());
-        throw "-B1/-B2 <n>";
-      }
-      (key[2] == '1' ? pm1B1 : pm1B2) = u64(x);
-    }
-    // DEPRECATED: the other P-1 options of old gpuowl.  These would silently change what gets tested, so unlike the no-ops above
-    // they must not be swallowed quietly.
-    else if (key == "-rB2" || key == "-pm1" || key == "-D") {
-      log("%s is no longer supported: P-1 bounds come from worktodo.txt lines and -B1/-B2 (see -h); remove it from config.txt\n",
-          key.c_str());
+    // DEPRECATED: the P-1 options of old gpuowl.  The bounds now come from the worktodo.txt lines.  These options would silently
+    // change what gets tested, so unlike the no-ops above they must not be swallowed quietly.
+    else if (key == "-B1" || key == "-b1" || key == "-B2" || key == "-b2" || key == "-rB2" ||
+             key == "-pm1" || key == "-D") {
+      log("%s is no longer supported: P-1 bounds come from worktodo.txt lines (see -h)\n", key.c_str());
       throw "P-1 option no longer supported";
     }
     else if (key == "-from") {           // used to resume at a specific iteration instead of the latest checkpoint.
@@ -916,18 +900,6 @@ void Args::parse(const string& line) {
 void Args::setDefaults() {
   // -prp, -ll, -verify run their tasks on worker 0 and exit (Worktodo::getTask):  one worker, whatever -workers says
   if (singleRun) { workers = 1; }
-
-  // -B1/-B2 as they stand after every source, with the limits of a worktodo line's B1=...; prefix.  B2 alone is not taken:  there is
-  // no rule for a B1 under a given B2.
-  if (pm1B2 && !pm1B1) {
-    log("-B2 needs -B1: prpll does not choose a B1 for a given B2 (-B2 %" PRIu64 ")\n", pm1B2);
-    throw "-B2 without -B1";
-  }
-  if (pm1B1 && (pm1B1 < 2 || (pm1B2 && pm1B2 <= pm1B1) || pm1B2 >= pm1::MAX_B2)) {
-    log("-B1 %" PRIu64 " -B2 %" PRIu64 ": B1 must be at least 2 and B2, when given, above B1 and below %" PRIu64 "\n", pm1B1, pm1B2,
-        pm1::MAX_B2);
-    throw "bad -B1/-B2";
-  }
 
   uid = getUidFromPos(device);
   cl_device_id dev = getDevice(device);

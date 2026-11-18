@@ -33,9 +33,8 @@ Put the lines in `worktodo-<N>.txt`, the same file that holds PRP work. The assi
 - `B1` alone means stage 1 only. `B2` alone is not accepted (PRPLL has no rule for choosing B1 under a given B2).
 - B1 must be at least 2, and B2, when given, above B1 and below 2^32 - 8192. The numbers are written as in `Pminus1=` lines
   (`1000000` or `1e6`); the keys may be lower case (`b1=`). Each key may appear once.
-- The prefix beats every other source of bounds for that line: [`-B1` and `-B2`](#-b1-and--b2), and the hidden
-  `-use PRPPM1_B1` key. It gives the whole bounds, so `B1=` alone is stage 1 only even with `-B2`. Only `-use PRPPM1=0` still
-  turns the P-1 inside PRP tests off.
+- The prefix beats the hidden `-use PRPPM1_B1` key. It gives the whole bounds, so `B1=` alone is stage 1 only. Only
+  `-use PRPPM1=0` still turns the P-1 inside PRP tests off.
 - A line whose prefix does not follow these rules is ignored with a log line, so that it never runs with other bounds than
   the ones meant. So is a prefix on a `Pminus1=` line (it gives its bounds itself) or on a `Test=`, `DoubleCheck=` or `Cert=`
   line (no P-1).
@@ -50,21 +49,10 @@ When the work is done, PRPLL deletes the line and appends a JSON result to `resu
 - Factors are given in decimal. A GCD that is a product of several factors is reported whole, as Prime95 does: it is not split.
 - `errors` holds the number of failed Gerbicz checks in stage 1. With `-use PM1_JACOBI=1` it also holds the number of failed Jacobi checks.
 
-## -B1 and -B2
+## Old gpuowl options
 
-`-B1 <B1>` and `-B2 <B2>` (also `-b1`, `-b2`), on the command line, fix the bounds wherever PRPLL would choose them: on
-`Pfactor=` lines and for the P-1 inside PRP tests. `Pminus1=` lines keep their own bounds.
-
-- The order is: a line's [bounds prefix](#worktodo-lines), then the command line, then PRPLL's own choice.
-- They are for the command line only. In `config.txt` they are not allowed, and PRPLL exits.
-- `-B1` alone means stage 1 only. `-B2` without `-B1` is an error, as are B1 < 2, B2 <= B1 and B2 >= 2^32 - 8192.
-- They replace the choice of the bounds, not the choice of whether to run P-1. A `PRP=` line with tests saved 0 (P-1 is done)
-  still gets none, and neither does a PRP test started without P-1, or a `-prp <p>` test. A `Pfactor=` line, which asks for P-1,
-  runs with these bounds as a `Pminus1=` line with them would, even where PRPLL would find that P-1 does not pay. Without GPU memory
-  for its buffers, the P-1 inside a PRP test is given up when it starts, and the PRP goes on.
-- A P-1 inside a PRP test that is under way keeps the bounds of its savefile, whatever `-B1` and `-B2` say now.
-- The hidden `-use PRPPM1_B1` key, for tests, comes before them.
-- `-rB2`, `-pm1` and `-D` of old gpuowl are still rejected.
+`-B1`, `-B2` (also `-b1`, `-b2`), `-rB2`, `-pm1` and `-D` of old gpuowl are not supported: the bounds come from the worktodo
+lines. PRPLL exits with a log line when one is given.
 
 ## Stage 1
 
@@ -304,7 +292,7 @@ PRPLL's tests of the hand-off: test/pm1/mlucas.sh (with `MLUCAS=/path/to/Mlucas`
 
 ## Bounds of Pfactor lines
 
-These are the bounds PRPLL chooses for a `Pfactor=` line without a bounds prefix, when `-B1` is not given.
+These are the bounds PRPLL chooses for a `Pfactor=` line without a bounds prefix.
 
 The bounds maximise the expected saving, in PRP iterations of p:
 
@@ -369,7 +357,6 @@ P-1 runs inside a PRP test, on the PRP test's own squarings, when the worktodo l
 - A line without these two fields (`PRP=<p>`, `PRP=AID,1,2,p,-1`): yes, with no factor assumed below 2^tf, tf from the exponent
   (Prime95's trial factoring table plus 4, GIMPS's GPU target, less 1 bit: 76 at 141M, 78 at 206M). The log says so.
 - `-prp <p>` on the command line: no.
-- `-B1` (and `-B2`) give the bounds in the cases above that get P-1 (see [-B1 and -B2](#-b1-and--b2)).
 - A line with a `B1=<B1>[,B2=<B2>];` prefix (see [Worktodo lines](#worktodo-lines)): yes, with these bounds, whatever its
   tests-saved field says. As with chosen bounds, a test whose P-1 is under way keeps the bounds of its savefiles (a prefix edited
   later is logged and not used), and a PRP test started without P-1 can't have it.
