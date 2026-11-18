@@ -266,8 +266,7 @@ PRPLL's tests of the hand-off: test/pm1/mlucas.sh (with `MLUCAS=/path/to/Mlucas`
 - **Unsupported types:** stage 2 does not support M31 or FP32 alone (FFT31, FFT32).
 
 **`-tune pm1`** times stage 2 multiplications, not PRP squarings, for every FFT type stage 2 supports.
-- It writes the fastest FFT per exponent range to `tune-pm1.txt`, with its stage 2 settings (INPLACE, TAIL_KERNELS, MULTI_Q,
-  L2_STRIPING).
+- It writes the fastest FFT per exponent range to `tune-pm1.txt`, with its stage 2 settings (INPLACE, TAIL_KERNELS, MULTI_Q).
 - It does not change `tune.txt` or `config.txt`.
 - See `prpll -h` for the options it takes.
 

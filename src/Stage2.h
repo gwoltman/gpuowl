@@ -51,7 +51,7 @@ public:
     double us;
     u64 res64{};
     double maxROE{};
-    u32 inPlace{}, tailKernels{}, multiQ{}, l2Striping{};
+    u32 inPlace{}, tailKernels{}, multiQ{};
   };
   static MulTime timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, const vector<KeyVal>& uses, int quick = 7);
 

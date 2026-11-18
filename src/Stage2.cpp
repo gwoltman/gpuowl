@@ -474,11 +474,10 @@ public:
     return w;
   }
 
-  // The settings the Gpu resolved (clDefines):  INPLACE, TAIL_KERNELS, MULTI_Q, L2_STRIPING
+  // The settings the Gpu resolved (clDefines):  INPLACE, TAIL_KERNELS, MULTI_Q
   u32 inPlace() const { return g.in_place; }
   u32 tailKernels() const { return (g.tail_single_wide ? 0 : 2) + (g.tail_single_kernel ? 0 : 1) + (g.zero_q ? 10 : 0); }
   u32 multiQ() const { return g.multi_q; }
-  u32 l2Striping() const { return g.l2_striping; }
 
 #ifdef PRPLL_PM1_FAULTS
   // TEST ONLY (PRPLL_STAGE2_FAULT, fault build):  simulated faults
@@ -621,8 +620,7 @@ Stage2::MulTime Stage2::timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, c
   if (!roeOK) { log("%s: stage 2 ROE %.3f is too large\n", fft.spec().c_str(), s2.maxROE()); }
   if (!deltaOK) { log("%s: a stage 2 multiplication by A_k - B_r differs from A_k and B_r multiplied apart\n", fft.spec().c_str()); }
   bool const ok = roeOK && deltaOK && !isZero(a);
-  return {ok ? us : std::numeric_limits<double>::infinity(), res64(a), s2.maxROE(), s2.inPlace(), s2.tailKernels(), s2.multiQ(),
-          s2.l2Striping()};
+  return {ok ? us : std::numeric_limits<double>::infinity(), res64(a), s2.maxROE(), s2.inPlace(), s2.tailKernels(), s2.multiQ()};
 }
 
 void Stage2::rankUntuned(GpuCommon shared, u64 E, vector<Pm1Fft>& ffts) {

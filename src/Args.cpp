@@ -533,7 +533,7 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                                         combined throughput.  FFT timings for tune.txt still use one worker.
                          pm1          - Time P-1 stage 2 multiplications instead (all the FFT types stage 2 supports; FP64 types as
                                         above) and write the fastest FFT for each exponent range, with its stage 2 settings (INPLACE,
-                                        TAIL_KERNELS, MULTI_Q, L2_STRIPING), to tune-pm1.txt.  Does not change tune.txt or config.txt.  Stage 2
+                                        TAIL_KERNELS, MULTI_Q), to tune-pm1.txt.  Does not change tune.txt or config.txt.  Stage 2
                                         uses tune-pm1.txt first, then tune.txt.  With pm1: noconfig skips the settings, m61 is timed
                                         by default (m61=0 skips it), and minexp/maxexp/exp, quick, warmup, fp64, ntt, fp32=0, fp6431,
                                         1k256, pfa=0 and -fft work as above; regs, variants, fine, tk and inplace do not apply.

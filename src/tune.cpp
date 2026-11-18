@@ -1803,11 +1803,10 @@ void Tune::pm1Tune(const Pm1Options& opt) {
   if (opt.noSettings) { return; }
 
   // The stage 2 settings of each new entry, one key at a time (the best value of a key is kept for the next):  INPLACE, TAIL_KERNELS
-  // (11 and 13 are not tried:  their extra queues cost dearly on ROCm), for the types with more than one part MULTI_Q, and with INPLACE
-  // and a power-of-two MIDDLE L2_STRIPING 1 and 2.  A value is
+  // (11 and 13 are not tried:  their extra queues cost dearly on ROCm), and for the types with more than one part MULTI_Q.  A value is
   // written to the line only if it beats the one the entry ran with in two more timings of each.  Keys given on the command line are not tuned (they would
   // win over the line anyway).  Not tuned on purpose:  TAIL_TRIGS and TABMUL_CHAIN (they trade accuracy, and stage 2 has no Gerbicz
-  // check), the register limits.
+  // check), the register limits, L2_STRIPING (about to be deprecated).
   bool changed = false;
   for (TuneEntry& e : results) {
     if (!addedSpecs.contains(e.fft.spec())) { continue; }
@@ -1817,16 +1816,13 @@ void Tune::pm1Tune(const Pm1Options& opt) {
     bool const multiPart = fft.shape.fft_type != FFT64 && fft.shape.fft_type != FFT61;
     vector<pair<string, vector<u32>>> keys{{"INPLACE", {0, 1, 2, 3}}, {"TAIL_KERNELS", {0, 1, 2, 3}}};
     if (multiPart) { keys.push_back({"MULTI_Q", {0, 1}}); }
-    // L2_STRIPING needs INPLACE (1, 2 or 3) and a power-of-two MIDDLE; clDefines lowers a value the width or MULTI_Q can't take
-    if (!fft.shape.isPfa()) { keys.push_back({"L2_STRIPING", {0, 1, 2}}); }
     auto const resolved = [](const string& key, const Stage2::MulTime& m) {
-      return key == "INPLACE" ? m.inPlace : key == "TAIL_KERNELS" ? m.tailKernels : key == "MULTI_Q" ? m.multiQ : m.l2Striping;
+      return key == "INPLACE" ? m.inPlace : key == "TAIL_KERNELS" ? m.tailKernels : m.multiQ;
     };
     for (const auto& [key, values] : keys) {
       if (args->usedOnCommandLine(key)) { log("%s: %s is given on the command line, not tuned\n", e.fft.spec().c_str(), key.c_str()); continue; }
       // The value the entry runs with now, and its time in this round
       Stage2::MulTime const now = timeStage2(E, shared, fft, e.uses, opt.quick, &ref);
-      if (key == "L2_STRIPING" && !now.inPlace) { continue; }
       u32 const nowValue = resolved(key, now);
       double bestCost = now.us;
       u32 bestValue = nowValue;
