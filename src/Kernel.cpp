@@ -15,6 +15,7 @@ Kernel::Kernel(string_view name, KernelCompiler* compiler, TimeInfo* timeInfo, Q
   timeInfo{timeInfo},
   queue{queue},
   workSizeX{workSize},
+  defaultWorkSizeX{workSize},
   workSizeY{1}
 {
   compiler->declare(this->nameInFile, this->defines);
@@ -64,5 +65,23 @@ void Kernel::setKernelsToExecute(size_t nX, size_t nY) {  // The rare two-dimens
 
 void Kernel::run() {
   assert(kernel);
-  queue->run(kernel.get(), groupSize, workSizeX, workSizeY, timeInfo);
+  queue->run(kernel.get(), groupSize, workSizeX, workSizeY, timeInfo, workOffsetX);
+}
+
+u32 Kernel::defaultGroups() {
+  if (!kernel) {
+    startLoad(compiler);
+    finishLoad();
+  }
+  if (!kernel) { throw std::runtime_error("OpenCL kernel "s + name + " not found"); }
+  return u32(defaultWorkSizeX / groupSize);
+}
+
+void Kernel::setGroupOffset(u32 groups) {
+  if (!kernel) {
+    startLoad(compiler);
+    finishLoad();
+  }
+  if (!kernel) { throw std::runtime_error("OpenCL kernel "s + name + " not found"); }
+  workOffsetX = size_t(groups) * groupSize;
 }
