@@ -3,6 +3,11 @@
 #pragma once
 
 #include "Primes.h"
+
+#include <functional>
+#include <map>
+#include <optional>
+#include <string>
 #include "GpuCommon.h"
 #include "FFTConfig.h"
 
@@ -49,6 +54,25 @@ private:
   int workers = 1;              // -tune workers=N: time -use options with N concurrent workers
 
   double timeOption(u64 exponent, FFTConfig fft, int quick, u32* usedWmul = nullptr);
+  double timeOptionOnce(u64 exponent, FFTConfig fft, int quick, u32* usedWmul);
+
+  // Noise guard (-tune guard=<pct>, default 3, 0 = off).  Timings on a real machine move by 20-50% over a few minutes (clocks, power
+  // limit, other programs), far more than the differences between options, so every timing is bracketed by a fixed reference timing:
+  // the FFT the warmup ran, with the settings -tune started with.  guarded() retimes a measurement whose bracketing reference timings
+  // differ by more than guardPct, and scales the result by how far the reference has drifted from its first timing.
+  double guardPct = 3;
+  struct TimeRef {
+    std::optional<FFTConfig> fft;
+    u64 exponent = 0;
+    int quick = 7;
+    std::map<std::string, std::string> flags;       // the settings -tune started with
+    double base = 0;                                // the first reference timing
+    double last = 0;                                // the most recent one
+  } ref;
+  double timeRef();
+  double guarded(const std::function<double()>& measure);
+  // Whether the settings `tuned` are faster than the settings -tune started with (ref.flags) on the given FFT: A B B A, means compared
+  bool tunedBeatsStart(FFTConfig fft, u64 exponent, int quick, const std::map<std::string, std::string>& tuned);
 
   float maxBpw(FFTConfig fft);
   float zForBpw(float bpw, FFTConfig fft, u32);
