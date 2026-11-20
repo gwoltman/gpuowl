@@ -228,6 +228,7 @@ private:
   bool tail_single_wide;                // TailSquare processes one line at a time
   bool tail_single_kernel;              // TailSquare does not use a separate kernel for line zero
   u32 in_place;                         // Should GPU perform transform in-place. 1 = nVidia friendly memory layout, 2 = AMD friendly, 3 = padded.
+  u32 in_place64, in_place32;           // The in-place layouts of the 64-bit (FP64, GF61) and 32-bit (FP32, GF31) data, INPLACE unless -use INPLACE64 / INPLACE32
   u32 wmul;                             // Number of workgroups carryFused kernel should process ("width multiplier").
   u32 pad_size;                         // Pad size in bytes as specified on the command line or config.txt.  Maximum value is 512.
                                         // With INPLACE=3 the ROWPAD, BLKPAD and MIDPAD packed by IP3_PADS instead.
@@ -494,5 +495,5 @@ private:
 #define FP32_DATA_SIZE(W,M,H,inplace,pad)       DATA_SIZE(W,M,H,inplace,pad,2 * sizeof(float))
 #define GF31_DATA_SIZE(W,M,H,inplace,pad)       DATA_SIZE(W,M,H,inplace,pad,2 * sizeof(uint))
 #define GF61_DATA_SIZE(W,M,H,inplace,pad)       DATA_SIZE(W,M,H,inplace,pad,2 * sizeof(ulong))
-#define TOTAL_DATA_SIZE(fft,W,M,H,inplace,pad)  ((int)(fft).FFT_FP64 * FP64_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).FFT_FP32 * FP32_DATA_SIZE(W,M,H,inplace,pad) + \
-                                                (int)(fft).NTT_GF31 * GF31_DATA_SIZE(W,M,H,inplace,pad) + (int)(fft).NTT_GF61 * GF61_DATA_SIZE(W,M,H,inplace,pad))
+#define TOTAL_DATA_SIZE(fft,W,M,H,ip64,ip32,pad) ((int)(fft).FFT_FP64 * FP64_DATA_SIZE(W,M,H,ip64,pad) + (int)(fft).FFT_FP32 * FP32_DATA_SIZE(W,M,H,ip32,pad) + \
+                                                (int)(fft).NTT_GF31 * GF31_DATA_SIZE(W,M,H,ip32,pad) + (int)(fft).NTT_GF61 * GF61_DATA_SIZE(W,M,H,ip64,pad))

@@ -698,12 +698,12 @@ void OVERLOAD writeCarryFusedLines(T2_F2_GF31_GF61 *u, P(T2_F2_GF31_GF61) out, u
 // Pair of routines to read/write data to/from carryFused
 //****************************************************************************************
 
-#if INPLACE == 3                                               // Padded, not swizzled (see INPLACE=3 above)
+#if INPLACE64 == 3                                               // Padded, not swizzled (see INPLACE=3 above)
 #define SIZEBLK (SMALL_HEIGHT + ROWPAD / 16)                   // Pads in bytes, 16-byte values
 #define SIZEW   (TILE64 * SIZEBLK + BLKPAD / 16)
 #define SIZEM   (WIDTH / TILE64 * SIZEW + MIDPAD / 16)
 #define SWIZ(a,m) (m)
-#elif INPLACE == 1                                             // nVidia friendly padding
+#elif INPLACE64 == 1                                             // nVidia friendly padding
 // Place middle rows after first 16 rows
 //#define SIZEBLK (SMALL_HEIGHT + 16)                            // Pad 256 bytes
 //#define SIZEW   (16 * SIZEA + 16)                              // Pad 256 bytes
@@ -749,7 +749,7 @@ void OVERLOAD writeCarryFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) 
 // With INPLACE=3 the lines of a workgroup are SIZEBLK apart (when they are in one block of TILE64 lines), so the address is the workgroup's
 // part plus the local id's part, see INPLACE=3 above.  Line gr * WMUL wraps to 0 for the last workgroup.
 void OVERLOAD readCarryFusedLines(CP(T2_GF61) in, T2_GF61 *u, u32 gr, u32 me, u32 line, u32 lowMe) {
-  if (INPLACE == 3 && TILE64 % WMUL == 0) {
+  if (INPLACE64 == 3 && TILE64 % WMUL == 0) {
     u32 line0 = gr * WMUL;
     if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
     in += line0 / SMALL_HEIGHT * SIZEM + line0 % TILE64 * SIZEBLK + line0 % SMALL_HEIGHT / TILE64 * TILE64;
@@ -761,7 +761,7 @@ void OVERLOAD readCarryFusedLines(CP(T2_GF61) in, T2_GF61 *u, u32 gr, u32 me, u3
 }
 
 void OVERLOAD writeCarryFusedLines(T2_GF61 *u, P(T2_GF61) out, u32 gr, u32 me, u32 line, u32 lowMe) {
-  if (INPLACE == 3 && TILE64 % WMUL == 0) {
+  if (INPLACE64 == 3 && TILE64 % WMUL == 0) {
     u32 line0 = gr * WMUL;
     if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
     out += line0 / SMALL_HEIGHT * SIZEM + line0 % TILE64 * SIZEBLK + line0 % SMALL_HEIGHT / TILE64 * TILE64;
@@ -805,7 +805,7 @@ void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 #define TAIL_LINE_START(line) ((line) / WIDTH * SIZEM + (line) % WIDTH * SIZEBLK + (line) % WIDTH / TILE64 * (BLKPAD / 16))
 
 void OVERLOAD readTailFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
-  if (INPLACE == 3) {
+  if (INPLACE64 == 3) {
     in += TAIL_LINE_START(line) + me;
     for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT / NH)]); }
     return;
@@ -817,7 +817,7 @@ void OVERLOAD readTailFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
 }
 
 void OVERLOAD writeTailFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) {
-  if (INPLACE == 3) {
+  if (INPLACE64 == 3) {
     out += TAIL_LINE_START(line) + me;
     for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[i * (SMALL_HEIGHT / NH)], u[i]); }
     return;
@@ -865,12 +865,12 @@ void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
 //****************************************************************************************
 
 // NOTE: I hven't studied best padding/swizzling/memory layout for 32-bit values.  I'm assuming the 64-bit values scheme will be pretty good.
-#if INPLACE == 3                                               // Padded, not swizzled (see INPLACE=3 above)
+#if INPLACE32 == 3                                               // Padded, not swizzled (see INPLACE=3 above)
 #define SIZEBLK32 (SMALL_HEIGHT + ROWPAD / 8)                  // Pads in bytes, 8-byte values
 #define SIZEW32   (TILE32 * SIZEBLK32 + BLKPAD / 8)
 #define SIZEM32   (WIDTH / TILE32 * SIZEW32 + MIDPAD / 8)
 #define SWIZ32(a,m) (m)
-#elif INPLACE == 1                                               // nVidia friendly padding
+#elif INPLACE32 == 1                                               // nVidia friendly padding
 // Place middle rows after first 16 rows
 //#define SIZEBLK32 (SMALL_HEIGHT + 16)                          // Pad 128 bytes
 //#define SIZEW32   (16 * SIZEA + 16)                            // Pad 128 bytes
@@ -914,7 +914,7 @@ void OVERLOAD writeCarryFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) 
 
 // The same for all WMUL lines of carryFused workgroup gr, see readCarryFusedLines above
 void OVERLOAD readCarryFusedLines(CP(F2_GF31) in, F2_GF31 *u, u32 gr, u32 me, u32 line, u32 lowMe) {
-  if (INPLACE == 3 && TILE32 % WMUL == 0) {
+  if (INPLACE32 == 3 && TILE32 % WMUL == 0) {
     u32 line0 = gr * WMUL;
     if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
     in += line0 / SMALL_HEIGHT * SIZEM32 + line0 % TILE32 * SIZEBLK32 + line0 % SMALL_HEIGHT / TILE32 * TILE32;
@@ -926,7 +926,7 @@ void OVERLOAD readCarryFusedLines(CP(F2_GF31) in, F2_GF31 *u, u32 gr, u32 me, u3
 }
 
 void OVERLOAD writeCarryFusedLines(F2_GF31 *u, P(F2_GF31) out, u32 gr, u32 me, u32 line, u32 lowMe) {
-  if (INPLACE == 3 && TILE32 % WMUL == 0) {
+  if (INPLACE32 == 3 && TILE32 % WMUL == 0) {
     u32 line0 = gr * WMUL;
     if (line0 >= BIG_HEIGHT) line0 -= BIG_HEIGHT;
     out += line0 / SMALL_HEIGHT * SIZEM32 + line0 % TILE32 * SIZEBLK32 + line0 % SMALL_HEIGHT / TILE32 * TILE32;
@@ -970,7 +970,7 @@ void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
 #define TAIL_LINE_START32(line) ((line) / WIDTH * SIZEM32 + (line) % WIDTH * SIZEBLK32 + (line) % WIDTH / TILE32 * (BLKPAD / 8))
 
 void OVERLOAD readTailFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
-  if (INPLACE == 3) {
+  if (INPLACE32 == 3) {
     in += TAIL_LINE_START32(line) + me;
     for (i32 i = 0; i < NH; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT / NH)]); }
     return;
@@ -982,7 +982,7 @@ void OVERLOAD readTailFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
 }
 
 void OVERLOAD writeTailFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {
-  if (INPLACE == 3) {
+  if (INPLACE32 == 3) {
     out += TAIL_LINE_START32(line) + me;
     for (i32 i = 0; i < NH; ++i) { FFTSTORE(&out[i * (SMALL_HEIGHT / NH)], u[i]); }
     return;

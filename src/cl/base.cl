@@ -121,6 +121,17 @@ G_H        "group height" == SMALL_HEIGHT / NH
 #if INPLACE < 0 || INPLACE > 3
 #error INPLACE must be 0, 1, 2 or 3
 #endif
+// Hidden, for testing:  the in-place layout (1, 2 or 3) of the 64-bit data types (FP64, GF61) and of the 32-bit ones (FP32, GF31),
+// INPLACE by default (Gpu.cpp passes them only in place).  INPLACE=0 cannot be split.
+#if !defined(INPLACE64)
+#define INPLACE64 INPLACE
+#endif
+#if !defined(INPLACE32)
+#define INPLACE32 INPLACE
+#endif
+#if (INPLACE == 0) != (INPLACE64 == 0) || (INPLACE == 0) != (INPLACE32 == 0) || INPLACE64 > 3 || INPLACE32 > 3
+#error INPLACE64 and INPLACE32 must be 1, 2 or 3 in place, else 0
+#endif
 
 // FFT variant is in 3 parts.  One digit for WIDTH, one digit for MIDDLE, one digit for HEIGHT.
 // For WIDTH and HEIGHT there are 3 variants:

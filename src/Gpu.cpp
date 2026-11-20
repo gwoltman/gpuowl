@@ -356,7 +356,7 @@ CARRY_SIZE = 100000
 // only in the local config and in the out-parameters.  args is const: writing such a change back into args.flags would carry it into
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 nH, const vector<KeyVal>& extraConf, u64 E, bool doLog,
-                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &pad_size, u32 &wmul,
+                 bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &in_place64, u32 &in_place32, u32 &pad_size, u32 &wmul,
                  u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q) {
   map<string, string> config;
 
@@ -428,6 +428,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
                               "DEBUG",
                               "CARRY64",
                               "INPLACE",
+                              "INPLACE64","INPLACE32",  // Hidden, for testing:  the in-place layout (1-3) of the 64-bit / 32-bit data types (see base.cl)
                               "PAD",
                               "MIDDLE_IN_LDS_TRANSPOSE",
                               "MIDDLE_OUT_LDS_TRANSPOSE",
@@ -514,10 +515,27 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     }
   }
 
+  // INPLACE64 / INPLACE32 (hidden, for testing):  the in-place layouts of the 64-bit and the 32-bit data types, INPLACE by default.
+  // Out of place (INPLACE=0) they do not apply.
+  in_place64 = in_place32 = in_place;
+  for (auto [key, ip] : {pair<const char*, u32*>{"INPLACE64", &in_place64}, {"INPLACE32", &in_place32}}) {
+    if (!config.contains(key)) { continue; }
+    if (!in_place) {
+      config.erase(key);
+      if (doLog) { log("Note: -use %s applies only in place (INPLACE 1, 2 or 3)\n", key); }
+      continue;
+    }
+    *ip = atoi(config[key].c_str());
+    if (*ip < 1 || *ip > 3) {
+      log("Invalid %s=%u, must be 1, 2 or 3\n", key, *ip);
+      throw "invalid INPLACE64 / INPLACE32";
+    }
+  }
+
   // INPLACE=3's pads (see middle.cl), in bytes:  after every tail line, after every block of TILE tail lines, after every middle.
   // Tuned on a Radeon Pro VII at 512:9:512 and 512:16:512.  Multiples of 256 keep every run of TILE values in one 256-byte block.
   // They size the buffers (IP3_PADS in Gpu.h), so the kernels get the values used here.
-  if (in_place == 3) {
+  if (in_place64 == 3 || in_place32 == 3) {
     struct { const char* key; u32 def, max; } const padKeys[] = {{"ROWPAD", 256, 63 * 256}, {"BLKPAD", 256, 63 * 256}, {"MIDPAD", 2048, 1023 * 256}};
     u32 pads[3];
     for (u32 i = 0; i < 3; ++i) {
@@ -849,7 +867,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // The openCL code needs to know the offset to the data and trig values.  Distances are in "number of double2 values".
   if (fft.FFT_FP64 && fft.NTT_GF31) {
     // GF31 data is located after the FP64 data.  Compute size of the FP64 data and trigs.
-    defines += toDefine("DISTGF31",      FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF31",      FP64_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place64, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nW, nH));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP64_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
@@ -857,25 +875,25 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   else if (fft.FFT_FP32 && fft.NTT_GF31 && fft.NTT_GF61) {
     // GF31 and GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
     u32 sz1, sz2, sz3, sz4;
-    defines += toDefine("DISTGF31",      sz1 = FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF31",      sz1 = FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place32, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF31", sz2 = SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nW, nH));
     defines += toDefine("DISTMTRIGGF31", sz3 = MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", sz4 = SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
-    defines += toDefine("DISTGF61",      sz1 + GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF61",      sz1 + GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place32, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF61", sz2 + SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nW, nH));
     defines += toDefine("DISTMTRIGGF61", sz3 + MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", sz4 + SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF31) {
     // GF31 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-    defines += toDefine("DISTGF31",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF31",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place32, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF31", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nW, nH));
     defines += toDefine("DISTMTRIGGF31", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF31", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
   }
   else if (fft.FFT_FP32 && fft.NTT_GF61) {
     // GF61 data is located after the FP32 data.  Compute size of the FP32 data and trigs.
-    defines += toDefine("DISTGF61",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF61",      FP32_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place32, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF61", SMALLTRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nW, nH));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_FP32_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
@@ -886,7 +904,7 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     defines += toDefine("DISTMTRIGGF31", 0);
     defines += toDefine("DISTHTRIGGF31", 0);
     // GF61 data is located after the GF31 data.  Compute size of the GF31 data and trigs.
-    defines += toDefine("DISTGF61",      GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place, pad_size) / 2);
+    defines += toDefine("DISTGF61",      GF31_DATA_SIZE(fft.shape.width, fft.shape.middle, fft.shape.height, in_place32, pad_size) / 2);
     defines += toDefine("DISTWTRIGGF61", SMALLTRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nW, nH));
     defines += toDefine("DISTMTRIGGF61", MIDDLETRIG_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height));
     defines += toDefine("DISTHTRIGGF61", SMALLTRIGCOMBO_GF31_DIST(fft.shape.width, fft.shape.middle, fft.shape.height, nH));
@@ -1234,7 +1252,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   queue{*shared.context, args.profile, false, args.value("SLEEP_WAIT", -1)},
   copyQueue{*shared.context, args.profile, true},
       
-  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, pad_size, wmul,
+  compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, in_place64, in_place32, pad_size, wmul,
                                multi_q, l2_striping, graphs, zero_q)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
@@ -1402,9 +1420,9 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   hostStage{copyQueue, N * fft.WordSize / sizeof(Word)},
   hostStageSum{copyQueue, 1},
 
-  BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
-  BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
-  BUF(buf3, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place, pad_size)),
+  BUF(buf1, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place64, in_place32, pad_size)),
+  BUF(buf2, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place64, in_place32, pad_size)),
+  BUF(buf3, TOTAL_DATA_SIZE(fft, WIDTH, fft.shape.middle, SMALL_H, in_place64, in_place32, pad_size)),
 #undef BUF
 
   statsBits{u32(args.value("STATS", 0))},

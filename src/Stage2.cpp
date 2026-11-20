@@ -167,7 +167,7 @@ class Stage2Run {
 
 public:
   static size_t bufDoubles(const Gpu& g) {
-    return size_t(TOTAL_DATA_SIZE(g.fft, g.WIDTH, g.fft.shape.middle, g.SMALL_H, g.in_place, g.pad_size));
+    return size_t(TOTAL_DATA_SIZE(g.fft, g.WIDTH, g.fft.shape.middle, g.SMALL_H, g.in_place64, g.in_place32, g.pad_size));
   }
 
   // Bytes of a residue (word) buffer
@@ -175,7 +175,7 @@ public:
 
   // The same for another FFT with g's layout settings (INPLACE, PAD)
   static size_t bufDoubles(const Gpu& g, const FFTConfig& fft) {
-    return size_t(TOTAL_DATA_SIZE(fft, fft.shape.width, fft.shape.middle, fft.shape.height, g.in_place, g.pad_size));
+    return size_t(TOTAL_DATA_SIZE(fft, fft.shape.width, fft.shape.middle, fft.shape.height, g.in_place64, g.in_place32, g.pad_size));
   }
 
   Stage2Run(Gpu& g, const pm1::Stage2Plan& plan, const vector<u32>& x) :
