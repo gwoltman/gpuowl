@@ -605,3 +605,30 @@ string numberK(u64 n) {
     return to_string(n);
  
 }
+
+std::optional<Pm1Fft> nextFit(const Args& args, u64 E, const FFTConfig& cur) {
+  if (!args.fftSpec.empty()) { return {}; }
+  auto const fits = [&](const FFTConfig& fft) {
+    return fft.maxExp() * args.fftOverdrive >= E && E / float(fft.size()) >= fft.minBpw() && fft.maxExp() > cur.maxExp()
+        && (hasFP64(getDevice(args.device)) || !fft.FFT_FP64);
+  };
+
+  vector<TuneEntry> const tunes = TuneEntry::readTuneFile(args);
+  auto it = std::ranges::find_if(tunes, [&](const TuneEntry& e) { return e.fft.spec() == cur.spec(); });
+  if (it != tunes.end()) {
+    for (++it; it != tunes.end(); ++it) {
+      if (fits(it->fft)) { return Pm1Fft{it->fft, it->uses, Pm1Fft::TUNED}; }
+    }
+  }
+
+  std::optional<FFTConfig> best;
+  for (const FFTShape& shape : FFTShape::allShapes()) {
+    if (shape.fft_type != cur.shape.fft_type) { continue; }
+    for (u32 const v : {101, 202}) {
+      FFTConfig const fft{shape, v, CARRY_AUTO};
+      if (fits(fft) && (!best || fft.size() < best->size() || (fft.size() == best->size() && fft.maxExp() > best->maxExp()))) { best = fft; }
+    }
+  }
+  if (best) { return Pm1Fft{*best, TuneEntry::usesFor(args, *best), Pm1Fft::UNTUNED}; }
+  return {};
+}

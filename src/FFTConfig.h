@@ -4,6 +4,7 @@
 
 #include "common.h"
 
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -169,3 +170,8 @@ struct Pm1Fft {
 //   by a quick timing of each (Stage2::run).  M31 and FP32 alone are not offered (stage 2 does not support them).  Untuned stage 1 takes
 //   PRP's untuned list (FFTConfig::untunedFits) instead:  it is Gerbicz-checked as PRP is.
 vector<Pm1Fft> pm1Ffts(const Args& args, u64 E, bool stage2 = false);
+
+// The FFT to retry a PRP test of E on after a repeatable error on cur:  the next tune.txt entry after cur's that handles E with a larger
+// max exponent (the entries are in order of cost:  the next is the more accurate), else the best guess, the smallest FFT of cur's type
+// with a larger max exponent.  None with an -fft spec, or when no FFT is more accurate.
+std::optional<Pm1Fft> nextFit(const Args& args, u64 E, const FFTConfig& cur);

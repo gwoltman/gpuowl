@@ -44,6 +44,13 @@ struct PRPResult {
   bool pm1Factor{};     // the P-1 inside the PRP test found a factor (its result line is written):  the PRP test stopped
 };
 
+// isPrimePRP's repeatable error:  the same wrong residue twice, at the check of iteration k.  Task::execute retries on a more
+// accurate FFT (FFTConfig::nextFit).  nErrors:  the Gerbicz errors so far, for the next Gpu (Gpu::nErrorsBefore).
+struct PrpConsistentError { u64 k; u32 nErrors; };
+// isPrimePRP on the retry FFT passed the check at Gpu::backAfterK or a later one, and its savefile is written:  Task::execute goes
+// back to the original FFT.
+struct PrpPastFailPoint { u64 k; u32 nErrors; };
+
 struct LLResult {
   bool isPrime;
   u64 res64;
@@ -115,6 +122,8 @@ class Gpu {
   std::atomic<bool> proofSaveFailed{false};
 
 public:
+  u64 backAfterK = 0;      // PRP on a retry FFT (Task::execute):  stop with PrpPastFailPoint at the first passed check at or after it
+  u32 nErrorsBefore = 0;   // PRP:  the Gerbicz errors on the FFTs before this one (the savefile may hold fewer)
   Args args;     // This Gpu's own copy: the shared args plus the FFT's tune.txt settings (see withFftUses)
 
 private:

@@ -592,6 +592,8 @@ void Task::execute(GpuCommon shared, u32 instance) {
   // compiler that can't build the FP32 code), move on to the next.  Kernels compile on first use, so this can surface after the
   // work has started; the savefiles hold plain residues, so the next FFT resumes from them.  Other errors are not retried.
   // P-1 with an -fft never moves to an FFT the user did not give.
+  u32 nConsistent = 0;      // PRP's repeatable errors (see PrpConsistentError below)
+  u32 nErrors = 0;          // PRP's Gerbicz errors on the FFTs left, for the next Gpu
   for (size_t i = 0; ; ++i) {
     bool const last = i + 1 == ffts.size();
     auto const failed = [&](const string& mes) {
@@ -605,8 +607,35 @@ void Task::execute(GpuCommon shared, u32 instance) {
       return true;
     };
     try {
-      executeWith(shared, instance, ffts[i].fft, ffts[i].uses);
+      executeWith(shared, instance, ffts[i].fft, ffts[i].uses, 0, nErrors);
       return;
+    } catch (const PrpConsistentError& e) {
+      nErrors = e.nErrors;
+      // A repeatable PRP error:  from the last savefile on the next more accurate FFT, and back to this FFT once that one passed the
+      // failing iteration.  On the second repeatable error in this process the test stays on the more accurate FFT (counted here only,
+      // not in the savefile); one there too stops the test.
+      const FFTConfig& cur = ffts[i].fft;
+      std::optional<Pm1Fft> const next = nextFit(*shared.args, exponent, cur);
+      if (!next) {
+        log("No FFT more accurate than %s to retry on%s, will stop.\n", cur.spec().c_str(), shared.args->fftSpec.empty() ? "" : " (-fft given)");
+        throw "consistent error";
+      }
+      bool const stay = ++nConsistent >= 2;
+      log("Retrying from the last savefile with FFT %s (%s, max %" PRIu64 ")%s\n", next->fft.spec().c_str(),
+          next->source == Pm1Fft::TUNED ? "next tune.txt entry" : "untuned", next->fft.maxExp(),
+          stay ? ", for the rest of the test (second repeatable error)" : ", until it passes the failing iteration");
+      try {
+        executeWith(shared, instance, next->fft, next->uses, stay ? 0 : e.k, nErrors);
+        return;
+      } catch (const PrpConsistentError&) {
+        log("Repeatable error on FFT %s too, will stop.\n", next->fft.spec().c_str());
+        throw "consistent error";
+      } catch (const PrpPastFailPoint& p) {
+        nErrors = p.nErrors;
+        log("FFT %s passed iteration %" PRIu64 " (the error was at %" PRIu64 "), back to FFT %s\n", next->fft.spec().c_str(), p.k, e.k,
+            cur.spec().c_str());
+      }
+      --i;      // this FFT again
     } catch (const string& mes) {
       if (!failed(mes)) { throw; }
     } catch (const std::exception& e) {
@@ -615,8 +644,10 @@ void Task::execute(GpuCommon shared, u32 instance) {
   }
 }
 
-void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vector<KeyVal>& fftUses) {
+void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vector<KeyVal>& fftUses, u64 backAfterK, u32 nErrorsBefore) {
   auto gpu = Gpu::make(exponent, shared, fft, {}, true, fftUses);
+  gpu->backAfterK = backAfterK;
+  gpu->nErrorsBefore = nErrorsBefore;
 
   if (kind == VERIFY) {
     Proof const proof{Proof::load(verifyPath)};

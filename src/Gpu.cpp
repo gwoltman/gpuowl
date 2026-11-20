@@ -3317,6 +3317,43 @@ double Gpu::timePRP(int quick) {        // Quick varies from 1 (slowest, longest
   return secsPerIt * 1e6;
 }
 
+#ifdef PRPLL_PRP_FAULTS
+// TEST ONLY, compiled in only with -DPRPLL_PRP_FAULTS (make BIN=build-prpfaults CPPFLAGS=-DPRPLL_PRP_FAULTS); a normal build has none
+// of this.  PRPLL_PRP_FAULT="<k>[:<fft spec>],..." flips bit 39 of the PRP residue right after iteration k, at every pass, on the
+// FFT given (as the log prints its spec) or on any FFT:  a repeatable error on that FFT, to test the retry on the next FFT
+// (Task::execute).  k must not be a multiple of the block size (the check would take the flipped residue in as a correct one), and
+// in the second half of a check step:  after the first error the check step halves, and the check at its middle has to pass for
+// the next one to see the same wrong residue.
+namespace {
+struct PrpFault { u64 k; string spec; };
+
+const vector<PrpFault>& prpFaults() {
+  static vector<PrpFault> const faults = [] {
+    vector<PrpFault> v;
+    const char *env = getenv("PRPLL_PRP_FAULT");
+    if (!env) { return v; }
+    for (const string& item : ::split(env, ',')) {
+      auto colon = item.find(':');
+      v.push_back({stoull(item.substr(0, colon)), colon == string::npos ? "" : item.substr(colon + 1)});
+    }
+    return v;
+  }();
+  return faults;
+}
+
+bool prpFaultAt(u64 k, const FFTConfig& fft) {
+  return std::ranges::any_of(prpFaults(), [&](const PrpFault& f) { return f.k == k && (f.spec.empty() || f.spec == fft.spec()); });
+}
+
+// The first fault after k (UINT64_MAX:  none)
+u64 nextPrpFault(u64 k) {
+  u64 next = UINT64_MAX;
+  for (const PrpFault& f : prpFaults()) { if (f.k > k) { next = std::min(next, f.k); } }
+  return next;
+}
+}
+#endif
+
 PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm1Report) {
   assert(E == task.exponent);
   auto pm1FactorResult = [] { PRPResult r{}; r.pm1Factor = true; return r; };
@@ -3329,7 +3366,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   // This timer is used to measure total elapsed time to be written to the savefile.
   Timer elapsedTimer;
 
-  u32 nErrors = 0;
+  u32 nErrors = nErrorsBefore;
   int nSeqErrors = 0;
   u64 lastFailedRes64 = 0;
   u32 const logStep = args.logStep;
@@ -3469,6 +3506,9 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     u64 boundary = std::min({roundUp(k + 1, blockSize), eventK, kEnd});     // eventK: the proof residue, and the P-1 steps (Pm1Prp)
     if (extraCheckK > k) { boundary = std::min(boundary, extraCheckK); }
     if (args.iters) { boundary = std::min(boundary, startK + args.iters); }
+#ifdef PRPLL_PRP_FAULTS
+    boundary = std::min(boundary, nextPrpFault(k));
+#endif
     u32 repeat = graphBatch;
     while (repeat > 1 && k + repeat >= boundary) { repeat /= 2; }
     if (repeat > 1 && use_graphs && !useLongCarry && !args.profile &&
@@ -3492,12 +3532,28 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     bool const doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
     bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k == extraCheckK);
     bool const doLog = k % logStep == 0;
-    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || useLongCarry ? LEAD_NONE : LEAD_WIDTH;
+#ifdef PRPLL_PRP_FAULTS
+    bool const fault = prpFaultAt(k, fft);
+#else
+    constexpr bool fault = false;
+#endif
+    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || useLongCarry || fault ? LEAD_NONE : LEAD_WIDTH;
 
     if (doStop) { log("Stopping, please wait..\n"); }
 
     square(bufData, bufData, leadIn, leadOut, false);
     leadIn = leadOut;
+
+#ifdef PRPLL_PRP_FAULTS
+    if (fault) {
+      Words s = readData();
+      if (s.empty()) { s = Words(nWords(E), 0); }
+      u64 const before = residue(s);
+      s[1] ^= u32(1) << 7;
+      writeIn(bufData, s);
+      log("TEST FAULT at %" PRIu64 " on %s: %016" PRIx64 " -> %016" PRIx64 "\n", k, fft.spec().c_str(), before, dataResidue());
+    }
+#endif
 
     if (k == eventK) {
       if (k == persistK) {
@@ -3629,6 +3685,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
           }
           return {.isPrime=isPrime, .res64=finalRes64, .nErrors=nErrors, .proofPath=proofFile.string(), .res2048=toHex(res2048)};
         }
+
+        // A retry FFT past the failing iteration:  its savefile (queued above) on disk, then back to the original FFT
+        if (backAfterK && k >= backAfterK && k < kEnd) {
+          background->waitEmpty();
+          if (proofSaveFailed) { throw "proof residue write failed"; }
+          queue.finish();
+          throw PrpPastFailPoint{k, nErrors};
+        }
       } else {
         ++nErrors;
         doBigLog(k, res, ok, secsPerIt, kEndEnd, nErrors);
@@ -3637,8 +3701,8 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
           throw "too many errors";
         }
         if (res == lastFailedRes64) {
-          log("Consistent error %016" PRIx64 ", will stop.\n", res);
-          throw "consistent error";
+          log("Consistent error %016" PRIx64 " at %" PRIu64 "\n", res, k);
+          throw PrpConsistentError{k, nErrors};
         }
         lastFailedRes64 = res;
         if (!doStop) { goto reload; }
