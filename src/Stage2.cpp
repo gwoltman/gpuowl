@@ -64,6 +64,13 @@ constexpr size_t HEADROOM_BYTES = Stage2::HEADROOM_BYTES;   // kept back from th
 // with a fixed overhead of about 1 GiB beyond the headroom; not settled (stage2-design.md "Stage 2 v2")
 constexpr size_t ALLOC_GRANULE = size_t(2) << 20;
 size_t allocBytes(size_t bytes) { return (bytes + ALLOC_GRANULE - 1) / ALLOC_GRANULE * ALLOC_GRANULE; }
+
+// The table buffers of bufBytes that a budget of `budget` bytes leaves room for, after EXTRA_BUFS more of bufBytes and WORD_BUFS of
+// wordBytes (0: none)
+u64 tableRoom(double budget, size_t bufBytes, size_t wordBytes) {
+  double const forTable = budget - double(WORD_BUFS) * wordBytes;
+  return forTable > double(bufBytes) * (EXTRA_BUFS + 1) ? u64(forTable / bufBytes) - EXTRA_BUFS : 0;
+}
 constexpr float MAX_ROE = 0.4f;
 constexpr int MAX_RETRIES = 3;
 // The untuned FFT candidates are timed (Stage2::timeMul) before a stage 2 with at least this many primes, about B2 = 8M:  about a second
@@ -559,6 +566,19 @@ Stage2::MulTime Stage2::timeMul(GpuCommon shared, u64 E, const FFTConfig& fft, c
   auto gpu = Gpu::make(E, shared, fft, {}, false, uses);
   Gpu& g = *gpu;
 
+  // The TABLE + EXTRA_BUFS big buffers must fit, or the allocation fails with only a "std::bad_alloc".  On a small GPU the larger FFTs'
+  // do not (a 4 GB GTX 1650 Super:  FP32+M31+M61 6M, about 3.4 GB with the Gpu's own buffers, while PRP runs up to 24M in about 2.2 GB:
+  // PRP holds 3 big buffers, this 30).  Such an FFT is not timed.  A real stage 2 still runs on it, with a table sized to the memory.
+  size_t const bufBytes = allocBytes(Stage2Run::bufDoubles(g) * sizeof(double));
+  size_t const wordBytes = allocBytes(Stage2Run::wordBytes(g));
+  if (double const budget = deviceBudget(shared).bytes; tableRoom(budget, bufBytes, wordBytes) < TABLE) {
+    double const GB = double(1u << 30);
+    log("%s: not timed, stage 2 timing needs %.2f GB of GPU memory (%u buffers of %.0f MB and %u of %.0f MB), %.2f GB is available\n",
+        fft.spec().c_str(), (double(TABLE + EXTRA_BUFS) * bufBytes + double(WORD_BUFS) * wordBytes) / GB, TABLE + EXTRA_BUFS,
+        bufBytes / double(1u << 20), WORD_BUFS, wordBytes / double(1u << 20), std::max(0.0, budget) / GB);
+    return {std::numeric_limits<double>::infinity()};
+  }
+
   // A fixed pseudo-random x (a stage 1 residue looks random), the first TABLE n of D = 2310 for the table and a k as in a real stage 2,
   // so that every FFT computes the same accumulator for E
   vector<u32> x(nWords(E));
@@ -785,9 +805,7 @@ Budget memoryBudget(GpuCommon shared, size_t bufBytes, size_t wordBytes, const c
              RESERVE_BYTES / GB);
   }
   log("Stage 2 memory%s: %s, %s => budget %.2f GB\n", what, memNote, capNote, std::max(0.0, budget) / GB);
-  double const forTable = budget - double(WORD_BUFS) * wordBytes;
-  u64 const maxN = forTable > double(bufBytes) * (EXTRA_BUFS + 1) ? u64(forTable / bufBytes) - EXTRA_BUFS : 0;
-  return {budget, maxN};
+  return {budget, tableRoom(budget, bufBytes, wordBytes)};
 }
 
 } // namespace
