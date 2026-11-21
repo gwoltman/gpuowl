@@ -1711,12 +1711,14 @@ void Tune::pm1Tune(const Pm1Options& opt) {
     return uses;
   };
 
-  // FP64 or NTT:  as tune() decides, by one FFT64 and one M31+M61 timing in the middle of the range (the smallest of each that handles it)
+  // FP64 or NTT:  as tune() decides, by one FFT64 and one M31+M61 timing (the smallest of each that handles the exponent) at 141M, or in
+  // the middle of a range without 141M.  The middle of a wide range (e.g. maxexp=14G) may be beyond every FP64 FFT and beyond what the
+  // stage 2 timing of an NTT can fit in memory.
   bool timeFFTs = opt.fp64 && fp64Device, timeNTTs = opt.ntt || !fp64Device;
   if (specGiven) {
     timeFFTs = timeNTTs = true;
   } else if (!timeFFTs && !timeNTTs) {
-    u64 const E = primes.prevPrime(opt.minExp / 2 + opt.maxExp / 2);
+    u64 const E = (opt.minExp <= 141000001 && 141000001 <= opt.maxExp) ? 141000001 : primes.prevPrime(opt.minExp / 2 + opt.maxExp / 2);
     vector<FFTShape> sizes = FFTShape::allShapes();
     std::ranges::stable_sort(sizes, [](const FFTShape& a, const FFTShape& b) { return a.size() < b.size(); });
     auto const smallest = [&](enum FFT_TYPES type) -> optional<FFTConfig> {
@@ -1732,7 +1734,9 @@ void Tune::pm1Tune(const Pm1Options& opt) {
         ntt ? ntt->spec().c_str() : "-", nttTime);
     timeFFTs = fp64Time < 1.20 * nttTime;
     timeNTTs = nttTime < 1.20 * fp64Time || !std::isfinite(fp64Time);
-    log("%s\n", !timeFFTs ? "FP64 FFTs are significantly slower for stage 2.  Only NTTs will be timed." :
+    if (!std::isfinite(fp64Time) && !std::isfinite(nttTime)) { timeFFTs = timeNTTs = true; }   // nothing to compare
+    log("%s\n", !std::isfinite(fp64Time) && !std::isfinite(nttTime) ? "Neither could be timed.  Both FP64 FFTs and NTTs will be timed." :
+                !timeFFTs ? "FP64 FFTs are significantly slower for stage 2.  Only NTTs will be timed." :
                 !timeNTTs ? "FP64 FFTs are significantly faster for stage 2.  Only FP64 FFTs will be timed." : "Both FP64 FFTs and NTTs will be timed.");
   }
 
