@@ -976,6 +976,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
                                            .plan = pm1::Stage2Plan::VERSION, .x64 = x64, .nMul = 0, .acc = makeWords(E, 1), .elapsed = 0};
   state.plan = pm1::Stage2Plan::VERSION;
   if (resume) { log("Stage 2 resuming at k=%" PRIu64 " (%" PRIu64 " multiplications done)\n", state.k, state.nMul); }
+  u32 nErrors = state.errors;     // failed checks, each going back to the last checkpoint (the next checkpoint saves the count)
 
   std::mt19937_64 rng{std::random_device{}()};
 
@@ -1039,22 +1040,22 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
         if (!s2.aOK(k)) { log("EE stage 2: A_k differs from x^((kD)^2) at k=%" PRIu64 "\n", k); ok = false; break; }
         double const elapsed = elapsedAtStart + sinceCheckpoint.at();
         state = P2State{.exponent = E, .k = k, .B1 = B1, .B2 = B2, .D = D, .M = M, .plan = pm1::Stage2Plan::VERSION, .x64 = x64,
-                        .nMul = nMul, .acc = a, .elapsed = elapsed};
+                        .nMul = nMul, .acc = a, .elapsed = elapsed, .errors = nErrors};
         saver.save(state);
         elapsedAtStart = elapsed;
         sinceCheckpoint.reset();
         retries = 0;
         if (atEnd) {
-          log("Stage 2 done: %" PRIu64 " multiplications, %.0fs, %.1f us/mul, max ROE %.3f, ROE %s, acc %016" PRIx64 "\n",
-              nMul, elapsed, usPerMul(), s2.maxROE(), s2.roe().toString().c_str(), res64(a));
+          log("Stage 2 done: %" PRIu64 " multiplications, %.0fs, %.1f us/mul, max ROE %.3f, ROE %s, acc %016" PRIx64 ", failed checks %u\n",
+              nMul, elapsed, usPerMul(), s2.maxROE(), s2.roe().toString().c_str(), res64(a), nErrors);
           if (args.profile) { g.logTimeKernels(); }
-          return {.status = Stage2Result::DONE, .acc = a, .nMul = nMul};
+          return {.status = Stage2Result::DONE, .acc = a, .nMul = nMul, .nErrors = nErrors};
         }
         if (stop) {
           log("Stage 2 stopped at k=%" PRIu64 " (%" PRIu64 " of %" PRIu64 " multiplications), %.1f us/mul, max ROE %.3f, ROE %s\n", k, nMul,
               mulsTotal, usPerMul(), s2.maxROE(), s2.roe().toString().c_str());
           if (args.profile) { g.logTimeKernels(); }
-          return {.status = Stage2Result::STOPPED, .nMul = nMul};
+          return {.status = Stage2Result::STOPPED, .nMul = nMul, .nErrors = nErrors};
         }
       }
 
@@ -1099,6 +1100,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
       }
     }
 
+    ++nErrors;
     if (++retries > MAX_RETRIES) { throw "stage 2: too many errors"; }
     log("Stage 2 going back to k=%" PRIu64 " (retry %d)\n", state.k, retries);
   }

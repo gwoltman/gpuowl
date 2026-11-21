@@ -533,7 +533,7 @@ Pm1Prp::Outcome Pm1Prp::finish(u64 k, u64 prp64) {
   }
   vector<string> const factors = pm1::gcdFactor(g, 1, E);
   if (!factors.empty()) {
-    report(B1, 0, factors, nErrors);
+    report(B1, 0, factors, nErrors, 0);
     save(k, prp64, 2);
     factor = true;
     return FACTOR;
@@ -543,7 +543,7 @@ Pm1Prp::Outcome Pm1Prp::finish(u64 k, u64 prp64) {
     save(k, prp64, 1);
     stage2Due = true;
   } else {
-    report(B1, 0, {}, nErrors);
+    report(B1, 0, {}, nErrors, 0);
     save(k, prp64, 2);
   }
   return CONTINUE;
@@ -557,6 +557,7 @@ Pm1Prp::Outcome Pm1Prp::afterSave() {
   Words const x = X.empty() ? makeWords(E, 1) : X;
   log("P-1 in the PRP test: stage 2 to B2=%" PRIu64 " (the PRP test waits)\n", B2);
   u64 doneB2 = 0;
+  u32 nStage2Errors = 0;
   vector<string> factors;
   // Stage 2 must not stop the PRP test:  an error in it (an FFT that can't be built, an -fft it refuses, a GPU error) gives the result
   // for B1 alone, as a stage 2 that declines does
@@ -571,6 +572,7 @@ Pm1Prp::Outcome Pm1Prp::afterSave() {
       Gcd gcd{gpu.shared};
       factors = Stage2::accFactor(gcd, r.acc, E, B1, B2);
       doneB2 = B2;
+      nStage2Errors = r.nErrors;
     } else {
       log("P-1 stage 2 (B2=%" PRIu64 ") is not run (%s); the result is for B1=%" PRIu64 " only\n", B2, r.why.c_str(), B1);
     }
@@ -589,7 +591,7 @@ Pm1Prp::Outcome Pm1Prp::afterSave() {
     factors.clear();
     doneB2 = 0;
   }
-  report(B1, doneB2, factors, nErrors);
+  report(B1, doneB2, factors, nErrors, nStage2Errors);
   save(doneK, done64, 2);
   gpu.background->waitEmpty();
   Saver<P2State>::clear(E);

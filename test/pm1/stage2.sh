@@ -207,13 +207,15 @@ fault_tests() {
   fi
   local p=400381 B1=500 B2=30000 d kind
   # table: a table entry overwritten (caught at the next checkpoint by its sum);  A: A_k overwritten (caught against x^((kD)^2));
-  # acc: the accumulator overwritten in a duplicated block.  Each goes back to the last checkpoint and ends with GMP's accumulator.
+  # acc: the accumulator overwritten in a duplicated block.  Each goes back to the last checkpoint and ends with GMP's accumulator,
+  # and the result and the last savefile count the one failed check.
   for kind in table A acc; do
     d=$WORK/fault-$kind
     setup "$d" "$p" "$B1" "$B2"
     PRPLL_STAGE2_FAULT=$kind,5 run "$d" "$FAULT_PRPLL"
     if grep -q "TEST FAULT: a simulated '$kind'" "$d/out" && grep -q "Stage 2 going back to k=" "$d/out" && stage2Oracle "$d" "$p" "$B1" "$B2" \
-       && result "$d" "$p" "$B1" "$B2" "$(cat "$d/gcd2")"; then
+       && result "$d" "$p" "$B1" "$B2" "$(cat "$d/gcd2")" && grep -q '"stage2":1}' "$d/results-0.txt" \
+       && head -1 "$(lastSave "$d" p2 "$p")" | grep -q ' errors=1$'; then
       pass "stage 2 fault $kind: $(grep 'EE stage 2' "$d/out" | head -1 | sed 's/.*EE stage 2: //'), went back, acc = GMP"
     else
       fail "stage 2 fault $kind (see $d)"

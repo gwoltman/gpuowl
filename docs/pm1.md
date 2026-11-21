@@ -29,6 +29,8 @@ When the work is done, PRPLL deletes the line and appends a JSON result to `resu
 - `b1` and `b2` are the bounds that were actually covered. `b2` is present only when stage 2 ran.
 - Factors are given in decimal. A GCD that is a product of several factors is reported whole, as Prime95 does: it is not split.
 - `errors` holds the number of failed Gerbicz checks in stage 1. With `-use PM1_JACOBI=1` it also holds the number of failed Jacobi checks.
+  When stage 2 ran, `stage2` is the number of its checks that failed (see [Checks](#stage-2)); each failure was redone from the last
+  checkpoint, so the result is still good. The count is kept in the stage 2 savefile, so it covers every run of the stage 2.
 
 ## Old gpuowl options
 
