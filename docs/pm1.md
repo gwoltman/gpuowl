@@ -132,7 +132,10 @@ twice the range of n to build.
 - A_k is checked against a direct exponentiation at every checkpoint.
 - acc must be nonzero.
 - The round-off error (ROE) of the carries is checked.
-- One block in 32, chosen at random, is computed twice and the results compared.
+- Blocks chosen at random are computed twice and the results compared: one block in 32 until 64 of them have matched (about 2000
+  blocks), then one in 128. After a failed check it goes back to one in 32. A card with errors in a few percent of its blocks is still caught in
+  the first blocks, one with rarer errors about 4 times later than at one in 32, and a sound card spends about 0.8% of stage 2 on the
+  duplicates instead of 3.1%.
 
 A failed check goes back to the last checkpoint. Checkpoints are written to `p2-<p>/`, at least every 10 minutes. A checkpoint holds
 B1, B2, the residue's res64, D, M and the pairing's version. A version 1 checkpoint (no M) is the plan with M = D/2, so it is resumed

@@ -234,7 +234,7 @@ constexpr double K_STEP = 2.0;
 constexpr double TABLE_ODD = 2.0;
 constexpr double TABLE_ENTRY = 1.1;
 constexpr double SETUP = 400;
-constexpr double STAGE2_DUP = 1.0 / 32;    // Stage2:  one block in 32 is computed twice
+constexpr double STAGE2_DUP = 1.0 / 128;   // Stage2:  one block in 128 is computed twice (one in 32 for its first ~2000 blocks)
 
 // The GPU GCD (Gcd.cpp, quadratic, 124 divsteps per launch), XTX:  1.26 s at 10M bits, 10.1 s at 41M, 51.2 s at 100M; PRP (default
 // FFT, -iters 20000) 69.0 us/iteration at 10M, 165.7 at 41M, 400-500 at 100M-136M:  18K, 61K and 102-128K iterations.  A fixed part
