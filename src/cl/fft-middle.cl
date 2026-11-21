@@ -58,8 +58,7 @@
 // order is larger, "outer" is whichever of row/col has the smaller range, and k is 1 (square) or 2 (2:1 ratio), moves the same values
 // without bank conflicts, for 4-byte as well as whole 8-byte elements (verified by simulation).  Other ratios fall back to the plain
 // transpose.
-void middleShuffleIdx(u32 workgroupSize, u32 blockSize, u32 *p1idx, u32 *p2idx) {
-  u32 me = get_local_id(0);
+void middleShuffleIdxMe(u32 me, u32 workgroupSize, u32 blockSize, u32 *p1idx, u32 *p2idx) {
   u32 ROWS = workgroupSize / blockSize;
   u32 row = me / blockSize, col = me % blockSize;
   u32 row_w = me % ROWS, col_w = me / ROWS;
@@ -76,6 +75,10 @@ void middleShuffleIdx(u32 workgroupSize, u32 blockSize, u32 *p1idx, u32 *p2idx) 
     *p1idx = col * ROWS + row;
     *p2idx = me;
   }
+}
+
+void middleShuffleIdx(u32 workgroupSize, u32 blockSize, u32 *p1idx, u32 *p2idx) {
+  middleShuffleIdxMe(get_local_id(0), workgroupSize, blockSize, p1idx, p2idx);
 }
 
 // The LDS row that middleShuffle writes u[i] to.  PFA fftMiddleOut passes pfaRows: pfaMiddleOut leaves out its rotation of the rows

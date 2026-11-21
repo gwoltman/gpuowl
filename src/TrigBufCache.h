@@ -44,7 +44,7 @@ public:
   ~TrigBufCache();
 
   TrigPtr smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 middle, u32 height, u32 nH, bool tail_single_wide);
-  TrigPtr middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 W);
+  TrigPtr middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 W, u32 msplit);
   TrigPtr smallTrig(Args *args, FFTConfig fft, u32 width, u32 nW, u32 middle, u32 height, u32 nH, bool tail_single_wide);
 };
 
@@ -105,3 +105,20 @@ u64 pfaRootOfUnity(u32 q, u32 R);
 #define SMALLTRIG_GF61_DIST(W,M,H,nW,nH)        SMALLTRIG_GF61_SIZE(W,M,H,nW,nH) * sizeof(ulong) / sizeof(double)
 #define SMALLTRIGCOMBO_GF61_DIST(W,M,H,nH)      SMALLTRIGCOMBO_GF61_SIZE(W,M,H,nH) * sizeof(ulong) / sizeof(double)
 #define MIDDLETRIG_GF61_DIST(W,M,H)             MIDDLETRIG_GF61_SIZE(W,M,H) * sizeof(ulong) / sizeof(double)
+
+// MSPLIT (see msplit.cl):  the middleMul2 table of the split 64-bit type, after the regular middle tables of the buffer (the GF61 ones,
+// the last, taken at their largest:  with the Karatsuba terms of their twiddles).  FP64:  W "fancy" roots root(MS * W, k) then H "fancy"
+// roots root(MS * H, k), the steps w^MS of the middleMul2 and middleMul chains of a thread.  GF61:  root(MIDDLE * W, k), k < MS * W,
+// stored as the trig1 table (in the CMUL61_MID2 format with its Karatsuba terms at MS * W + k).  Offsets in double2 from the start of
+// the middle trig buffer, 0 for a type that isn't split; end is the buffer's size.
+struct MsplitTrig { u32 fp64{}, gf61{}, end{}; };
+inline MsplitTrig msplitTrig(u32 W, u32 M, u32 H, bool fp64, bool fp32, bool gf31, bool gf61, bool msplit) {
+  MsplitTrig o{};
+  u32 n = (fp64 ? MIDDLETRIG_FP64_DIST(W, M, H) : 0) + (fp32 ? MIDDLETRIG_FP32_DIST(W, M, H) : 0)
+          + (gf31 ? MIDDLETRIG_GF31_DIST(W, M, H) : 0) + (gf61 ? 2 * (H * M + W) : 0);
+  u32 const ms = M == 9 ? 3 : 4;
+  if (msplit && fp64) { o.fp64 = n; n += W + H; }
+  if (msplit && gf61) { o.gf61 = n; n += 2 * ms * W; }
+  o.end = n;
+  return o;
+}

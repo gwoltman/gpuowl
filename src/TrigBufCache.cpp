@@ -1272,7 +1272,7 @@ static vector<T2> genPfaMiddleTrigFP(u32 smallH, u32 middle, u32 width, Root roo
   return tab;
 }
 
-static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width, bool chain31, u32 fmt61, u32 fmt61b) {
+static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 width, bool chain31, u32 fmt61, u32 fmt61b, u32 msplit) {
   vector<double2> tab;
   size_t tabsize;
 
@@ -1306,6 +1306,28 @@ static vector<double2> genMiddleTrig(FFTConfig fft, u32 smallH, u32 middle, u32 
     tabsize = tab.size();
     tab.resize(tabsize + tab3.size());
     memcpy((double *) tab.data() + tabsize * 2, tab3.data(), tab3.size() * 2 * sizeof(ulong));
+  }
+
+  // MSPLIT:  the split type's middleMul2 table (see msplitTrig)
+  if (msplit) {
+    MsplitTrig const o = msplitTrig(width, middle, smallH, fft.FFT_FP64, fft.FFT_FP32, fft.NTT_GF31, fft.NTT_GF61, msplit);
+    assert(tab.size() <= o.end);
+    tab.resize(o.end);
+    u32 const ms = middle == 9 ? 3 : 4;
+    // root(MS * W, k), k < W, then root(MS * H, k), k < H, as "fancy" (cos - 1, sin):  angles up to 2 pi / MS (root1Fancy wants
+    // less than pi / 2)
+    auto const fancy = [ms](u32 n, u32 k) { long double const a = M_PIl * 2 * k / (ms * n); return pair{cosl(a) - 1, sinl(a)}; };
+    if (o.fp64) {
+      for (u32 k = 0; k < width; ++k)  { auto [c, sn] = fancy(width, k);  tab[o.fp64 + k] = double2{double(c), double(sn)}; }
+      for (u32 k = 0; k < smallH; ++k) { auto [c, sn] = fancy(smallH, k); tab[o.fp64 + width + k] = double2{double(c), double(sn)}; }
+    }
+    if (o.gf61) {
+      vector<ulong2> t;
+      for (u32 k = 0; k < ms * width; ++k) { t.push_back(root1GF61(middle * width, k)); }
+      t.resize(2 * ms * width);
+      formatTableGF61(t, 0, ms * width, ms * width, fmt61b);
+      memcpy((double *) (tab.data() + o.gf61), t.data(), t.size() * sizeof(ulong2));
+    }
   }
 
   return tab;
@@ -1395,20 +1417,21 @@ TrigPtr TrigBufCache::smallTrigCombo(Args *args, FFTConfig fft, u32 width, u32 m
   return p;
 }
 
-TrigPtr TrigBufCache::middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 width) {
+TrigPtr TrigBufCache::middleTrig(Args *args, FFTConfig fft, u32 SMALL_H, u32 MIDDLE, u32 width, u32 msplit) {
   std::scoped_lock const lock{mut};
   auto& m = middle;
   bool const chain31 = chainTablesGF31(args, true);
   bool const amd = isAmdGpu(context->deviceId());
   u32 const fmt61 = fft.NTT_GF61 ? midFormatGF61(args, amd, fft.isPfa()) : 0, fmt61b = fft.NTT_GF61 ? mid2FormatGF61(args, amd) : 0;
   u32 const key_part = make_key_part(fft.FFT_FP64, 0, fft.NTT_GF31, 0, fft.FFT_FP32, 0, fft.NTT_GF61, 0, fft.isPfa(), chain31)   // FFT64 may or may not be PFA
-                       | fmt61 << 20 | fmt61b << 23;        // How the GF61 twiddles are stored
+                       | fmt61 << 20 | fmt61b << 23        // How the GF61 twiddles are stored
+                       | msplit << 27;                      // MSPLIT's tables (see msplitTrig)
   decay_t<decltype(m)>::key_type const key{SMALL_H, MIDDLE, width, key_part};
 
   TrigPtr p{};
   auto it = m.find(key);
   if (it == m.end() || !(p = it->second.lock())) {
-    p = make_shared<TrigBuf>(context, genMiddleTrig(fft, SMALL_H, MIDDLE, width, chain31, fmt61, fmt61b));
+    p = make_shared<TrigBuf>(context, genMiddleTrig(fft, SMALL_H, MIDDLE, width, chain31, fmt61, fmt61b, msplit));
     m[key] = p;
     middleCache.add(p);
   }

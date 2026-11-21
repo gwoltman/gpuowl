@@ -357,7 +357,7 @@ CARRY_SIZE = 100000
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
 string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 nH, const vector<KeyVal>& extraConf, u64 E, bool doLog,
                  bool &tail_single_wide, bool &tail_single_kernel, u32 &in_place, u32 &in_place64, u32 &in_place32, u32 &pad_size, u32 &wmul,
-                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q) {
+                 u32 &multi_q, u32 &l2_striping, bool &graphs, bool &zero_q, u32 &msplit) {
   map<string, string> config;
 
   // Highest priority is the requested "extra" conf
@@ -401,6 +401,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
 			      "LDSPAD_W","LDSPAD_H",
 			      "LDSSWIZ_W","LDSSWIZ_H",
 			      "L2_STRIPING",
+                              "MSPLIT",                 // Experimental, 1:  the 64-bit type's fftMiddleIn/Out split over MS threads per point (MIDDLE = MS^2, see msplit.cl)
+                              "MSPLIT_TRIG","MSPLIT_FFT", // Experimental, MSPLIT:  one slowTrig per element (FP64) / the per-thread-group radix-MS routines (default 1), see msplit.cl
 			      "MIDDLE_CHAIN31",
                               "MIDDLE_CHAIN61",
                               "TABMUL_CHAIN61",         // 1: tabMul's GF61 twiddles chained (see base.cl)
@@ -722,6 +724,28 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     }
   }
 
+  // MSPLIT=1:  the 64-bit type's (FP64's or GF61's) MIDDLE = MS * MS runs split over MS threads per point (see msplit.cl):  FP64 at 9 or
+  // 16, GF61 at 16 (its odd middles are always PFA).  Not with PFA or L2_STRIPING, nor GF61's chained middle table (MIDDLE_CHAIN61:
+  // the split reads each thread's twiddles from the table).  In place a split workgroup is MS tiles, so TILE64 is lowered to 8.
+  msplit = configValue("MSPLIT", 0);
+  if (msplit > 1) {
+    log("Invalid MSPLIT=%u, must be 0 or 1\n", msplit);
+    throw "invalid MSPLIT";
+  }
+  if (msplit) {
+    u32 const m = fft.shape.middle;
+    bool const ok = !fft.isPfa() && !l2_striping
+                    && ((fft.FFT_FP64 && (m == 9 || m == 16)) || (fft.NTT_GF61 && m == 16 && !configValue("MIDDLE_CHAIN61", 0)));
+    if (!ok) {
+      if (doLog) { log("MSPLIT does not apply to this FFT.  Changing to MSPLIT=0.\n"); }
+      msplit = 0;
+      config.erase("MSPLIT");
+    } else if (in_place && configValue("TILE64", isAmdGpu(id) ? 16 : 8) > 8) {
+      if (doLog) { log("MSPLIT needs 8x8 in-place tiles.  Changing to TILE64=8.\n"); }
+      config["TILE64"] = "8";
+    }
+  }
+
   // The register limits are applied per kernel (numRegisters), not as defines: as defines they would change every kernel's
   // compile options, and so its kernel cache entry, whenever one kernel's limit changed.
   // Nor can the radix keys be defines (a macro name cannot start with a digit); the .cl code sees NW and NH.
@@ -920,6 +944,13 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     defines += toDefine("DISTWTRIGGF61", 0);
     defines += toDefine("DISTMTRIGGF61", 0);
     defines += toDefine("DISTHTRIGGF61", 0);
+  }
+
+  // MSPLIT's middleMul2 tables, from the start of the middle trig buffer (see msplitTrig)
+  if (msplit) {
+    MsplitTrig const o = msplitTrig(fft.shape.width, fft.shape.middle, fft.shape.height, fft.FFT_FP64, fft.FFT_FP32, fft.NTT_GF31, fft.NTT_GF61, msplit);
+    if (o.fp64) { defines += toDefine("MSPLIT_XT64", o.fp64); }
+    if (o.gf61) { defines += toDefine("MSPLIT_XT61", o.gf61); }
   }
 
   // Calculate fractional bits-per-word = (E % N) / N * 2^64
@@ -1253,11 +1284,13 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   copyQueue{*shared.context, args.profile, true},
       
   compiler{args, shared.context, clDefines(args, shared.context->deviceId(), fft, nW, nH, extraConf, E, logFftSize, tail_single_wide, tail_single_kernel, in_place, in_place64, in_place32, pad_size, wmul,
-                               multi_q, l2_striping, graphs, zero_q)},
+                               multi_q, l2_striping, graphs, zero_q, msplit)},
 
 #define K(name, ...) name(#name, &compiler, profile.make(#name), &queue, __VA_ARGS__)
 
-  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDIN)),
+// MSPLIT:  the split middle kernels (the 64-bit type's) run MS = sqrt(MIDDLE) threads per point (see clDefines)
+#define MSPLIT_K (msplit ? (fft.shape.middle == 16 ? 4 : 3) : 1)
+  K(kfftMidIn,             "fftmiddlein.cl",  "fftMiddleIn",  hN / (BIG_H / SMALL_H) * (fft.FFT_FP64 ? MSPLIT_K : 1), kernelDefines(KFP) + numRegisters(MIDIN)),
 // With PFA every row frequency has its own pair of self-paired tail lines, see tailSquareZero
 #define PFA_ROWS (fft.isPfa() ? fft.shape.pfaRadix() : 1u)
 // The FP side of a PFA hybrid pairs the tail rows k3 and R - k3 (see base.cl): tailSquareZero does 2 + (R - 1) / 2 workgroups, the
@@ -1296,7 +1329,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(KFP) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H), kernelDefines(KFP) + numRegisters(MIDOUT)),
+  K(kfftMidOut,            "fftmiddleout.cl", "fftMiddleOut", hN / (BIG_H / SMALL_H) * (fft.FFT_FP64 ? MSPLIT_K : 1), kernelDefines(KFP) + numRegisters(MIDOUT)),
   K(kfftW,                 "fftw.cl", "fftW", hN / nW, kernelDefines(KFP)),
 
   K(kfftMidInGF31,         "fftmiddlein.cl",  "fftMiddleInGF31",  hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDIN31)),
@@ -1328,7 +1361,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
   K(kfftMidOutGF31,        "fftmiddleout.cl", "fftMiddleOutGF31", hN / (BIG_H / SMALL_H), kernelDefines(K31) + numRegisters(MIDOUT31)),
   K(kfftWGF31,             "fftw.cl", "fftWGF31", hN / nW, kernelDefines(K31)),
 
-  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDIN61)),
+  K(kfftMidInGF61,         "fftmiddlein.cl",  "fftMiddleInGF61",  hN / (BIG_H / SMALL_H) * MSPLIT_K, kernelDefines(K61) + numRegisters(MIDIN61)),
   K(kfftHinGF61,           "ffthin.cl",  "fftHinGF61",  hN / nH, kernelDefines(K61)),
   K(ktailSquareZeroGF61,   "tailsquare.cl", "tailSquareZeroGF61", SMALL_H / nH * 2 * PFA_ROWS, kernelDefines(K61)),
   K(ktailSquareGF61,       "tailsquare.cl", "tailSquareGF61",
@@ -1354,7 +1387,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
                                                !tail_single_wide ? hN / nH :                                           // Double-wide tailMul with one kernel
                                                !tail_single_kernel ? hN / nH / 2 - SMALL_H / nH * PFA_ROWS :                      // Single-wide tailMul with two kernels
                                                hN / nH / 2, kernelDefines(K61) + "-DMUL_LOW=1"),                       // Single-wide tailMul with one kernel
-  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H), kernelDefines(K61) + numRegisters(MIDOUT61)),
+  K(kfftMidOutGF61,        "fftmiddleout.cl", "fftMiddleOutGF61", hN / (BIG_H / SMALL_H) * MSPLIT_K, kernelDefines(K61) + numRegisters(MIDOUT61)),
   K(kfftWGF61,             "fftw.cl", "fftWGF61", hN / nW, kernelDefines(K61)),
 
   K(kfftP,                 "fftp.cl", "fftP", hN / nW, kernelDefines(KALL)),
@@ -1392,7 +1425,7 @@ Gpu::Gpu(GpuCommon s, FFTConfig fft, u64 E, const vector<KeyVal>& extraConf, boo
 #undef K
 
   bufTrigH{shared.bufCache->smallTrigCombo(&args, fft, WIDTH, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
-  bufTrigM{shared.bufCache->middleTrig(&args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH)},
+  bufTrigM{shared.bufCache->middleTrig(&args, fft, SMALL_H, BIG_H / SMALL_H, WIDTH, msplit)},
   bufTrigW{shared.bufCache->smallTrig(&args, fft, WIDTH, nW, fft.shape.middle, SMALL_H, nH, tail_single_wide)},
 
   weights{genWeights(fft, E, WIDTH, BIG_H, nW, isNvidiaGpu(shared.context->deviceId()), args.value("NTT_WEIGHT_TABLE", 0))},

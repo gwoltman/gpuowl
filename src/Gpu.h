@@ -236,6 +236,7 @@ private:
   u32 l2_striping;
   bool graphs;
   bool zero_q;          // TAIL_KERNELS 11 or 13: the tail*Zero kernels run in their own queue(s), see replay_one
+  u32 msplit;           // MSPLIT as adjusted for this FFT (see clDefines):  1 when the 64-bit type's middle kernels run split
   // Twiddles: trigonometry constant buffers, used in FFTs.
   // The twiddles depend only on FFT config and do not depend on the exponent.
   // It is important to generate the height trigs before the width trigs because width trigs can be a subset of the height trigs

@@ -5,10 +5,11 @@
 
 #define INCLUDE_FILE "middle.cl"
 #include "expand.cl"
+#include "msplit.cl"
 
 #if !INPLACE                  // Original implementation (not in place)
 
-#if FFT_FP64
+#if FFT_FP64 && !MSPLIT_FP64
 
 KERNEL_CAP(IN_WG) fftMiddleIn(PA_MI(T2) out, CPA_MI(T2) in, u32 base, Trig trig) {
   T2 u[MIDDLE];
@@ -199,7 +200,7 @@ KERNEL_CAP(IN_WG) fftMiddleInGF31(PA_MI(T2) out, CPA_MI(T2) in, u32 base, Trig t
 /*          Similar to above, but for an NTT based on GF(M61^2)           */
 /**************************************************************************/
 
-#if NTT_GF61
+#if NTT_GF61 && !MSPLIT_GF61
 
 KERNEL_CAP(IN_WG) fftMiddleInGF61(PA_MI(T2) out, CPA_MI(T2) in, u32 base, Trig trig) {
   GF61 u[MIDDLE];
@@ -312,7 +313,7 @@ void map_striping_group_id(u32 base_lo, u32 g, u32 *startx, u32 *starty) {
 }
 #endif
 
-#if FFT_FP64
+#if FFT_FP64 && !MSPLIT_FP64
 
 KERNEL_CAP((TILE64*TILE64)) fftMiddleIn(PA_MI(T2) out, PA_MI(T2) in, u32 base, Trig trig) {
   assert(out == in);
@@ -497,7 +498,7 @@ KERNEL_CAP((TILE32*TILE32)) fftMiddleInGF31(PA_MI(T2) out, PA_MI(T2) in, u32 bas
 /*          Similar to above, but for an NTT based on GF(M61^2)           */
 /**************************************************************************/
 
-#if NTT_GF61
+#if NTT_GF61 && !MSPLIT_GF61
 
 KERNEL_CAP((TILE64*TILE64)) fftMiddleInGF61(PA_MI(T2) out, PA_MI(T2) in, u32 base, Trig trig) {
   assert(out == in);
@@ -555,4 +556,35 @@ KERNEL_CAP((TILE64*TILE64)) fftMiddleInGF61(PA_MI(T2) out, PA_MI(T2) in, u32 bas
 
 #endif
 
+#endif
+
+/**************************************************************************/
+/*        MSPLIT:  the middle split over MS threads per point (msplit.cl)  */
+/**************************************************************************/
+
+#if MSPLIT
+#if INPLACE
+#define MSPLIT_G(tile) ((tile) * (tile))
+#define MSPLIT_CIN(pa, cpa) pa(T2)
+#else
+#define MSPLIT_G(tile) IN_WG
+#define MSPLIT_CIN(pa, cpa) cpa(T2)
+#endif
+
+#if MSPLIT_FP64
+KERNEL_CAP((MS * MSPLIT_G(TILE64))) fftMiddleIn(PA_MI(T2) out, MSPLIT_CIN(PA_MI, CPA_MI) in, u32 base, Trig trig) {
+  local T2 lds[MS_LDS(MSPLIT_G(TILE64))];
+  msplitIn((P(T2)) (out), (CP(T2)) (in), trig, (Trig) (trig + MSPLIT_XT64), lds, FFT_TYPE == FFT64);
+}
+#endif
+
+#if MSPLIT_GF61
+KERNEL_CAP((MS * MSPLIT_G(TILE64))) fftMiddleInGF61(PA_MI(T2) out, MSPLIT_CIN(PA_MI, CPA_MI) in, u32 base, Trig trig) {
+  local GF61 lds[MS_LDS(MSPLIT_G(TILE64))];
+  msplitIn((P(GF61)) (out + DISTGF61), (CP(GF61)) (in + DISTGF61), (TrigGF61) (trig + DISTMTRIGGF61), (TrigGF61) (trig + MSPLIT_XT61), lds, FFT_TYPE == FFT61);
+}
+#endif
+
+#undef MSPLIT_G
+#undef MSPLIT_CIN
 #endif

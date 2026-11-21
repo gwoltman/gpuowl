@@ -87,18 +87,19 @@ void OVERLOAD writeCarryFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) 
 #endif
 }
 
-void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
+void OVERLOAD readMiddleInLines(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x, u32 j, u32 n) {
 #if PAD_SIZE > 0
   // Each work group reads successive y's which increments by one pad size.
   // Rather than having u[i] also increment by one, we choose a larger pad increment
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
   in += y * WIDTH + y * PAD_SIZE + (y / SMALL_HEIGHT) * BIG_PAD_SIZE + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
 #else
   in += y * WIDTH + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SMALL_HEIGHT * WIDTH]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SMALL_HEIGHT * WIDTH]); }
 #endif
 }
+void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) { readMiddleInLines(u, in, y, x, 0, 1); }
 
 //****************************************************************************************
 // Pair of routines to write data from fftMiddleIn and read data into tailFusedSquare/Mul
@@ -112,7 +113,7 @@ void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 //      x         ranges 0...SMALL_HEIGHT-1 (multiples of one)          (also known as 0...G_H-1 and 0...NH-1)
 //      y         ranges 0...MIDDLE*WIDTH-1 (multiples of SMALL_HEIGHT)
 
-void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleInLines(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x, u32 j, u32 n)
 {
   //u32 SIZEY = IN_WG / IN_SIZEX;
   //u32 num_x_chunks = WIDTH / IN_SIZEX;                // Number of x chunks
@@ -130,7 +131,7 @@ void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chu
                                                         //              = SMALL_HEIGHT / (IN_WG / IN_SIZEX) * (MIDDLE * IN_WG + PAD_SIZE)
                                                         //              = SMALL_HEIGHT * MIDDLE * IN_SIZEX + SMALL_HEIGHT / SIZEY * PAD_SIZE
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * IN_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * IN_WG], u[k]); }
 
 #else
 
@@ -140,10 +141,11 @@ void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chu
                                                         //                       = MIDDLE * SMALL_HEIGHT / (IN_WG / IN_SIZEX) * IN_WG
                                                         //                       = MIDDLE * SMALL_HEIGHT * IN_SIZEX
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * IN_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * IN_WG], u[k]); }
 
 #endif
 }
+void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x) { writeMiddleInLines(out, u, chunk_y, chunk_x, 0, 1); }
 
 // Read a line for tailFused or fftHin
 // This reads partially transposed data as written by fftMiddleIn
@@ -237,7 +239,7 @@ void OVERLOAD writeTailFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) {
 #endif
 }
 
-void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
+void OVERLOAD readMiddleOutLines(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x, u32 j, u32 n) {
 #if PAD_SIZE > 0
 #if MIDDLE == 4 || MIDDLE == 8 || MIDDLE == 16
   // Each u[i] increments by one pad size.
@@ -247,12 +249,13 @@ void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 #else
   in += y * MIDDLE * (SMALL_HEIGHT + PAD_SIZE) + x;
 #endif
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT + PAD_SIZE)]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[i * (SMALL_HEIGHT + PAD_SIZE)]); }
 #else                                                                   // No rotation, might be better on nVidia cards
   in += y * MIDDLE * SMALL_HEIGHT + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SMALL_HEIGHT]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[i * SMALL_HEIGHT]); }
 #endif
 }
+void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) { readMiddleOutLines(u, in, y, x, 0, 1); }
 
 
 //****************************************************************************************
@@ -300,7 +303,7 @@ void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
 // adjusted to effect a transpose.  Or caller must transpose the x and y values and send us an out pointer with thread_id added in.
 // In other words, caller is responsible for deciding the best way to transpose x and y values.
 
-void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleOutLines(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x, u32 j, u32 n)
 {
   //u32 SIZEY = OUT_WG / OUT_SIZEX;
   //u32 num_x_chunks = SMALL_HEIGHT / OUT_SIZEX;  // Number of x chunks
@@ -317,7 +320,7 @@ void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 ch
                                                         //              = WIDTH / (OUT_WG / OUT_SIZEX) * (MIDDLE * OUT_WG + PAD_SIZE)
                                                         //              = WIDTH * MIDDLE * OUT_SIZEX + WIDTH / SIZEY * PAD_SIZE
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * OUT_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * OUT_WG], u[k]); }
 
 #else
 
@@ -327,10 +330,11 @@ void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 ch
                                         //                       = MIDDLE * WIDTH / (OUT_WG / OUT_SIZEX) * OUT_WG
                                         //                       = MIDDLE * WIDTH * OUT_SIZEX
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * OUT_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * OUT_WG], u[k]); }
 
 #endif
 }
+void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 chunk_y, u32 chunk_x) { writeMiddleOutLines(out, u, chunk_y, chunk_x, 0, 1); }
 
 // Read a line for carryFused or FFTW.  This line was written by writeMiddleOutLine above.
 void OVERLOAD readCarryFusedLine(CP(T2_GF61) in, T2_GF61 *u, u32 line, u32 me) {
@@ -413,20 +417,21 @@ void OVERLOAD writeCarryFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) 
 #endif
 }
 
-void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
+void OVERLOAD readMiddleInLines(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x, u32 j, u32 n) {
 #if PAD_SIZE > 0
   // Each work group reads successive y's which increments by one pad size.
   // Rather than having u[i] also increment by one, we choose a larger pad increment
   u32 BIG_PAD_SIZE = (PAD_SIZE/2+1)*PAD_SIZE;
   in += y * WIDTH + y * PAD_SIZE + (y / SMALL_HEIGHT) * BIG_PAD_SIZE + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * (SMALL_HEIGHT * (WIDTH + PAD_SIZE) + BIG_PAD_SIZE)]); }
 #else
   in += y * WIDTH + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SMALL_HEIGHT * WIDTH]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SMALL_HEIGHT * WIDTH]); }
 #endif
 }
+void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) { readMiddleInLines(u, in, y, x, 0, 1); }
 
-void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleInLines(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x, u32 j, u32 n)
 {
 #if PAD_SIZE > 0
   u32 SIZEY = IN_WG / IN_SIZEX;
@@ -439,7 +444,7 @@ void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chu
                                                         //              = SMALL_HEIGHT / (IN_WG / IN_SIZEX) * (MIDDLE * IN_WG + PAD_SIZE)
                                                         //              = SMALL_HEIGHT * MIDDLE * IN_SIZEX + SMALL_HEIGHT / SIZEY * PAD_SIZE
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * IN_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * IN_WG], u[k]); }
 #else
   // Output data such that readCarryFused lines are packed tightly together.  No padding.
   out += chunk_y * MIDDLE * IN_WG +                     // Write y chunks after middles
@@ -447,9 +452,10 @@ void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chu
                                                         //                       = MIDDLE * SMALL_HEIGHT / (IN_WG / IN_SIZEX) * IN_WG
                                                         //                       = MIDDLE * SMALL_HEIGHT * IN_SIZEX
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * IN_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * IN_WG], u[k]); }
 #endif
 }
+void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x) { writeMiddleInLines(out, u, chunk_y, chunk_x, 0, 1); }
 
 // Read a line for tailFused or fftHin
 // This reads partially transposed data as written by fftMiddleIn
@@ -517,7 +523,7 @@ void OVERLOAD writeTailFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {
 #endif
 }
 
-void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
+void OVERLOAD readMiddleOutLines(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x, u32 j, u32 n) {
 #if PAD_SIZE > 0
 #if MIDDLE == 4 || MIDDLE == 8 || MIDDLE == 16
   // Each u[i] increments by one pad size.
@@ -527,14 +533,15 @@ void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
 #else
   in += y * MIDDLE * (SMALL_HEIGHT + PAD_SIZE) + x;
 #endif
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * (SMALL_HEIGHT + PAD_SIZE)]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[i * (SMALL_HEIGHT + PAD_SIZE)]); }
 #else                                                                   // No rotation, might be better on nVidia cards
   in += y * MIDDLE * SMALL_HEIGHT + x;
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SMALL_HEIGHT]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[i * SMALL_HEIGHT]); }
 #endif
 }
+void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) { readMiddleOutLines(u, in, y, x, 0, 1); }
 
-void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x)
+void OVERLOAD writeMiddleOutLines(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x, u32 j, u32 n)
 {
 #if PAD_SIZE > 0
   u32 SIZEY = OUT_WG / OUT_SIZEX;
@@ -546,7 +553,7 @@ void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 ch
                                                         //              = WIDTH / (OUT_WG / OUT_SIZEX) * (MIDDLE * OUT_WG + PAD_SIZE)
                                                         //              = WIDTH * MIDDLE * OUT_SIZEX + WIDTH / SIZEY * PAD_SIZE
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * OUT_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * OUT_WG], u[k]); }
 #else
   // Output data such that readCarryFused lines are packed tightly together.  No padding.
   out += chunk_y * MIDDLE * OUT_WG +             // Write y chunks after middles
@@ -554,9 +561,10 @@ void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 ch
                                         //                       = MIDDLE * WIDTH / (OUT_WG / OUT_SIZEX) * OUT_WG
                                         //                       = MIDDLE * WIDTH * OUT_SIZEX
   // Write each u[i] sequentially
-  for (int i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * OUT_WG], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * OUT_WG], u[k]); }
 #endif
 }
+void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 chunk_y, u32 chunk_x) { writeMiddleOutLines(out, u, chunk_y, chunk_x, 0, 1); }
 
 void OVERLOAD readCarryFusedLine(CP(F2_GF31) in, F2_GF31 *u, u32 line, u32 me) {
   u32 SIZEY = OUT_WG / OUT_SIZEX;
@@ -780,17 +788,19 @@ void OVERLOAD writeCarryFusedLines(T2_GF61 *u, P(T2_GF61) out, u32 gr, u32 me, u
 //      u[i]      ranges 0...MIDDLE-1 (multiples of SMALL_HEIGHT)
 //      y         ranges 0...SMALL_HEIGHT-1 (multiples of one)
 
-void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
+void OVERLOAD readMiddleInLines(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x, u32 j, u32 n) {
   in += (x / TILE64 * SIZEW) + (y % TILE64 * SIZEBLK) + (SWIZ(y % TILE64, y / TILE64) * TILE64) + (x % TILE64);
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM]); }
 }
+void OVERLOAD readMiddleInLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) { readMiddleInLines(u, in, y, x, 0, 1); }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.
-void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleInLines(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x, u32 j, u32 n)
 {
   out += (x / TILE64 * SIZEW) + (y % TILE64 * SIZEBLK) + (SWIZ(y % TILE64, y / TILE64) * TILE64) + (x % TILE64);
-  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * SIZEM], u[k]); }
 }
+void OVERLOAD writeMiddleInLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x) { writeMiddleInLines(out, u, y, x, 0, 1); }
 
 //****************************************************************************************
 // Pair of routines to read/write data to/from tailSquare/Mul
@@ -836,20 +846,22 @@ void OVERLOAD writeTailFusedLine(T2_GF61 *u, P(T2_GF61) out, u32 line, u32 me) {
 //      u[i]      ranges 0...MIDDLE-1 (multiples of SMALL_HEIGHT)
 //      y         ranges 0...WIDTH-1 (multiples of BIG_HEIGHT)
 
-void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) {
+void OVERLOAD readMiddleOutLines(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x, u32 j, u32 n) {
   in += (y / TILE64 * SIZEW) + (y % TILE64 * SIZEBLK) + (SWIZ(y % TILE64, x / TILE64) * TILE64) + (x % TILE64);
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SIZEM]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[i * SIZEM]); }
 }
+void OVERLOAD readMiddleOutLine(T2_GF61 *u, CP(T2_GF61) in, u32 y, u32 x) { readMiddleOutLines(u, in, y, x, 0, 1); }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
 // With PFA the caller's pfaMiddleOut leaves out its rotation of the rows, and u[i] goes to line MIDDLE_IN_INDEX(i, xs) instead (as SHUFFLE_ROW
 // does in the out-of-place middleShuffle), xs the x of the thread whose values the 16x16 transpose brought here.
-void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleOutLines(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x, u32 j, u32 n)
 {
   u32 xs = x / TILE64 * TILE64 + y % TILE64;
   out += (y / TILE64 * SIZEW) + (y % TILE64 * SIZEBLK) + (SWIZ(y % TILE64, x / TILE64) * TILE64) + (x % TILE64);
-  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[MIDDLE_IN_INDEX(i, xs) * SIZEM], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[MIDDLE_IN_INDEX(i, xs) * SIZEM], u[k]); }
 }
+void OVERLOAD writeMiddleOutLine(P(T2_GF61) out, T2_GF61 *u, u32 y, u32 x) { writeMiddleOutLines(out, u, y, x, 0, 1); }
 
 #endif
 
@@ -945,17 +957,19 @@ void OVERLOAD writeCarryFusedLines(F2_GF31 *u, P(F2_GF31) out, u32 gr, u32 me, u
 //      u[i]      ranges 0...MIDDLE-1 (multiples of SMALL_HEIGHT)
 //      y         ranges 0...SMALL_HEIGHT-1 (multiples of one)
 
-void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
+void OVERLOAD readMiddleInLines(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x, u32 j, u32 n) {
   in += (x / TILE32 * SIZEW32) + (y % TILE32 * SIZEBLK32) + (SWIZ32(y % TILE32, y / TILE32) * TILE32) + (x % TILE32);
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM32]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[MIDDLE_IN_INDEX(i, y) * SIZEM32]); }
 }
+void OVERLOAD readMiddleInLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) { readMiddleInLines(u, in, y, x, 0, 1); }
 
 // NOTE:  writeMiddleInLine uses the same definition of x,y as readMiddleInLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleInLine.
-void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleInLines(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x, u32 j, u32 n)
 {
   out += (x / TILE32 * SIZEW32) + (y % TILE32 * SIZEBLK32) + (SWIZ32(y % TILE32, y / TILE32) * TILE32) + (x % TILE32);
-  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[i * SIZEM32], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[i * SIZEM32], u[k]); }
 }
+void OVERLOAD writeMiddleInLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x) { writeMiddleInLines(out, u, y, x, 0, 1); }
 
 //****************************************************************************************
 // Pair of routines to read/write data to/from tailSquare/Mul
@@ -1001,19 +1015,21 @@ void OVERLOAD writeTailFusedLine(F2_GF31 *u, P(F2_GF31) out, u32 line, u32 me) {
 //      u[i]      ranges 0...MIDDLE-1 (multiples of SMALL_HEIGHT)
 //      y         ranges 0...WIDTH-1 (multiples of BIG_HEIGHT)
 
-void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) {
+void OVERLOAD readMiddleOutLines(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x, u32 j, u32 n) {
   in += (y / TILE32 * SIZEW32) + (y % TILE32 * SIZEBLK32) + (SWIZ32(y % TILE32, x / TILE32) * TILE32) + (x % TILE32);
-  for (i32 i = 0; i < MIDDLE; ++i) { u[i] = FFTLOAD(&in[i * SIZEM32]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; u[k] = FFTLOAD(&in[i * SIZEM32]); }
 }
+void OVERLOAD readMiddleOutLine(F2_GF31 *u, CP(F2_GF31) in, u32 y, u32 x) { readMiddleOutLines(u, in, y, x, 0, 1); }
 
 // NOTE:  writeMiddleOutLine uses the same definition of x,y as readMiddleOutLine.  Caller transposes 16x16 blocks of FFT data before calling writeMiddleOutLine.
 // With PFA, u[i] goes to line MIDDLE_IN_INDEX(i, xs), see writeMiddleOutLine above.
-void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x)
+void OVERLOAD writeMiddleOutLines(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x, u32 j, u32 n)
 {
   u32 xs = x / TILE32 * TILE32 + y % TILE32;
   out += (y / TILE32 * SIZEW32) + (y % TILE32 * SIZEBLK32) + (SWIZ32(y % TILE32, x / TILE32) * TILE32) + (x % TILE32);
-  for (i32 i = 0; i < MIDDLE; ++i) { FFTSTORE(&out[MIDDLE_IN_INDEX(i, xs) * SIZEM32], u[i]); }
+  for (i32 k = 0; k < MIDDLE / n; ++k) { i32 i = j + n * k; FFTSTORE(&out[MIDDLE_IN_INDEX(i, xs) * SIZEM32], u[k]); }
 }
+void OVERLOAD writeMiddleOutLine(P(F2_GF31) out, F2_GF31 *u, u32 y, u32 x) { writeMiddleOutLines(out, u, y, x, 0, 1); }
 
 #endif
 
