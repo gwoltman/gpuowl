@@ -14,7 +14,8 @@
 // Checks (no Gerbicz-type check exists for a product of unrelated factors; see stage2-design.md):  each table entry is transformed
 // twice and the sums compared, the last entry of the second-difference chain is checked against Gpu::exponentiate (an error anywhere in
 // the chain carries on to it), the table sums are verified again at each checkpoint, A_k against Gpu::exponentiate, acc != 0, ROE of
-// the carries, and one randomly chosen block in DUP_ONE_IN computed twice and compared.  A failed check goes back to the last
+// the carries, and randomly chosen blocks computed twice and compared (one in DUP_ONE_IN, one in DUP_ONE_IN_CLEAN once DUP_CLEAN of them
+// have matched since the run or the last failed check began).  A failed check goes back to the last
 // checkpoint.
 
 #include "Stage2.h"
@@ -50,7 +51,11 @@ namespace {
 
 constexpr double CHECKPOINT_SECS = 600;
 constexpr double LOG_SECS = 60;
-constexpr u32 DUP_ONE_IN = 32;            // one block in this many (at random) is computed twice
+constexpr u32 DUP_ONE_IN = 32;            // one block in this many (at random) is computed twice ...
+constexpr u32 DUP_CLEAN = 64;             // ... until this many duplicated blocks have matched (since the start of the run, or since the
+constexpr u32 DUP_ONE_IN_CLEAN = 128;     // last failed check), then one in this many:  a card that faults in a few % of its blocks is still
+                                          // caught in the first ones, one with rarer faults 4x later, and a sound one pays ~0.8% of stage 2
+                                          // instead of ~3.1%
 constexpr u32 ROE_FIRST = 16;             // ROE is sampled in the first blocks of a run and then in one block in ROE_ONE_IN
 constexpr u32 ROE_ONE_IN = 8;
 constexpr u32 EXTRA_BUFS = 3;             // big buffers besides the table:  A and G in Low form (A also the table build's scratch), C in
@@ -994,6 +999,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
   u64 const mulsBefore = state.nMul;     // -iters counts the multiplications of this run
   Signal signal;
   int retries = 0;
+  u32 dupsClean = 0;       // duplicated blocks that matched since the run, or the last failed check, began
   u32 lastBadEntry = u32(-1);
 
   while (true) {
@@ -1022,7 +1028,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
 #ifdef PRPLL_PM1_FAULTS
       if (faultKind == "acc" && kk == faultK) { return true; }
 #endif
-      return rng() % DUP_ONE_IN == 0;
+      return rng() % (dupsClean >= DUP_CLEAN ? DUP_ONE_IN_CLEAN : DUP_ONE_IN) == 0;
     };
     bool parked = false;      // acc's chain is parked in buf1 (block), its words stale:  no checkpoint before a block ends in words
     bool dup = drawDup(k);
@@ -1080,6 +1086,9 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
       if (fault && kind == "acc") { s2.corruptAcc(); }
 #endif
       if (dup && !s2.dupOK(items)) { log("EE stage 2: block k=%" PRIu64 " gave two different results\n", k); ok = false; break; }
+      if (dup && ++dupsClean == DUP_CLEAN) {
+        log("Stage 2: %u duplicated blocks matched; one block in %u is duplicated from here\n", DUP_CLEAN, DUP_ONE_IN_CLEAN);
+      }
       s2.stepK();
 #ifdef PRPLL_PM1_FAULTS
       if (fault && kind == "table") { s2.corruptTable(); }
@@ -1103,6 +1112,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
     ++nErrors;
     if (++retries > MAX_RETRIES) { throw "stage 2: too many errors"; }
     log("Stage 2 going back to k=%" PRIu64 " (retry %d)\n", state.k, retries);
+    dupsClean = 0;      // back to one block in DUP_ONE_IN
   }
 }
 
