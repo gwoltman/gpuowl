@@ -30,7 +30,10 @@ you need to fix your OpenCL installation first.
 
 2. run "prpll -h", and verify that it displays a list of devices towards the end.
 
-3. run "prpll -tune", to tune various PRPLL options for your GPU.
+3. run "prpll" with no arguments (or only -device N) in an empty folder (or "prpll -setup" in any folder), to tune PRPLL for your GPU.
+   It asks what the GPU will test (first-time tests, double checks, 100M-digit tests or your own exponent range) and
+   how thoroughly to tune (Minimal, Adequate or Robust, with time estimates), then tunes.  -setup first renames an
+   existing config.txt, tune.txt and tune-pm1.txt with the date.  "prpll -tune" tunes without the questions.
 
    -tune writes settings for all FFTs to config.txt and the best FFTs, each with settings of its own, to tune.txt.
    After a new PRPLL release or a new GPU driver, "prpll -tune regs" retunes the tune.txt settings (register limits,

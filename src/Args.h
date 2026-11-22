@@ -65,6 +65,7 @@ public:
   string tune;
 
   bool doTune{};
+  bool doSetup{};       // -setup:  ask what to tune for, then tune (setup:: in tune.h)
   bool doZtune{};
   bool carryTune{};
   bool logROE{};

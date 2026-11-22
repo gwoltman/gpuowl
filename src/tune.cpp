@@ -61,6 +61,11 @@ RegLimits regLimits(cl_device_id id);
 // through hundreds of candidates that all cost infinity.
 bool anyCandidateRan = false;
 
+// The timings timeConfig has run so far and the seconds they took (building the Gpu, which is mostly compiling its kernels, and timing
+// it), for the estimates of how long the rest of a tune will take
+u32 timingsRun = 0;
+double timingSecs = 0;
+
 // After a failed candidate, before any candidate has run:  build the FFT with no tune overrides (only the user's own -use settings).
 // If that fails too, run the smallest FFT of the same type:  a shape too big for the GPU (out of resources or memory) fails on its own,
 // and the tune goes on to the next shape as it does after a warmup.  If the smallest FFT fails too, stop the tune with an explanation.
@@ -114,6 +119,7 @@ double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<Ke
     if (!logged) { log("TUNE_EXP: measuring at exponent %llu\n", (unsigned long long)exponent); logged = true; }
   }
   if (Signal::stopRequested()) { throw "stop requested"; }
+  Timer const timer;
   try {
 #ifdef CUDA_BACKEND
     cudaResetL2ForTune();
@@ -122,6 +128,8 @@ double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<Ke
     if (usedWmul) { *usedWmul = gpu->effectiveWmul(); }
     double const cost = gpu->timePRP(quick);
     anyCandidateRan = true;
+    ++timingsRun;
+    timingSecs += timer.at();
     return cost;
   } catch (const std::exception& e) {
     log("%s failed: %s\n", fft.spec().c_str(), e.what());
@@ -132,7 +140,123 @@ double timeConfig(u64 exponent, GpuCommon shared, FFTConfig fft, const vector<Ke
   return numeric_limits<double>::infinity();
 }
 
+// The estimates of how long a tune takes start from what one took on an RTX 5080 in an old PC (Skylake-X) and on a Radeon VII:  the
+// seconds of a config.txt option timing, of an FFT timing (larger FFTs, more kernels to compile), and of tuning one tune.txt entry's
+// register usage.  Nearly all of a timing is compiling its kernels, so the CPU matters as much as the GPU.  Once some timings have
+// run, the time they took scales these.
+constexpr double OPTION_SECS = 18, FFT_SECS = 40, REG_SECS_NVIDIA = 120, REG_SECS_AMD = 60;
+constexpr u32 VARIANTS_PER_ENTRY = 8;           // -tune variants:  about how many variants of an FP64 entry's shape are timed
+
+// The spec of a shape's mirror, its width and height swapped (which may not be a valid shape:  heights only go up to 2K)
+string mirrorSpec(const FFTShape& shape) {
+  vector<string> v = split(shape.spec(), ':');
+  std::swap(v[v.size() - 3], v.back());
+  string ret;
+  for (const string& part : v) { ret += (ret.empty() ? "" : ":") + part; }
+  return ret;
+}
+
+string minutesText(double minutes) {
+  u32 const m = u32(std::max(1.0, minutes / 5 < 1 ? std::round(minutes) : std::round(minutes / 5) * 5));
+  if (m < 60) { return to_string(m) + (m == 1 ? " minute" : " minutes"); }
+  u32 const h = m / 60, rest = m % 60;
+  return to_string(h) + (h == 1 ? " hour" : " hours") + (rest ? " " + to_string(rest) + " minutes" : "");
+}
+
+// An exponent as -tune exp= takes it:  150M rather than 150000000
+string expText(u64 e) { return e % 1000000 == 0 ? to_string(e / 1000000) + 'M' : to_string(e); }
+
+const char* tuneLevelText(const string& level) {
+  return level == "minimal"  ? "the config.txt settings that matter most, one FFT family, no register tuning"
+       : level == "adequate" ? "all the config.txt settings and FFTs, no register tuning (easily upgraded to Robust)"
+       : level == "robust"   ? "all the config.txt settings and FFTs, the register usage, and the more accurate FP64 variants (recommended)"
+       : "";
+}
+
+// Whether the GPU is probably faster with FP64 FFTs than with integer NTTs:  AMD's wave64 GPUs (Radeon VII, Instinct) and nVidia's
+// x.0 compute capabilities (P100, V100 and TITAN V, A100, H100).  Only for the estimates:  -tune times both to decide.
+bool likelyFp64(cl_device_id id) {
+  if (!hasFP64(id)) { return false; }
+  if (isAmdGpu(id)) { return getAmdWavefrontWidth(id) == 64; }
+  if (isNvidiaGpu(id)) { u32 const cc = getNvidiaComputeCapability(id); return cc >= 600 && cc % 100 == 0; }
+  return false;
+}
+
+// What the FFT phase of Tune::tune times
+struct FftPlan {
+  bool fp64, ntt, fp6431, fp32, k1k256, m61, pfa, minimal, variant0;
+  u64 minExp, maxExp;
+};
+
+// About how many timings the FFT phase of Tune::tune makes:  its filters of the shapes, one variant of each FP64 shape (two where the
+// 64-bit carry reaches further), and the width and height variant searches.  Only about:  the phase skips variants by their timings.
+u32 fftPhaseTimings(const FftPlan& p) {
+  vector<FFTShape> const shapes = FFTShape::allShapes();
+  set<string> specs;
+  for (const FFTShape& shape : shapes) { specs.insert(shape.spec()); }
+  set<u32> widths, heights;
+  u32 n = 0;
+  for (const FFTShape& shape : shapes) {
+    enum FFT_TYPES const t = shape.fft_type;
+    bool const hasFp32 = t == FFT3261 || t == FFT323161 || t == FFT3231 || t == FFT32;
+    if ((t == FFT64 && !p.fp64) || (t == FFT6431 && !p.fp6431) || (t != FFT64 && t != FFT6431 && !p.ntt) || (hasFp32 && !p.fp32)) { continue; }
+    if ((t == FFT61 && !p.m61) || (((shape.width == 256 && shape.height == 1024) || (shape.width == 1024 && shape.height == 256)) && !p.k1k256)) { continue; }
+    FFTConfig const any{shape, 202, CARRY_AUTO};
+    if (shape.isPfa() && (any.FFT_FP64 || any.FFT_FP32) && !p.pfa) { continue; }
+    if (p.minimal && (t == FFT3261 || (shape.width > shape.height && specs.contains(mirrorSpec(shape))))) { continue; }
+    if (!shape.isFavoredShape()) { continue; }
+    if ((shape.width == 2048 || shape.height == 2048) && (shape.width == 256 || shape.height == 256 || shape.width == 512 || shape.height == 512)) { continue; }
+    FFTConfig const fft{shape, any.FFT_FP64 ? 101u : 202u, any.FFT_FP64 ? CARRY_32 : CARRY_AUTO};
+    if (fft.maxExp() < p.minExp || fft.maxExp() > 1.2 * p.maxExp) { continue; }
+    if (!any.FFT_FP64) { ++n; continue; }
+    n += t == FFT64 && FFTConfig{shape, 101, CARRY_64}.maxBpw() > fft.maxBpw() ? 2 : 1;
+    if (widths.insert(shape.width).second) { n += p.variant0 ? 3 : 2; }
+    if (heights.insert(shape.height).second) { n += p.variant0 ? 3 : 2; }
+  }
+  return n;
+}
+
+// The seconds the FFT phase and what follows it take:  nFft FFT timings, the register tuning of nRegEntries entries, and (variants) the
+// more accurate variants of those entries.  scale:  the time of a timing in this tune over OPTION_SECS.
+double fftPhaseSecs(u32 nFft, u32 nRegEntries, bool variants, bool amd, double scale) {
+  double const regSecs = amd ? REG_SECS_AMD : REG_SECS_NVIDIA;
+  u32 const nEntries = std::max(1u, nFft / 3);
+  return scale * (nFft * FFT_SECS + nRegEntries * regSecs + (variants ? nEntries * (VARIANTS_PER_ENTRY * FFT_SECS + regSecs / 2) : 0));
+}
+
+// Log how long the rest of a tune will take, from the time of the timings run so far
+void logRemaining(u32 nFft, u32 nRegEntries, bool variants, bool amd) {
+  double const scale = timingsRun >= 5 ? timingSecs / timingsRun / OPTION_SECS : 1;
+  log("About %u FFT timings to go%s%s:  roughly %s more%s\n", nFft, nRegEntries ? ", then the register tuning" : "",
+      variants ? " and the FP64 variants" : "", minutesText(fftPhaseSecs(nFft, nRegEntries, variants, amd, scale) / 60).c_str(),
+      timingsRun >= 5 ? (", from the " + to_string(lround(timingSecs / timingsRun)) + " seconds per timing so far").c_str() : "");
+}
+
 } // namespace
+
+double Tune::estimateMinutes(const string& level, u64 minExp, u64 maxExp, cl_device_id id) {
+  bool const amd = isAmdGpu(id), nvidia = isNvidiaGpu(id);
+  bool const fp64 = likelyFp64(id), ntt = !fp64;
+  bool const hints = nvidia, notInplace = !nvidia;
+#ifdef CUDA_BACKEND
+  bool const cuda = true;
+#else
+  bool const cuda = false;
+#endif
+  bool const minimal = level == "minimal";
+  // The option timings, as Tune::tune times them:  2 to choose FP64 or NTT, then each setting's values
+  u32 nOptions = 0;
+  if (minimal) {
+    nOptions = 2 + 2 + 2 + (notInplace ? 2 : 0) + (cuda ? 2 : 0) + (ntt ? 8 : 0) + 3;
+  } else {
+    nOptions = 2 + (hints ? 26 : 11) + (notInplace ? 4 + 9 + 9 + 5 + 2 + 2 : 0) + (cuda ? 0 : 2) + (fp64 ? 5 : 0)
+             + (ntt ? 2 + 3 + 2 + 2 + 2 + 4 + 4 : 0) + 4 + 4 + 4 + 3 + (cuda ? 3 + 7 + (getNvidiaComputeCapability(id) >= 900 ? 2 : 0) : 0) + 6;
+  }
+  u32 const nFft = fftPhaseTimings({.fp64 = fp64, .ntt = ntt, .fp6431 = false, .fp32 = true, .k1k256 = false, .m61 = false, .pfa = true,
+                                    .minimal = minimal, .variant0 = amd || nvidia, .minExp = minExp, .maxExp = maxExp});
+  bool const noRegs = minimal || level == "adequate";
+  return (15 + nOptions * OPTION_SECS + fftPhaseSecs(nFft, noRegs ? 0 : nFft / 3, level == "robust" && fp64, amd, 1)) / 60;
+}
 
 float Tune::maxBpw(FFTConfig fft) {
 
@@ -300,6 +424,21 @@ void Tune::carryTune() {
 // config.txt as it was when -tune began timing the options, while it times them
 static optional<string> configBeforeOptions;
 
+// -tune level=minimal:  the settings it does not time, set to the values expected to be best for this GPU (see Tune::tune).  Written
+// to config.txt in their own group, so that a later full -tune can tell them from timed ones.
+static vector<pair<string,int>> untimedConfigKeyVals;
+
+static void writeUntimed(File& config, const char* indent) {
+  if (untimedConfigKeyVals.empty()) { return; }
+  config.write("\n# Not timed (a Minimal tune):  the values expected to be best for this GPU.  LOADS and STORES:  only their FFT data"
+               "\n# digit was timed.  A full -tune times them all.");
+  for (u32 i = 0; i < untimedConfigKeyVals.size(); ++i) {
+    config.write(i == 0 ? indent : ",");
+    config.printf("%s=%u", untimedConfigKeyVals[i].first.c_str(), untimedConfigKeyVals[i].second);
+  }
+  config.write("\n");
+}
+
 // Rewrite config.txt as it was before the option timings plus the settings chosen so far, so that a -tune that is stopped (or crashes, or
 // hangs and is killed) before the end of the timings keeps them.  The end of the timings writes config.txt again with all the settings.
 static void savePartialConfig(const vector<pair<string,int>> &newConfigKeyVals, const vector<pair<string,int>> &suggestedConfigKeyVals) {
@@ -316,12 +455,19 @@ static void savePartialConfig(const vector<pair<string,int>> &newConfigKeyVals, 
     config->printf("%s=%u", suggestedConfigKeyVals[i].first.c_str(), suggestedConfigKeyVals[i].second);
   }
   config->write("\n");
+  writeUntimed(*config, "\n   -use ");
 }
 
-// Add better -use settings to list of changes to be made to config.txt
+// Add better -use settings to list of changes to be made to config.txt.  A current_cost below 0 is a current setting that was not timed
+// (a Minimal tune times fewer values):  the best one timed is then a new setting.
 static void configsUpdate(double current_cost, double best_cost, double threshold, const char *key, u32 value, vector<pair<string,int>> &newConfigKeyVals, vector<pair<string,int>> &suggestedConfigKeyVals) {
   if (best_cost == current_cost) return;
   if (!std::isfinite(best_cost)) return;     // every setting failed its check (Gpu::timePRP returned infinity)
+  if (current_cost < 0) {
+    newConfigKeyVals.emplace_back(key, value);
+    savePartialConfig(newConfigKeyVals, suggestedConfigKeyVals);
+    return;
+  }
   // If best cost is better than current cost by a substantial margin (the threshold) then add the key value pair to suggestedConfigKeyVals
   if (best_cost < (1.0 - threshold) * current_cost)
     newConfigKeyVals.emplace_back(key, value);
@@ -372,6 +518,7 @@ double Tune::timeOption(u64 exponent, FFTConfig fft, int quick, u32* usedWmul) {
 }
 
 void Tune::tune() {
+  Timer const tuneTimer;
   Args *args = shared.args;
   vector<FFTShape> shapes = FFTShape::multiSpec(args->fftSpec);
 
@@ -407,6 +554,10 @@ void Tune::tune() {
   u32 warmup_secs = 15;                         // Seconds the GPU runs before the first timing (warmup=)
   bool pm1 = false;                             // -tune pm1:  P-1 stage 2 (pm1Tune), tune-pm1.txt only
   bool m61_given = false;
+  // -tune level=minimal|adequate|robust (what -setup runs):  minimal times the config.txt settings that matter most and sets the others
+  // to their expected best values (untimedConfigKeyVals), times one FFT family without type 2 or the mirrored shapes, and does not tune
+  // the register usage.  adequate is -tune without the register tuning; robust is -tune followed by -tune variants (FP64).
+  string level;
 
   // Parse input args
   for (const string& s : split(args->tune, ',')) {
@@ -447,8 +598,14 @@ void Tune::tune() {
       if (keyVal.front() == "fine") fine_pct = stod(keyVal.back());
       if (keyVal.front() == "regs") { regs_only = true; retune = Args::retuneKeys(keyVal.back()).value(); }
       if (keyVal.front() == "workers") workers = std::clamp(stoi(keyVal.back()), 1, 4);
+      if (keyVal.front() == "level") level = keyVal.back();
     }
   }
+  bool const minimal = level == "minimal";
+  bool const noRegs = minimal || level == "adequate";
+  bool const robust = level == "robust";
+  untimedConfigKeyVals.clear();
+  if (!level.empty()) { log("Tune level %s:  %s\n", level.c_str(), tuneLevelText(level)); }
   quick = std::max(quick, 1);
   quick = std::min(quick, 10);
   inplaceOnly = time_inplace_only;
@@ -611,6 +768,11 @@ void Tune::tune() {
           time_FFTs = true;
         }
       }
+      if (minimal && time_FFTs && time_NTTs) {
+        bool const fp64 = defaultShape == &defaultFFTShape;
+        log("A Minimal tune times only the faster family, the %s.\n", fp64 ? "FP64 FFTs" : "integer NTTs");
+        (fp64 ? time_NTTs : time_FFTs) = false;
+      }
     }
 
     // Without -fft, an exponent range without 141M (e.g. minexp=330M,maxexp=336M) has its options timed on the FFTs that handle its
@@ -650,8 +812,8 @@ void Tune::tune() {
     args->flags["INPLACE"] = to_string(0);
     if (File f = File::openRead("config.txt")) { configBeforeOptions = f.readAll(); } else { configBeforeOptions = ""; }
 
-    // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings
-    if (!time_inplace_only) {
+    // Find best IN_WG,IN_SIZEX,OUT_WG,OUT_SIZEX settings (a Minimal tune keeps the defaults of these and of the next three)
+    if (!time_inplace_only && !minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_in_wg = 0;
@@ -700,7 +862,7 @@ void Tune::tune() {
     }
 
     // Find best PAD setting.  Default is 256 bytes for AMD, 0 for all others.
-    if (!time_inplace_only) {
+    if (!time_inplace_only && !minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_pad = 0;
@@ -720,7 +882,7 @@ void Tune::tune() {
     }
 
     // Find best MIDDLE_IN_LDS_TRANSPOSE setting
-    if (!time_inplace_only) {
+    if (!time_inplace_only && !minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_in_lds_transpose = 0;
@@ -740,7 +902,7 @@ void Tune::tune() {
     }
 
     // Find best MIDDLE_OUT_LDS_TRANSPOSE setting
-    if (!time_inplace_only) {
+    if (!time_inplace_only && !minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_middle_out_lds_transpose = 0;
@@ -773,6 +935,7 @@ void Tune::tune() {
       double best_cost = -1.0;
       double current_cost = -1.0;
       for (u32 const inplace : {0, 1, 2, 3}) {     // 1 = nVidia friendly layout, 2 = AMD friendly layout, 3 = padded layout
+        if (minimal && (inplace == 1 || inplace == 2)) { continue; }     // Minimal:  not in place (default IN/OUT/PAD settings) or padded
         args->flags["INPLACE"] = to_string(inplace);
         double const cost = timeOption(exponent, fft, quick);
         log("Time for %12s using INPLACE=%u is %6.1f\n", fft.spec().c_str(), inplace, cost);
@@ -789,6 +952,20 @@ void Tune::tune() {
       u32 loads = args->value("LOADS", 0);
       u32 stores = args->value("STORES", 0);
 
+      // A Minimal tune sets the other digits to the values expected to be best.  Data used once is loaded and stored nontemporally (the
+      // carry shuttle, the trig data used once), trig data used more than once temporally.  With the PTX hints the carry shuttle is
+      // loaded as its last use and stored to L2.  These are what a full -tune found on a Radeon VII (LOADS=10011, STORES=11) and an RTX
+      // 5080 (carry shuttle 4/2, trig loads 0).
+      if (minimal) {
+        bool const hints = NVIDIAGPU && !NO_ASM;
+        u32 const cs_load = hints ? 4 : 1, cs_store = hints ? 2 : 1, once_load = hints ? 0 : 1;
+        loads = once_load * 10000 + cs_load * 10 + loads % 10;      // trig several uses and frequently used:  0
+        stores = stores / 100 * 100 + cs_store * 10 + stores % 10;
+        args->flags["LOADS"] = to_string(loads);
+        args->flags["STORES"] = to_string(stores);
+        log("Minimal tune:  LOADS=%u, STORES=%u except for the FFT data digit, which is timed\n", loads, stores);
+      }
+
       // Find best FFT data LOADS setting
       if (true) {
         FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
@@ -797,6 +974,8 @@ void Tune::tune() {
         double best_cost = -1.0;
         for (u32 const fft_load : {0, 1, 2, 3, 4}) {
           if (fft_load >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
+          // Minimal:  temporal or not.  With the PTX hints that is last use (4), which won on an RTX 5080.
+          if (minimal && fft_load != 0 && fft_load != (NVIDIAGPU && !NO_ASM ? 4u : 1u)) continue;
           args->flags["LOADS"] = to_string(loads / 10 * 10 + fft_load);
           double const cost = timeOption(exponent, fft, quick);
           log("Time for %12s using FFT load=%u is %6.1f\n", fft.spec().c_str(), fft_load, cost);
@@ -815,6 +994,7 @@ void Tune::tune() {
         double best_cost = -1.0;
         for (u32 const fft_store : {0, 1, 2, 3}) {
           if (fft_store >= 2 && (!NVIDIAGPU || NO_ASM)) continue;
+          if (minimal && fft_store >= 2) continue;     // Minimal:  temporal or not
           args->flags["STORES"] = to_string(stores / 10 * 10 + fft_store);
           double const cost = timeOption(exponent, fft, quick);
           log("Time for %12s using FFT store=%u is %6.1f\n", fft.spec().c_str(), fft_store, cost);
@@ -826,7 +1006,7 @@ void Tune::tune() {
       }
 
       // Find best carryShuttle LOADS/STORES settings
-      if (true) {
+      if (!minimal) {
         FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_cs_load = 0, best_cs_store = 0;
@@ -849,7 +1029,7 @@ void Tune::tune() {
       }
 
       // Find best TRIG frequently used data LOADS setting
-      if (true) {
+      if (!minimal) {
         FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_trig_load = 0;
@@ -867,7 +1047,7 @@ void Tune::tune() {
       }
 
       // Find best TRIG several uses data LOADS setting
-      if (true) {
+      if (!minimal) {
         FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_trig_load = 0;
@@ -885,7 +1065,7 @@ void Tune::tune() {
       }
 
       // Find best TRIG used once data LOADS setting
-      if (true) {
+      if (!minimal) {
         FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
         u64 const exponent = primes.prevPrime(fft.maxExp());
         u32 best_trig_load = 0;
@@ -903,9 +1083,15 @@ void Tune::tune() {
       }
 
       // Write accumulated LOADS/STORES settings
-      configsUpdate(1.000, 0.000, 0.000, "LOADS", loads, newConfigKeyVals, suggestedConfigKeyVals);
+      if (minimal) {
+        untimedConfigKeyVals.emplace_back("LOADS", loads);
+        untimedConfigKeyVals.emplace_back("STORES", stores);
+        savePartialConfig(newConfigKeyVals, suggestedConfigKeyVals);
+      } else {
+        configsUpdate(1.000, 0.000, 0.000, "LOADS", loads, newConfigKeyVals, suggestedConfigKeyVals);
+        configsUpdate(1.000, 0.000, 0.000, "STORES", stores, newConfigKeyVals, suggestedConfigKeyVals);
+      }
       args->flags["LOADS"] = to_string(loads);
-      configsUpdate(1.000, 0.000, 0.000, "STORES", stores, newConfigKeyVals, suggestedConfigKeyVals);
       args->flags["STORES"] = to_string(stores);
     }
 
@@ -914,7 +1100,7 @@ void Tune::tune() {
     // whenever the compiled wavefront isn't 64 (RDNA under ROCm's OpenCL compiler always picks 32) or the
     // device is CDNA2/CDNA3 (gfx90a, gfx94x/gfx95x -- wave64 too, but with the same non-waiting barrier as
     // RDNA), so testing FAST_BARRIER=1 there would just repeat the FAST_BARRIER=0 timing.
-    if (!amdFastBarrierUnsafe(shared.context->deviceId())) {                 // FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
+    if (!minimal && !amdFastBarrierUnsafe(shared.context->deviceId())) {     // FAST_BARRIER now works for nVidia GPUs too (from what I've seen)
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_fast_barrier = 0;
@@ -934,8 +1120,10 @@ void Tune::tune() {
     }
 #endif
 
+    // A Minimal tune leaves the settings from here to CMUL61WHERE, the unrolls, 256RADIX8 and PDL at their defaults:  on an RTX 5080 and a
+    // Radeon VII they made 0.5% or less.
     // Find best TAIL_TRIGS setting
-    if (time_FFTs) {
+    if (time_FFTs && !minimal) {
       FFTConfig const fft{defaultFFTShape, 101, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_trigs = 0;
@@ -955,7 +1143,7 @@ void Tune::tune() {
     }
 
     // Find best TAIL_TRIGS31 setting
-    if (time_NTTs) {
+    if (time_NTTs && !minimal) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
@@ -976,7 +1164,7 @@ void Tune::tune() {
     }
 
     // Find best TAIL_TRIGS32 setting
-    if (time_NTTs && time_FP32) {
+    if (time_NTTs && time_FP32 && !minimal) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(rangeShape(FFT3261, 202, FFTShape(FFT3261, 512, 8, 512)), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(u64(fft.maxBpw() * 0.95 * fft.shape.size()));   // Back off the maxExp as different settings will have different maxBpw
@@ -997,7 +1185,7 @@ void Tune::tune() {
     }
 
     // Find best TAIL_TRIGS61 setting
-    if (time_NTTs) {
+    if (time_NTTs && !minimal) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF61) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
@@ -1018,7 +1206,7 @@ void Tune::tune() {
     }
 
     // Find best TABMUL_CHAIN setting
-    if (time_FFTs) {
+    if (time_FFTs && !minimal) {
       FFTConfig const fft{defaultFFTShape, 101, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tabmul_chain = 0;
@@ -1038,7 +1226,7 @@ void Tune::tune() {
     }
 
     // Find best TABMUL_CHAIN31 setting
-    if (time_NTTs) {
+    if (time_NTTs && !minimal) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.NTT_GF31) fft = FFTConfig(FFTShape(FFT3161, 512, 7, 512), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(fft.maxExp());
@@ -1059,7 +1247,7 @@ void Tune::tune() {
     }
 
     // Find best TABMUL_CHAIN32 setting
-    if (time_NTTs && time_FP32) {
+    if (time_NTTs && time_FP32 && !minimal) {
       FFTConfig fft{defaultNTTShape, 202, CARRY_AUTO};
       if (!fft.FFT_FP32) fft = FFTConfig(rangeShape(FFT3261, 202, FFTShape(FFT3261, 512, 8, 512)), 202, CARRY_AUTO);
       u64 const exponent = primes.prevPrime(u64(fft.maxBpw() * 0.95 * fft.shape.size()));   // Back off the maxExp as different settings will have different maxBpw
@@ -1132,7 +1320,7 @@ void Tune::tune() {
     }
 
     // Find best UNROLL_W setting
-    if (true) {
+    if (!minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_w = 0;
@@ -1152,7 +1340,7 @@ void Tune::tune() {
     }
 
     // Find best UNROLL_H setting
-    if (true) {
+    if (!minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_unroll_h = 0;
@@ -1172,7 +1360,7 @@ void Tune::tune() {
     }
 
     // Find best 256RADIX8_W setting.  It only matters at a width of 256, so time the default shape with width and height 256.
-    if (true) {
+    if (!minimal) {
       FFTConfig const fft{FFTShape(defaultShape->fft_type, 256, defaultShape->middle, 256), variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_radix8_w = 0;
@@ -1192,7 +1380,7 @@ void Tune::tune() {
     }
 
     // Find best 256RADIX8_H setting.  It only matters at a height of 256, so time the default shape with height and width 256.
-    if (true) {
+    if (!minimal) {
       FFTConfig const fft{FFTShape(defaultShape->fft_type, 256, defaultShape->middle, 256), variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_radix8_h = 0;
@@ -1211,8 +1399,19 @@ void Tune::tune() {
       args->flags["256RADIX8_H"] = to_string(best_radix8_h);
     }
 
+    // A Minimal tune sets ZEROHACK_W, ZEROHACK_H, L1CUDA and TAIL_KERNELS to the values expected to be best
+    auto untimed = [&](const char* key, u32 value) {
+      args->flags[key] = to_string(value);
+      untimedConfigKeyVals.emplace_back(key, value);
+      savePartialConfig(newConfigKeyVals, suggestedConfigKeyVals);
+    };
+    if (minimal) {
+      untimed("ZEROHACK_W", 1);
+      untimed("ZEROHACK_H", 1);
+    }
+
     // Find best ZEROHACK_W setting
-    if (true) {
+    if (!minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_zerohack_w = 0;
@@ -1232,7 +1431,7 @@ void Tune::tune() {
     }
 
     // Find best ZEROHACK_H setting
-    if (true) {
+    if (!minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_zerohack_h = 0;
@@ -1275,15 +1474,16 @@ void Tune::tune() {
 
     // Find best CUDA compiler options
 #if CUDA_BACKEND
-    // Find best L1CUDA setting.
-    if (true) {
+    // Find best L1CUDA setting.  L1CUDA=2 has never won (on an RTX 5080 it took 2.5 times as long), so it is not timed.
+    if (minimal) { untimed("L1CUDA", 3); }
+    if (!minimal) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_l1cuda = 0;
       u32 current_l1cuda = args->value("L1CUDA", 0);
       double best_cost = -1.0;
       double current_cost = -1.0;
-      for (u32 l1cuda : {0, 1, 2, 3}) {
+      for (u32 l1cuda : {0, 1, 3}) {
         args->flags["L1CUDA"] = to_string(l1cuda);
         double cost = timeOption(exponent, fft, quick);
         log("Time for %12s using L1CUDA=%u is %6.1f\n", fft.spec().c_str(), l1cuda, cost);
@@ -1306,6 +1506,7 @@ void Tune::tune() {
       double best_cost = -1.0;
       double current_cost = -1.0;
       for (auto [graphs, batch] : initializer_list<pair<u32, u32>>{{0, 1}, {1, 1}, {1, 4}, {1, 16}, {1, 64}, {1, 128}, {1, 256}}) {
+        if (minimal && !(graphs == 0 || batch == 128)) { continue; }      // Minimal:  no graphs, or batches of 128
         args->flags["GRAPHS"] = to_string(graphs);
         args->flags["GRAPH_BATCH"] = to_string(batch);
         double cost = timeOption(exponent, fft, quick);
@@ -1323,7 +1524,7 @@ void Tune::tune() {
     }
 
     // Find best PDL setting (programmatic dependent launch, sm_90 and up), after GRAPHS: it changes how the kernels of a graph start
-    if (getNvidiaComputeCapability(shared.context->deviceId()) >= 900) {
+    if (!minimal && getNvidiaComputeCapability(shared.context->deviceId()) >= 900) {
       FFTConfig fft{*defaultShape, variant, CARRY_AUTO};
       u64 exponent = primes.prevPrime(fft.maxExp());
       u32 best_pdl = 0;
@@ -1347,7 +1548,8 @@ void Tune::tune() {
     // Find best TAIL_KERNELS setting.  After GRAPHS: 11 and 13 add queues (one per tail queue, see Gpu::replay_one), whose cost depends on
     // the queues already in use (MULTI_Q, here config.txt's:  retuneEntry tunes it per tune.txt line) and on whether graphs hide the extra
     // kernel launches.  On a Radeon VII (ROCm) every extra queue costs dearly; on nVidia 13 matched 2 for a PFA NTT.
-    if (true) {
+    if (minimal) { untimed("TAIL_KERNELS", 2); }
+    if (!minimal) {
       FFTConfig const fft{*defaultShape, variant, CARRY_AUTO};
       u64 const exponent = primes.prevPrime(fft.maxExp());
       u32 best_tail_kernels = 0;
@@ -1391,6 +1593,7 @@ void Tune::tune() {
       }
       config.write("\n");
     }
+    writeUntimed(config, "\n   -use ");
     if (args->logStep < 100000) {
       config.write("\n# Less frequent save file creation improves throughput.");
       config.write("\n  -log 1000000\n");
@@ -1439,6 +1642,23 @@ skip_some_WH_variants = 2;   // should default be 1??
   // Time FFT shapes smallest-to-largest exponent handled
   std::ranges::stable_sort(shapes, [](const FFTShape& a, const FFTShape& b) { return a.maxExp() < b.maxExp(); });
 
+  // A Minimal tune times only one of a shape and its mirror (width and height swapped):  the one with the smaller width, which was the
+  // faster in every pair on an RTX 5080 and a Radeon VII
+  set<string> shapeSpecs;
+  for (const FFTShape& shape : shapes) { shapeSpecs.insert(shape.spec()); }
+  auto const minimalSkips = [&](const FFTShape& shape) {
+    return minimal && shapes.size() > 1
+        && (shape.fft_type == FFT3261      // FP32+M61:  never the fastest on an RTX 5080
+            || (shape.width > shape.height && shapeSpecs.contains(mirrorSpec(shape))));
+  };
+
+  if (!level.empty()) {
+    u32 const n = fftPhaseTimings({.fp64 = time_FFTs, .ntt = time_NTTs, .fp6431 = time_FFT6431 != 0, .fp32 = time_FP32 != 0,
+                                   .k1k256 = time_1K_256 != 0, .m61 = time_M61 != 0, .pfa = time_PFA != 0, .minimal = minimal,
+                                   .variant0 = VARIANT0, .minExp = min_exponent, .maxExp = max_exponent});
+    logRemaining(n, noRegs ? 0 : n / 3, robust && (time_FFTs || time_FFT6431), isAmdGpu(shared.context->deviceId()));
+  }
+
   // Loop through all possible FFT shapes
   for (const FFTShape& shape : shapes) {
 
@@ -1447,6 +1667,7 @@ skip_some_WH_variants = 2;   // should default be 1??
     if (shape.fft_type == FFT6431 && !time_FFT6431) continue;
     if (shape.fft_type != FFT64 && shape.fft_type != FFT6431 && !time_NTTs) continue;
     if ((shape.fft_type == FFT3261 || shape.fft_type == FFT323161 || shape.fft_type == FFT3231 || shape.fft_type == FFT32) && !time_FP32) continue;
+    if (minimalSkips(shape)) continue;
 
     // Skip the optional groups that are not wanted (a single -fft shape is always timed).  A shape in a group set to 0 is
     // skipped.  If any group is set to 2, only shapes in a group set to 2 are timed.
@@ -1498,8 +1719,7 @@ skip_some_WH_variants = 2;   // should default be 1??
       {
         FFTConfig const fft{shape, variant, CARRY_AUTO};
         if (fft.maxExp() < min_exponent) continue;
-        if (fft.maxExp() > 1.3*max_exponent) continue;
-        if (shape.fft_type == FFT64 && fft.maxExp() > 1.2*max_exponent) continue;
+        if (fft.maxExp() > 1.2*max_exponent) continue;
       }
 
       // If only one shape was specified on the command line, time it.  This lets the user time any shape, including non-favored ones.
@@ -1597,7 +1817,7 @@ skip_some_WH_variants = 2;   // should default be 1??
     }
   }
 
-  // FFTs up to 30% above max_exponent were timed to find the cheapest that handles max_exponent.  Of the new entries above
+  // FFTs up to 20% above max_exponent were timed to find the cheapest that handles max_exponent.  Of the new entries above
   // max_exponent only that one is kept.  (The entries tune.txt had before are kept, they may come from tuning a higher range.)
   auto pruneAbove = [&]() {
     if (!args->fftSpec.empty()) { return; }
@@ -1646,7 +1866,24 @@ skip_some_WH_variants = 2;   // should default be 1??
 
   // The FFTs were timed with the compiler's default registers.  Now find the best register limits for the entries this run
   // added.  The other entries keep theirs (-tune regs retunes them).  -tune fine has already done this for every FFT that earned an entry.
-  if (fine_pct == 0) { regTune(quick, args->fftSpec.empty() ? vector<FFTShape>{} : shapes, &addedSpecs); }
+  // The Minimal and Adequate levels leave them for a later -tune regs.
+  if (fine_pct == 0 && !noRegs) { regTune(quick, args->fftSpec.empty() ? vector<FFTShape>{} : shapes, &addedSpecs); }
+
+  // Robust:  the more accurate variants of the FP64 FFTs, as -tune variants
+  bool const fp64Entries = std::ranges::any_of(results, [](const TuneEntry& e) { return e.fft.FFT_FP64; });
+  if (robust && fp64Entries) { variantTune(quick, VARIANT0, args->fftSpec.empty() ? vector<FFTShape>{} : shapes, min_exponent, max_exponent); }
+
+  if (!level.empty()) {
+    string const range = range_given ? ",exp="s + expText(min_exponent) + '-' + expText(max_exponent) : "";
+    if (minimal) {
+      log("This was a Minimal tune.  For a Robust one, the recommended tune, run prpll -setup again and choose Robust.\n");
+    } else if (level == "adequate") {
+      log("This was an Adequate tune.  To upgrade it to a Robust tune, the recommended tune, run:\n");
+      log("  prpll -tune regs%s\n", range.c_str());
+      if (fp64Entries) { log("  prpll -tune variants%s\n", range.c_str()); }
+    }
+  }
+  log("Tuning finished in %s\n", minutesText(tuneTimer.at() / 60).c_str());
 }
 
 namespace {
@@ -2677,3 +2914,219 @@ TuneEntry Tune::regTuneEntry(const TuneEntry& e, int quick, const RegLimits& sm,
   }
   return best;
 }
+
+// ---- -setup, and a first run ----
+
+#include <ctime>
+#include <filesystem>
+#include <iostream>
+#ifdef _WIN32
+#include <io.h>
+#define PRPLL_ISATTY(fd) _isatty(fd)
+#else
+#include <unistd.h>
+#define PRPLL_ISATTY(fd) isatty(fd)
+#endif
+
+namespace setup {
+
+namespace {
+
+// Until Teal provides the text for AutoPrimeNet
+constexpr const char* AUTOPRIMENET_TEXT =
+  "Download AutoPrimeNet to get work and report results.  Available at https://download.mersenne.ca/AutoPrimeNet/";
+
+bool haveTerminal() { return PRPLL_ISATTY(0) && PRPLL_ISATTY(1); }
+
+// One answer, trimmed and lower case.  End of input is a quit.
+optional<string> answer(const char* prompt) {
+  printf("%s", prompt);
+  fflush(stdout);
+  string line;
+  if (!std::getline(std::cin, line)) { printf("\n"); return {}; }
+  size_t const b = line.find_first_not_of(" \t\r"), e = line.find_last_not_of(" \t\r");
+  line = b == string::npos ? "" : line.substr(b, e - b + 1);
+  for (char& c : line) { c = char(tolower((unsigned char) c)); }
+  return line;
+}
+
+// A menu choice from 1 to n, the default for an empty answer.  0:  quit.
+u32 choose(u32 n, u32 dflt) {
+  while (true) {
+    auto const a = answer(("Choice [" + to_string(dflt) + "]: ").c_str());
+    if (!a || *a == "q" || *a == "quit") { return 0; }
+    if (a->empty()) { return dflt; }
+    if (a->size() == 1 && (*a)[0] >= '1' && u32((*a)[0] - '0') <= n) { return u32((*a)[0] - '0'); }
+    printf("Please answer 1 to %u, or q to quit.\n", n);
+  }
+}
+
+// The GPU's name as -h shows it:  the board name where there is one (AMD's device name is the chip, e.g. gfx906)
+string gpuName(cl_device_id id) {
+  string const board = getBoardName(id);
+  return board.empty() ? getDeviceName(id) : board;
+}
+
+bool isGpuKey(const string& key) { return key == "-device" || key == "-d" || key == "-uid" || key == "-pci"; }
+
+// The GPU selection (-device, -uid, -pci) of an argument line
+vector<KeyVal> gpuSelection(const string& line) {
+  vector<KeyVal> ret;
+  for (const KeyVal& kv : Args::splitArgLine(line)) { if (isGpuKey(kv.first)) { ret.push_back(kv); } }
+  return ret;
+}
+
+// The GPU selection of config.txt
+vector<KeyVal> configGpuSelection() {
+  vector<KeyVal> ret;
+  if (File f = File::openRead("config.txt")) {
+    for (const string& line : split(f.readAll(), '\n')) {
+      if (line.empty() || line[0] == '#') { continue; }
+      for (const KeyVal& kv : gpuSelection(line)) { ret.push_back(kv); }
+    }
+  }
+  return ret;
+}
+
+} // namespace
+
+bool wanted(bool setupGiven, const string& mainLine) {
+  if (setupGiven) {
+    if (!haveTerminal()) {
+      log("-setup asks what to tune for, so it needs a terminal.  Without one, use -tune (see prpll -h).\n");
+      throw "-setup needs a terminal";
+    }
+    return true;
+  }
+  // A first run:  no arguments other than a GPU selection and -dir
+  auto const args = Args::splitArgLine(mainLine);
+  bool const onlyGpu = std::ranges::all_of(args, [](const KeyVal& kv) { return isGpuKey(kv.first) || kv.first == "-dir"; });
+  return onlyGpu && haveTerminal() && !std::filesystem::exists("config.txt") && !std::filesystem::exists("tune.txt");
+}
+
+optional<Choice> ask(bool setupGiven, const string& mainLine, int device) {
+  Choice choice;
+  if (setupGiven) {
+    printf("\nPRPLL setup:  tune PRPLL for this GPU again.\n\n"
+           "Once tuning starts, the current config.txt and tune.txt (and tune-pm1.txt) are kept under dated names and new ones are\n"
+           "written.  The GPU selection (-device, -uid or -pci) is kept; copy any other settings you want from the old file.\n\n");
+  } else {
+    printf("\nWelcome to PRPLL.\n\n"
+           "This folder has no config.txt and no tune.txt yet.  PRPLL runs fastest once it has timed its settings and FFTs on this\n"
+           "GPU, and it saves what it finds in config.txt and tune.txt.  This takes a while, but only needs doing once (prpll -setup\n"
+           "does it again, e.g. after a new GPU driver or PRPLL version).\n\n");
+  }
+
+  // The GPU:  as the command line or config.txt selects it, else the user's choice when there is more than one.  The new config.txt
+  // selects it, so that later runs use the GPU that was tuned.
+  // The GPU, which the new config.txt selects so that later runs use the GPU that was tuned.  -setup keeps the selection of the command
+  // line, else of config.txt, as it is.  A first run writes -d:  of the command line's selection, else of the user's choice when there is
+  // more than one GPU, else -d 0.
+  vector<KeyVal> const given = gpuSelection(mainLine);
+  if (setupGiven && !given.empty()) {
+    choice.gpu = given;
+    choice.gpuFrom = "the command line";
+  } else if (setupGiven) {
+    choice.gpu = configGpuSelection();
+    choice.gpuFrom = "config.txt";
+  } else if (!given.empty()) {
+    choice.gpu = {{"-d", to_string(device)}};
+    choice.gpuFrom = "the command line";
+  }
+  vector<cl_device_id> const devices = getAllDeviceIDs();
+  if (choice.gpu.empty() && devices.size() > 1) {
+    printf("Which GPU should be set up?  (Each GPU needs a folder of its own:  run prpll -setup in another folder, or with\n"
+           "-dir <folder>, for the others.)\n");
+    for (u32 i = 0; i < devices.size() && i < 9; ++i) {
+      string const bdf = getBdfFromDevice(devices[i]);
+      float const ram = getGpuRamGB(devices[i]);
+      printf("  %u. %-32s%s%s\n", i + 1, gpuName(devices[i]).c_str(), bdf.empty() ? "" : ("  PCI " + bdf).c_str(),
+             ram > 0 ? ("  " + to_string(lround(ram)) + " GB").c_str() : "");
+    }
+    printf("  q. Quit\n");
+    u32 const n = choose(std::min<u32>(devices.size(), 9), 1);
+    if (!n) { return {}; }
+    device = int(n - 1);
+    choice.gpu = {{"-d", to_string(device)}};
+    choice.gpuFrom = "the choice above";
+    printf("\n");
+  } else if (choice.gpu.empty()) {
+    choice.gpu = {{"-d", to_string(device)}};
+    choice.gpuFrom = "the only GPU";
+  }
+  cl_device_id const id = getDevice(device);
+  printf("GPU:  %s\n\n", gpuName(id).c_str());
+
+  printf("What will this GPU test?\n"
+         "  1. First-time PRP tests     135M to 200M\n"
+         "  2. Double checks             84M to 112M\n"
+         "  3. 100M-digit tests         332M to 345M\n"
+         "  4. My own exponent range\n"
+         "  q. Quit\n");
+  u64 minExp = 0, maxExp = 0;
+  switch (choose(4, 1)) {
+    case 0: return {};
+    case 1: minExp = 135'000'000; maxExp = 200'000'000; break;
+    case 2: minExp = 84'000'000; maxExp = 112'000'000; break;
+    case 3: minExp = 332'000'000; maxExp = 345'000'000; break;
+    case 4:
+      while (true) {
+        auto const a = answer("Exponent range, e.g. 120M-140M: ");
+        if (!a || *a == "q" || *a == "quit") { return {}; }
+        size_t const dash = a->find('-');
+        auto const lo = dash == string::npos ? std::nullopt : Args::parseExponent(a->substr(0, dash));
+        auto const hi = dash == string::npos ? std::nullopt : Args::parseExponent(a->substr(dash + 1));
+        if (lo && hi && *lo >= 1'000'000 && *lo < *hi) { minExp = *lo; maxExp = *hi; break; }
+        printf("Please give two exponents, the smaller first and at least 1M, e.g. 120M-140M or 120000000-140000000.\n");
+      }
+      break;
+  }
+
+  printf("\nHow thorough should the tuning be?  The times are rough:  most of each timing is compiling GPU code, so a slow CPU\n"
+         "takes longer.\n");
+  const char* const levels[] = {"minimal", "adequate", "robust"};
+  const char* const names[] = {"Minimal", "Adequate [Easily upgraded to Robust]", "Robust [Recommended]"};
+  for (u32 i = 0; i < 3; ++i) {
+    printf("  %u. %-38s about %s\n", i + 1, names[i], minutesText(Tune::estimateMinutes(levels[i], minExp, maxExp, id)).c_str());
+  }
+  printf("  q. Quit\n");
+  u32 const level = choose(3, 3);
+  if (!level) { return {}; }
+  printf("\nTuning starts now.  It writes its progress to gpuowl-0.log too.  Ctrl+C stops it; prpll -setup starts over.\n\n");
+  // quick=4:  each timing is mostly compiling, so timing 5000 iterations rather than -tune's 1200 costs little and is more accurate
+  choice.tune = "level="s + levels[level - 1] + ",exp=" + expText(minExp) + '-' + expText(maxExp) + ",quick=4,workers=1";
+  return choice;
+}
+
+vector<string> renameOldFiles(const Choice& choice) {
+  vector<string> said;
+  char stamp[32];
+  time_t const now = time(nullptr);
+  strftime(stamp, sizeof stamp, "%Y%m%d-%H%M", localtime(&now));
+  string gpuFrom = choice.gpuFrom;
+  for (string const name : {"config.txt", "tune.txt", "tune-pm1.txt"}) {
+    if (!std::filesystem::exists(name)) { continue; }
+    string const stem = name.substr(0, name.size() - 4);
+    string to = stem + '-' + stamp + ".txt";
+    for (u32 i = 2; std::filesystem::exists(to); ++i) { to = stem + '-' + stamp + '-' + to_string(i) + ".txt"; }
+    if (name == "config.txt" && gpuFrom == "config.txt") { gpuFrom = to; }
+    std::filesystem::rename(name, to);
+    said.push_back("Renamed " + name + " to " + to);
+  }
+  if (!choice.gpu.empty()) {
+    File f = File::openWrite("config.txt");
+    f.printf("# The GPU this folder is set up for (from %s)\n", gpuFrom.c_str());
+    for (const auto& [k, v] : choice.gpu) { f.printf("%s %s\n", k.c_str(), v.c_str()); }
+    said.push_back("The new config.txt selects the GPU (from " + gpuFrom + ")");
+  }
+  return said;
+}
+
+void printClosing() {
+  log("\n");
+  log("PRPLL is set up for this GPU.  Next, give it work:\n");
+  log("  %s\n", AUTOPRIMENET_TEXT);
+  log("  Or add lines such as PRP=<exponent> to worktodo-0.txt (prpll -h shows the formats), then run prpll.\n");
+}
+
+} // namespace setup

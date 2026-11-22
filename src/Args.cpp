@@ -161,6 +161,15 @@ static void checkTuneOptions(const string& options) {
   for (const string& s : all) {
     if (s.empty() || s == "noconfig" || s == "regs" || s == "variants" || s == "fine" || s == "fp64" || s == "ntt" || s == "fp6431" || s == "nofp32" || s == "fp32" || s == "inplace"
         || s == "1k256" || s == "m61" || s == "pfa" || s == "pm1") { continue; }
+    if (s == "level=minimal" || s == "level=adequate" || s == "level=robust") {
+      if (std::ranges::find(all, "pm1") != all.end() || std::ranges::any_of(all, [](const string& o) {
+            string const k = o.substr(0, o.find('='));
+            return k == "regs" || k == "variants" || k == "fine" || k == "noconfig"; })) {
+        log("-tune %s can't be combined with pm1, regs, variants, fine or noconfig\n", s.c_str());
+        throw "-tune option";
+      }
+      continue;
+    }
     auto pos = s.find('=');
     string const key = s.substr(0, pos);
     bool const isGroup = key == "1k256" || key == "m61" || key == "pfa" || key == "fp6431" || key == "fp32";
@@ -202,7 +211,7 @@ static void checkTuneOptions(const string& options) {
       }
       continue;
     }
-    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, pm1, workers=<N>\n", s.c_str());
+    log("-tune option '%s' not understood; valid options are noconfig, regs, regs=<val>, variants, fine, fine=<pct>, inplace, fp64, ntt, fp32=0, fp6431, 1k256, m61, pfa, minexp=<val>, maxexp=<val>, exp=<min>-<max>, quick=<val>, warmup=<secs>, pm1, workers=<N>, level=minimal|adequate|robust\n", s.c_str());
     throw "-tune option";
   }
 }
@@ -351,7 +360,7 @@ P-1 factoring (see docs/pm1.md):
 
 The configuration options listed below can be passed on the command line or can be put in a file
 named "config.txt" in the prpll run directory.  The options for one run are command line only:  -h, -info, -version,
--dir, -prp, -ll, -verify, -iters, -fft, -time, -roe, -tune, -ztune and -carryTune.
+-dir, -prp, -ll, -verify, -iters, -fft, -time, -roe, -setup, -tune, -ztune and -carryTune.
 
 
 -h                 : print general help, list of FFTs, list of devices
@@ -489,6 +498,12 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
   -use STATS=<val> : enable carry statistics collection & logging (developers), for the kernel according to <val>:
                      1 = CarryFused, 2 = CarryFusedMul, 4 = CarryA, 8 = CarryMul
 
+-setup             : Tune PRPLL for this GPU, asking what it will test (first-time tests, double checks, 100M-digit tests or your
+                     own range) and how thoroughly to tune (Minimal, Adequate or Robust, with time estimates).  The existing
+                     config.txt, tune.txt and tune-pm1.txt are renamed with the date when tuning starts.  Needs a terminal.
+                     Running prpll with no arguments (other than -device, -uid, -pci or -dir) in a folder with no config.txt
+                     and no tune.txt does the same.  The new config.txt selects the GPU that was tuned:  -setup keeps the
+                     -device, -uid or -pci of the command line or the old config.txt; a first run writes -device.
 -tune <options>    : Looks for best settings to include in config.txt.  Times many FFTs to find fastest one to test exponents -- written to tune.txt.
                      An -fft <spec> can be given on the command line to limit which FFTs are timed.
                      Options are not required.  If present, the options are a comma separated list from below.
@@ -531,6 +546,10 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                          fine=<pct>   - Like fine, for FFTs within <pct> percent of earning a tune.txt entry.
                          workers=<N>  - Time config.txt settings with N workers running concurrently (as with -workers N), scoring their
                                         combined throughput.  FFT timings for tune.txt still use one worker.
+                         level=<lvl>  - What -setup runs.  minimal: times the config.txt settings that matter most and writes the
+                                        expected best values of the others (in their own group, marked as not timed), times one FFT
+                                        family without FP32+M61 (type 2) or the mirrored shapes, and does not tune the register usage.
+                                        adequate: -tune without the register tuning.  robust: -tune, then -tune variants (FP64).
                          pm1          - Time P-1 stage 2 multiplications instead (all the FFT types stage 2 supports; FP64 types as
                                         above) and write the fastest FFT for each exponent range, with its stage 2 settings (INPLACE,
                                         TAIL_KERNELS, MULTI_Q), to tune-pm1.txt.  Does not change tune.txt or config.txt.  Stage 2
@@ -604,7 +623,7 @@ static bool isCommandLineOnly(const string& key) {
   static const std::set<string> keys{
     "-h", "--help", "-version", "-info", "-dir",
     "-prp", "-PRP", "-ll", "-LL", "-verify", "-iters", "-fft",
-    "-time", "-roe", "-tune", "-ztune", "-carryTune",
+    "-time", "-roe", "-tune", "-ztune", "-carryTune", "-setup",
   };
   return keys.contains(key);
 }
@@ -660,6 +679,8 @@ void Args::parse(const string& line) {
     } else if (key == "-roe") {
       assert(s.empty());
       logROE = true;
+    } else if (key == "-setup") {
+      doSetup = true;
     } else if (key == "-tune") {
       doTune = true;
       if (!s.empty()) { checkTuneOptions(s); tune = s; }

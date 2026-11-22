@@ -5,6 +5,7 @@
 #include "Primes.h"
 #include "GpuCommon.h"
 #include "FFTConfig.h"
+#include "clwrap.h"
 
 #include <array>
 #include <map>
@@ -25,6 +26,27 @@ using RegLimits = AmdSimdLimits;
 #endif
 
 using TuneConfig = vector<KeyVal>;
+
+// -setup, and a first run (no arguments, no config.txt and no tune.txt, with a terminal):  ask what the GPU will work on and how
+// thoroughly to tune it, rename the old config.txt, tune.txt and tune-pm1.txt, and tune (see main.cpp)
+namespace setup {
+  // Whether this run asks:  -setup, or a first run (no arguments but a GPU selection, no config.txt and no tune.txt).  -setup without a
+  // terminal is an error.
+  bool wanted(bool setupGiven, const std::string& mainLine);
+  struct Choice {
+    std::string tune;               // the -tune options
+    std::vector<KeyVal> gpu;        // the GPU selection (-device, -uid, -pci) the new config.txt starts with
+    std::string gpuFrom;            // where it came from:  the command line, config.txt, the user's choice or the only GPU
+  };
+  // What to tune for, or none to quit.  The GPU is the one mainLine or config.txt selects, else (more than one GPU) the user's choice.
+  // device:  the GPU Args selected, for the time estimates when it is not the user's choice.
+  std::optional<Choice> ask(bool setupGiven, const std::string& mainLine, int device);
+  // Give config.txt, tune.txt and tune-pm1.txt dated names, and start the new config.txt with the choice's GPU selection.  Returns
+  // what was done, to log.
+  std::vector<std::string> renameOldFiles(const Choice& choice);
+  // After the tune:  what to do next
+  void printClosing();
+}
 
 class Tune {
 private:
@@ -77,6 +99,9 @@ public:
 
   // Considering the cost of each FFT and the max-BPW, work out the transition points between them
   void tune();
+
+  // About how many minutes -tune level=<level>,exp=<minExp>-<maxExp> takes on this device (see the estimates in tune.cpp)
+  static double estimateMinutes(const std::string& level, u64 minExp, u64 maxExp, cl_device_id id);
 
   void carryTune();
 

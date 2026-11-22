@@ -20,6 +20,7 @@
 #endif
 
 #include <atomic>
+#include <optional>
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
@@ -185,8 +186,28 @@ int main(int argc, char **argv) {
     }
 #endif
 
+    // -setup, or a first run (no arguments but a GPU selection, no config.txt and no tune.txt):  ask what to tune for, then rename the files the tune
+    // replaces, before config.txt is read for this run.  (After the -v 10 re-exec above, so that only one process asks.)
+    optional<string> setupTune;
+    vector<string> setupDone;
+    {
+      Args args{true};
+      args.readConfig("config.txt");      // its GPU selection
+      args.parse(mainLine);
+      if (setup::wanted(args.doSetup, mainLine)) {
+        auto const choice = setup::ask(args.doSetup, mainLine, args.device);
+        if (!choice) {
+          printf("Nothing was changed.\n");
+          return 0;
+        }
+        setupTune = choice->tune;
+        setupDone = setup::renameOldFiles(*choice);
+      }
+    }
+
     initLog("gpuowl-0.log");
     log("PRPLL %s starting\n", VERSION);
+    for (const string& s : setupDone) { log("%s\n", s.c_str()); }
 #if !defined(CUDA_BACKEND) && !defined(_WIN32)
     if (!reexecError.empty()) {
       log("Warning: could not re-exec for -v 10 assembly dump (%s), continuing without it\n", reexecError.c_str());
@@ -199,6 +220,11 @@ int main(int argc, char **argv) {
     args.readConfig("config.txt");
     args.parse(mainLine);
     args.setDefaults();
+    if (setupTune) {
+      args.doTune = true;
+      args.tune = *setupTune;
+      log("Setup:  -tune %s\n", setupTune->c_str());
+    }
 
     if (args.maxAlloc) { AllocTrac::setMaxAlloc(args.maxAlloc); }
 
@@ -241,6 +267,7 @@ int main(int argc, char **argv) {
 
       if (args.doTune) {
         tune.tune();
+        if (setupTune) { setup::printClosing(); }
       } else if (args.doZtune) {
         tune.ztune();
       } else if (args.carryTune) {
