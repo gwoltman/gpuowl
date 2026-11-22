@@ -3058,7 +3058,7 @@ optional<Choice> ask(bool setupGiven, const string& mainLine, int device) {
   printf("GPU:  %s\n\n", gpuName(id).c_str());
 
   printf("What will this GPU test?\n"
-         "  1. First-time PRP tests     135M to 200M\n"
+         "  1. First-time PRP tests     136M to 200M\n"
          "  2. Double checks             84M to 112M\n"
          "  3. 100M-digit tests         332M to 345M\n"
          "  4. My own exponent range\n"
@@ -3066,7 +3066,7 @@ optional<Choice> ask(bool setupGiven, const string& mainLine, int device) {
   u64 minExp = 0, maxExp = 0;
   switch (choose(4, 1)) {
     case 0: return {};
-    case 1: minExp = 135'000'000; maxExp = 200'000'000; break;
+    case 1: minExp = 136'000'000; maxExp = 200'000'000; break;
     case 2: minExp = 84'000'000; maxExp = 112'000'000; break;
     case 3: minExp = 332'000'000; maxExp = 345'000'000; break;
     case 4:
