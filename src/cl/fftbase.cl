@@ -703,6 +703,19 @@ void partial_tabMul8(local T2 *lds, Trig trig, T *preloads, T2 *u, u32 f, u32 nu
       preloads[i+1] = cosines.y;
     }
   }
+  else if (f == WG/4) {
+    // SIZE=2K's last step (see finish_tabMul8_fft8_4).  Cosine k is in line (pre-shufl u index) ((k * WG + me) / f) & 7 and column
+    // (k / 2) * (WG/32): the odd k are 4 lines after the even k's.  (When WG is a multiple of 8*f, as below, the line is (me/f) & 7 for every k.)
+    // Cosines 0 and 1 are 1.
+    u32 line = (me/f) & 7;
+    u32 lineOdd = line + 4;
+    preloads[4] = lds1[WG + line    * WG/8 + 2 * (WG/32)];
+    preloads[5] = lds1[WG + lineOdd * WG/8 + 2 * (WG/32)];
+    preloads[6] = lds1[WG + line    * WG/8 + 3 * (WG/32)];
+    preloads[7] = lds1[WG + lineOdd * WG/8 + 3 * (WG/32)];
+    preloads[2] = lds1[WG + line    * WG/8 + 1 * (WG/32)];
+    preloads[3] = lds1[WG + lineOdd * WG/8 + 1 * (WG/32)];
+  }
   else {
     // Load cosine4, cosine5/cosine1, cosine6/cosine2, cosine7/cosine3, cosine2, cosine3/cosine1, cosine1
     // Load them in the order they will be used, though it probably won't matter.
@@ -811,6 +824,38 @@ void finish_tabMul8_fft8(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me
   SWAP(u[3], u[6]);
 }
 
+
+// Finish off a partial tabMul while doing two fft4s (u[0,2,4,6] and u[1,3,5,7], as fft8_4 does) making use of FMA.  Used for SIZE=2K's last step,
+// where f == WG / 4.  There each thread's cosine k (post-shufl order) is in table column (k / 2) * (WG/32), and the odd k are in the line 4 after
+// the even k's (see partial_tabMul8).  So cosine0 = cosine1 = 1, and the table holds raw cosines in columns 1 and 2 * (WG/32) and cosine6/cosine2
+// (even k) or cosine7/cosine3 (odd k) in column 3 * (WG/32).  Like the second half of an fft8 in finish_tabMul8_fft8, every cosine
+// folds into an FMA: the fft4 of u[1,3,5,7] uses cosine5, cosine7/cosine3 and cosine3 the way the fft4 of u[0,2,4,6] uses cosine4, cosine6/cosine2
+// and cosine2.
+void finish_tabMul8_fft8_4(Trig trig, T *preloads, T2 *u, u32 f, u32 numWG, u32 me) {
+  assert(f == WG / 4);
+  TrigSingle trig1 = (TrigSingle) trig;
+
+  // HOIST == 3: load the cosines here, after the shufl (see finish_tabMul8_fft8)
+  if (HOIST == 3) {
+    for (u32 k = 2; k < 8; ++k) {
+      preloads[k] = TFLOAD(&trig1[16*WG + (((k * WG + me) / f) & 7) * (WG/8) + ((k * WG + me) / (8*f)) * (f/8)]);
+    }
+  }
+
+  X2_via_FMA(u[0], preloads[4], u[4]);
+  X2_via_FMA(u[1], preloads[5], u[5]);
+  X2_via_FMA(u[2], preloads[6], u[6]);  u[6] = mul_t4(u[6]);
+  X2_via_FMA(u[3], preloads[7], u[7]);  u[7] = mul_t4(u[7]);
+
+  X2_via_FMA(u[0], preloads[2], u[2]);
+  X2_via_FMA(u[4], preloads[2], u[6]);
+  X2_via_FMA(u[1], preloads[3], u[3]);
+  X2_via_FMA(u[5], preloads[3], u[7]);
+
+  // revbin [0, 2, 1, 3] undo in each fft4
+  SWAP(u[2], u[4]);
+  SWAP(u[3], u[5]);
+}
 
 void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 lowMe, int callnum) {
 
@@ -983,6 +1028,43 @@ void OVERLOAD fft_common(local T2 *lds, T2 *u, Trig trig, T2 w, u32 numWG, u32 l
   if (HOIST >= 1) OPAQUE(me);
 
   if (lowMe < WG / 2) fft8_16a(u); else fft8_16b(u);
+
+// Variant 2 code for SIZE=2K, RADIX=8, threads=256.  Performed as 8 * 8 * 8 * 4 rather than the plain version's 8 * 16 * 16 (below), so
+// that every tabMul uses the FMA-based partial/finish tabMul8 machinery, like SIZE=4K.  After the third shufl each thread holds two
+// radix-4s (u[0,2,4,6] and u[1,3,5,7], as in fft8_4), see finish_tabMul8_fft8_4.  Fewer FP64 ops than 8 * 16 * 16.
+#elif WG == 256 && RADIX == 8 && VARIANT == 2
+
+  T preloads[10];               // Place to store preloaded trig values.  We want F64 ops to hide load latencies without creating register pressure.
+  Trig trig2 = trig + WG*8;     // Skip past old FFT_width trig values to the !save_one_more_mul trig values
+
+  // Preload trig values to hide global memory latencies.  As the preloads are used, the next set of trig values are preloaded.
+  u32 me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);       // This stage's LDS addresses and preloads are not computed before this point (see HOIST_W/H)
+  preload_tabMul8_trig(trig2, preloads, 1, numWG, me);
+
+  // Do first fft8, partial tabMul, and shufl.
+  if (FUSE_WEIGHT_BUTTERFLY && DOING_WIDTH && callnum == 2) fft8_skip1(u); else fft8(u);
+  partial_tabMul8(partitioned_lds, trig2, preloads, u, 1, numWG, me);
+  shufl(lds, u, 1, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
+
+  // Finish the first tabMul and perform second fft8.  Do second partial tabMul and shufl.
+  finish_tabMul8_fft8(trig2, preloads, u, 1, numWG, me, 0);  // We'd rather set save_one_more_mul to 1
+  partial_tabMul8(partitioned_lds, trig2, preloads, u, 8, numWG, me);
+  shufl(lds, u, 8, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
+
+  // Finish the second tabMul and perform third fft8.  Do third partial tabMul and shufl.
+  finish_tabMul8_fft8(trig2, preloads, u, 8, numWG, me, 0);  // We'd rather set save_one_more_mul to 1
+  partial_tabMul8(partitioned_lds, trig2, preloads, u, 64, numWG, me);
+  shufl(lds, u, 64, numWG, me);
+  me = lowMe;
+  if (HOIST >= 1) OPAQUE(me);
+
+  // Finish the third tabMul and perform the final two fft4s.
+  finish_tabMul8_fft8_4(trig2, preloads, u, 64, numWG, me);
 
 // Variant 2 code for SIZE=4K, RADIX=8
 #elif WG == 512 && RADIX == 8 && VARIANT == 2
