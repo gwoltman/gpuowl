@@ -101,6 +101,7 @@ struct P2State {
   u64 nMul;
   vector<u32> acc;
   double elapsed{};
+  u32 errors{};     // stage 2 checks that failed (and were redone from a checkpoint) up to this checkpoint
 };
 
 // P-1 stage 1 inside a PRP test (Pm1Prp):  written beside the verified PRP savefile of iteration k, whose res64 is prp64.  data

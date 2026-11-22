@@ -214,13 +214,14 @@ void Task::writeResultLL(FFTConfig fft, const Args &args, u32 instance, bool isP
 }
 
 void Task::writeResultPM1(FFTConfig fft, const Args &args, u32 instance, u64 B1, u64 B2, const vector<string>& factors, u32 nErrors,
-                          u32 nJacobi, bool integrated) const {
+                          u32 nJacobi, u32 nStage2Errors, bool integrated) const {
   // {"status":"NF", "exponent":45581713, "worktype":"P-1", "b1":50000, "b2":5000000, "fft-length":5120, ..., "factors":["..."]}
   vector<string> fields{json("b1", B1)};
   if (B2 > B1) { fields.push_back(json("b2", B2)); }
   fields.push_back(json("fft-length", fft.size()));
   vector<string> errors{json("gerbicz", nErrors)};
   if (nJacobi) { errors.push_back(json("jacobi", nJacobi)); }
+  if (B2 > B1) { errors.push_back(json("stage2", nStage2Errors)); }     // stage 2's failed checks, when it ran
   fields.push_back(json("errors", errors));
   if (integrated) { fields.push_back(json("integrated") + ":true"); }    // stage 1 from the squarings of a PRP test (Pm1Prp)
   if (!factors.empty()) {
@@ -494,6 +495,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
   if (nJacobi) { log("P-1 stage 1 had %u Jacobi check failures\n", nJacobi); }
 
   u64 doneB2 = 0;     // the B2 of the result:  0 for a result of stage 1 alone
+  u32 nStage2Errors = 0;
   if (factors.empty() && B2 > B1) {
     Stage2Result const r = Stage2::run(shared, exponent, B1, B2, x);
     if (r.status == Stage2Result::STOPPED) {
@@ -503,6 +505,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
     if (r.status == Stage2Result::DONE) {
       factors = Stage2::accFactor(gcd, r.acc, exponent, B1, B2);
       doneB2 = B2;
+      nStage2Errors = r.nErrors;
     } else if (to != To::NONE) {
       log("P-1 stage 2 is not run here (%s)\n", r.why.c_str());
       handOff(B2, "stage 2");
@@ -512,7 +515,7 @@ void Task::executePM1(GpuCommon shared, u32 instance, FFTConfig fft, unique_ptr<
           "in '%s'\n", B2, r.why.c_str(), noHandOff.c_str(), B1, p1Dir.string().c_str());
     }
   }
-  writeResultPM1(fft, args, instance, B1, doneB2, factors, nErrors, nJacobi);
+  writeResultPM1(fft, args, instance, B1, doneB2, factors, nErrors, nJacobi, nStage2Errors);
   Worktodo::deleteTask(*this, instance);
   if (args.clean && (B2 <= B1 || doneB2 || !factors.empty())) {
     Saver<P1State>::clear(exponent);
@@ -663,8 +666,8 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
     bool isPrime;
     if (kind == PRP) {
       // The P-1 inside the PRP test reports through this; a factor ends the test (it is composite) with no PRP result
-      Pm1Report const pm1Report = [&](u64 b1, u64 b2, const vector<string>& factors, u32 nErr) {
-        writeResultPM1(fft, *shared.args, instance, b1, b2, factors, nErr, 0, true);
+      Pm1Report const pm1Report = [&](u64 b1, u64 b2, const vector<string>& factors, u32 nErr, u32 nStage2Err) {
+        writeResultPM1(fft, *shared.args, instance, b1, b2, factors, nErr, 0, nStage2Err, true);
       };
       prpPm1Bounds(*this, shared, *gpu);
       auto [tmpIsPrime, res64, nErrors, proofPath, res2048, pm1Factor] = gpu->isPrimePRP(*this, pm1Report);

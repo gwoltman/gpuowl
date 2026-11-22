@@ -37,7 +37,7 @@
 class Gpu;
 
 // The P-1 result of a PRP test:  writes the result line (B2 = 0 for a result of stage 1 alone).
-using Pm1Report = std::function<void(u64 B1, u64 B2, const vector<string>& factors, u32 nErrors)>;
+using Pm1Report = std::function<void(u64 B1, u64 B2, const vector<string>& factors, u32 nErrors, u32 nStage2Errors)>;
 
 class Pm1Prp {
 public:

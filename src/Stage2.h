@@ -21,6 +21,7 @@ struct Stage2Result {
   string why{};             // DECLINED: the reason
   vector<u32> acc{};        // DONE: the accumulator
   u64 nMul{};               // accumulator and k-step multiplications of the plan, over all runs
+  u32 nErrors{};            // DONE, STOPPED: the checks that failed (each redone from a checkpoint), over all runs (the savefile keeps it)
 };
 
 class Stage2 {
