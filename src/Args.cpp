@@ -21,6 +21,9 @@
 #include <algorithm>
 #include <charconv>
 
+// A warning from parsing:  the silent early passes in main() (before the log file is open) leave it to the main pass, which says it once.
+#define warn(...) do { if (!silent) { log(__VA_ARGS__); } } while (0)
+
 // This is a copy of the args.verbose level.  It allows the CUDA wrapper to access the value.
 int prpll_verbose = 0;
 
@@ -633,7 +636,7 @@ void Args::parse(const string& line) {
 
   if (line[0] == '!') {
     // old per-FFT config lines
-    log("WARNING: per-FFT config line ignored (\"! <fft> <use-flags>\" is no longer supported, use tune.txt): \"%s\"\n", line.c_str());
+    warn("WARNING: per-FFT config line ignored (\"! <fft> <use-flags>\" is no longer supported, use tune.txt): \"%s\"\n", line.c_str());
     return;
   }
 
@@ -754,22 +757,22 @@ void Args::parse(const string& line) {
     // DEPRECATED options from old gpuowl config.txt files that no longer affect anything PRPLL does.
     // Accepted (rather than "not understood") so migrated configs keep running; see forum #474/#480.
     else if (key == "-yield") {          // was a work-around for Nvidia's CUDA busy-wait eating a CPU core; PRPLL has no such busy-wait to work around.
-      log("-yield is deprecated and ignored (CUDA busy-wait work-around no longer applies)\n");
+      warn("-yield is deprecated and ignored (CUDA busy-wait work-around no longer applies)\n");
     }
     else if (key == "-nospin") {         // used to silence the "-\\|/" progress spinner, which no longer exists.
-      log("-nospin is deprecated and ignored (there is no progress spinner to silence)\n");
+      warn("-nospin is deprecated and ignored (there is no progress spinner to silence)\n");
     }
     else if (key == "-cpu") {            // used to label results with a machine name; PRPLL derives that label from the last segment of -dir instead.
-      log("-cpu is deprecated and ignored (results are now labeled from -dir instead)\n");
+      warn("-cpu is deprecated and ignored (results are now labeled from -dir instead)\n");
     }
     else if (key == "-results") {        // used to rename results.txt; PRPLL always writes results-<worker>.txt.
-      log("-results is deprecated and ignored (results are always written to results-<N>.txt)\n");
+      warn("-results is deprecated and ignored (results are always written to results-<N>.txt)\n");
     }
     else if (key == "-tmpDir" || key == "-tmpdir") {   // used to redirect proof checkpoint scratch space.
-      log("-tmpDir is deprecated and ignored (proof checkpoints are always kept under -dir)\n");
+      warn("-tmpDir is deprecated and ignored (proof checkpoints are always kept under -dir)\n");
     }
     else if (key == "-binary") {         // used to load a precompiled kernel binary from a given file.
-      log("-binary is deprecated and ignored; use -cache for a persistent kernel cache instead\n");
+      warn("-binary is deprecated and ignored; use -cache for a persistent kernel cache instead\n");
     }
     else if (key == "-mprimeStage2") {
       mprimeStage2 = true;
@@ -812,8 +815,7 @@ void Args::parse(const string& line) {
       // Was an option of master only (PR #213):  P-1 inside the PRP test is now automatic, from the worktodo line.  Args::parse runs
       // once per source (config.txt, command line), so this is said once.
       static bool said = false;
-      if (!said) { log("-prpPm1 is ignored: P-1 inside PRP tests is now automatic, from the worktodo line (see -h)\n"); }
-      said = true;
+      if (!said && !silent) { said = true; log("-prpPm1 is ignored: P-1 inside PRP tests is now automatic, from the worktodo line (see -h)\n"); }
     }
     else if (key == "-iters") { iters = stoi(s); assert(iters > 0); }   // any positive count; release never enforced the old multiple-of-10000 rule
     else if (key == "-prp" || key == "-PRP") { prpExp = stoll(s); singleRun = true; }
@@ -828,7 +830,7 @@ void Args::parse(const string& line) {
       bool const isOffset = s.size() >= 2 && (s[0] == '+' || s[0] == '-') &&
         s.find_first_not_of("0123456789", 1) == string::npos;
       if (isOffset && stoi(s) == 0) {
-        log("-fft %s ignored (relative FFT size offsets are not supported; auto-selecting FFT)\n", s.c_str());
+        warn("-fft %s ignored (relative FFT size offsets are not supported; auto-selecting FFT)\n", s.c_str());
       } else if (isOffset) {
         log("-fft %s not supported: relative FFT size offsets (+N/-N) no longer exist; "
             "specify an explicit FFT size or spec (e.g. -fft 6.5M), or omit -fft to auto-select\n", s.c_str());
@@ -865,7 +867,7 @@ void Args::parse(const string& line) {
         carry = s == "short" ? CARRY_32 : CARRY_64;
         // parse() runs once per source (command line, config.txt, ...), so warn only the first time
         static bool warnedCarryShort = false;
-        if (s == "short" && !warnedCarryShort) {
+        if (s == "short" && !warnedCarryShort && !silent) {
           warnedCarryShort = true;
           log("-carry short has no effect: PRPLL already uses short carry whenever it is safe, and always "
               "switches to long carry below 10 bits/word regardless of -carry, to avoid incorrect results\n");
@@ -890,7 +892,7 @@ void Args::parse(const string& line) {
       for (const auto& [key, val] : splitUses(s)) {
         auto it = flags.find(key);
         if (it != flags.end() && it->second != val) {
-          log("warning: -use %s=%s overrides %s=%s\n", key.c_str(), val.c_str(), it->first.c_str(), it->second.c_str());
+          warn("warning: -use %s=%s overrides %s=%s\n", key.c_str(), val.c_str(), it->first.c_str(), it->second.c_str());
         }
         flags[key] = val;
         if (!readingConfig) { cmdlineUses.insert(key); }
