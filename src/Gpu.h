@@ -234,6 +234,8 @@ private:
                                         // With INPLACE=3 the ROWPAD, BLKPAD and MIDPAD packed by IP3_PADS instead.
   u32 multi_q;                          // MULTI_Q, L2_STRIPING and GRAPHS as adjusted for this FFT and device (see clDefines)
   u32 l2_striping;
+  u32 tail_split[4];                    // TAIL_SPLIT: number of dispatches per tail kernel, by cache group (see replay_one)
+  u32 carry_split;                      // CARRY_SPLIT: number of dispatches per carryFused (see runCarryFused)
   bool graphs;
   bool zero_q;          // TAIL_KERNELS 11 or 13: the tail*Zero kernels run in their own queue(s), see replay_one
   u32 msplit;           // MSPLIT as adjusted for this FFT (see clDefines):  1 when the 64-bit type's middle kernels run split
@@ -318,6 +320,7 @@ private:
   void carryA(Buffer<Word>& out, Buffer<double>& in);
   void carryM(Buffer<Word>& out, Buffer<double>& in);
   void carryLL(Buffer<Word>& out, Buffer<double>& in);
+  template<typename... A> void runCarryFused(Kernel& k, const A&... args);
   void carryFused(Buffer<double>& buf);
   void carryFusedMul(Buffer<double>& buf);
   void carryFusedLL(Buffer<double>& buf);
