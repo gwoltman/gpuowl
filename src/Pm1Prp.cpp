@@ -563,6 +563,7 @@ Pm1Prp::Outcome Pm1Prp::afterSave() {
   // for B1 alone, as a stage 2 that declines does
   string error;
   try {
+    ProgressPause const pause;      // progress-<N>.txt keeps the PRP test's fraction during this stage 2
     Stage2Result const r = Stage2::run(gpu.shared, E, B1, B2, x);
     if (r.status == Stage2Result::STOPPED) {
       gpu.queue.finish();

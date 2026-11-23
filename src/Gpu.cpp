@@ -2854,6 +2854,7 @@ static string makeLogStr(const string& status, u64 k, u64 res, float secsPerIt, 
 }
 
 void Gpu::doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors) {
+  writeProgress(double(k) / nIters);
   auto [roeSq, roeMul] = readROE();
   double const z = roeSq.z();
   // With every roundoff error near zero (an NTT has none) the Gumbel fit divides by about zero:  Z is inf or noise, so leave it out
@@ -3642,6 +3643,7 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
       assert(words.size() >= 64);
       res2048.insert(res2048.end(), words.begin(), std::next(words.begin(), 64));
       log("%s %8" PRIu64 " / %" PRIu64 ", %s\n", isPrime ? "PP" : "CC", kEnd, E, hex(finalRes64).c_str());
+      writeProgress(1);
     }
 
     if (!doCheck && !doLog) {
@@ -4079,6 +4081,7 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
       float const secsPerIt = iterationTimer.reset(k);
       queue.setSquareTime((int) (secsPerIt * 1'000'000));
       log("%9" PRIu64 " %016" PRIx64 " %s ETA %s\n", k, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
+      writeProgress(double(k) / kEnd);
       continue;
     }
 
@@ -4132,6 +4135,7 @@ LLResult Gpu::isPrimeLL([[maybe_unused]] const Task& task, Gcd* gcd) {
 
     queue.setSquareTime((int) (secsPerIt * 1'000'000));
     log("%9" PRIu64 " %016" PRIx64 " %s ETA %s\n", k, res64, formatSecsPerIter(secsPerIt).c_str(), getETA(k, kEnd, secsPerIt).c_str());
+    writeProgress(double(k) / kEnd);
 
     if (k >= kEnd) { return {.isPrime=isAllZero, .res64=res64, .nJacobi=nJacobi}; }
 

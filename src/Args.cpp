@@ -369,7 +369,7 @@ named "config.txt" in the prpll run directory.  The options for one run are comm
 -h                 : print general help, list of FFTs, list of devices
 -info <fft>        : print detailed information about the given FFT; e.g. -info 1K:13:256
 -dir <folder>      : specify local work directory (containing worktodo-<N>.txt, results-<N>.txt, config.txt,
-                     gpuowl-<N>.log)
+                     gpuowl-<N>.log, progress.txt)
 -pool <dir>        : specify a directory with the shared (pooled) worktodo.txt and config.txt
                      Multiple PRPLL instances, each in its own directory, can share a pool of assignments.
                      Results are still written locally, to results-<N>.txt in each instance's own directory.
@@ -453,6 +453,9 @@ P-1 inside PRP tests: a PRP line whose tests-saved field is above 0 (PRP=AID,1,2
 -roe               : measure the Round-Off Error (Z) for more iterations (slow)
 -time              : collect and print a per-kernel GPU timing profile
 -log <N>           : log progress and checkpoint every <N> iterations (positive multiple of 1000; default 20000)
+                     Each log also writes progress.txt (with -workers 2 or more, progress-<N>.txt for worker N):  the fraction of
+                     the test done, from 0 to 1, e.g. 0.1234567890 (for a wrapper such as BOINC's).  P-1 counts each stage from 0 to 1;  the
+                     P-1 inside a PRP test does not change it.
 
 )"   // split in two:  MSVC rejects a string literal longer than 16380 characters (error C2026)
 R"(-use <define>      : comma separated list of defines for configuring openCL code, such as:

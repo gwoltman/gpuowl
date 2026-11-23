@@ -12,6 +12,25 @@ void log(const char *fmt, ...);
 
 void initLog();
 void initLog(const char *);
+
+// progress.txt (progress-<instance>.txt with -workers 2 or more):  the fraction of the current task (or P-1 stage) done, 0 to 1, e.g. 0.1234567890.  Written at each log
+// point of the worker thread that called initProgress (other threads write nothing), for a wrapper that polls it (BOINC's
+// fraction_done_filename).  Written to a temporary file and renamed into place, so a reader never sees part of a value;  not
+// synced to disk, since it is only a progress display.
+void initProgress(const std::string& name);
+void writeProgress(double fraction);
+
+// While one exists, writeProgress does nothing on this thread.  Held around the stage 2 of the P-1 inside a PRP test, whose own
+// progress would otherwise show the PRP test at 1 (done) before it goes on:  the file keeps the PRP test's fraction instead.
+struct ProgressPause {
+  ProgressPause();
+  ~ProgressPause();
+  ProgressPause(const ProgressPause&) = delete;
+  ProgressPause& operator=(const ProgressPause&) = delete;
+
+private:
+  bool previous;
+};
 std::string logContext();
 std::string shortTimeStr();
 
