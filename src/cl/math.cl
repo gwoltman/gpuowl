@@ -846,6 +846,12 @@ GF31 OVERLOAD shl(GF31 a, u32 k) { return U2(shl(a.x, k), shl(a.y, k)); }
 Z31 OVERLOAD mul(Z31 a, Z31 b) { u64 t = a * (u64) b; return modM31(t, 62); }
 GF31 OVERLOAD mul(GF31 a, Z31 b) { return U2(mul(a.x, b), mul(a.y, b)); }    // Both components times a scalar
 
+// a * b for a constant b (0 <= b < M31), with b + b folded at compile time as in cmul_const:  r = a * 2b is 2 times the true product T, so
+// T = hi32(r) * 2^31 + lo32(r) / 2 == hi32(r) + (lo32(r) >> 1).  r <= M31 * (2 M31 - 2) < 2^63, so hi32(r) <= 0x7FFFFFFE and the sum is at most
+// 0xFFFFFFFD:  one modM31, and no masking or shift across the 32-bit word boundary as in mul's modM31(t, 62).
+Z31 OVERLOAD mul_const(Z31 a, Z31 b) { u64 r = a * (u64) (b + b); return modM31(hi32(r) + (lo32(r) >> 1)); }
+GF31 OVERLOAD mul_const(GF31 a, Z31 b) { return U2(mul_const(a.x, b), mul_const(a.y, b)); }
+
 // Multiply by 2
 Z31 OVERLOAD mul2(Z31 a) { return add(a, a); }
 GF31 OVERLOAD mul2(GF31 a) { return U2(mul2(a.x), mul2(a.y)); }
