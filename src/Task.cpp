@@ -314,7 +314,7 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   const Args& args = *shared.args;
   u64 const E = task.exponent;
   task.B1 = task.B2 = 0;
-  if (args.value("PRPPM1", 1) == 0) { return; }
+  if (args.cofactor || args.value("PRPPM1", 1) == 0) { return; }
   if (u64 const b1 = useValue(args, "PRPPM1_B1")) {
     u64 const b2 = useValue(args, "PRPPM1_B2");
     if (b1 < 2 || (b2 && b2 <= b1) || b2 >= pm1::MAX_B2) {
@@ -553,7 +553,7 @@ void Task::execute(GpuCommon shared, u32 instance) {
   // timing.  Instead, we output a warning and test a smaller prime exponent.
   {
     Primes const primes;
-    if (!primes.isPrime(exponent)) {
+    if (!shared.args->cofactor && !primes.isPrime(exponent)) {
       u64 const new_exponent = primes.prevPrime(exponent);
       log("Warning: Exponent %" PRIu64 " is not prime.  Using exponent %" PRIu64 " instead.\n", exponent, new_exponent);
       exponent = new_exponent;
@@ -678,7 +678,9 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
         return;
       }
       isPrime = tmpIsPrime;
-      writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath);
+      // -cofactor:  the result is the residue file (Gpu::isPrimePRP), for a cofactor test elsewhere;  a result line for 2^E - 1
+      // would be wrong to report
+      if (!shared.args->cofactor) { writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath); }
     } else { // LL
       // The Jacobi check, on by default:  its GCD kernels are built only when it runs
       unique_ptr<Gcd> gcd;

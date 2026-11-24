@@ -456,6 +456,7 @@ public:
 
 private:
   u32 getProofPower(u64 k);
+  void saveCofactorResidue(const Words& words, u64 k);
   void doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors);
   enum WHICH_KERNEL {CARRYFUSED=0, MIDIN=1, MIDIN31=2, MIDIN61=3, TAIL=4, TAIL31=5, TAIL61=6, MIDOUT=7, MIDOUT31=8, MIDOUT61=9};
   [[nodiscard]] string regKey(enum WHICH_KERNEL which_kernel) const;

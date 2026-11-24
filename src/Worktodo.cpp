@@ -55,6 +55,9 @@ bool isHex(const string& s) {
 // Pminus1=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,1000000,30000000
 // Pfactor=B2EE67DC0A514753E488794C9DD6F6BD,1,2,82997591,-1,76,1.3
 // The line is the verbatim worktodo line (task.line); body is the line without its "\n" (parse).
+
+// -cofactor:  PRP lines may have a composite exponent (set by Worktodo::getTask from Args::cofactor)
+static bool allowCompositePRP = false;
 std::optional<Task> parseBody(const std::string& line, const std::string& body) {
   vector<string> topParts = split(body, '=');
 
@@ -162,7 +165,7 @@ std::optional<Task> parseBody(const std::string& line, const std::string& body) 
     // Task::execute silently retargets a composite exponent to the previous prime.  That is a convenience for
     // "-prp <random>" timing runs; an assignment line with a composite exponent is a mistake, and running a
     // different exponent under its AID would report the wrong result.  Ignore the line instead.
-    if (exp > 1000 && !Primes{}.isPrime(exp)) {
+    if (exp > 1000 && !(isPRP && allowCompositePRP) && !Primes{}.isPrime(exp)) {
       log("worktodo.txt line ignored, exponent %" PRIu64 " is not prime: \"%s\"\n", exp, rstripNewline(line).c_str());
       return {};
     }
@@ -332,6 +335,7 @@ optional<Task> getWork(Args& args, i32 instance) {
 } // namespace
 
 std::optional<Task> Worktodo::getTask(Args &args, i32 instance) {
+  allowCompositePRP = args.cofactor;
   if (instance == 0) {
     if (args.prpExp) {
       u64 const exp = args.prpExp;

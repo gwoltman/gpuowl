@@ -1,6 +1,8 @@
 // Copyright (C) Mihai Preda and George Woltman.
 
 #include "Gpu.h"
+#include "CycleFile.h"
+#include "Primes.h"
 #include "Proof.h"
 #include "TimeInfo.h"
 #include "Trig.h"
@@ -20,6 +22,7 @@
 #include "Gcd.h"
 
 #include <algorithm>
+#include <numeric>
 #include <limits>
 #include <iomanip>
 #include <sstream>
@@ -3110,6 +3113,31 @@ std::optional<PRPState> Gpu::loadPRPAt(u64 k) {
   return state;
 }
 
+// -cofactor:  save R = 3^(2^E) mod (2^E - 1), the residue before doDiv9, for a PRP test of a cofactor N = (2^E - 1) / F:  if N
+// is a base-3 Fermat PRP, R = 3^(N F + 1) = 3^(F + 1) mod N (the PRP-CF test).  The file holds the E-bit R as little-endian u32
+// words, e.g. for GMP's mpz_import(r, nWords, -1, 4, 0, 0, data).  For E = p q (p < q primes) and F = (2^p - 1)(2^q - 1),
+// F + 1 = 2^(p+q) - 2^p - 2^q + 2, so the test is R 3^(2^p) 3^(2^q) = 9 3^(2^(p+q)) mod N:  the residues at k = p, q and p + q
+// are saved too, as <E>.cofactor.<k>, which makes the check a few multiplications (tools/cofactor-check.c).
+void Gpu::saveCofactorResidue(const Words& words, u64 k) {
+  fs::path const path = to_string(E) + ".cofactor" + (k == E ? ""s : "." + to_string(k));
+  {
+    CycleFile f{path};
+    f->write(words);
+  }
+  log("-cofactor: 3^(2^%" PRIu64 ") mod 2^%" PRIu64 "-1 written to %s (%zu u32 words, little-endian), res64 %016" PRIx64 "\n",
+      k, E, path.string().c_str(), words.size(), residue(words));
+}
+
+// -cofactor, E = p q with primes p < q:  the iterations whose residues tools/cofactor-check.c needs besides R (see above)
+static vector<u64> cofactorKs(u64 E) {
+  u64 p = 2;
+  while (p * p <= E && E % p) { ++p; }
+  if (p * p > E) { return {}; }
+  u64 const q = E / p;
+  if (q == p || !Primes{}.isPrime(q)) { return {}; }
+  return {p, q, p + q};
+}
+
 u32 Gpu::getProofPower(u64 k) {
   u32 const power = ProofSet::effectivePower(E, args.getProofPow(E), k);
 
@@ -3500,6 +3528,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   assert(checkStep % blockSize == 0);
 
   u32 const power = getProofPower(k);
+  vector<u64> const cofactorAt = args.cofactor ? cofactorKs(E) : vector<u64>{};
+
+  // An exponent that shares a factor with the FFT size gives a periodic word-size pattern and much larger roundoff errors (e.g.
+  // 140000001 on 512:15:512);  only a composite exponent (-cofactor) can
+  if (u64 const g = std::gcd(E, u64(fft.shape.size())); g > 1) {
+    log("Warning: exponent %" PRIu64 " and the FFT size %" PRIu64 " have the common factor %" PRIu64 ":  expect large roundoff errors;"
+        "  an FFT with a size coprime to the exponent is safer (-fft)\n", E, u64(fft.shape.size()), g);
+  }
 
   // power == 0 means "proof generation disabled" (no complete set of residues can be built from here on).  ProofSet does
   // not accept 0, so only construct one when there is a proof to make.
@@ -3583,12 +3619,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     bool const doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
     bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k == extraCheckK);
     bool const doLog = k % logStep == 0;
+    bool const atCofactorK = std::ranges::find(cofactorAt, k) != cofactorAt.end();
 #ifdef PRPLL_PRP_FAULTS
     bool const fault = prpFaultAt(k, fft);
 #else
     constexpr bool fault = false;
 #endif
-    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || useLongCarry || fault ? LEAD_NONE : LEAD_WIDTH;
+    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || atCofactorK || useLongCarry || fault
+                                   ? LEAD_NONE : LEAD_WIDTH;
 
     if (doStop) { log("Stopping, please wait..\n"); }
 
@@ -3630,8 +3668,11 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
       }
     }
 
+    if (atCofactorK) { saveCofactorResidue(readData(), k); }
+
     if (k == kEnd) {
       Words words = readData();
+      if (args.cofactor) { saveCofactorResidue(words, E); }
       isPrime = equals9(words);
       doDiv9(E, words);
       finalRes64 = residue(words);
