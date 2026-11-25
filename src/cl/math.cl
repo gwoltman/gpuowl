@@ -1054,6 +1054,7 @@ typedef struct { Z31q x, y; } GF31q;
 
 Z31q OVERLOAD makeZ31q(u64 v) { Z31q r; r.v = v; return r; }
 GF31q OVERLOAD makeGF31q(Z31q x, Z31q y) { GF31q r; r.x = x; r.y = y; return r; }
+GF31q OVERLOAD makeGF31q(u64 x, u64 y) { return makeGF31q(makeZ31q(x), makeZ31q(y)); }
 
 // x * c for a constant c (x in 0..M31).  A c above negAbove is folded to (M31 - x) * (M31 - c), which costs a subtract but keeps the product
 // below M31 * (M31 - c); otherwise the product is below M31 * c.  The default negAbove of M31/2 keeps every product below M31 * M31/2 < 2^61.
@@ -1078,6 +1079,24 @@ Z31q OVERLOAD addq(Z31q a, Z31q b) { return makeZ31q(a.v + b.v); }
 Z31q OVERLOAD subq(Z31q a, Z31q b) { return makeZ31q(a.v + ((u64) M31 << 32) - b.v); }
 GF31q OVERLOAD addq(GF31q a, GF31q b) { return makeGF31q(addq(a.x, b.x), addq(a.y, b.y)); }
 GF31q OVERLOAD subq(GF31q a, GF31q b) { return makeGF31q(subq(a.x, b.x), subq(a.y, b.y)); }
+
+// Signed differences for the radix-PFA DFTs.  X2qs:  a = a + b reduced (0..M31), b = a - b as an i32 (-M31..M31, kept in a Z31), one
+// instruction.  mulqs / madqs multiply such a difference by a signed constant (balanced, |c| <= M31/2) with a signed 32x32 -> 64 multiply
+// (IMAD.WIDE on nVidia, v_mad_i64_i32 on AMD):  |x * c| <= M31 * |c|, and the sum is a signed GF31q in two's complement.  The caller adds
+// a multiple of M31, at least the sum's magnitude, to the other operand once (into the shared base), so that addq(a, b) and subqs(a, b)
+// = a - b are both in 0..0xFFFFFFFF7FFFFFFF.
+void OVERLOAD X2qs(GF31 *a, GF31 *b) { GF31 t = *a; *a = add(t, *b); *b = U2(t.x - b->x, t.y - b->y); }
+Z31q OVERLOAD mulqs(Z31 x, i32 c) { return makeZ31q((u64) ((i64) (i32) x * c)); }
+Z31q OVERLOAD madqs(Z31 x, i32 c, Z31q acc) { return makeZ31q(acc.v + (u64) ((i64) (i32) x * c)); }
+GF31q OVERLOAD mulqs(GF31 a, i32 c) { return makeGF31q(mulqs(a.x, c), mulqs(a.y, c)); }
+GF31q OVERLOAD madqs(GF31 a, i32 c, GF31q acc) { return makeGF31q(madqs(a.x, c, acc.x), madqs(a.y, c, acc.y)); }
+Z31q OVERLOAD subqs(Z31q a, Z31q b) { return makeZ31q(a.v - b.v); }
+GF31q OVERLOAD subqs(GF31q a, GF31q b) { return makeGF31q(subqs(a.x, b.x), subqs(a.y, b.y)); }
+
+// Hides a row's partial sum from the optimizer.  Without it, NVVM (LLVM's reassociation) adds a row's products together first and the shared
+// base (cbase) after, as a separate 64-bit add per row, instead of keeping the base as the first IMAD.WIDE's addend.  Likewise for u0 + K:
+// without it, NVVM multiplies with u0 as the addend and adds K after, as a separate 64-bit add.
+GF31q OVERLOAD opaque(GF31q a) { OPAQUE_U64(a.x.v); OPAQUE_U64(a.y.v); return a; }
 
 Z31 OVERLOAD modM31(Z31q a) { return modM31(a.v); }
 GF31 OVERLOAD modM31(GF31q a) { return U2(modM31(a.x), modM31(a.y)); }

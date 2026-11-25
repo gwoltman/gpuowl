@@ -197,95 +197,100 @@ void OVERLOAD fft11(F2 *u) {
 #endif
 
 // Radix-11 DFT, y_j = sum_k u_k w^(jk) with w = 7^((p-1)/11) (pfaRootOfUnity), for the radix-PFA of a PFA middle.  The method of
-// the FP version above: pair inputs k and 11-k (X2 makes the sums and differences), then output pair j, 11-j is
+// the FP version above: pair inputs k and 11-k (X2qs makes the sums and differences), then output pair j, 11-j is
 // (u0 + sum_k c_jk sum_k) +- sum_k s_jk dif_k, with c_m = (w^m + w^-m)/2 and s_m = (w^m - w^-m)/2 in Z/pZ.  base = u0 + c4 * (the sum of
 // the sums) zeroes one term per cos row (no roundoff in GF, so the base is chosen for the bounds).  Each row is a GF31q (64-bit) dot product
 // reduced once.
+//
+// The differences are signed (X2qs:  u_k - u_(11-k) as an i32, -M31..M31, one instruction, no fold), multiplied by the balanced sine constants
+// (|s| <= M31/2, the sign of each row's term folded into the constant) with a signed multiply (mulqs / madqs).  Each row's sine sum b is then
+// a signed value of magnitude at most sum_m |s_m| * M31.  K, a multiple of M31 at least that plus the cos terms' negative part, is added once
+// to the base, so y_j = a + b and y_(11-j) = a - b need no per-row offset.  K = M31 * 2^32 has a zero low word, so adding it costs nothing;
+// for it to fit, c3 - c4 is used as a negative constant (balanced) with a signed multiply (madqs) of its reduced sum.  Each row's first
+// partial sums go through opaque(), which keeps NVVM from adding cbase to each row as a separate 64-bit add (see opaque in math.cl).
+//
+// Bounds (each rounded outward):  inputs, and every add result, are 0..M31;  the differences -M31..M31.  The 64-bit values are given in M31^2
+// (about 2^62):  a (the base and cos terms, K included) is 1.536..2.710, |b| at most 1.141, so a + b <= 3.851, below modM31(u64)'s limit
+// 0xFFFFFFFF7FFFFFFF (4.000 M31^2), and a - b >= 0.395.  The unsigned cos products pass negAbove = M31, so no constant is folded.
 void OVERLOAD fft11(GF31 *u) {
-  const Z31 C4 = 136443684u;
-  const Z31 C1_C4 = 814846006u;    // c1 - c4
-  const Z31 C2_C4 = 150095003u;    // c2 - c4
-  const Z31 C3_C4 = 1151570634u;    // c3 - c4
-  const Z31 C5_C4 = 422495407u;    // c5 - c4
-  const Z31 S1 = 1017922484u;
-  const Z31 S2 = 2080399339u;
-  const Z31 S3 = 960443073u;
-  const Z31 S4 = 143966213u;
-  const Z31 S5 = 1886736629u;
+  const Z31 C4 = 136443684u;        // c4 = (w^4 + w^-4) / 2                 0.064 M31
+  const Z31 C1_C4 = 814846006u;     // c1 - c4                               0.380 M31
+  const Z31 C2_C4 = 150095003u;     // c2 - c4                               0.070 M31
+  const i32 C3_C4 = -995913013;     // c3 - c4, balanced                    -0.464 M31
+  const Z31 C5_C4 = 422495407u;     // c5 - c4                               0.197 M31
+  const i32 S1 = 1017922484;        // s1 = (w - w^-1) / 2, balanced         0.474 M31
+  const i32 S2 = -67084308;         // s2                                   -0.032 M31
+  const i32 S3 = 960443073;         // s3                                    0.448 M31
+  const i32 S4 = 143966213;         // s4                                    0.068 M31
+  const i32 S5 = -260747018;        // s5                                   -0.122 M31
+  const u64 K = (u64) M31 << 32;    // 2.0 M31^2, low word 0 (u0 + K needs no add):  more than every row's |b| plus 0.464 (1.605)
 
-  X2(u[1], u[10]);
-  X2(u[9], u[2]); SWAP(u[2], u[9]);  // reversed difference
-  X2(u[3], u[8]);
-  X2(u[4], u[7]);
-  X2(u[5], u[6]);
+  X2qs(&u[1], &u[10]);                                 // u[1] = 0..M31, u[10] = -M31..M31
+  X2qs(&u[2], &u[9]);                                  // u[2] = 0..M31, u[9] = -M31..M31
+  X2qs(&u[3], &u[8]);                                  // u[3] = 0..M31, u[8] = -M31..M31
+  X2qs(&u[4], &u[7]);                                  // u[4] = 0..M31, u[7] = -M31..M31
+  X2qs(&u[5], &u[6]);                                  // u[5] = 0..M31, u[6] = -M31..M31
 
-  GF31 sum = add(add(add(add(u[1], u[2]), u[3]), u[4]), u[5]);
-  GF31q cbase = madq(sum, C4, u[0]);                   // u0 + c4 * sum
-  u[0] = add(u[0], sum);
+  GF31 sum = add(add(add(add(u[1], u[2]), u[3]), u[4]), u[5]);    // 0..M31
+  GF31q u0K = makeGF31q(u[0].x + K, u[0].y + K);
+  GF31q cbase = madq(sum, C4, opaque(u0K), M31);          // K + u0 + c4 * sum:  2.000..2.064 M31^2
+  u[0] = add(u[0], sum);                                  // y0:  0..M31
 
-  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  No product is folded
-  // (negAbove = M31), so there are no M31 - x subtracts:  base c4 instead of c1, the k = 2 difference reversed (X2 then SWAP, free) and
-  // row 3/10's sines negated (its outputs swapped, free) keep each row within modM31's limits.  The comments give each row's maximum
-  // values; subq needs tmpNNa below about 4*2^61 and tmpNNb <= M31 * 2^32 (about 4*2^61), addq needs the sum below 8*2^61.
-  GF31q tmp211a = cbase;
-  tmp211a = madq(u[1], C1_C4, tmp211a);
-  GF31q tmp211b = mulq(u[10], S1);
-  tmp211a = madq(u[2], C2_C4, tmp211a);
-  tmp211b = madq(u[9], (M31 - S2), tmp211b);
-  tmp211a = madq(u[3], C3_C4, tmp211a, M31);
-  tmp211b = madq(u[8], S3, tmp211b);
-  tmp211b = madq(u[7], S4, tmp211b);
-  tmp211a = madq(u[5], C5_C4, tmp211a);
-  tmp211b = madq(u[6], S5, tmp211b, M31);
-  GF31 y1 = modM31(addq(tmp211a, tmp211b)), y10 = modM31(subq(tmp211a, tmp211b));  // tmp211a < 2.49*2^61, tmp211b < 3.80*2^61
+  // One row at a time; the outputs are kept until the last row.  The comments give each partial sum's bound in M31^2.
+  GF31q tmp211a = opaque(madq(u[1], C1_C4, cbase, M31));  // 2.000..2.443
+  GF31q tmp211b = opaque(mulqs(u[10], S1));               // +-0.475
+  tmp211a = madq(u[2], C2_C4, tmp211a, M31);              // 2.000..2.513
+  tmp211b = madqs(u[9], S2, tmp211b);                     // +-0.506
+  tmp211a = madqs(u[3], C3_C4, tmp211a);                  // 1.536..2.513
+  tmp211b = madqs(u[8], S3, tmp211b);                     // +-0.953
+  tmp211a = madq(u[5], C5_C4, tmp211a, M31);              // 1.536..2.710
+  tmp211b = madqs(u[7], S4, tmp211b);                     // +-1.020
+  tmp211b = madqs(u[6], S5, tmp211b);                     // +-1.141
+  GF31 y1 = modM31(addq(tmp211a, tmp211b)), y10 = modM31(subqs(tmp211a, tmp211b));
 
-  GF31q tmp310a = cbase;
-  tmp310a = madq(u[1], C2_C4, tmp310a);
-  GF31q tmp310b = mulq(u[10], (M31 - S2));
-  tmp310b = madq(u[9], S4, tmp310b);
-  tmp310a = madq(u[3], C5_C4, tmp310a);
-  tmp310b = madq(u[8], S5, tmp310b, M31);
-  tmp310a = madq(u[4], C3_C4, tmp310a, M31);
-  tmp310b = madq(u[7], S3, tmp310b);
-  tmp310a = madq(u[5], C1_C4, tmp310a);
-  tmp310b = madq(u[6], S1, tmp310b);
-  GF31 y9 = modM31(addq(tmp310a, tmp310b)), y2 = modM31(subq(tmp310a, tmp310b));  // tmp310a < 2.49*2^61, tmp310b < 3.80*2^61  (sines negated)
+  GF31q tmp310a = opaque(madq(u[1], C2_C4, cbase, M31));  // 2.000..2.134
+  GF31q tmp310b = opaque(mulqs(u[10], S2));               // +-0.032
+  tmp310a = madq(u[3], C5_C4, tmp310a, M31);              // 2.000..2.331  (c6 = c5)
+  tmp310b = madqs(u[9], S4, tmp310b);                     // +-0.099
+  tmp310a = madqs(u[4], C3_C4, tmp310a);                  // 1.536..2.331  (c8 = c3)
+  tmp310b = madqs(u[8], -S5, tmp310b);                    // +-0.220  (s6 = -s5)
+  tmp310a = madq(u[5], C1_C4, tmp310a, M31);              // 1.536..2.710  (c10 = c1)
+  tmp310b = madqs(u[7], -S3, tmp310b);                    // +-0.667  (s8 = -s3)
+  tmp310b = madqs(u[6], -S1, tmp310b);                    // +-1.141  (s10 = -s1)
+  GF31 y2 = modM31(addq(tmp310a, tmp310b)), y9 = modM31(subqs(tmp310a, tmp310b));
 
-  GF31q tmp49a = cbase;
-  tmp49a = madq(u[1], C3_C4, tmp49a, M31);
-  GF31q tmp49b = mulq(u[10], S3);
-  tmp49a = madq(u[2], C5_C4, tmp49a);
-  tmp49b = madq(u[9], S5, tmp49b, M31);
-  tmp49a = madq(u[3], C2_C4, tmp49a);
-  tmp49b = madq(u[8], (M31 - S2), tmp49b);
-  tmp49a = madq(u[4], C1_C4, tmp49a);
-  tmp49b = madq(u[7], S1, tmp49b);
-  tmp49b = madq(u[6], S4, tmp49b);
-  GF31 y3 = modM31(addq(tmp49a, tmp49b)), y8 = modM31(subq(tmp49a, tmp49b));  // tmp49a < 2.49*2^61, tmp49b < 3.80*2^61
+  GF31q tmp49a = opaque(madqs(u[1], C3_C4, cbase));       // 1.536..2.064
+  GF31q tmp49b = opaque(mulqs(u[10], S3));                // +-0.448
+  tmp49a = madq(u[2], C5_C4, tmp49a, M31);                // 1.536..2.261  (c6 = c5)
+  tmp49b = madqs(u[9], -S5, tmp49b);                      // +-0.569  (s6 = -s5)
+  tmp49a = madq(u[3], C2_C4, tmp49a, M31);                // 1.536..2.331  (c9 = c2)
+  tmp49b = madqs(u[8], -S2, tmp49b);                      // +-0.600  (s9 = -s2)
+  tmp49a = madq(u[4], C1_C4, tmp49a, M31);                // 1.536..2.710
+  tmp49b = madqs(u[7], S1, tmp49b);                       // +-1.074
+  tmp49b = madqs(u[6], S4, tmp49b);                       // +-1.141
+  GF31 y3 = modM31(addq(tmp49a, tmp49b)), y8 = modM31(subqs(tmp49a, tmp49b));
 
-  GF31q tmp58a = cbase;
-  GF31q tmp58b = mulq(u[10], S4);
-  tmp58a = madq(u[2], C3_C4, tmp58a, M31);
-  tmp58b = madq(u[9], S3, tmp58b);
-  tmp58a = madq(u[3], C1_C4, tmp58a);
-  tmp58b = madq(u[8], S1, tmp58b);
-  tmp58a = madq(u[4], C5_C4, tmp58a);
-  tmp58b = madq(u[7], S5, tmp58b, M31);
-  tmp58a = madq(u[5], C2_C4, tmp58a);
-  tmp58b = madq(u[6], (M31 - S2), tmp58b);
-  GF31 y4 = modM31(addq(tmp58a, tmp58b)), y7 = modM31(subq(tmp58a, tmp58b));  // tmp58a < 2.49*2^61, tmp58b < 3.80*2^61
+  GF31q tmp58a = opaque(madqs(u[2], C3_C4, cbase));       // 1.536..2.064  (c8 = c3)
+  GF31q tmp58b = opaque(mulqs(u[10], S4));                // +-0.068
+  tmp58a = madq(u[3], C1_C4, tmp58a, M31);                // 1.536..2.443
+  tmp58b = madqs(u[9], -S3, tmp58b);                      // +-0.515  (s8 = -s3)
+  tmp58a = madq(u[4], C5_C4, tmp58a, M31);                // 1.536..2.640
+  tmp58b = madqs(u[8], S1, tmp58b);                       // +-0.989
+  tmp58a = madq(u[5], C2_C4, tmp58a, M31);                // 1.536..2.710  (c9 = c2)
+  tmp58b = madqs(u[7], S5, tmp58b);                       // +-1.110
+  tmp58b = madqs(u[6], -S2, tmp58b);                      // +-1.141  (s9 = -s2)
+  GF31 y4 = modM31(addq(tmp58a, tmp58b)), y7 = modM31(subqs(tmp58a, tmp58b));
 
-  GF31q tmp67a = cbase;
-  tmp67a = madq(u[1], C5_C4, tmp67a);
-  GF31q tmp67b = mulq(u[10], S5, M31);
-  tmp67a = madq(u[2], C1_C4, tmp67a);
-  tmp67b = madq(u[9], S1, tmp67b);
-  tmp67b = madq(u[8], S4, tmp67b);
-  tmp67a = madq(u[4], C2_C4, tmp67a);
-  tmp67b = madq(u[7], (M31 - S2), tmp67b);
-  tmp67a = madq(u[5], C3_C4, tmp67a, M31);
-  tmp67b = madq(u[6], S3, tmp67b);
-  GF31 y5 = modM31(addq(tmp67a, tmp67b)), y6 = modM31(subq(tmp67a, tmp67b));  // tmp67a < 2.49*2^61, tmp67b < 3.80*2^61
+  GF31q tmp67a = opaque(madq(u[1], C5_C4, cbase, M31));   // 2.000..2.261
+  GF31q tmp67b = opaque(mulqs(u[10], S5));                // +-0.122
+  tmp67a = madq(u[2], C1_C4, tmp67a, M31);                // 2.000..2.640  (c10 = c1)
+  tmp67b = madqs(u[9], -S1, tmp67b);                      // +-0.596  (s10 = -s1)
+  tmp67a = madq(u[4], C2_C4, tmp67a, M31);                // 2.000..2.710  (c9 = c2)
+  tmp67b = madqs(u[8], S4, tmp67b);                       // +-0.663
+  tmp67a = madqs(u[5], C3_C4, tmp67a);                    // 1.536..2.710
+  tmp67b = madqs(u[7], -S2, tmp67b);                      // +-0.694  (s9 = -s2)
+  tmp67b = madqs(u[6], S3, tmp67b);                       // +-1.141
+  GF31 y5 = modM31(addq(tmp67a, tmp67b)), y6 = modM31(subqs(tmp67a, tmp67b));
 
   u[1] = y1; u[10] = y10;
   u[2] = y2; u[9] = y9;

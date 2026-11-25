@@ -1212,16 +1212,19 @@ void barsync(const u32 numWG, const u32 WG) {
 
 // OPAQUE(x) hides x's value from the optimizer, forcing expressions that use x afterwards to be recomputed rather than
 // reused from registers.  The asm constraint letter is backend-specific, and the other backend's is a compile error.
-// OPAQUE takes a 32-bit integer, OPAQUE_F64 a double (PTX needs a different constraint letter for each).
+// OPAQUE takes a 32-bit integer, OPAQUE_F64 a double, OPAQUE_U64 a 64-bit integer (PTX needs a different constraint letter for each).
 #if HAS_ASM
 #define OPAQUE(x) __asm volatile("" : "+v"(x))
 #define OPAQUE_F64(x) __asm volatile("" : "+v"(x))
+#define OPAQUE_U64(x) __asm volatile("" : "+v"(x))
 #elif HAS_PTX
 #define OPAQUE(x) __asm volatile("" : "+r"(x))
 #define OPAQUE_F64(x) __asm volatile("" : "+d"(x))
+#define OPAQUE_U64(x) __asm volatile("" : "+l"(x))
 #else
 #define OPAQUE(x)
 #define OPAQUE_F64(x)
+#define OPAQUE_U64(x)
 #endif
 
 // NVRTC_ZERO_FIX (set by the CUDA backend for NVRTC below 13.1 on Blackwell): NVRTC's own PTX-to-CUBIN compiler generates wrong

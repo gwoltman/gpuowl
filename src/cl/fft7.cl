@@ -115,51 +115,59 @@ void OVERLOAD fft7(F2 *u) { return fft7by(u, 0, 1, 7); }
 #endif
 
 // Radix-7 DFT, y_j = sum_k u_k w^(jk) with w = 7^((p-1)/7) (pfaRootOfUnity), for the radix-PFA of a PFA middle.  The method of
-// the FP version above: pair inputs k and 7-k (X2 makes the sums and differences), then output pair j, 7-j is
-// (u0 + sum_k c_jk sum_k) +- sum_k s_jk dif_k, with c_m = (w^m + w^-m)/2 and s_m = (w^m - w^-m)/2 in Z/pZ.  base = u0 + c1 * (the sum of
-// the sums) zeroes one term per cos row.  Each row is a GF31q (64-bit) dot product reduced once.
+// the FP version above: pair inputs k and 7-k (X2qs makes the sums and differences), then output pair j, 7-j is
+// (u0 + sum_k c_jk sum_k) +- sum_k s_jk dif_k, with c_m = (w^m + w^-m)/2 and s_m = (w^m - w^-m)/2 in Z/pZ.  base = u0 + c3 * (the sum of
+// the sums) zeroes one term per cos row (no roundoff in GF, so the base is chosen for the bounds:  c1 - c3 and c2 - c3 are small).  Each row
+// is a GF31q (64-bit) dot product reduced once.
+//
+// The differences are signed (X2qs:  u_k - u_(7-k) as an i32, -M31..M31, one instruction, no fold), multiplied by the balanced sine constants
+// (|s| <= M31/2, the sign of each row's term folded into the constant) with a signed multiply (mulqs / madqs).  Each row's sine sum b is then
+// a signed value of magnitude at most sum_m |s_m| * M31.  K, a multiple of M31 at least that, is added once to the base, so y_j = a + b and
+// y_(7-j) = a - b need no per-row offset.  Each row's first partial sums go through opaque(), which keeps NVVM from adding cbase to each row
+// as a separate 64-bit add (see opaque in math.cl).
+//
+// Bounds (each rounded up):  inputs, and every add result, are 0..M31;  the differences -M31..M31.  The 64-bit values are given in M31^2
+// (about 2^62):  a (the base and cos terms, K included) is 2.000..2.368, |b| at most 1.223, so a + b <= 3.591, below modM31(u64)'s limit
+// 0xFFFFFFFF7FFFFFFF (4.000 M31^2), and a - b >= 0.777.  The cos products pass negAbove = M31, so no constant is folded.
 void OVERLOAD fft7by(GF31 *u, u32 base, u32 step, u32 M) {
-  const Z31 C1 = 405239506u;
-  const Z31 C2_C1 = 121291560u;    // c2 - c1
-  const Z31 C3_C1 = 1884215392u;    // c3 - c1
-  const Z31 S1 = 800123379u;
-  const Z31 S2 = 1073059520u;
-  const Z31 S3 = 752284155u;
+  const Z31 C3 = 141971251u;        // c3 = (w^3 + w^-3) / 2                 0.067 M31
+  const Z31 C1_C3 = 263268255u;     // c1 - c3                               0.123 M31
+  const Z31 C2_C3 = 384559815u;     // c2 - c3                               0.180 M31
+  const i32 S1 = 800123379;         // s1 = (w - w^-1) / 2, balanced         0.373 M31
+  const i32 S2 = 1073059520;        // s2                                    0.500 M31
+  const i32 S3 = 752284155;         // s3                                    0.351 M31
+  const u64 K = (u64) M31 << 32;    // 2.0 M31^2, low word 0 (u0 + K needs no add):  more than every row's |b| (1.223)
 
-  X2(A(1), A(6));
-  X2(A(2), A(5));
-  X2(A(3), A(4));
+  X2qs(&A(1), &A(6));                                  // A(1) = 0..M31, A(6) = -M31..M31
+  X2qs(&A(2), &A(5));                                  // A(2) = 0..M31, A(5) = -M31..M31
+  X2qs(&A(3), &A(4));                                  // A(3) = 0..M31, A(4) = -M31..M31
 
-  GF31 sum = add(add(A(1), A(2)), A(3));
-  GF31q cbase = madq(sum, C1, A(0));                   // u0 + c1 * sum
-  A(0) = add(A(0), sum);
+  GF31 sum = add(add(A(1), A(2)), A(3));               // 0..M31
+  GF31q u0K = makeGF31q(A(0).x + K, A(0).y + K);
+  GF31q cbase = madq(sum, C3, opaque(u0K), M31);       // K + u0 + c3 * sum:  2.000..2.067 M31^2  (opaque:  K stays in the addend)
+  A(0) = add(A(0), sum);                               // y0:  0..M31
 
-  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  No constant is folded
-  // (negAbove = M31):  the row sums still fit, saving the M31 - x subtracts.  The comments give each row's maximum values; subq needs
-  // tmpNNb <= M31 * 2^32 (about 4*2^61) and tmpNNa below about 4*2^61, addq needs the sum below 8*2^61 (modM31's limit 0xFFFFFFFF7FFFFFFF).
-  GF31q tmp27a = cbase;
-  GF31q tmp27b = mulq(A(6), S1);
-  tmp27a = madq(A(2), C2_C1, tmp27a);
-  tmp27b = madq(A(5), S2, tmp27b);
-  tmp27a = madq(A(3), C3_C1, tmp27a, M31);
-  tmp27b = madq(A(4), S3, tmp27b);
-  GF31 y1 = modM31(addq(tmp27a, tmp27b)), y6 = modM31(subq(tmp27a, tmp27b));  // tmp27a < 2.25*2^61, tmp27b < 2.45*2^61
+  // One row at a time; the outputs are kept until the last row.  The comments give each partial sum's bound in M31^2.
+  GF31q tmp27a = opaque(madq(A(1), C1_C3, cbase, M31));   // 2.000..2.189
+  GF31q tmp27b = opaque(mulqs(A(6), S1));                 // +-0.373
+  tmp27a = madq(A(2), C2_C3, tmp27a, M31);                // 2.000..2.368
+  tmp27b = madqs(A(5), S2, tmp27b);                       // +-0.873
+  tmp27b = madqs(A(4), S3, tmp27b);                       // +-1.223
+  GF31 y1 = modM31(addq(tmp27a, tmp27b)), y6 = modM31(subqs(tmp27a, tmp27b));
 
-  GF31q tmp36a = cbase;
-  tmp36a = madq(A(1), C2_C1, tmp36a);
-  GF31q tmp36b = mulq(A(6), S2);
-  tmp36a = madq(A(2), C3_C1, tmp36a, M31);
-  tmp36b = madq(A(5), (M31 - S3), tmp36b, M31);
-  tmp36b = madq(A(4), (M31 - S1), tmp36b, M31);
-  GF31 y2 = modM31(addq(tmp36a, tmp36b)), y5 = modM31(subq(tmp36a, tmp36b));  // tmp36a < 2.25*2^61, tmp36b < 3.56*2^61
+  GF31q tmp36a = opaque(madq(A(1), C2_C3, cbase, M31));   // 2.000..2.246
+  GF31q tmp36b = opaque(mulqs(A(6), S2));                 // +-0.500
+  tmp36a = madq(A(3), C1_C3, tmp36a, M31);                // 2.000..2.368  (c6 = c1)
+  tmp36b = madqs(A(5), -S3, tmp36b);                      // +-0.850  (s4 = -s3)
+  tmp36b = madqs(A(4), -S1, tmp36b);                      // +-1.223  (s6 = -s1)
+  GF31 y2 = modM31(addq(tmp36a, tmp36b)), y5 = modM31(subqs(tmp36a, tmp36b));
 
-  GF31q tmp45a = cbase;
-  tmp45a = madq(A(1), C3_C1, tmp45a, M31);
-  GF31q tmp45b = mulq(A(6), S3);
-  tmp45b = madq(A(5), (M31 - S1), tmp45b, M31);
-  tmp45a = madq(A(3), C2_C1, tmp45a);
-  tmp45b = madq(A(4), S2, tmp45b);
-  GF31 y3 = modM31(addq(tmp45a, tmp45b)), y4 = modM31(subq(tmp45a, tmp45b));  // tmp45a < 2.25*2^61, tmp45b < 2.96*2^61
+  GF31q tmp45a = opaque(madq(A(2), C1_C3, cbase, M31));   // 2.000..2.189  (c6 = c1)
+  GF31q tmp45b = opaque(mulqs(A(6), S3));                 // +-0.351
+  tmp45a = madq(A(3), C2_C3, tmp45a, M31);                // 2.000..2.368
+  tmp45b = madqs(A(5), -S1, tmp45b);                      // +-0.723  (s6 = -s1)
+  tmp45b = madqs(A(4), S2, tmp45b);                       // +-1.223
+  GF31 y3 = modM31(addq(tmp45a, tmp45b)), y4 = modM31(subqs(tmp45a, tmp45b));
 
   A(1) = y1; A(6) = y6;
   A(2) = y2; A(5) = y5;

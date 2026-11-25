@@ -144,63 +144,73 @@ void OVERLOAD fft9(F2 *u) {
 #endif
 
 // Radix-9 DFT, y_j = sum_k u_k w^(jk) with w = 7^((p-1)/9) (pfaRootOfUnity).  Paired as in fft7/fft11 (64-bit dot products reduced
-// once), with the structure 9 = 3 * 3 adds as in the FP fft9:  rows 1, 2, 4 share base = u0 + c3 sum3 + c1 (sum1 + sum2 + sum4).
+// once), with the structure 9 = 3 * 3 adds as in the FP fft9:  rows 1, 2, 4 share base = u0 + c3 sum3 + c4 (sum1 + sum2 + sum4).  A c4 base
+// (c1 + c2 + c4 = 0) leaves the smallest cos constants, c1 - c4 and c2 - c4.  c3 = -1/2 and c4 are used as negative constants (balanced),
+// with a signed multiply (madqs) of the reduced sums, so the base ranges from K - 0.712 to K:  that keeps a + |b| below 4.0 with K = 2.0.
+//
+// The differences are signed (X2qs:  u_k - u_(9-k) as an i32, -M31..M31, one instruction, no fold), multiplied by the balanced sine constants
+// (|s| <= M31/2, the sign of each row's term folded into the constant) with a signed multiply (mulqs / madqs).  Each row's sine sum b is then
+// a signed value of magnitude at most sum_m |s_m| * M31.  K, a multiple of M31 at least that plus the base's negative part, is added once to
+// the base (and to row 3's t), so y_j = a + b and y_(9-j) = a - b need no per-row offset.  Each row's first partial sums go through opaque(),
+// which keeps NVVM from adding cbase to each row as a separate 64-bit add (see opaque in math.cl).
+//
+// Bounds (each rounded outward):  inputs, and every add result, are 0..M31;  the differences -M31..M31.  The 64-bit values are given in M31^2
+// (about 2^62):  a (the base and cos terms, K included) is 1.288..2.635 (row 3:  1.499..2.001), |b| at most 1.205 (row 3:  0.615), so
+// a + b <= 3.840, below modM31(u64)'s limit 0xFFFFFFFF7FFFFFFF (4.000 M31^2), and a - b >= 0.083.  The unsigned cos products pass
+// negAbove = M31, so no constant is folded.
 void OVERLOAD fft9(GF31 *u) {
-  const Z31 C1 = 586798891u;
-  const Z31 C3 = 1073741823u;                          // c3 = -1/2
-  const Z31 C2_C1 = 1428287284u;    // c2 - c1
-  const Z31 C4_C1 = 1106283337u;    // c4 - c1
-  const Z31 S1 = 1869791976u;
-  const Z31 S2 = 942092970u;
-  const Z31 S3 = 439735912u;
-  const Z31 S4 = 1219784641u;
+  const i32 C3 = -1073741824;       // c3 = -1/2, balanced                  -0.500 M31
+  const i32 C4 = -454401419;        // c4 = (w^4 + w^-4) / 2, balanced      -0.212 M31
+  const Z31 C1_C4 = 1041200310u;    // c1 - c4                               0.485 M31
+  const Z31 C2_C4 = 322003947u;     // c2 - c4                               0.150 M31
+  const i32 S1 = -277691671;        // s1 = (w - w^-1) / 2, balanced        -0.130 M31
+  const i32 S2 = 942092970;         // s2                                    0.439 M31
+  const i32 S3 = 439735912;         // s3                                    0.205 M31
+  const i32 S4 = -927699006;        // s4                                   -0.432 M31
+  const u64 K = (u64) M31 << 32;    // 2.0 M31^2, low word 0 (u0 + K needs no add):  more than every row's |b| plus 0.712 (1.917)
 
-  X2(u[1], u[8]);
-  X2(u[2], u[7]);
-  X2(u[3], u[6]);
-  X2(u[4], u[5]);
+  X2qs(&u[1], &u[8]);                                  // u[1] = 0..M31, u[8] = -M31..M31
+  X2qs(&u[2], &u[7]);                                  // u[2] = 0..M31, u[7] = -M31..M31
+  X2qs(&u[3], &u[6]);                                  // u[3] = 0..M31, u[6] = -M31..M31
+  X2qs(&u[4], &u[5]);                                  // u[4] = 0..M31, u[5] = -M31..M31
 
-  GF31 s124 = add(add(u[1], u[2]), u[4]);
-  GF31 t = add(u[0], u[3]);
-  GF31q cbase = madq(s124, C1, madq(u[3], C3, u[0]));   // rows 1, 2, 4:  u0 + c3 sum3 + c1 (sum1 + sum2 + sum4)
-  u[0] = add(t, s124);
+  GF31 s124 = add(add(u[1], u[2]), u[4]);              // 0..M31
+  GF31 t = add(u[0], u[3]);                            // 0..M31
+  GF31q u0K = makeGF31q(u[0].x + K, u[0].y + K);
+  GF31q tK = makeGF31q(t.x + K, t.y + K);
+  GF31q cbase = madqs(s124, C4, madqs(u[3], C3, opaque(u0K)));       // rows 1, 2, 4:  K + u0 + c3 sum3 + c4 (sum1 + sum2 + sum4):  1.499..2.001, 1.288..2.001
+  u[0] = add(t, s124);                                 // y0:  0..M31
 
-  // One row at a time, each k's cos and sin products together; the outputs are kept until the last row.  No product is folded
-  // (negAbove = M31), so there are no M31 - x subtracts:  row 1/8's sines negated (its outputs swapped, free) keeps each row within
-  // modM31's limits.  The comments give each row's maximum values; subq needs tmpNNa below about 4*2^61 and tmpNNb <= M31 * 2^32
-  // (about 4*2^61), addq needs the sum below 8*2^61.
-  GF31q tmp29a = cbase;
-  GF31q tmp29b = mulq(u[8], (M31 - S1));
-  tmp29a = madq(u[2], C2_C1, tmp29a, M31);
-  tmp29b = madq(u[7], (M31 - S2), tmp29b, M31);
-  tmp29b = madq(u[6], (M31 - S3), tmp29b, M31);
-  tmp29a = madq(u[4], C4_C1, tmp29a, M31);
-  tmp29b = madq(u[5], (M31 - S4), tmp29b);
-  GF31 y8 = modM31(addq(tmp29a, tmp29b)), y1 = modM31(subq(tmp29a, tmp29b));  // tmp29a < 3.91*2^61, tmp29b < 3.84*2^61  (sines negated)
+  // One row at a time; the outputs are kept until the last row.  The comments give each partial sum's bounds in M31^2.
+  GF31q tmp29a = opaque(madq(u[1], C1_C4, cbase, M31));   // 1.288..2.485
+  GF31q tmp29b = opaque(mulqs(u[8], S1));                 // +-0.130
+  tmp29a = madq(u[2], C2_C4, tmp29a, M31);                // 1.288..2.635
+  tmp29b = madqs(u[7], S2, tmp29b);                       // +-0.569
+  tmp29b = madqs(u[6], S3, tmp29b);                       // +-0.773
+  tmp29b = madqs(u[5], S4, tmp29b);                       // +-1.205
+  GF31 y1 = modM31(addq(tmp29a, tmp29b)), y8 = modM31(subqs(tmp29a, tmp29b));
 
-  GF31q tmp38a = cbase;
-  tmp38a = madq(u[1], C2_C1, tmp38a, M31);
-  GF31q tmp38b = mulq(u[8], S2);
-  tmp38a = madq(u[2], C4_C1, tmp38a, M31);
-  tmp38b = madq(u[7], S4, tmp38b, M31);
-  tmp38b = madq(u[6], (M31 - S3), tmp38b, M31);
-  tmp38b = madq(u[5], (M31 - S1), tmp38b);
-  GF31 y2 = modM31(addq(tmp38a, tmp38b)), y7 = modM31(subq(tmp38a, tmp38b));  // tmp38a < 3.91*2^61, tmp38b < 3.86*2^61
+  GF31q tmp38a = opaque(madq(u[1], C2_C4, cbase, M31));   // 1.288..2.150
+  GF31q tmp38b = opaque(mulqs(u[8], S2));                 // +-0.439
+  tmp38a = madq(u[4], C1_C4, tmp38a, M31);                // 1.288..2.635  (c8 = c1)
+  tmp38b = madqs(u[7], S4, tmp38b);                       // +-0.871
+  tmp38b = madqs(u[6], -S3, tmp38b);                      // +-1.076  (s6 = -s3)
+  tmp38b = madqs(u[5], -S1, tmp38b);                      // +-1.205  (s8 = -s1)
+  GF31 y2 = modM31(addq(tmp38a, tmp38b)), y7 = modM31(subqs(tmp38a, tmp38b));
 
-  GF31q tmp47a = madq(s124, C3, t);                 // row 3:  u0 + sum3 + c3 (sum1 + sum2 + sum4)
-  GF31q tmp47b = mulq(u[8], S3);
-  tmp47b = madq(u[7], (M31 - S3), tmp47b, M31);
-  tmp47b = madq(u[5], S3, tmp47b);
-  GF31 y3 = modM31(addq(tmp47a, tmp47b)), y6 = modM31(subq(tmp47a, tmp47b));  // tmp47a < 1.00*2^61, tmp47b < 2.41*2^61
+  GF31q tmp47a = madqs(s124, C3, opaque(tK));             // 1.499..2.001
+  GF31q tmp47b = opaque(mulqs(u[8], S3));                 // +-0.205
+  tmp47b = madqs(u[7], -S3, tmp47b);                      // +-0.410  (s6 = -s3)
+  tmp47b = madqs(u[5], S3, tmp47b);                       // +-0.615
+  GF31 y3 = modM31(addq(tmp47a, tmp47b)), y6 = modM31(subqs(tmp47a, tmp47b));
 
-  GF31q tmp56a = cbase;
-  tmp56a = madq(u[1], C4_C1, tmp56a, M31);
-  GF31q tmp56b = mulq(u[8], S4, M31);
-  tmp56b = madq(u[7], (M31 - S1), tmp56b);
-  tmp56b = madq(u[6], S3, tmp56b);
-  tmp56a = madq(u[4], C2_C1, tmp56a, M31);
-  tmp56b = madq(u[5], (M31 - S2), tmp56b, M31);
-  GF31 y4 = modM31(addq(tmp56a, tmp56b)), y5 = modM31(subq(tmp56a, tmp56b));  // tmp56a < 3.91*2^61, tmp56b < 2.93*2^61
+  GF31q tmp56a = opaque(madq(u[2], C1_C4, cbase, M31));   // 1.288..2.485  (c8 = c1)
+  GF31q tmp56b = opaque(mulqs(u[8], S4));                 // +-0.432
+  tmp56a = madq(u[4], C2_C4, tmp56a, M31);                // 1.288..2.635  (c7 = c2)
+  tmp56b = madqs(u[7], -S1, tmp56b);                      // +-0.562  (s8 = -s1)
+  tmp56b = madqs(u[6], S3, tmp56b);                       // +-0.767
+  tmp56b = madqs(u[5], -S2, tmp56b);                      // +-1.205  (s7 = -s2)
+  GF31 y4 = modM31(addq(tmp56a, tmp56b)), y5 = modM31(subqs(tmp56a, tmp56b));
 
   u[1] = y1; u[8] = y8;
   u[2] = y2; u[7] = y7;
