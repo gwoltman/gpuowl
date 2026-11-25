@@ -494,7 +494,18 @@ long2 OVERLOAD U2(i64 a, i64 b) { return (long2) (a, b); }
 uint2 OVERLOAD U2(uint a, uint b) { return (uint2) (a, b); }
 ulong2 OVERLOAD U2(unsigned long a, unsigned long b) { return (ulong2) ((ulong)a, (ulong)b); }              // Two versions dealing with longs to handle TAILTGF61 constant
 #if !NO_INT128                // Without 128-bit integers (see KernelCompiler.cpp) there are no long long literals to handle
+// OpenCL C reserves long long.  AMD's compiler still provides it, as a 128-bit type, so a "ull" literal does not match
+// the unsigned long overload above (TAILTGF61, and the ULL constants passed to U2).  Recent Adrenaline comgr warns about
+// the reserved name; older compilers do not know -Wreserved-identifier, hence -Wunknown-warning-option.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wreserved-identifier"
+#endif
 ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2) ((ulong)a, (ulong)b); }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #endif
 
 // Other handy macros
