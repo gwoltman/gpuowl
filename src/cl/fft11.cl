@@ -308,7 +308,7 @@ void OVERLOAD fft11(GF31 *u) {
 
 #if NTT_GF61
 
-#if PFA == 11 && PFA_W61 != 2266698407988980144ull
+#if PFA == 11 && PFA_W61 != 2266698407988980144u
 #error PFA_W61 does not match the root hardwired here (pfaRootOfUnity in TrigBufCache.cpp)
 #endif
 
@@ -318,20 +318,20 @@ void OVERLOAD fft11(GF31 *u) {
 // the sums) zeroes one term per cos row, and sbase = s5 * (the sum of the differences) one term per sin row (no roundoff in GF, so the
 // bases are chosen for the bounds).  Each row is a 128-bit dot product reduced once.
 void OVERLOAD fft11(GF61 *u) {
-  const Z61 C4 = 123224072626932599ull;
-  const Z61 C1_C4 = 1037129623414667697ull;           // c1 - c4
-  const Z61 C2_C4 = 1411401323955138171ull;           // c2 - c4
-  const Z61 C3_C4 = 132562184592884328ull;            // c3 - c4
-  const Z61 C5_C4 = 261551018723187735ull;            // c5 - c4
-  const Z61 S5 = 892586779545797283ull;
-  const Z61 S1_S5 = 213757932401582565ull;            // s1 - s5
-  const Z61 S2_S5 = 496875036475571045ull;            // s2 - s5
-  const Z61 S3_S5 = 1183163122638166100ull;           // s3 - s5
-  const Z61 S4_S5 = 1393734592053029365ull;           // s4 - s5
-  const Z61 NS1_S5 = 306911517720516820ull;           // -s1 - s5
-  const Z61 NS2_S5 = 23794413646528340ull;            // -s2 - s5
-  const Z61 NS3_S5 = 1643349336697627236ull;          // -s3 - s5
-  const Z61 NS4_S5 = 1432777867282763971ull;          // -s4 - s5
+  const Z61 C4 = 123224072626932599u;
+  const Z61 C1_C4 = 1037129623414667697u;           // c1 - c4
+  const Z61 C2_C4 = 1411401323955138171u;           // c2 - c4
+  const Z61 C3_C4 = 132562184592884328u;            // c3 - c4
+  const Z61 C5_C4 = 261551018723187735u;            // c5 - c4
+  const Z61 S5 = 892586779545797283u;
+  const Z61 S1_S5 = 213757932401582565u;            // s1 - s5
+  const Z61 S2_S5 = 496875036475571045u;            // s2 - s5
+  const Z61 S3_S5 = 1183163122638166100u;           // s3 - s5
+  const Z61 S4_S5 = 1393734592053029365u;           // s4 - s5
+  const Z61 NS1_S5 = 306911517720516820u;           // -s1 - s5
+  const Z61 NS2_S5 = 23794413646528340u;            // -s2 - s5
+  const Z61 NS3_S5 = 1643349336697627236u;          // -s3 - s5
+  const Z61 NS4_S5 = 1432777867282763971u;          // -s4 - s5
 
   // Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
   X2qp(&u[1], &u[10]);   // u[1] = 0..2+, u[10] = 1-..3+

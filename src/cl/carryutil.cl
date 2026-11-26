@@ -46,7 +46,7 @@ u64 OVERLOAD ulowBits(u64 u, u32 bits) { return ulowBits((i64) u, bits); }
 u32 OVERLOAD ulowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; return u & ((1 << bits) - 1); }
 u32 OVERLOAD ulowFixedBits(u32 u, const u32 bits) { return ulowFixedBits((i32) u, bits); }
 // Return unsigned low bits where number of bits is known at compile time (number of bits can be 0 to 64)
-u64 OVERLOAD ulowFixedBits(i64 u, const u32 bits) { return u & ((1LL << bits) - 1); }
+u64 OVERLOAD ulowFixedBits(i64 u, const u32 bits) { return u & (((i64) 1 << bits) - 1); }
 u64 OVERLOAD ulowFixedBits(u64 u, const u32 bits) { return ulowFixedBits((i64) u, bits); }
 
 // Return signed low bits (number of bits must be between 1 and 31)
@@ -81,7 +81,7 @@ i32 OVERLOAD lowFixedBits(i32 u, const u32 bits) { if (bits == 32) return u; ret
 i32 OVERLOAD lowFixedBits(u32 u, const u32 bits) { return lowFixedBits((i32)u, bits); }
 // Return signed low bits where number of bits is known at compile time (number of bits can be 1 to 63).  The two versions are the same speed on TitanV.
 i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return ((u << (64 - bits)) >> (64 - bits)); }
-//i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return (i64) ulowFixedBits(u, bits - 1) - (u & (1LL << (bits - 1))); }
+//i64 OVERLOAD lowFixedBits(i64 u, const u32 bits) { if (bits <= 32) return lowFixedBits((i32) u, bits); return (i64) ulowFixedBits(u, bits - 1) - (u & ((i64) 1 << (bits - 1))); }
 i64 OVERLOAD lowFixedBits(u64 u, const u32 bits) { return lowFixedBits((i64)u, bits); }
 
 // Extract 32 bits from a 64-bit value (starting bit offset can be 0 to 31)
@@ -105,7 +105,7 @@ bool test(u32 bits, u32 pos) { return (bits >> pos) & 1; }
 
 #if FFT_FP64
 // Rounding constant: 3 * 2^51, See https://stackoverflow.com/questions/17035464
-#define RNDVAL (3.0 * (1ull << 51))
+#define RNDVAL (3.0 * ((u64) 1 << 51))
 
 // Convert a double to long efficiently.  Double must be in RNDVAL+integer format.
 i64 RNDVALdoubleToLong(double d) {

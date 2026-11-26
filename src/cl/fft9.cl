@@ -227,13 +227,13 @@ void OVERLOAD fft9(GF31 *u) {
 
 #if NTT_GF61
 
-#if PFA == 9 && PFA_W61 != 1102844585000305877ull
+#if PFA == 9 && PFA_W61 != 1102844585000305877u
 #error PFA_W61 does not match the root hardwired here (pfaRootOfUnity in TrigBufCache.cpp)
 #endif
 
 // Radix-9 DFT, y_j = sum_k u_k w^(jk) with w = 37^((p-1)/9) (pfaRootOfUnity).
 void OVERLOAD fft9(GF61 *u) {
-  const Z61 W1 = 1102844585000305877ull, W2 = 594418010121383343ull, W4 = 569931187132395942ull;
+  const Z61 W1 = 1102844585000305877u, W2 = 594418010121383343u, W4 = 569931187132395942u;
   // 3 x 3 Cooley-Tukey: radix-3 down the columns u[n1 + 3 n2], twiddles w^(n1 k2), radix-3 along the rows, then transpose.  (Paired
   // 64x64-bit dot products, as in fft7/fft11, need about 24 products per component here instead of 10.)
   fft3by(u, 0, 3, 9);

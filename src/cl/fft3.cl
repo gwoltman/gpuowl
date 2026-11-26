@@ -79,7 +79,7 @@ void OVERLOAD fft3(GF31 *u) { fft3by(u, 0, 1, 3); }
 
 #if NTT_GF61
 
-#if PFA == 3 && PFA_W61 != 1669582390241348315ull
+#if PFA == 3 && PFA_W61 != 1669582390241348315u
 #error PFA_W61 does not match the root hardwired here (pfaRootOfUnity in TrigBufCache.cpp)
 #endif
 
@@ -88,7 +88,7 @@ void OVERLOAD fft3(GF31 *u) { fft3by(u, 0, 1, 3); }
 void OVERLOAD fft3by(GF61 *u, u32 base, u32 step, u32 M) {
   // MW = M61 - w = -w, w a cube root of unity (w^2 + w + 1 = 0, so one scalar multiply), stored times 8 for the cheaper weakModM61x8.  -w rather
   // than w:  8 MW + d stays below 2^64 (8 w + d does not), so mul64s applies, and the product's range is smaller.
-  const Z61 MW = 636260618972345636ull;                  // 0.28 M61
+  const Z61 MW = 636260618972345636u;                  // 0.28 M61
   // Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
   GF61 d = A(1) + neg(A(2), 2);                                         // 1-..3+, positive for the multiply
   GF61 nwd = U2(weakModM61x8(mul64s(d.x, X8(MW))), weakModM61x8(mul64s(d.y, X8(MW))));         // -w (u1 - u2), 0..1.83+

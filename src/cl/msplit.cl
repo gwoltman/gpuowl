@@ -187,9 +187,9 @@ void OVERLOAD msplitStage2(MFP2 *u, u32 j) {
 #if MSPLIT_GF61
 // root(16, 1), root(16, 3) and root(16, 9) = -root(16, 1) in GF(M61^2)
 void OVERLOAD msplitInnerTwiddle(GF61 *u, u32 j) {
-  const GF61 W1 = U2((Z61) 22027337052962166ull, (Z61) 1693317751237720973ull);
-  const GF61 W3 = U2((Z61) 1693317751237720973ull, (Z61) 22027337052962166ull);
-  const GF61 W9 = U2((Z61) (M61 - 22027337052962166ull), (Z61) (M61 - 1693317751237720973ull));
+  const GF61 W1 = U2((Z61) 22027337052962166u, (Z61) 1693317751237720973u);
+  const GF61 W3 = U2((Z61) 1693317751237720973u, (Z61) 22027337052962166u);
+  const GF61 W9 = U2((Z61) (M61 - 22027337052962166u), (Z61) (M61 - 1693317751237720973u));
   if (j == 1) { u[1] = cmul(u[1], W1); u[2] = mul_t8(u[2]);  u[3] = cmul(u[3], W3); }
   if (j == 2) { u[1] = mul_t8(u[1]);  u[2] = mul_t4(u[2]);  u[3] = mul_3t8(u[3]); }
   if (j == 3) { u[1] = cmul(u[1], W3); u[2] = mul_3t8(u[2]); u[3] = cmul(u[3], W9); }

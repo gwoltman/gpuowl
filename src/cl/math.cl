@@ -112,7 +112,7 @@ u64 i128_lo64(i128 val) { return val.x; }
 u64 i128_hi64(i128 val) { return val.x >> 64; }
 u64 i128_shrlo64(i128 val, u32 bits) { return val.x >> bits; }
 i96 i128_shr96(i128 val, u32 bits) { __int128 v = val.x >> bits; return make_i96((i32) (v >> 64), (u64) v); }
-i128 OVERLOAD i128_masklo64(i128 a, u64 m) { i128 val; val.x = a.x & (((__int128)0xFFFFFFFFFFFFFFFFULL << 64) | m); return val; }
+i128 OVERLOAD i128_masklo64(i128 a, u64 m) { i128 val; val.x = a.x & (((__int128)0xFFFFFFFFFFFFFFFFu << 64) | m); return val; }
 i128 OVERLOAD add(i128 a, i128 b) { i128 val; val.x = a.x + b.x; return val; }
 i128 OVERLOAD add(i128 a, u64 b) { i128 val; val.x = a.x + (__int128)b; return val; }
 i128 OVERLOAD add(i128 a, i64 b) { i128 val; val.x = a.x + (__int128)b; return val; }
@@ -472,12 +472,12 @@ T2 OVERLOAD conjugate(T2 a) { return U2(a.x, -a.y); }
 
 // Multiply by 2 without using floating point instructions.  This is a little sloppy as an input of zero returns 2^-1022.
 // WARNING:  Use of this macro *may* cause the rocm optimizer to fail to recognize common sub-expressions built on the returned result.
-T OVERLOAD mul2(T a) { return as_double(as_ulong(a) + (u64)0x0010000000000000ULL); /* Bump exponent by 1 */; }
+T OVERLOAD mul2(T a) { return as_double(as_ulong(a) + (u64)0x0010000000000000u); /* Bump exponent by 1 */; }
 T2 OVERLOAD mul2(T2 a) { return U2(mul2(a.x), mul2(a.y)); }
 
 // Multiply by -2 without using floating point instructions.  This is a little sloppy as an input of zero returns -2^-1022.
 // WARNING:  Use of this macro *may* cause the rocm optimizer to fail to recognize common sub-expressions built on the returned result.
-T OVERLOAD mulminus2(T a) { return as_double(as_ulong(a) + (u64)0x8010000000000000ULL); /* Bump exponent by 1, flip sign bit */; }
+T OVERLOAD mulminus2(T a) { return as_double(as_ulong(a) + (u64)0x8010000000000000u); /* Bump exponent by 1, flip sign bit */; }
 T2 OVERLOAD mulminus2(T2 a) { return U2(mulminus2(a.x), mulminus2(a.y)); }
 
 // a * (b + 1) == a * b + a
@@ -1120,7 +1120,7 @@ Z61 OVERLOAD make_Z61(u64 a) { return (Z61) (a); }                              
 // However, a long string of subtracts (example, fft8 does 3 subtracts before mod M61 will be better off using the quick routines and negative intermediate results).
 // The mul routine (and csq and cmul) must use only positive values as __int128 multiply is very slow.
 
-u64 OVERLOAD get_Z61(Z61 a) { Z61 m = a - M61; return (m & 0x8000000000000000ULL) ? a : m; }        // Get value in range 0 to M61-1
+u64 OVERLOAD get_Z61(Z61 a) { Z61 m = a - M61; return (m & (Z61) 0x8000000000000000u) ? a : m; }        // Get value in range 0 to M61-1
 i64 OVERLOAD get_balanced_Z61(Z61 a) { return (hi32(a) >= 0x10000000) ? (i64)(a - M61) : (i64)a; }  // Get balanced value in range -M61/2 to M61/2
 
 // Internal routine to bring Z61 value into the range 0..M61+epsilon
@@ -1143,7 +1143,7 @@ GF61 OVERLOAD modM61(GF61 a) { return U2(modM61(a.x), modM61(a.y)); }
 // get_balanced_Z61(modM61(a)) without get_balanced_Z61's compare and selects: reduce a + 2^60 and take 2^60 off again (both only touch the
 // high word).  Gives -2^60..2^60+epsilon, the right representative for any value well inside -M61/2..M61/2.  a must be below 2^63 - 2^60.
 // Cheaper than get_balanced_Z61 only when the modM61 is needed anyway.
-i64 OVERLOAD balancedModM61(Z61 a) { return (i64) modM61(a + (1ULL << 60)) - (1LL << 60); }
+i64 OVERLOAD balancedModM61(Z61 a) { return (i64) modM61(a + ((u64) 1 << 60)) - ((i64) 1 << 60); }
 // Internal routine to negate a value by adding the specified number of M61s -- no mod M61 reduction
 Z61 OVERLOAD neg(Z61 a, const u32 m61_count) { return m61_count * M61 - a; }
 GF61 OVERLOAD neg(GF61 a, const u32 m61_count) { return U2(neg(a.x, m61_count), neg(a.y, m61_count)); }
@@ -1499,49 +1499,49 @@ GF61 OVERLOAD mul_t16(GF61 a) {
    //                  = ax - (ay * (SQRT2 - 1)), ax * (SQRT2 - 1) + ay
    //                  = ax - ay * SQRT2 + ay, ax * SQRT2 - ax + ay
    GF61 a_negsqrt2 = shl31(a);      // Mul by (2^31 = -SQRT2)
-   return U2(weakMul(a.x + a_negsqrt2.y + a.y, 22027337052962166ULL, 2, 2), weakMul(neg(a_negsqrt2.x + a.x, 3) + a.y, 22027337052962166ULL, 2, 2));
+   return U2(weakMul(a.x + a_negsqrt2.y + a.y, (Z61) 22027337052962166u, 2, 2), weakMul(neg(a_negsqrt2.x + a.x, 3) + a.y, (Z61) 22027337052962166u, 2, 2));
 }
 GF61 OVERLOAD mul_3t16(GF61 a) {
    // a * U2(S1/C1, 1) = axbx - ayby, axby + aybx
    //                  = ax * (SQRT2 - 1) - ay, ax + ay * (SQRT2 - 1)
    //                  = ax * SQRT2 - ax - ay, ax + ay * SQRT2 - ay
    GF61 a_negsqrt2 = shl31(a);      // Mul by (2^31 = -SQRT2)
-   return U2(weakMul(neg(a_negsqrt2.x + a.x + a.y, 4), 22027337052962166ULL, 2, 2), weakMul(a.x + neg(a_negsqrt2.y + a.y, 3), 22027337052962166ULL, 2, 2));
+   return U2(weakMul(neg(a_negsqrt2.x + a.x + a.y, 4), (Z61) 22027337052962166u, 2, 2), weakMul(a.x + neg(a_negsqrt2.y + a.y, 3), (Z61) 22027337052962166u, 2, 2));
 }
 GF61 OVERLOAD mul_5t16(GF61 a) {
    // a * U2(-S1/C1, 1) = axbx - ayby, axby + aybx
    //                   = ax * -(SQRT2 - 1) - ay, ax + ay * -(SQRT2 - 1)
    //                   = -ax * SQRT2 + ax - ay, ax - ay * SQRT2 + ay
    GF61 a_negsqrt2 = shl31(a);      // Mul by (2^31 = -SQRT2)
-   return U2(weakMul(a_negsqrt2.x + a.x + neg(a.y, 2), 22027337052962166ULL, 2, 2), weakMul(a.x + a_negsqrt2.y + a.y, 22027337052962166ULL, 2, 2));
+   return U2(weakMul(a_negsqrt2.x + a.x + neg(a.y, 2), (Z61) 22027337052962166u, 2, 2), weakMul(a.x + a_negsqrt2.y + a.y, (Z61) 22027337052962166u, 2, 2));
 }
 GF61 OVERLOAD mul_7t16(GF61 a) {
    // a * U2(-1, S1/C1) = axbx - ayby, axby + aybx
    //                   = -ax - (ay * (SQRT2 - 1)), ax * (SQRT2 - 1) - ay
    //                   = -ax - ay * SQRT2 + ay, ax * SQRT2 - ax - ay
    GF61 a_negsqrt2 = shl31(a);      // Mul by (2^31 = -SQRT2)
-   return U2(weakMul(neg(a.x, 2) + a_negsqrt2.y + a.y, 22027337052962166ULL, 2, 2), weakMul(neg(a_negsqrt2.x + a.x + a.y, 4), 22027337052962166ULL, 2, 2));
+   return U2(weakMul(neg(a.x, 2) + a_negsqrt2.y + a.y, (Z61) 22027337052962166u, 2, 2), weakMul(neg(a_negsqrt2.x + a.x + a.y, 4), (Z61) 22027337052962166u, 2, 2));
 }
 GF61 OVERLOAD mul_9t16(GF61 a) {
    // a * U2(-1, -S1/C1) = axbx - ayby, axby + aybx
    //                    = -ax - (ay * -(SQRT2 - 1)), ax * -(SQRT2 - 1) - ay
    //                    = -ax + ay * SQRT2 - ay, -ax * SQRT2 + ax - ay
    GF61 a_negsqrt2 = shl31(a);      // Mul by (2^31 = -SQRT2)
-   return U2(weakMul(neg(a.x + a_negsqrt2.y + a.y, 4), 22027337052962166ULL, 2, 2), weakMul(a_negsqrt2.x + a.x + neg(a.y, 2), 22027337052962166ULL, 2, 2));
+   return U2(weakMul(neg(a.x + a_negsqrt2.y + a.y, 4), (Z61) 22027337052962166u, 2, 2), weakMul(a_negsqrt2.x + a.x + neg(a.y, 2), (Z61) 22027337052962166u, 2, 2));
 }
 #else
-GF61 OVERLOAD mul_t16(GF61 a) { return cmul(a, U2(22027337052962166ULL, 1693317751237720973ULL)); }
-GF61 OVERLOAD mul_3t16(GF61 a) { return cmul(a, U2(1693317751237720973ULL, 22027337052962166ULL)); }
-GF61 OVERLOAD mul_5t16(GF61 a) { return cmul(a, U2(M61 - 1693317751237720973ULL, 22027337052962166ULL)); }
-GF61 OVERLOAD mul_7t16(GF61 a) { return cmul(a, U2(M61 - 22027337052962166ULL, 1693317751237720973ULL)); }
-GF61 OVERLOAD mul_9t16(GF61 a) { return cmul(a, U2(M61 - 22027337052962166ULL, M61 - 1693317751237720973ULL)); }
+GF61 OVERLOAD mul_t16(GF61 a) { return cmul(a, U2((Z61) 22027337052962166u, (Z61) 1693317751237720973u)); }
+GF61 OVERLOAD mul_3t16(GF61 a) { return cmul(a, U2((Z61) 1693317751237720973u, (Z61) 22027337052962166u)); }
+GF61 OVERLOAD mul_5t16(GF61 a) { return cmul(a, U2(M61 - (Z61) 1693317751237720973u, (Z61) 22027337052962166u)); }
+GF61 OVERLOAD mul_7t16(GF61 a) { return cmul(a, U2(M61 - (Z61) 22027337052962166u, (Z61) 1693317751237720973u)); }
+GF61 OVERLOAD mul_9t16(GF61 a) { return cmul(a, U2(M61 - (Z61) 22027337052962166u, M61 - (Z61) 1693317751237720973u)); }
 #endif
 
 // Quick (no final modM61) multiply by the 16th root of unity w = (C1, S1), for fft8_16b (which gets w^3 and w^9 from it too).  Karatsuba's
 // shared product k1 = C1 * (a.x + a.y) is tiny because C1 is (0.0096 M61), and the other constants come out non-negative (M61 - S1 - C1 =
 // 0.256 M61, S1 - C1 = 0.725 M61), so the outputs need no modM61.  Inputs 0..1+; outputs 0..1.28+, 0..1.74+.
-#define T16C1  22027337052962166ULL
-#define T16S1  1693317751237720973ULL
+#define T16C1  ((Z61) 22027337052962166u)
+#define T16S1  ((Z61) 1693317751237720973u)
 GF61 OVERLOAD mul_t16q(GF61 a) {         // k1 = C1 * (ax + ay):  re = k1 + ay * (M61 - S1 - C1) is 0..1.28+,  im = k1 + ax * (S1 - C1) is 0..1.74+
   // The constants are stored times 8, so each sum is 8 times the unscaled one and weakModM61x8 returns exactly what weakModM61(sum, 125)
   // returns for the unscaled sum.  mul64s and mad64s apply:  a.x and a.y are modM61 outputs (0..1+), so each factor plus its constant times

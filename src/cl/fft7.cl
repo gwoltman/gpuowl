@@ -185,7 +185,7 @@ void OVERLOAD fft7(GF31 *u) { fft7by(u, 0, 1, 7); }
 
 #if NTT_GF61
 
-#if PFA == 7 && PFA_W61 != 1165310750493918737ull
+#if PFA == 7 && PFA_W61 != 1165310750493918737u
 #error PFA_W61 does not match the root hardwired here (pfaRootOfUnity in TrigBufCache.cpp)
 #endif
 
@@ -195,14 +195,14 @@ void OVERLOAD fft7(GF31 *u) { fft7by(u, 0, 1, 7); }
 // the sums) zeroes one term per cos row, and sbase = s1 * (the sum of the differences) one term per sin row.  Each row is a 128-bit dot
 // product reduced once.
 void OVERLOAD fft7by(GF61 *u, u32 base, u32 step, u32 M) {
-  const Z61 C1 = 784002893271222362ull;
-  const Z61 C2_C1 = 989671222192671703ull;            // c2 - c1
-  const Z61 C3_C1 = 117084611814202137ull;            // c3 - c1
-  const Z61 S1 = 381307857222696375ull;
-  const Z61 S2_S1 = 1251050654277315072ull;           // s2 - s1
-  const Z61 S3_S1 = 450576194449256153ull;            // s3 - s1
-  const Z61 NS2_S1 = 292176640490986129ull;           // -s2 - s1
-  const Z61 NS3_S1 = 1092651100319045048ull;          // -s3 - s1
+  const Z61 C1 = 784002893271222362u;
+  const Z61 C2_C1 = 989671222192671703u;            // c2 - c1
+  const Z61 C3_C1 = 117084611814202137u;            // c3 - c1
+  const Z61 S1 = 381307857222696375u;
+  const Z61 S2_S1 = 1251050654277315072u;           // s2 - s1
+  const Z61 S3_S1 = 450576194449256153u;            // s3 - s1
+  const Z61 NS2_S1 = 292176640490986129u;           // -s2 - s1
+  const Z61 NS3_S1 = 1092651100319045048u;          // -s3 - s1
 
   // Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
   X2qp(&A(1), &A(6));    // A(1) = 0..2+, A(6) = 1-..3+

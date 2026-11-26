@@ -81,7 +81,7 @@ void OVERLOAD fft5(F2 *u) { return fft5by(u, 0, 1, 5); }
 
 #if NTT_GF61
 
-#if PFA == 5 && PFA_W61 != 725554454131936870ull
+#if PFA == 5 && PFA_W61 != 725554454131936870u
 #error PFA_W61 does not match the root hardwired here (pfaRootOfUnity in TrigBufCache.cpp)
 #endif
 
@@ -90,10 +90,10 @@ void OVERLOAD fft5(F2 *u) { return fft5by(u, 0, 1, 5); }
 // (u0 + sum_k c_jk sum_k) +- sum_k s_jk dif_k, with c_m = (w^m + w^-m)/2 and s_m = (w^m - w^-m)/2 in Z/pZ.  base = u0 + c1 * (the sum of
 // the sums) zeroes one term per cos row.  Each row is a 128-bit dot product reduced once.
 void OVERLOAD fft5by(GF61 *u, u32 base, u32 step, u32 M) {
-  const Z61 C1 = 1317869282320094880ull;
-  const Z61 C2_C1 = 823025949180351166ull;    // c2 - c1
-  const Z61 S1 = 1713528181025535941ull;
-  const Z61 S2 = 359591414418026295ull;
+  const Z61 C1 = 1317869282320094880u;
+  const Z61 C2_C1 = 823025949180351166u;    // c2 - c1
+  const Z61 S1 = 1713528181025535941u;
+  const Z61 S2 = 359591414418026295u;
 
   // Quick (unreduced) arithmetic, ranges in M61s as in math.cl.  Inputs 0..1+.
   X2qp(&A(1), &A(4));    // A(1) = 0..2+, A(4) = 1-..3+

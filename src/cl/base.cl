@@ -405,11 +405,11 @@ u32 pfaFpTailTrigBase(u32 line) { return (line / PFA_TW * PFA_L + PFA * (line % 
 // For a power-of-two NWORDS that is 2^(2^(q-1) / NWORDS) as 2^(q-1) == 1 mod q.  With PFA, NWORDS is PFA times a power of two
 // and the host passes PFA_RINV61 = PFA^-1 mod 61 and PFA_RINV31 = PFA^-1 mod 31.
 #if PFA
-#define LOG2_ROOT_TWO61 ((u32) ((((1ULL << 60) / (NWORDS / PFA)) % 61) * PFA_RINV61 % 61))
-#define LOG2_ROOT_TWO31 ((u32) ((((1ULL << 30) / (NWORDS / PFA)) % 31) * PFA_RINV31 % 31))
+#define LOG2_ROOT_TWO61 ((u32) (((((u64) 1 << 60) / (NWORDS / PFA)) % 61) * PFA_RINV61 % 61))
+#define LOG2_ROOT_TWO31 ((u32) (((((u64) 1 << 30) / (NWORDS / PFA)) % 31) * PFA_RINV31 % 31))
 #else
-#define LOG2_ROOT_TWO61 ((u32) (((1ULL << 60) / NWORDS) % 61))
-#define LOG2_ROOT_TWO31 ((u32) (((1ULL << 30) / NWORDS) % 31))
+#define LOG2_ROOT_TWO61 ((u32) ((((u64) 1 << 60) / NWORDS) % 61))
+#define LOG2_ROOT_TWO31 ((u32) ((((u64) 1 << 30) / NWORDS) % 31))
 #endif
 // log2 of MIDDLE's share of the NTT's output scale.  With PFA the factor PFA is removed in fftMiddleOut, see pfaTwiddleInv, leaving PFA_M2.
 #define LOG2_MIDDLE_NTT (PFA ? (MIDDLE / PFA == 8 ? 3 : MIDDLE / PFA == 4 ? 2 : MIDDLE / PFA == 2 ? 1 : 0) : MIDDLE == 1 ? 0 : MIDDLE == 2 ? 1 : MIDDLE == 4 ? 2 : MIDDLE == 8 ? 3 : 4)
@@ -492,10 +492,7 @@ float2 OVERLOAD U2(float a, float b) { return (float2) (a, b); }
 int2 OVERLOAD U2(int a, int b) { return (int2) (a, b); }
 long2 OVERLOAD U2(i64 a, i64 b) { return (long2) (a, b); }
 uint2 OVERLOAD U2(uint a, uint b) { return (uint2) (a, b); }
-ulong2 OVERLOAD U2(unsigned long a, unsigned long b) { return (ulong2) ((ulong)a, (ulong)b); }              // Two versions dealing with longs to handle TAILTGF61 constant
-#if !NO_INT128                // Without 128-bit integers (see KernelCompiler.cpp) there are no long long literals to handle
-ulong2 OVERLOAD U2(unsigned long long a, unsigned long long b) { return (ulong2) ((ulong)a, (ulong)b); }
-#endif
+ulong2 OVERLOAD U2(ulong a, ulong b) { return (ulong2) (a, b); }
 
 // Other handy macros
 #define RE(a) (a.x)

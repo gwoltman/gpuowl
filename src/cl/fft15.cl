@@ -64,7 +64,7 @@ void OVERLOAD fft15(F2 *u) {
 
 #if NTT_GF61
 
-#if PFA == 15 && PFA_W61 != 1276162394648261926ull
+#if PFA == 15 && PFA_W61 != 1276162394648261926u
 #error PFA_W61 does not match the root hardwired here (pfaRootOfUnity in TrigBufCache.cpp)
 #endif
 

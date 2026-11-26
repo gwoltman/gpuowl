@@ -282,10 +282,12 @@ Weights genWeights(FFTConfig fft, u64 E, u32 W, u32 H, u32 nW, bool nvidiaGpu, i
 
 string toLiteral(i32 value) { return to_string(value); }
 string toLiteral(u32 value) { return to_string(value) + 'u'; }
-[[maybe_unused]] string toLiteral(long value) { return to_string(value) + "ll"; }
-[[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + "ull"; }
-[[maybe_unused]] string toLiteral(long long value) { return to_string(value) + "ll"; }
-[[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + "ull"; }
+[[maybe_unused]] string toLiteral(long value) { return to_string(value); }
+// 64-bit unsigned literals take a bare 'u':  that types them as the first of unsigned int, unsigned long and unsigned long long
+// that holds them, without naming long (32 bits in MSVC) or long long (reserved, 128 bits, in OpenCL C)
+[[maybe_unused]] string toLiteral(unsigned long value) { return to_string(value) + 'u'; }
+[[maybe_unused]] string toLiteral(long long value) { return to_string(value); }
+[[maybe_unused]] string toLiteral(unsigned long long value) { return to_string(value) + 'u'; }
 
 template<typename F>
 string toLiteral(F value) {
@@ -329,7 +331,9 @@ string toLiteral(const string& s) { return s; }
 [[maybe_unused]] string toLiteral(double2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 [[maybe_unused]] string toLiteral(int2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
 [[maybe_unused]] string toLiteral(uint2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
-[[maybe_unused]] string toLiteral(ulong2 cs) { return "U2("s + toLiteral(cs.first) + ',' + toLiteral(cs.second) + ')'; }
+// The casts pick U2(ulong, ulong) whatever type each 'u' literal got (uint for a value that fits in 32 bits).  No spaces:  the
+// OpenCL compiler splits its options string at them.
+[[maybe_unused]] string toLiteral(ulong2 cs) { return "U2((ulong)"s + toLiteral(cs.first) + ",(ulong)" + toLiteral(cs.second) + ')'; }
 
 template<typename T>
 string toDefine(const string& k, const T& v) { return " -D"s + k + '=' + toLiteral(v); }
@@ -858,9 +862,8 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
     // PFA_W31 / PFA_W61 differs.
     for (u32 q : {31u, 61u}) {
       if ((q == 31 && !fft.NTT_GF31) || (q == 61 && !fft.NTT_GF61)) { continue; }
-      string const suffix = q == 61 ? "ull" : "u";
       defines += toDefine("PFA_RINV" + to_string(q), [&]{ for (u32 x = 1; x < q; ++x) { if (R * x % q == 1) { return x; } } return 0u; }());
-      defines += toDefine("PFA_W" + to_string(q), to_string(pfaRootOfUnity(q, R)) + suffix);
+      defines += toDefine("PFA_W" + to_string(q), to_string(pfaRootOfUnity(q, R)) + 'u');
     }
     // The FP side of a hybrid needs no constants from here: its radix-PFA is the hand-tuned fftN (fft-middle.cl pfaDftR)
 

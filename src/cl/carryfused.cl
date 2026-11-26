@@ -814,7 +814,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF31) out, CPA_CF(GF31) in, u32 posROE, 
 #define combo_counter   combo.b
 
   const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % ((u64) 31 << 32);
   combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
@@ -1080,7 +1080,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(GF61) out, CPA_CF(GF61) in, u32 posROE, 
 #define combo_counter   combo.b
 
   const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % ((u64) 61 << 32);
   combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 61;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
@@ -1362,7 +1362,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #define combo_counter   combo.b
 
   const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % ((u64) 31 << 32);
   combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
@@ -1690,7 +1690,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #define combo_counter   combo.b
 
   const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % ((u64) 31 << 32);
   combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 31;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
@@ -2020,7 +2020,7 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #define combo_counter   combo.b
 
   const u64 combo_step = make_u64(bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  const u64 combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * bigword_weight_shift_minus1, 0)) % ((u64) 61 << 32);
   combo_counter = comboFracBits(word_index) + make_u64(word_index * bigword_weight_shift_minus1, 0xFFFFFFFF);
   weight_shift = weight_shift % 61;
   u64 starting_combo_counter = combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
@@ -2338,12 +2338,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #define m61_combo_counter   m61_combo.b
 
   const u64 m31_combo_step = make_u64(m31_bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 m31_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  const u64 m31_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % ((u64) 31 << 32);
   m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m31_weight_shift = m31_weight_shift % 31;
   u64 m31_starting_combo_counter = m31_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
   const u64 m61_combo_step = make_u64(m61_bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 m61_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  const u64 m61_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % ((u64) 61 << 32);
   m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m61_weight_shift = m61_weight_shift % 61;
   u64 m61_starting_combo_counter = m61_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
@@ -2674,12 +2674,12 @@ KERNEL_CAP(G_W * WMUL) carryFused(PA_CF(T2) out, CPA_CF(T2) in, u32 posROE, P(i6
 #define m61_combo_counter   m61_combo.b
 
   const u64 m31_combo_step = make_u64(m31_bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 m31_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % (31ULL << 32);
+  const u64 m31_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m31_bigword_weight_shift_minus1, 0)) % ((u64) 31 << 32);
   m31_combo_counter = comboFracBits(word_index) + make_u64(word_index * m31_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m31_weight_shift = m31_weight_shift % 31;
   u64 m31_starting_combo_counter = m31_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
   const u64 m61_combo_step = make_u64(m61_bigword_weight_shift_minus1, FRAC_BPW_HI);
-  const u64 m61_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % (61ULL << 32);
+  const u64 m61_combo_bigstep = (comboFracBits(G_W * H * 2 - 1) + make_u64((G_W * H * 2 - 1) * m61_bigword_weight_shift_minus1, 0)) % ((u64) 61 << 32);
   m61_combo_counter = comboFracBits(word_index) + make_u64(word_index * m61_bigword_weight_shift_minus1, 0xFFFFFFFF);
   m61_weight_shift = m61_weight_shift % 61;
   u64 m61_starting_combo_counter = m61_combo_counter;     // Save starting counter before adding log2_NWORDS+1 for applying weights after carry propagation
