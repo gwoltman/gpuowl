@@ -2932,9 +2932,8 @@ namespace setup {
 
 namespace {
 
-// Until Teal provides the text for AutoPrimeNet
 constexpr const char* AUTOPRIMENET_TEXT =
-  "Download AutoPrimeNet to get work and report results.  Available at https://download.mersenne.ca/AutoPrimeNet/";
+   "Use AutoPrimeNet to get work and report results.  Download AutoPrimeNet from https://download.mersenne.ca/AutoPrimeNet/ and then on Windows run \"autoprimenet.exe --setup\", otherwise on Linux run \"python3 autoprimenet.py --setup\".";
 
 bool haveTerminal() { return PRPLL_ISATTY(0) && PRPLL_ISATTY(1); }
 
