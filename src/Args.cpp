@@ -130,11 +130,12 @@ std::optional<u64> Args::parseExponent(const string& s) {
 }
 
 std::optional<std::set<string>> Args::retuneKeys(const string& val) {
-  std::set<string> const shortKeys{"INPLACE", "NTT_WEIGHT_TABLE", "TILE64", "TILE32", "LDSSWIZ", "MULTI_Q", "REGS", "WMUL", "L2PERSIST"};
+  std::set<string> const shortKeys{"INPLACE", "NTT_WEIGHT_TABLE", "TILE64", "TILE32", "MULTI_Q", "REGS", "WMUL", "L2PERSIST"};
   if (val.empty() || val == "short") { return shortKeys; }
   if (val == "long") {
     std::set<string> keys = shortKeys;
     keys.insert("TAIL_KERNELS");
+    keys.insert("LDSSWIZ");
     return keys;
   }
   std::set<string> const known{"INPLACE", "NTT_WEIGHT_TABLE", "TILE64", "TILE32", "LDSSWIZ", "MULTI_Q", "REGS", "WMUL", "TAIL_KERNELS", "L2PERSIST"};
@@ -535,11 +536,10 @@ R"(-use <define>      : comma separated list of defines for configuring openCL c
                                         0 skips it.
                          regs         - (CUDA, AMD) Only retune the settings of the FFTs already in tune.txt (of the -fft <spec> shapes,
                                         if given, and of the entries used for exponents from minexp to maxexp, if either is given):
-                                        INPLACE, the weight table and in-place tile sizes, LDSSWIZ (where LDS padding does not fit),
-                                        MULTI_Q (FFTs with two number types) and (CUDA) L2 persistence, the register limits and WMUL.
-                                        -tune does this for the FFTs it adds.  Rerun it after a new CUDA driver/toolkit
+                                        INPLACE, the weight table and in-place tile sizes, MULTI_Q (FFTs with two number types) and (CUDA)
+                                        L2 persistence, the register limits and WMUL.  -tune does this for the FFTs it adds.  Rerun it after a new CUDA driver/toolkit
                                         or PRPLL version.  The settings are added to each tune.txt line, e.g. REGxxxx=<val>.
-                         regs=long    - Like regs, and also TAIL_KERNELS.  Takes longer.  regs=short is the same as regs.
+                         regs=long    - Like regs, and also TAIL_KERNELS and LDSSWIZ (where LDS padding does not fit).  Takes longer.  regs=short is the same as regs.
                          variants     - Time all the other variants of FFT shapes already in tune.txt.  Only FFTs with an FP64
                                         part (FP64 and FP64+M31) have variants.  More accurate variants extend an entry's
                                         max exponent a bit.  Variants that earn a tune.txt entry then get their register usage tuned (CUDA, AMD).

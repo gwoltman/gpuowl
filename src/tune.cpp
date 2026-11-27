@@ -2403,7 +2403,7 @@ string regValueName(int v, bool amd) {
 
 // The settings selected by retune, in the order they depend on each other.  First those that change the kernels whose register limits
 // are tuned: INPLACE (the tiles apply to its in-place transforms), NTT_WEIGHT_TABLE, TILE64 and TILE32 (the in-place middle kernels'
-// threads per block), and LDSSWIZ_W/H (only where the device's local-memory limit drops LDSPAD), each timed with the compiler's default
+// threads per block), and LDSSWIZ_W/H (regs=long, and only where the device's local-memory limit drops LDSPAD), each timed with the compiler's default
 // registers.  Then MULTI_Q with (CUDA) L2PERSIST, also with the default
 // registers if they are tuned next.  Then the register limits with WMUL and TAIL_KERNELS (regTuneEntry), also when one of the first
 // changed: the line's limits were tuned for the old kernels.  A setting not selected keeps its value on the line.  A setting is written to the line only where it differs from
