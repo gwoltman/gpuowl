@@ -393,6 +393,11 @@ public:
   // The WMUL this Gpu runs with, after clDefines lowered a requested value the FFT or device cannot use
   [[nodiscard]] u32 effectiveWmul() const { return wmul; }
 
+  // Whether the width / height side loses LDSPAD under this device's local-memory limit while still allowing LDSSWIZ
+  // (LDSMUL <= 1 and workgroup >= 64).  Used by -tune so LDSSWIZ_W/H is timed only on entries that actually drop LDSPAD.
+  struct LdsSwizzleEligible { bool w{}, h{}; };
+  static LdsSwizzleEligible ldsSwizzleEligible(const Args& shared, cl_device_id id, FFTConfig fft, const vector<KeyVal>& fftUses = {});
+
   // pm1Report writes the result line of the P-1 that runs inside the PRP test
   PRPResult isPrimePRP(const Task& task, const Pm1Report& pm1Report = {});
   // With the Jacobi check on (-use LL_JACOBI, on by default) gcd computes the symbols; nullptr: no check

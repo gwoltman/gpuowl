@@ -356,6 +356,92 @@ ROE_SIZE = 100000,
 CARRY_SIZE = 100000
 };
 
+static bool fitWidthLds(cl_device_id id, const FFTShape& shape, u32 nW, map<string, string>& config, u32& wmul, bool doLog, bool throwOnFail) {
+  auto val = [&config](const char* key, u32 dflt) { auto it = config.find(key); return it == config.end() ? dflt : u32(atoi(it->second.c_str())); };
+  u32 shufl_bytes_w = val("SHUFL_BYTES_W", 8);
+  if (!throwOnFail && shufl_bytes_w != 4 && shufl_bytes_w != 8 && shufl_bytes_w != 16) { shufl_bytes_w = 8; }
+  u32 const lds_limit = u32(std::min<u64>(32768, getLocalMemSize(id)));
+  u32 const big_h = shape.height * shape.middle;
+  // SHUFL_BYTES_W is global (config.txt, where -tune saves the value that won on its default shape), but the LDS use is
+  // width * SHUFL_BYTES_W, so a value that suits a narrow width can be too big for a wide one (16 at width 4096 needs 64KB).
+  // Use the largest value that fits for this FFT, as WMUL is adjusted below.
+  if (u32 const requested_bytes = shufl_bytes_w; shape.width * shufl_bytes_w > getLocalMemSize(id)) {
+    while (shufl_bytes_w > 4 && shape.width * shufl_bytes_w > getLocalMemSize(id)) { shufl_bytes_w /= 2; }
+    if (shape.width * shufl_bytes_w > getLocalMemSize(id)) {
+      if (!throwOnFail) { return false; }
+      log("SHUFL_BYTES_W=%u needs %u bytes of local memory at width %u, the device has %u\n",
+          shufl_bytes_w, shape.width * shufl_bytes_w, shape.width, u32(getLocalMemSize(id)));
+      throw "SHUFL_BYTES_W too large";
+    }
+    config["SHUFL_BYTES_W"] = to_string(shufl_bytes_w);
+    if (doLog) {
+      log("SHUFL_BYTES_W=%u needs %u bytes of local memory at width %u, the device has %u.  Changing to SHUFL_BYTES_W=%u\n",
+          requested_bytes, shape.width * requested_bytes, shape.width, u32(getLocalMemSize(id)), shufl_bytes_w);
+    }
+  }
+  // A line narrower than a wavefront (radix 8 at WIDTH 256 is 32 threads) leaves part of every wavefront idle with WMUL=1, and the
+  // global WMUL in config.txt is chosen for wider FFTs.  So on 64-lane AMD wavefronts carryFused uses WMUL = WAVEFRONT / G_W.
+  u32 const g_w = shape.width / nW;
+  if (u32 const wavefront = getAmdWavefrontWidth(id); wavefront && g_w < wavefront && wmul != wavefront / g_w) {
+    if (doLog) { log("WMUL=%u changed to %u: a %u-thread line is narrower than a %u-lane wavefront\n", wmul, wavefront / g_w, g_w, wavefront); }
+    wmul = wavefront / g_w;
+    config["WMUL"] = to_string(wmul);
+  }
+  u32 max_wmul = lds_limit / (shape.width * shufl_bytes_w);
+  if (max_wmul > 2 && shape.width >= 1024) max_wmul = 2;
+  if (max_wmul > 1 && shape.width >= 4096) max_wmul = 1;
+  max_wmul = std::min(max_wmul, getMaxWorkGroupSize(id) / g_w);
+  max_wmul = std::max(max_wmul, 1u);
+  u32 const requested = wmul;
+  if (wmul > max_wmul) wmul = max_wmul;
+  if (wmul < 1) wmul = 1;
+  while (big_h % wmul) --wmul;
+  if (wmul != requested) {
+    config["WMUL"] = to_string(wmul);
+    if (doLog) { log("WMUL=%u is not usable for this FFT on this device.  Changing to WMUL=%u\n", requested, wmul); }
+  }
+  bool const hadPad = val("LDSPAD_W", 1) != 0;
+  bool const exceeded = shape.width * shufl_bytes_w * wmul >= lds_limit;
+  if (exceeded) {
+    if (doLog) { log("Local shared memory limit of %uKB exceeded.  Changing to LDSPAD_W=0\n", lds_limit / 1024); }
+    config["LDSPAD_W"] = to_string(0);
+  }
+  return exceeded && hadPad && val("LDSMUL_W", 1) <= 1 && g_w >= 64;
+}
+
+static bool fitHeightLds(cl_device_id id, const FFTShape& shape, u32 nH, map<string, string>& config,
+                         bool& tail_single_wide, bool tail_single_kernel, bool doLog) {
+  auto val = [&config](const char* key, u32 dflt) { auto it = config.find(key); return it == config.end() ? dflt : u32(atoi(it->second.c_str())); };
+  u64 const local_mem = getLocalMemSize(id);
+  u32 const g_h = shape.height / nH;
+  u32 shufl = val("SHUFL_BYTES_H", 8);
+  bool const hadPad = val("LDSPAD_H", 1) != 0;
+  bool ldspad = hadPad;
+  auto need = [&](u32 wide) {
+    u32 const pad = !ldspad ? 0 : nH == 4 ? (shufl == 4 ? g_h - 16 : 12) : shufl >= 16 ? 7 : g_h == 256 ? (shufl == 4 ? 252 : 126) : 56;
+    return u64(wide) * (g_h * nH + pad) * shufl;
+  };
+  u64 const before = need(tail_single_wide ? 1 : 2);
+  bool const wasSingle = tail_single_wide;
+  while (val("LDSMUL_H", 1) <= 1 && need(tail_single_wide ? 1 : 2) > local_mem) {
+    if (ldspad) { ldspad = false; }
+    else if (shufl > 4) { shufl /= 2; }
+    else if (!tail_single_wide) { tail_single_wide = true; }
+    else { break; }   // the compile or the launch will report it
+  }
+  if (need(tail_single_wide ? 1 : 2) != before) {
+    if (!ldspad && hadPad) { config["LDSPAD_H"] = "0"; }
+    if (shufl != val("SHUFL_BYTES_H", 8)) { config["SHUFL_BYTES_H"] = to_string(shufl); }
+    if (tail_single_wide != wasSingle) { config["TAIL_KERNELS"] = tail_single_kernel ? "0" : "1"; }
+    if (doLog) {
+      log("H kernels need %llu bytes of local memory at height %u, the device has %llu.  Using LDSPAD_H=%d SHUFL_BYTES_H=%u TAIL_KERNELS=%s (%llu bytes)\n",
+          (unsigned long long)before, shape.height, (unsigned long long)local_mem, int(ldspad), shufl,
+          tail_single_wide ? (tail_single_kernel ? "0" : "1") : (tail_single_kernel ? "2" : "3"), (unsigned long long)need(tail_single_wide ? 1 : 2));
+    }
+  }
+  return !ldspad && hadPad && g_h >= 64;
+}
+
 // Any setting adjusted here for this FFT or device (INPLACE, TAIL_KERNELS, WMUL, LDSPAD_W, L2_STRIPING, MULTI_Q, GRAPHS...) is changed
 // only in the local config and in the out-parameters.  args is const: writing such a change back into args.flags would carry it into
 // every later Gpu, e.g. once -tune timed a PFA FFT (which turns L2_STRIPING off) every later timing would also run without L2_STRIPING.
@@ -564,86 +650,14 @@ string clDefines(const Args& args, cl_device_id id, FFTConfig fft, u32 nW, u32 n
   // Furthermore, I've seen the CUDA compiler refuse to create a kernel with 1024 threads.  Thus, we limit WMUL to 2 for a 1K width and to 1 for a 4K width.
   // carryFused's workgroup is G_W * WMUL threads, which must not exceed the device's maximum workgroup size.  WMUL must be at
   // least 1, and must divide BIG_HEIGHT as carryFused is launched with BIG_HEIGHT / WMUL + 1 workgroups.
-  {
-    u32 shufl_bytes_w = config.contains("SHUFL_BYTES_W") ? atoi(config["SHUFL_BYTES_W"].c_str()) : 8;
-    u32 const lds_limit = u32(std::min<u64>(32768, getLocalMemSize(id)));
-    u32 const big_h = fft.shape.height * fft.shape.middle;
-    // SHUFL_BYTES_W is global (config.txt, where -tune saves the value that won on its default shape), but the LDS use is
-    // width * SHUFL_BYTES_W, so a value that suits a narrow width can be too big for a wide one (16 at width 4096 needs 64KB).
-    // Use the largest value that fits for this FFT, as WMUL is adjusted below.
-    if (u32 const requested_bytes = shufl_bytes_w; fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) {
-      while (shufl_bytes_w > 4 && fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) { shufl_bytes_w /= 2; }
-      if (fft.shape.width * shufl_bytes_w > getLocalMemSize(id)) {
-        log("SHUFL_BYTES_W=%u needs %u bytes of local memory at width %u, the device has %u\n",
-            shufl_bytes_w, fft.shape.width * shufl_bytes_w, fft.shape.width, u32(getLocalMemSize(id)));
-        throw "SHUFL_BYTES_W too large";
-      }
-      config["SHUFL_BYTES_W"] = to_string(shufl_bytes_w);
-      if (doLog) {
-        log("SHUFL_BYTES_W=%u needs %u bytes of local memory at width %u, the device has %u.  Changing to SHUFL_BYTES_W=%u\n",
-            requested_bytes, fft.shape.width * requested_bytes, fft.shape.width, u32(getLocalMemSize(id)), shufl_bytes_w);
-      }
-    }
-    // A line narrower than a wavefront (radix 8 at WIDTH 256 is 32 threads) leaves part of every wavefront idle with WMUL=1, and the
-    // global WMUL in config.txt is chosen for wider FFTs.  So on 64-lane AMD wavefronts carryFused uses WMUL = WAVEFRONT / G_W.
-    if (u32 const wavefront = getAmdWavefrontWidth(id), g_w = fft.shape.width / nW; wavefront && g_w < wavefront && wmul != wavefront / g_w) {
-      if (doLog) { log("WMUL=%u changed to %u: a %u-thread line is narrower than a %u-lane wavefront\n", wmul, wavefront / g_w, g_w, wavefront); }
-      wmul = wavefront / g_w;
-      config["WMUL"] = to_string(wmul);
-    }
-    u32 max_wmul = lds_limit / (fft.shape.width * shufl_bytes_w);
-    if (max_wmul > 2 && fft.shape.width >= 1024) max_wmul = 2;
-    if (max_wmul > 1 && fft.shape.width >= 4096) max_wmul = 1;
-    max_wmul = std::min(max_wmul, getMaxWorkGroupSize(id) / (fft.shape.width / nW));
-    max_wmul = std::max(max_wmul, 1u);
-    u32 const requested = wmul;
-    if (wmul > max_wmul) wmul = max_wmul;
-    if (wmul < 1) wmul = 1;
-    while (big_h % wmul) --wmul;
-    if (wmul != requested) {
-      config["WMUL"] = to_string(wmul);
-      if (doLog) { log("WMUL=%u is not usable for this FFT on this device.  Changing to WMUL=%u\n", requested, wmul); }
-    }
-    if (fft.shape.width * shufl_bytes_w * wmul >= lds_limit) {
-      if (doLog) { log("Local shared memory limit of %uKB exceeded.  Changing to LDSPAD_W=0\n", lds_limit / 1024); }
-      config["LDSPAD_W"] = to_string(0);
-    }
-  }
+  fitWidthLds(id, fft.shape, nW, config, wmul, doLog, true);
 
   // The double-wide tail kernels allocate 2 * (G_H * NH + pad) * SHUFL_BYTES_H bytes of local memory (fftbase.cl LDS_BYTES(2)): 34,784 at
   // height 2K with the defaults.  AMD's Windows OpenCL runtime (PAL) reports CL_DEVICE_LOCAL_MEM_SIZE as 32KB even on hardware with 64KB, and
   // refuses the launch of a kernel that needs more (CL_OUT_OF_RESOURCES), so every 2K-height FFT failed there at its first tailMul.
   // The same check on the width side is above.  Steps, in order, until the H kernels fit:  LDSPAD_H=0 (double-wide at height 2K is then exactly
   // 32KB), halve SHUFL_BYTES_H (down to 4), single-wide tail.  Only when the LDS is not shared (LDSMUL_H=1).
-  {
-    auto val = [&config](const char* key, u32 dflt) { auto it = config.find(key); return it == config.end() ? dflt : u32(atoi(it->second.c_str())); };
-    u64 const local_mem = getLocalMemSize(id);
-    u32 const g_h = fft.shape.height / nH;
-    u32 shufl = val("SHUFL_BYTES_H", 8);
-    bool ldspad = val("LDSPAD_H", 1) != 0;
-    auto need = [&](u32 wide) {
-      u32 const pad = !ldspad ? 0 : nH == 4 ? (shufl == 4 ? g_h - 16 : 12) : shufl >= 16 ? 7 : g_h == 256 ? (shufl == 4 ? 252 : 126) : 56;
-      return u64(wide) * (g_h * nH + pad) * shufl;
-    };
-    u64 const before = need(tail_single_wide ? 1 : 2);
-    bool const wasSingle = tail_single_wide;
-    while (val("LDSMUL_H", 1) <= 1 && need(tail_single_wide ? 1 : 2) > local_mem) {
-      if (ldspad) { ldspad = false; }
-      else if (shufl > 4) { shufl /= 2; }
-      else if (!tail_single_wide) { tail_single_wide = true; }
-      else { break; }   // the compile or the launch will report it
-    }
-    if (need(tail_single_wide ? 1 : 2) != before) {
-      if (!ldspad && val("LDSPAD_H", 1)) { config["LDSPAD_H"] = "0"; }
-      if (shufl != val("SHUFL_BYTES_H", 8)) { config["SHUFL_BYTES_H"] = to_string(shufl); }
-      if (tail_single_wide != wasSingle) { config["TAIL_KERNELS"] = tail_single_kernel ? "0" : "1"; }
-      if (doLog) {
-        log("H kernels need %llu bytes of local memory at height %u, the device has %llu.  Using LDSPAD_H=%d SHUFL_BYTES_H=%u TAIL_KERNELS=%s (%llu bytes)\n",
-            (unsigned long long)before, fft.shape.height, (unsigned long long)local_mem, int(ldspad), shufl,
-            tail_single_wide ? (tail_single_kernel ? "0" : "1") : (tail_single_kernel ? "2" : "3"), (unsigned long long)need(tail_single_wide ? 1 : 2));
-      }
-    }
-  }
+  fitHeightLds(id, fft.shape, nH, config, tail_single_wide, tail_single_kernel, doLog);
 
   // MULTI_Q is not allowed when profiling with -time
   auto configValue = [&config](const char* key, u32 valNotFound) {
@@ -1080,6 +1094,24 @@ static Args gpuArgs(const Args& shared, const string& fftSpec, const vector<KeyV
   Args ret = shared.withFftUses(fftSpec, fftUses, doLog);
   for (const auto& [key, val] : extraConf) { ret.flags[key] = val; }
   return ret;
+}
+
+Gpu::LdsSwizzleEligible Gpu::ldsSwizzleEligible(const Args& shared, cl_device_id id, FFTConfig fft, const vector<KeyVal>& fftUses) {
+  Args const args = gpuArgs(shared, fft.spec(), fftUses, {}, false);
+  u32 const nW = fft.shape.nW(args.radix8At256(false));
+  u32 const nH = fft.shape.nH(args.radix8At256(true));
+  map<string, string> config(args.flags.begin(), args.flags.end());
+  bool tail_single_wide = false, tail_single_kernel = true;
+  u32 wmul = 2;
+  if (auto it = config.find("TAIL_KERNELS"); it != config.end()) {
+    int const tk = atoi(it->second.c_str());
+    tail_single_wide = tk % 10 < 2;
+    tail_single_kernel = tk % 2 == 0;
+  }
+  if (auto it = config.find("WMUL"); it != config.end()) { wmul = atoi(it->second.c_str()); }
+  bool const w = fitWidthLds(id, fft.shape, nW, config, wmul, false, false);
+  bool const h = fitHeightLds(id, fft.shape, nH, config, tail_single_wide, tail_single_kernel, false);
+  return {w, h};
 }
 
 unique_ptr<Gpu> Gpu::make(u64 E, GpuCommon shared, FFTConfig fftConfig, const vector<KeyVal>& extraConf, bool logFftSize,
