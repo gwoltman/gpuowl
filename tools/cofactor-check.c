@@ -7,7 +7,12 @@
 // prpll saves those three residues as E.cofactor.<k>;  when they are next to E.cofactor, the check is a few multiplications.
 // Otherwise it computes 3^(F + 1) mod N, about log2(F) modular squarings of N:  slow for large E.
 //
-//   cofactor-check E.cofactor E f1 [f2 ...]   F = f1 * f2 * ..., each fi given as 2^k-1 (e.g. 2^101-1) or in decimal
+// Faster on the GPU when F is large (log2(N) iterations instead of E, e.g. 2/3 of them for p = 3):  write N to E.n, and
+// prpll -cofactor computes x = 3^N mod (2^E - 1) by square-and-multiply instead, to E.pow3n;  N is a base-3 PRP if x mod N = 3.
+//
+//   cofactor-check --exp E f1 [f2 ...]        write N = (2^E - 1) / F to E.n (little-endian u32 words) for prpll -cofactor
+//   cofactor-check E.pow3n E f1 [f2 ...]      check x = 3^N:  x mod N = 3
+//   cofactor-check E.cofactor E f1 [f2 ...]   check R:  F = f1 * f2 * ..., each fi given as 2^k-1 (e.g. 2^101-1) or in decimal
 //   cofactor-check --ref E                    compute R with GMP (E squarings) and compare it with E.cofactor, to test prpll
 //
 // Build:  cc -O2 -o cofactor-check cofactor-check.c -lgmp
@@ -98,14 +103,19 @@ int main(int argc, char** argv) {
   }
 
   if (argc < 4) {
-    fprintf(stderr, "usage:  %s <E>.cofactor <E> <f1> [<f2> ...]   (fi as 2^k-1 or decimal)\n"
-                    "        %s --ref <E>\n", argv[0], argv[0]);
+    fprintf(stderr, "usage:  %s --exp <E> <f1> [<f2> ...]          (fi as 2^k-1 or decimal)\n"
+                    "        %s <E>.pow3n <E> <f1> [<f2> ...]\n"
+                    "        %s <E>.cofactor <E> <f1> [<f2> ...]\n"
+                    "        %s --ref <E>\n", argv[0], argv[0], argv[0], argv[0]);
     return 2;
   }
+  int const writeExp = !strcmp(argv[1], "--exp");
+  size_t const len1 = strlen(argv[1]);
+  int const isPow3n = len1 > 6 && !strcmp(argv[1] + len1 - 6, ".pow3n");
   unsigned long const E = strtoul(argv[2], NULL, 10);
   mpz_setbit(M, E);
   mpz_sub_ui(M, M, 1);
-  readResidue(R, argv[1], E);
+  if (!writeExp) { readResidue(R, argv[1], E); }
 
   mpz_t F, f, N, rem, want, Fp1, three;
   mpz_inits(F, f, N, rem, want, Fp1, NULL);
@@ -117,6 +127,27 @@ int main(int argc, char** argv) {
   }
   mpz_tdiv_qr(N, rem, M, F);
   if (mpz_sgn(rem) != 0) { fprintf(stderr, "F does not divide 2^%lu-1\n", E); return 2; }
+
+  if (writeExp) {
+    char path[64];
+    snprintf(path, sizeof(path), "%lu.n", E);
+    size_t nWords = 0;
+    unsigned* w = mpz_export(NULL, &nWords, -1, 4, 0, 0, N);
+    FILE* fo = fopen(path, "wb");
+    if (!fo || fwrite(w, 4, nWords, fo) != nWords || fclose(fo)) { perror(path); return 2; }
+    printf("%s:  N = (2^%lu-1)/F, %zu bits;  now run prpll -cofactor -prp %lu, then %s %lu.pow3n %lu", path, E,
+           mpz_sizeinbase(N, 2), E, argv[0], E, E);
+    for (int i = 3; i < argc; ++i) { printf(" %s", argv[i]); }
+    printf("\n");
+    return 0;
+  }
+
+  if (isPow3n) {
+    mpz_mod(R, R, N);
+    int const prp = mpz_cmp_ui(R, 3) == 0;
+    printf("N = (2^%lu-1)/F, %zu digits:  %s\n", E, decimalDigits(N), prp ? "base-3 PRP" : "composite");
+    return prp ? 0 : 1;
+  }
 
   mpz_mod(R, R, N);
   unsigned long const p = argc == 5 ? mersenneK(argv[3]) : 0, q = argc == 5 ? mersenneK(argv[4]) : 0;

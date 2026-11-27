@@ -405,6 +405,8 @@ named "config.txt" in the prpll run directory.  The options for one run are comm
                      to <E>.cofactor (E bits as little-endian u32 words).  N is a base-3 PRP if R mod N = 3^(F + 1) mod N.
                      For E = p q, the residues at iterations p, q and p + q go to <E>.cofactor.<k>:  with them the check
                      (tools/cofactor-check.c) is R 3^(2^p) 3^(2^q) = 9 3^(2^(p+q)) mod N, a few multiplications.
+                     With <E>.n (N as u32 words, from cofactor-check --exp) PRPLL computes x = 3^N mod 2^E - 1 instead,
+                     to <E>.pow3n:  log2(N) iterations rather than E (2/3 of them for F = 7 (2^q - 1)).  N is a PRP if x mod N = 3.
 -proof <power>     : generate proof of power <power> (default: optimal depending on exponent).
                      A lower power reduces disk space requirements but increases the verification cost.
                      A higher power increases disk usage a lot.

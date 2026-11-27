@@ -7,6 +7,7 @@
 #include "File.h"
 #include "Worktodo.h"
 #include "Saver.h"
+#include "CycleFile.h"
 #include "version.h"
 #include "Primes.h"
 #include "Pm1.h"
@@ -20,6 +21,7 @@
 #include "Signal.h"
 #include "timeutil.h"
 
+#include <cstring>
 #include <cmath>
 #include <cassert>
 #include <cstdio>
@@ -664,6 +666,35 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
 
   } else if (kind == PRP || kind == LL) {
     bool isPrime;
+    // -cofactor with <E>.n (cofactor-check --exp):  3^n mod 2^E - 1 by square-and-multiply over n's bits, about log2(n) iterations
+    // rather than E, checked as P-1 stage 1 is.  N = n is a base-3 Fermat PRP if the result mod n is 3.
+    if (kind == PRP && shared.args->cofactor && fs::exists(to_string(exponent) + ".n")) {
+      fs::path const nPath = to_string(exponent) + ".n";
+      string const bytes = File::openReadThrow(nPath).readAll();
+      vector<u32> n(bytes.size() / 4);
+      if (n.empty() || bytes.size() % 4) {
+        log("%s:  %zu bytes, expected a whole number of u32 words (cofactor-check --exp)\n", nPath.string().c_str(), bytes.size());
+        throw "bad .n file";
+      }
+      memcpy(n.data(), bytes.data(), bytes.size());
+      while (!n.empty() && !n.back()) { n.pop_back(); }
+      if (n.empty() || n.size() > (exponent + 31) / 32) {
+        log("%s:  n must be between 1 and 2^%" PRIu64 "\n", nPath.string().c_str(), exponent);
+        throw "bad .n file";
+      }
+      Gcd gcd{shared};
+      PM1Result const r = gpu->pm1Stage1(*this, gcd, &n);
+      fs::path const out = to_string(exponent) + ".pow3n";
+      {
+        CycleFile f{out};
+        f->write(r.x);
+      }
+      log("-cofactor: 3^n mod 2^%" PRIu64 "-1 written to %s (%zu u32 words, little-endian), res64 %016" PRIx64 ", %u check errors\n",
+          exponent, out.string().c_str(), r.x.size(), residue(r.x), r.nErrors);
+      Worktodo::deleteTask(*this, instance);
+      if (shared.args->clean) { Saver<P1State>::clear(exponent); }
+      return;
+    }
     if (kind == PRP) {
       // The P-1 inside the PRP test reports through this; a factor ends the test (it is composite) with no PRP result
       Pm1Report const pm1Report = [&](u64 b1, u64 b2, const vector<string>& factors, u32 nErr, u32 nStage2Err) {

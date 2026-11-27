@@ -4732,22 +4732,27 @@ bool Gpu::pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buf
 // (3 | 2^p-1) = -1, so the symbol is -1 exactly when those bits are odd) and the final residue (+1: E is even).  A wrong symbol on
 // load sets the savefile aside as a bad one; at the end it fails the last block as a failed Gerbicz check does.  Off by default:
 // Gerbicz with verified-only saves covers the arithmetic, and a Jacobi symbol costs about as much as a GCD (two minutes at 100M bits).
-PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd) {
+PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd, const vector<u32>* cofactorExp) {
   assert(E == task.exponent);
-  u64 const B1 = task.B1;
+  u64 const B1 = cofactorExp ? 0 : task.B1;     // B1 = 0:  a -cofactor exponent, which the savefile check tells apart by nBits
   constexpr u32 CHECKS_PER_RUN = 20;       // rollback exposure: about 5% of stage 1, however long it is
   constexpr u32 MAX_L = 3000;
 
   Saver<P1State> saver{E, 1000, args.nSavefiles};
-  vector<u32> const exp = pm1::stage1ExponentCached(saver.dir(), E, B1);
+  vector<u32> const exp = cofactorExp ? *cofactorExp : pm1::stage1ExponentCached(saver.dir(), E, B1);
   u64 const nBits = pm1::bitLength(exp);
-  assert(nBits >= 2);
+  if (nBits < 2) { throw "exponent too small"; }
 
   // L of a full block, and the L in use: halved after a failed check, grown back over about 30 good blocks
   u32 const fullL = u32(std::clamp(std::sqrt(double(nBits) / CHECKS_PER_RUN), 2.0, double(MAX_L)));
   u32 curL = fullL;
-  log("P-1 stage 1 B1=%" PRIu64 ", %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), about %.2f%% overhead\n",
-      B1, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+  if (cofactorExp) {
+    log("-cofactor: 3^n mod 2^%" PRIu64 "-1, n of %" PRIu64 " bits, %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), "
+        "about %.2f%% overhead\n", E, nBits, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+  } else {
+    log("P-1 stage 1 B1=%" PRIu64 ", %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), about %.2f%% overhead\n",
+        B1, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+  }
 
   // Sized as bufData (makeBufVector's buffers are larger when the words are 32-bit), so that they can be copied to and from it
   u32 const wordBufSize = N * fft.WordSize / sizeof(Word);

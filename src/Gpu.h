@@ -399,7 +399,8 @@ public:
   LLResult isPrimeLL(const Task& task, Gcd* gcd);
   CERTResult isCERT(const Task& task);
   // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
-  PM1Result pm1Stage1(const Task& task, Gcd& gcd);
+  // cofactorExp:  -cofactor's exponent n (see Task::execute) instead of the P-1 stage 1 exponent;  x is then 3^n mod 2^E - 1
+  PM1Result pm1Stage1(const Task& task, Gcd& gcd, const vector<u32>* cofactorExp = nullptr);
 
   double timePRP(int quick = 7);
 
