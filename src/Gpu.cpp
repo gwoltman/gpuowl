@@ -1,6 +1,8 @@
 // Copyright (C) Mihai Preda and George Woltman.
 
 #include "Gpu.h"
+#include "CycleFile.h"
+#include "Primes.h"
 #include "Proof.h"
 #include "TimeInfo.h"
 #include "Trig.h"
@@ -20,6 +22,7 @@
 #include "Gcd.h"
 
 #include <algorithm>
+#include <numeric>
 #include <limits>
 #include <iomanip>
 #include <sstream>
@@ -3113,6 +3116,31 @@ std::optional<PRPState> Gpu::loadPRPAt(u64 k) {
   return state;
 }
 
+// -cofactor:  save R = 3^(2^E) mod (2^E - 1), the residue before doDiv9, for a PRP test of a cofactor N = (2^E - 1) / F:  if N
+// is a base-3 Fermat PRP, R = 3^(N F + 1) = 3^(F + 1) mod N (the PRP-CF test).  The file holds the E-bit R as little-endian u32
+// words, e.g. for GMP's mpz_import(r, nWords, -1, 4, 0, 0, data).  For E = p q (p < q primes) and F = (2^p - 1)(2^q - 1),
+// F + 1 = 2^(p+q) - 2^p - 2^q + 2, so the test is R 3^(2^p) 3^(2^q) = 9 3^(2^(p+q)) mod N:  the residues at k = p, q and p + q
+// are saved too, as <E>.cofactor.<k>, which makes the check a few multiplications (tools/cofactor-check.c).
+void Gpu::saveCofactorResidue(const Words& words, u64 k) {
+  fs::path const path = to_string(E) + ".cofactor" + (k == E ? ""s : "." + to_string(k));
+  {
+    CycleFile f{path};
+    f->write(words);
+  }
+  log("-cofactor: 3^(2^%" PRIu64 ") mod 2^%" PRIu64 "-1 written to %s (%zu u32 words, little-endian), res64 %016" PRIx64 "\n",
+      k, E, path.string().c_str(), words.size(), residue(words));
+}
+
+// -cofactor, E = p q with primes p < q:  the iterations whose residues tools/cofactor-check.c needs besides R (see above)
+static vector<u64> cofactorKs(u64 E) {
+  u64 p = 2;
+  while (p * p <= E && E % p) { ++p; }
+  if (p * p > E) { return {}; }
+  u64 const q = E / p;
+  if (q == p || !Primes{}.isPrime(q)) { return {}; }
+  return {p, q, p + q};
+}
+
 u32 Gpu::getProofPower(u64 k) {
   u32 const power = ProofSet::effectivePower(E, args.getProofPow(E), k);
 
@@ -3503,6 +3531,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
   assert(checkStep % blockSize == 0);
 
   u32 const power = getProofPower(k);
+  vector<u64> const cofactorAt = args.cofactor ? cofactorKs(E) : vector<u64>{};
+
+  // An exponent that shares a factor with the FFT size gives a periodic word-size pattern and much larger roundoff errors (e.g.
+  // 140000001 on 512:15:512);  only a composite exponent (-cofactor) can
+  if (u64 const g = std::gcd(E, u64(fft.shape.size())); g > 1) {
+    log("Warning: exponent %" PRIu64 " and the FFT size %" PRIu64 " have the common factor %" PRIu64 ":  expect large roundoff errors;"
+        "  an FFT with a size coprime to the exponent is safer (-fft)\n", E, u64(fft.shape.size()), g);
+  }
 
   // power == 0 means "proof generation disabled" (no complete set of residues can be built from here on).  ProofSet does
   // not accept 0, so only construct one when there is a proof to make.
@@ -3586,12 +3622,14 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
     bool const doStop = (k % blockSize == 0) && (Signal::stopRequested() || (args.iters && k - startK >= args.iters));
     bool const doCheck = doStop || (k % checkStep == 0) || (k >= kEndEnd) || (k == extraCheckK);
     bool const doLog = k % logStep == 0;
+    bool const atCofactorK = std::ranges::find(cofactorAt, k) != cofactorAt.end();
 #ifdef PRPLL_PRP_FAULTS
     bool const fault = prpFaultAt(k, fft);
 #else
     constexpr bool fault = false;
 #endif
-    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || useLongCarry || fault ? LEAD_NONE : LEAD_WIDTH;
+    enum LEAD_TYPE const leadOut = doCheck || doLog || (k == eventK && eventWords) || k == kEnd || atCofactorK || useLongCarry || fault
+                                   ? LEAD_NONE : LEAD_WIDTH;
 
     if (doStop) { log("Stopping, please wait..\n"); }
 
@@ -3633,8 +3671,11 @@ PRPResult Gpu::isPrimePRP([[maybe_unused]] const Task& task, const Pm1Report& pm
       }
     }
 
+    if (atCofactorK) { saveCofactorResidue(readData(), k); }
+
     if (k == kEnd) {
       Words words = readData();
+      if (args.cofactor) { saveCofactorResidue(words, E); }
       isPrime = equals9(words);
       doDiv9(E, words);
       finalRes64 = residue(words);
@@ -4694,22 +4735,27 @@ bool Gpu::pm1Verify(Buffer<Word>& u0, Buffer<Word>& alt, Buffer<Word>& bpow, Buf
 // (3 | 2^p-1) = -1, so the symbol is -1 exactly when those bits are odd) and the final residue (+1: E is even).  A wrong symbol on
 // load sets the savefile aside as a bad one; at the end it fails the last block as a failed Gerbicz check does.  Off by default:
 // Gerbicz with verified-only saves covers the arithmetic, and a Jacobi symbol costs about as much as a GCD (two minutes at 100M bits).
-PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd) {
+PM1Result Gpu::pm1Stage1(const Task& task, Gcd& gcd, const vector<u32>* cofactorExp) {
   assert(E == task.exponent);
-  u64 const B1 = task.B1;
+  u64 const B1 = cofactorExp ? 0 : task.B1;     // B1 = 0:  a -cofactor exponent, which the savefile check tells apart by nBits
   constexpr u32 CHECKS_PER_RUN = 20;       // rollback exposure: about 5% of stage 1, however long it is
   constexpr u32 MAX_L = 3000;
 
   Saver<P1State> saver{E, 1000, args.nSavefiles};
-  vector<u32> const exp = pm1::stage1ExponentCached(saver.dir(), E, B1);
+  vector<u32> const exp = cofactorExp ? *cofactorExp : pm1::stage1ExponentCached(saver.dir(), E, B1);
   u64 const nBits = pm1::bitLength(exp);
-  assert(nBits >= 2);
+  if (nBits < 2) { throw "exponent too small"; }
 
   // L of a full block, and the L in use: halved after a failed check, grown back over about 30 good blocks
   u32 const fullL = u32(std::clamp(std::sqrt(double(nBits) / CHECKS_PER_RUN), 2.0, double(MAX_L)));
   u32 curL = fullL;
-  log("P-1 stage 1 B1=%" PRIu64 ", %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), about %.2f%% overhead\n",
-      B1, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+  if (cofactorExp) {
+    log("-cofactor: 3^n mod 2^%" PRIu64 "-1, n of %" PRIu64 " bits, %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), "
+        "about %.2f%% overhead\n", E, nBits, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+  } else {
+    log("P-1 stage 1 B1=%" PRIu64 ", %" PRIu64 " iterations, Gerbicz check every %u iterations (L=%u), about %.2f%% overhead\n",
+        B1, nBits - 1, fullL * fullL, fullL, 200.0 / fullL);
+  }
 
   // Sized as bufData (makeBufVector's buffers are larger when the words are 32-bit), so that they can be copied to and from it
   u32 const wordBufSize = N * fft.WordSize / sizeof(Word);

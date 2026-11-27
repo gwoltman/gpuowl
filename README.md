@@ -44,6 +44,9 @@ See `prpll -h` for the command line options.
 P-1 factoring (`Pminus1=` and `Pfactor=` worktodo lines, stage 1 and stage 2 on the GPU, the hand-off to mprime) is described in
 [docs/pm1.md](docs/pm1.md).
 
+`-cofactor` runs PRP tests of cofactors (2^E - 1) / F with a known divisor F, e.g. (2^(pq) - 1) / ((2^p - 1)(2^q - 1)), with
+a composite E allowed; see [docs/cofactor.md](docs/cofactor.md).
+
 
 ## License
 

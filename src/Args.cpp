@@ -400,6 +400,13 @@ named "config.txt" in the prpll run directory.  The options for one run are comm
 -ll <exponent>     : run a single LL test and exit, ignoring worktodo.txt
 -verify <file>     : verify the PRP proof contained in <file> and exit, ignoring worktodo.txt
 -smallest          : work on smallest exponent in worktodo.txt rather than the first exponent in worktodo.txt    
+-cofactor          : for a PRP test of a cofactor N = (2^E - 1) / F, e.g. (2^(pq) - 1) / ((2^p - 1)(2^q - 1)):  PRP tests may have
+                     a composite exponent E, run without a proof or P-1, write no result line, and save R = 3^(2^E) mod 2^E - 1
+                     to <E>.cofactor (E bits as little-endian u32 words).  N is a base-3 PRP if R mod N = 3^(F + 1) mod N.
+                     For E = p q, the residues at iterations p, q and p + q go to <E>.cofactor.<k>:  with them the check
+                     (tools/cofactor-check.c) is R 3^(2^p) 3^(2^q) = 9 3^(2^(p+q)) mod N, a few multiplications.
+                     With <E>.n (N as u32 words, from cofactor-check --exp) PRPLL computes x = 3^N mod 2^E - 1 instead,
+                     to <E>.pow3n:  log2(N) iterations rather than E (2/3 of them for F = 7 (2^q - 1)).  N is a PRP if x mod N = 3.
 -proof <power>     : generate proof of power <power> (default: optimal depending on exponent).
                      A lower power reduces disk space requirements but increases the verification cost.
                      A higher power increases disk usage a lot.
@@ -626,7 +633,7 @@ static bool isCommandLineOnly(const string& key) {
   static const std::set<string> keys{
     "-h", "--help", "-version", "-info", "-dir",
     "-prp", "-PRP", "-ll", "-LL", "-verify", "-iters", "-fft",
-    "-time", "-roe", "-tune", "-ztune", "-carryTune", "-setup",
+    "-time", "-roe", "-tune", "-ztune", "-carryTune", "-setup", "-cofactor",
   };
   return keys.contains(key);
 }
@@ -710,6 +717,8 @@ void Args::parse(const string& line) {
       useCache = true;
     } else if (key == "-noclean") {
       clean = false;
+    } else if (key == "-cofactor") {
+      cofactor = true;
     } else if (key == "-proof") {
       int power = 0;
       if (s.empty() || (power = stoi(s)) < 0 || power > 13) {
@@ -918,6 +927,21 @@ void Args::parse(const string& line) {
 void Args::setDefaults() {
   // -prp, -ll, -verify run their tasks on worker 0 and exit (Worktodo::getTask):  one worker, whatever -workers says
   if (singleRun) { workers = 1; }
+
+  // -cofactor:  PRP only, no proof, no P-1 inside the PRP test
+  if (cofactor) {
+    string conflict = proofPow > 0 ? "-proof " + to_string(proofPow)
+                    : llExp ? "-ll"s
+                    : !verifyPath.empty() ? "-verify"s
+                    : (uses("PRPPM1") && value("PRPPM1") != 0) ? "-use PRPPM1"s
+                    : uses("PRPPM1_B1") ? "-use PRPPM1_B1"s
+                    : uses("PRPPM1_B2") ? "-use PRPPM1_B2"s : ""s;
+    if (!conflict.empty()) {
+      log("-cofactor runs PRP tests without a proof or P-1:  it can't be combined with %s\n", conflict.c_str());
+      throw "-cofactor conflict";
+    }
+    proofPow = 0;
+  }
 
   uid = getUidFromPos(device);
   cl_device_id dev = getDevice(device);

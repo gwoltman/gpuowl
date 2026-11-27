@@ -7,6 +7,7 @@
 #include "File.h"
 #include "Worktodo.h"
 #include "Saver.h"
+#include "CycleFile.h"
 #include "version.h"
 #include "Primes.h"
 #include "Pm1.h"
@@ -20,6 +21,7 @@
 #include "Signal.h"
 #include "timeutil.h"
 
+#include <cstring>
 #include <cmath>
 #include <cassert>
 #include <cstdio>
@@ -314,7 +316,7 @@ void prpPm1Bounds(Task& task, GpuCommon shared, const Gpu& gpu) {
   const Args& args = *shared.args;
   u64 const E = task.exponent;
   task.B1 = task.B2 = 0;
-  if (args.value("PRPPM1", 1) == 0) { return; }
+  if (args.cofactor || args.value("PRPPM1", 1) == 0) { return; }
   if (u64 const b1 = useValue(args, "PRPPM1_B1")) {
     u64 const b2 = useValue(args, "PRPPM1_B2");
     if (b1 < 2 || (b2 && b2 <= b1) || b2 >= pm1::MAX_B2) {
@@ -553,7 +555,7 @@ void Task::execute(GpuCommon shared, u32 instance) {
   // timing.  Instead, we output a warning and test a smaller prime exponent.
   {
     Primes const primes;
-    if (!primes.isPrime(exponent)) {
+    if (!shared.args->cofactor && !primes.isPrime(exponent)) {
       u64 const new_exponent = primes.prevPrime(exponent);
       log("Warning: Exponent %" PRIu64 " is not prime.  Using exponent %" PRIu64 " instead.\n", exponent, new_exponent);
       exponent = new_exponent;
@@ -664,6 +666,35 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
 
   } else if (kind == PRP || kind == LL) {
     bool isPrime;
+    // -cofactor with <E>.n (cofactor-check --exp):  3^n mod 2^E - 1 by square-and-multiply over n's bits, about log2(n) iterations
+    // rather than E, checked as P-1 stage 1 is.  N = n is a base-3 Fermat PRP if the result mod n is 3.
+    if (kind == PRP && shared.args->cofactor && fs::exists(to_string(exponent) + ".n")) {
+      fs::path const nPath = to_string(exponent) + ".n";
+      string const bytes = File::openReadThrow(nPath).readAll();
+      vector<u32> n(bytes.size() / 4);
+      if (n.empty() || bytes.size() % 4) {
+        log("%s:  %zu bytes, expected a whole number of u32 words (cofactor-check --exp)\n", nPath.string().c_str(), bytes.size());
+        throw "bad .n file";
+      }
+      memcpy(n.data(), bytes.data(), bytes.size());
+      while (!n.empty() && !n.back()) { n.pop_back(); }
+      if (n.empty() || n.size() > (exponent + 31) / 32) {
+        log("%s:  n must be between 1 and 2^%" PRIu64 "\n", nPath.string().c_str(), exponent);
+        throw "bad .n file";
+      }
+      Gcd gcd{shared};
+      PM1Result const r = gpu->pm1Stage1(*this, gcd, &n);
+      fs::path const out = to_string(exponent) + ".pow3n";
+      {
+        CycleFile f{out};
+        f->write(r.x);
+      }
+      log("-cofactor: 3^n mod 2^%" PRIu64 "-1 written to %s (%zu u32 words, little-endian), res64 %016" PRIx64 ", %u check errors\n",
+          exponent, out.string().c_str(), r.x.size(), residue(r.x), r.nErrors);
+      Worktodo::deleteTask(*this, instance);
+      if (shared.args->clean) { Saver<P1State>::clear(exponent); }
+      return;
+    }
     if (kind == PRP) {
       // The P-1 inside the PRP test reports through this; a factor ends the test (it is composite) with no PRP result
       Pm1Report const pm1Report = [&](u64 b1, u64 b2, const vector<string>& factors, u32 nErr, u32 nStage2Err) {
@@ -678,7 +709,9 @@ void Task::executeWith(GpuCommon shared, u32 instance, FFTConfig fft, const vect
         return;
       }
       isPrime = tmpIsPrime;
-      writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath);
+      // -cofactor:  the result is the residue file (Gpu::isPrimePRP), for a cofactor test elsewhere;  a result line for 2^E - 1
+      // would be wrong to report
+      if (!shared.args->cofactor) { writeResultPRP(fft, *shared.args, instance, isPrime, res64, res2048, nErrors, proofPath); }
     } else { // LL
       // The Jacobi check, on by default:  its GCD kernels are built only when it runs
       unique_ptr<Gcd> gcd;

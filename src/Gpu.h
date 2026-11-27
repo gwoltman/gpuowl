@@ -399,7 +399,8 @@ public:
   LLResult isPrimeLL(const Task& task, Gcd* gcd);
   CERTResult isCERT(const Task& task);
   // With -use PM1_JACOBI=1, gcd computes the Jacobi symbols that check a loaded savefile and the final residue.
-  PM1Result pm1Stage1(const Task& task, Gcd& gcd);
+  // cofactorExp:  -cofactor's exponent n (see Task::execute) instead of the P-1 stage 1 exponent;  x is then 3^n mod 2^E - 1
+  PM1Result pm1Stage1(const Task& task, Gcd& gcd, const vector<u32>* cofactorExp = nullptr);
 
   double timePRP(int quick = 7);
 
@@ -456,6 +457,7 @@ public:
 
 private:
   u32 getProofPower(u64 k);
+  void saveCofactorResidue(const Words& words, u64 k);
   void doBigLog(u64 k, u64 res, bool checkOK, float secsPerIt, u64 nIters, u32 nErrors);
   enum WHICH_KERNEL {CARRYFUSED=0, MIDIN=1, MIDIN31=2, MIDIN61=3, TAIL=4, TAIL31=5, TAIL61=6, MIDOUT=7, MIDOUT31=8, MIDOUT61=9};
   [[nodiscard]] string regKey(enum WHICH_KERNEL which_kernel) const;
