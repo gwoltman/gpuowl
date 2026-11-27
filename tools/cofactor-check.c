@@ -37,6 +37,17 @@ static void modMersenne(mpz_t x, unsigned long E, mpz_t tmp, const mpz_t M) {
   if (mpz_cmp(x, M) >= 0) { mpz_sub(x, x, M); }
 }
 
+// The number of decimal digits of x > 0:  mpz_sizeinbase(x, 10) is exact or one too many
+static size_t decimalDigits(const mpz_t x) {
+  size_t d = mpz_sizeinbase(x, 10);
+  mpz_t p;
+  mpz_init(p);
+  mpz_ui_pow_ui(p, 10, d - 1);
+  if (mpz_cmp(x, p) < 0) { --d; }
+  mpz_clear(p);
+  return d;
+}
+
 // The k of a factor given as 2^k-1, else 0
 static unsigned long mersenneK(const char* s) {
   unsigned long k;
@@ -136,6 +147,6 @@ int main(int argc, char** argv) {
     mpz_powm(want, three, Fp1, N);
     prp = mpz_cmp(R, want) == 0;
   }
-  printf("N = (2^%lu-1)/F, %zu digits:  %s\n", E, mpz_sizeinbase(N, 10), prp ? "base-3 PRP" : "composite");
+  printf("N = (2^%lu-1)/F, %zu digits:  %s\n", E, decimalDigits(N), prp ? "base-3 PRP" : "composite");
   return prp ? 0 : 1;
 }
