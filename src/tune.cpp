@@ -2178,18 +2178,20 @@ bool Tune::canTuneRegs() {
   return true;
 #else
   cl_device_id const id = shared.context->deviceId();
-  return isAmdGpu(id) && amdHasKernelInfo(id);
+  return isAmdGpu(id) && amdHasKernelInfo(id) && amdHonorsRegisterLimits(shared.context->get(), id);
 #endif
 }
 
 void Tune::regTune(int quick, const vector<FFTShape>& onlyShapes, const set<string>* onlySpecs, u64 minExp, u64 maxExp) {
-  // Where the register limits can't be tuned, only MULTI_Q is
+  // Where the register limits can't be tuned, the settings timed with the default registers still are (retuneEntry:  INPLACE,
+  // NTT_WEIGHT_TABLE, TILE64/TILE32, MULTI_Q);  the register limits and what is tuned together with them (TAIL_KERNELS, WMUL) are not
   bool const canRegs = canTuneRegs();
   if (!canRegs) {
     // Only -tune regs says so
-    if (!onlySpecs) { log("-tune regs: register limits are only tuned in the CUDA build and on AMD GPUs whose runtime reports VGPRs\n"); }
-    if (!retune.contains("MULTI_Q")) { return; }
-    retune = {"MULTI_Q"};
+    if (!onlySpecs) { log("-tune regs: register limits are only tuned in the CUDA build and on AMD GPUs whose runtime reports VGPRs and whose compiler "
+                            "applies amdgpu_waves_per_eu\n"); }
+    for (const char* k : {"REGS", "TAIL_KERNELS", "WMUL"}) { retune.erase(k); }
+    if (retune.empty()) { return; }
   }
   vector<TuneEntry> const entries = TuneEntry::readTuneFile(*shared.args);
   if (entries.empty()) {
@@ -2211,7 +2213,7 @@ void Tune::regTune(int quick, const vector<FFTShape>& onlyShapes, const set<stri
   }
   log("\n");
   if (!canRegs) {
-    log("Tuning MULTI_Q of %stune.txt entries.\n", onlySpecs ? "new " : "");
+    log("Tuning the settings of %stune.txt entries (not their register limits).\n", onlySpecs ? "new " : "");
   } else {
 #ifdef CUDA_BACKEND
     log("Tuning register usage of %stune.txt entries.  Per SM: %d registers, %d threads, %d blocks, %d bytes shared memory.\n",
@@ -2551,9 +2553,16 @@ TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) 
     // The new kernels won with the compiler's default registers, which flatters a setting that saves registers (on a TITAN V
     // NTT_WEIGHT_TABLE=1 was 7% faster so, but no faster once the limits were tuned).  So the new kernels with their own register
     // limits have to beat the old ones with theirs: the line's, or retuned if the register limits are selected.
-    TuneEntry const changed = regTuneEntry(out, quick, sm);
+    // Where the register limits can't be tuned (see regTune), both sides are timed with the default registers
+    bool const canRegs = canTuneRegs();
+    TuneEntry changed = out;
+    if (canRegs) {
+      changed = regTuneEntry(out, quick, sm);
+    } else {
+      changed.cost = timeConfig(exponent, shared, e.fft, {}, quick, nullptr, out.uses);
+    }
     TuneEntry kept = original;
-    if (regs) {
+    if (regs && canRegs) {
       kept = regTuneEntry(original, quick, sm);
     } else {
       kept.cost = timeConfig(exponent, shared, e.fft, {}, quick, nullptr, original.uses);
