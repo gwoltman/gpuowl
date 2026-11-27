@@ -46,6 +46,8 @@ static void gpuWorker(GpuCommon shared, i32 instance) {
     initLog(("gpuowl-"s + to_string(instance) + ".log").c_str());
     log("PRPLL %s, instance %d\n", VERSION, instance);
   }
+  // One worker (as under the BOINC wrapper):  progress.txt.  Several:  one file each, as for gpuowl-<N>.log
+  initProgress(shared.args->workers > 1 ? "progress-"s + to_string(instance) + ".txt" : "progress.txt"s);
 
   try {
     while (auto task = Worktodo::getTask(*shared.args, instance)) { task->execute(shared, instance); }

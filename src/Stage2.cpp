@@ -1054,6 +1054,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
         if (atEnd) {
           log("Stage 2 done: %" PRIu64 " multiplications, %.0fs, %.1f us/mul, max ROE %.3f, ROE %s, acc %016" PRIx64 ", failed checks %u\n",
               nMul, elapsed, usPerMul(), s2.maxROE(), s2.roe().toString().c_str(), res64(a), nErrors);
+          writeProgress(1);
           if (args.profile) { g.logTimeKernels(); }
           return {.status = Stage2Result::DONE, .acc = a, .nMul = nMul, .nErrors = nErrors};
         }
@@ -1106,6 +1107,7 @@ Stage2Result Stage2::runOn(GpuCommon shared, u64 E, u64 B1, u64 B2, const vector
         mulsAtLog = nMul;
         log("Stage 2 k=%" PRIu64 " %5.2f%% %.0f us/mul, ETA %s, max ROE %.3f\n", k, 100.0 * nMul / mulsTotal,
             secs / std::max<u64>(done, 1) * 1e6, formatETA(secs / std::max<u64>(done, 1) * double(mulsTotal - nMul)).c_str(), s2.maxROE());
+        writeProgress(double(nMul) / mulsTotal);
       }
     }
 
