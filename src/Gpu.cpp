@@ -1255,6 +1255,10 @@ string Gpu::amdRegisterOption([[maybe_unused]] enum WHICH_KERNEL which_kernel, i
   cl_device_id const id = shared.context->deviceId();
   if (!isAmdGpu(id)) return string("");
   if (override_regs < 0) return string("");
+#ifndef CUDA_BACKEND
+  // A compiler that ignores the attribute only warns about it in every build log (and the define changes the kernel cache key)
+  if (!amdHonorsRegisterLimits(shared.context->get(), id)) return string("");
+#endif
   if (override_regs > REG_MAX_OCCUPANCY) return string("-DAMD_NUM_VGPR=") + to_string(override_regs) + " ";
   if (override_regs > 0) return string("-DAMD_WAVES_PER_EU=") + to_string(override_regs) + " ";
   // Default: 2 waves per SIMD for the in-place middle kernels on Vega class GPUs (gfx900/902/904/906/909/90c: 256 VGPRs per lane).

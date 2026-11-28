@@ -17,6 +17,8 @@
 #include <atomic>
 #include <sstream>
 #include <algorithm>
+#include <map>
+#include <mutex>
 
 using namespace std;
 
@@ -279,6 +281,29 @@ GetKernelInfoAMD getKernelInfoAMD(cl_device_id id) {
 }
 
 bool amdHasKernelInfo(cl_device_id id) { return getKernelInfoAMD(id) != nullptr; }
+
+// The AMD Windows driver's HSAIL compiler (e.g. OpenCL "3444.0 (PAL,HSAIL)" on a Radeon VII) warns "unknown attribute
+// 'amdgpu_waves_per_eu' ignored" and compiles without the cap:  there the register limits (REGxxxx, and the default cap of the
+// Vega in-place middle kernels) do nothing, and -tune would time identical kernels.  A probe kernel with the attribute tells.
+bool amdHonorsRegisterLimits(cl_context context, cl_device_id id) {
+  static std::mutex m;
+  static std::map<cl_device_id, bool> known;
+  std::lock_guard const lock{m};
+  if (auto it = known.find(id); it != known.end()) { return it->second; }
+  bool ok = false;
+  if (Program probe = loadSource(context,
+        "kernel __attribute__((reqd_work_group_size(64, 1, 1), amdgpu_waves_per_eu(2))) void probe(global int* p) { p[get_global_id(0)] = 1; }\n")) {
+    bool const built = clBuildProgram(probe.get(), 1, &id, "", nullptr, nullptr) == CL_SUCCESS;
+    string const mes = getBuildLog(probe.get(), id);
+    ok = built && mes.find("amdgpu_waves_per_eu") == string::npos;
+  }
+  if (!ok) {
+    log("This OpenCL compiler ignores amdgpu_waves_per_eu:  the AMD register limits (REGxxxx in tune.txt) have no effect, "
+        "and -tune leaves them out\n");
+  }
+  known[id] = ok;
+  return ok;
+}
 
 KernelResources amdKernelResources(cl_kernel k, cl_device_id id) {
   KernelResources r{-1, 0, 0, 0};

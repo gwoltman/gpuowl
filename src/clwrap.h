@@ -171,6 +171,8 @@ struct KernelResources {
 KernelResources amdKernelResources(cl_kernel k, cl_device_id id);
 // Whether the runtime has clGetKernelInfoAMD
 bool amdHasKernelInfo(cl_device_id id);
+// Whether the OpenCL compiler applies amdgpu_waves_per_eu, with which Gpu::amdRegisterOption caps a kernel's VGPRs (probed once)
+bool amdHonorsRegisterLimits(cl_context context, cl_device_id id);
 
 // AMD: what limits the waves per SIMD (EU) that a kernel's VGPRs and LDS allow
 struct AmdSimdLimits {
