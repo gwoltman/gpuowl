@@ -2403,7 +2403,8 @@ string regValueName(int v, bool amd) {
 
 // The settings selected by retune, in the order they depend on each other.  First those that change the kernels whose register limits
 // are tuned: INPLACE (the tiles apply to its in-place transforms), NTT_WEIGHT_TABLE, TILE64 and TILE32 (the in-place middle kernels'
-// threads per block), each timed with the compiler's default registers.  Then MULTI_Q with (CUDA) L2PERSIST, also with the default
+// threads per block), and LDSSWIZ_W/H (regs=long, and only where the device's local-memory limit drops LDSPAD), each timed with the compiler's default
+// registers.  Then MULTI_Q with (CUDA) L2PERSIST, also with the default
 // registers if they are tuned next.  Then the register limits with WMUL and TAIL_KERNELS (regTuneEntry), also when one of the first
 // changed: the line's limits were tuned for the old kernels.  A setting not selected keeps its value on the line.  A setting is written to the line only where it differs from
 // what the FFT gets without it (config.txt or the default), so that a later change of the default reaches the line.
@@ -2432,8 +2433,8 @@ TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) 
 
   // A new value of a setting that changes the kernels must win again with register limits (kernelsChanged below)
   bool kernelsChanged = false;
-  auto search = [&](const string& key, int builtIn, const vector<int>& values) {
-    if (!retune.contains(key)) { return; }
+  auto search = [&](const string& key, int builtIn, const vector<int>& values, const char* retuneKey = nullptr) {
+    if (!retune.contains(retuneKey ? retuneKey : key)) { return; }
     int const without = args->value(key, builtIn);
     int const current = lineValue(key).value_or(without);
     vector<KeyVal> const uses = usesBut(key);
@@ -2462,6 +2463,11 @@ TuneEntry Tune::retuneEntry(const TuneEntry& e, int quick, const RegLimits& sm) 
   if (e.fft.NTT_GF31 || e.fft.NTT_GF61) { search("NTT_WEIGHT_TABLE", 0, {0, 1, 2, 3}); }
   if (inPlace && (e.fft.FFT_FP64 || e.fft.NTT_GF61)) { search("TILE64", isAmdGpu(shared.context->deviceId()) ? 16 : 8, {8, 16}); }     // the defaults as base.cl
   if (inPlace && (e.fft.FFT_FP32 || e.fft.NTT_GF31)) { search("TILE32", 16, {8, 16}); }
+  if (retune.contains("LDSSWIZ")) {
+    Gpu::LdsSwizzleEligible const swiz = Gpu::ldsSwizzleEligible(*args, shared.context->deviceId(), e.fft, out.uses);
+    if (swiz.w) { search("LDSSWIZ_W", 0, {0, 1}, "LDSSWIZ"); }
+    if (swiz.h) { search("LDSSWIZ_H", 0, {0, 1}, "LDSSWIZ"); }
+  }
 
   bool const regs = retune.contains("REGS") || retune.contains("WMUL") || retune.contains("TAIL_KERNELS");
 
